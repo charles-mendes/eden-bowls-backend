@@ -1,0 +1,21 @@
+{
+  "name": "eden-bowls-backend",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "api:start:dev": "npm run start:dev -w apps/api",
+    "api:build": "npm run build -w apps/api",
+    "api:test": "npm run test -w apps/api",
+    "api:test:e2e:bootstrap": "npm run test:e2e:bootstrap -w apps/api",
+    "e2e": "npm run api:test:e2e:bootstrap",
+    "db:format": "npm run db:format -w apps/api",
+    "db:generate": "npm run db:generate -w apps/api",
+    "db:migrate:dev": "npm run db:migrate:dev -w apps/api",
+    "db:migrate:deploy": "npm run db:migrate:deploy -w apps/api",
+    "db:seed": "npm run db:seed -w apps/api"
+  }
+}
