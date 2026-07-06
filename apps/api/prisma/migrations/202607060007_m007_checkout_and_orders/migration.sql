@@ -82,11 +82,20 @@ CREATE TABLE `order_status_history` (
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- AddIndex
-CREATE INDEX `subscriptions_order_id_idx` ON `subscriptions`(`order_id`);
-
 -- AddForeignKey
 ALTER TABLE `checkout_orders` ADD CONSTRAINT `checkout_orders_user_id_fkey` FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddIndex
+CREATE INDEX `checkout_orders_session_id_idx` ON `checkout_orders`(`session_id`);
+
+-- AddIndex
+CREATE INDEX `checkout_orders_plan_snapshot_id_idx` ON `checkout_orders`(`plan_snapshot_id`);
+
+-- AddForeignKey
+ALTER TABLE `checkout_orders` ADD CONSTRAINT `checkout_orders_session_id_fkey` FOREIGN KEY (`session_id`) REFERENCES `onboarding_sessions`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `checkout_orders` ADD CONSTRAINT `checkout_orders_plan_snapshot_id_fkey` FOREIGN KEY (`plan_snapshot_id`) REFERENCES `plan_snapshots`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `checkout_order_items` ADD CONSTRAINT `checkout_order_items_order_id_fkey` FOREIGN KEY (`order_id`) REFERENCES `checkout_orders`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
@@ -112,5 +121,3 @@ ALTER TABLE `order_status_history` ADD CONSTRAINT `order_status_history_order_id
 -- AddForeignKey
 ALTER TABLE `order_status_history` ADD CONSTRAINT `order_status_history_changed_by_user_id_fkey` FOREIGN KEY (`changed_by_user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
--- AddForeignKey
-ALTER TABLE `subscriptions` ADD CONSTRAINT `subscriptions_order_id_fkey` FOREIGN KEY (`order_id`) REFERENCES `checkout_orders`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

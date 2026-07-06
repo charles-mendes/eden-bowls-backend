@@ -95,7 +95,7 @@ CREATE TABLE `subscription_terms` (
     `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updated_at` DATETIME(3) NOT NULL,
 
-    INDEX `subscription_terms_market_country_months_active_effective_fro_idx`(`market_country`, `months`, `active`, `effective_from`),
+    INDEX `sub_terms_country_months_active_eff_from_idx`(`market_country`, `months`, `active`, `effective_from`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

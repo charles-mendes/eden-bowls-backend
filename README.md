@@ -115,6 +115,55 @@ Dependency rules:
 npm ci
 ```
 
+## Local Run (with Docker MySQL)
+
+1) Start MySQL in Docker (port 3307 on host):
+
+```bash
+docker compose -f docker-compose.db.yml up -d
+```
+
+2) Copy environment file for API:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+```
+
+3) Update `apps/api/.env` with local values:
+
+```env
+DATABASE_URL="mysql://root:root@localhost:3307/eden_bowls"
+JWT_ACCESS_SECRET="dev-access-secret"
+JWT_REFRESH_SECRET="dev-refresh-secret"
+```
+
+4) Generate Prisma client and run migrations:
+
+```bash
+npm run db:generate
+npm run db:migrate:dev
+```
+
+5) (Optional) Seed base data:
+
+```bash
+npm run db:seed
+```
+
+6) Start API in watch mode:
+
+```bash
+npm run api:start:dev
+```
+
+Note: this project uses `ts-node-dev` for watch mode because it preserves decorator metadata required by NestJS dependency injection. This avoids intermittent runtime DI errors seen with alternative watch runners.
+
+7) Stop database when done:
+
+```bash
+docker compose -f docker-compose.db.yml down
+```
+
 ## Environment
 
 Set at least:

@@ -27,6 +27,20 @@ export class OrdersController {
     return this.ordersService.listOrders(user, query);
   }
 
+  @Get('admin/orders')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'operator', 'readonly')
+  listAdminOrders(@Query() query: ListOrdersQueryDto) {
+    return this.ordersService.listAdminOrders(query);
+  }
+
+  @Get('admin/orders/:orderId')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'operator', 'readonly')
+  getAdminOrder(@Param('orderId') orderId: string) {
+    return this.ordersService.getAdminOrder(orderId);
+  }
+
   @Get('orders/:orderId')
   getOrder(@CurrentUser() user: AuthUser, @Param('orderId') orderId: string) {
     return this.ordersService.getOrder(user, orderId);

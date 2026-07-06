@@ -362,7 +362,7 @@ model SubscriptionTerm {
 
   subscriptions Subscription[]
 
-  @@index([marketCountry, months, active, effectiveFrom])
+  @@index([marketCountry, months, active, effectiveFrom], map: "sub_terms_country_months_active_eff_from_idx")
   @@map("subscription_terms")
 }
 

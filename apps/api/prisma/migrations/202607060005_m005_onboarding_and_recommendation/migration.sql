@@ -94,11 +94,6 @@ CREATE TABLE `plan_snapshots` (
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- AlterTable
-ALTER TABLE `checkout_orders`
-    ADD INDEX `checkout_orders_session_id_idx`(`session_id`),
-    ADD INDEX `checkout_orders_plan_snapshot_id_idx`(`plan_snapshot_id`);
-
 -- AddForeignKey
 ALTER TABLE `onboarding_sessions` ADD CONSTRAINT `onboarding_sessions_linked_user_id_fkey`
     FOREIGN KEY (`linked_user_id`) REFERENCES `users`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
@@ -131,10 +126,3 @@ ALTER TABLE `recommendation_pet_results` ADD CONSTRAINT `recommendation_pet_resu
 ALTER TABLE `plan_snapshots` ADD CONSTRAINT `plan_snapshots_run_id_fkey`
     FOREIGN KEY (`run_id`) REFERENCES `recommendation_runs`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
--- AddForeignKey
-ALTER TABLE `checkout_orders` ADD CONSTRAINT `checkout_orders_session_id_fkey`
-    FOREIGN KEY (`session_id`) REFERENCES `onboarding_sessions`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `checkout_orders` ADD CONSTRAINT `checkout_orders_plan_snapshot_id_fkey`
-    FOREIGN KEY (`plan_snapshot_id`) REFERENCES `plan_snapshots`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

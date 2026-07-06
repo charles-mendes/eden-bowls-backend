@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "start:dev": "tsx watch src/main.ts",
+    "start:dev": "ts-node-dev --respawn --transpile-only --project tsconfig.json src/main.ts",
     "test": "jest --config jest.config.cjs --passWithNoTests",
     "test:e2e": "jest --config jest.e2e.config.cjs --runInBand --passWithNoTests",
     "test:e2e:bootstrap": "DATABASE_URL=${DATABASE_URL:-mysql://root:root@127.0.0.1:3307/eden_bowls} JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-e2e-access-secret} JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-e2e-refresh-secret} RUN_E2E=1 sh -c 'npx prisma db push && npm run test:e2e'",
@@ -31,12 +31,14 @@
   },
   "devDependencies": {
     "@nestjs/testing": "^10.4.9",
-    "@types/supertest": "^6.0.3",
     "@types/jest": "^29.5.12",
+    "@types/supertest": "^6.0.3",
     "jest": "^29.7.0",
     "prisma": "^6.10.1",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4"
   }

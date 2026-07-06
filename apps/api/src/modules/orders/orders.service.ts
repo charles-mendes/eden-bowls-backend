@@ -20,12 +20,33 @@ export class OrdersService {
   ) {}
 
   async listOrders(actor: AuthUser, query: ListOrdersQueryDto) {
+    return this.listOrdersByWhere(
+      {
+        userId: actor.userId,
+      },
+      query,
+    );
+  }
+
+  async listAdminOrders(query: ListOrdersQueryDto) {
+    return this.listOrdersByWhere({}, query, true);
+  }
+
+  async getAdminOrder(orderId: string) {
+    return this.getOrderById(orderId, true);
+  }
+
+  private async listOrdersByWhere(
+    baseWhere: Prisma.OrderWhereInput,
+    query: ListOrdersQueryDto,
+    includeUser = false,
+  ) {
     const page = query.page ?? 1;
     const perPage = query.perPage ?? 20;
     const skip = (page - 1) * perPage;
 
     const where: Prisma.OrderWhereInput = {
-      userId: actor.userId,
+      ...baseWhere,
       ...(query.status ? { status: query.status } : {}),
     };
 
@@ -37,6 +58,16 @@ export class OrdersService {
         take: perPage,
         orderBy: { createdAt: 'desc' },
         include: {
+          ...(includeUser
+            ? {
+                user: {
+                  select: {
+                    id: true,
+                    email: true,
+                  },
+                },
+              }
+            : {}),
           checkoutOrder: {
             include: {
               items: true,
@@ -56,9 +87,29 @@ export class OrdersService {
   }
 
   async getOrder(actor: AuthUser, orderId: string) {
+    const order = await this.getOrderById(orderId);
+
+    if (order.userId !== actor.userId && !this.isAdmin(actor)) {
+      throw new ForbiddenException('forbidden');
+    }
+
+    return order;
+  }
+
+  private async getOrderById(orderId: string, includeUser = false) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
       include: {
+        ...(includeUser
+          ? {
+              user: {
+                select: {
+                  id: true,
+                  email: true,
+                },
+              },
+            }
+          : {}),
         checkoutOrder: {
           include: {
             items: {
@@ -92,10 +143,6 @@ export class OrdersService {
 
     if (!order) {
       throw new NotFoundException('order_not_found');
-    }
-
-    if (order.userId !== actor.userId && !this.isAdmin(actor)) {
-      throw new ForbiddenException('forbidden');
     }
 
     return order;
