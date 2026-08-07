@@ -48,6 +48,12 @@ Nunca criar uma nova arquitetura sem autorização.
 
 Antes de sugerir mudancas, identifique tambem o componente alvo (api, scheduler, worker, service ou infraestrutura) e considere impacto nas feature flags ENABLE_BACKGROUND_JOBS e PRIME_ENABLE_UPDATE. Qualquer alteracao em processamento de eventos deve preservar idempotencia por correlation_id.
 
+## Padrao obrigatorio de rotas HTTP
+
+- Todo endpoint de negocio deste backend deve usar prefixo versionado `/api/v1`.
+- Nao criar novas rotas com prefixos legados como `/wp-json`, `/custom`, `/test` ou `/jobs` para funcionalidades de negocio.
+- Em evolucoes de API, manter consistencia de naming e versionamento no namespace `/api/v1`.
+
 
 ## Objetivo do sistema
 - Microsservico Node.js para validacao de documentos academicos.
@@ -120,9 +126,9 @@ Dependencias de desenvolvimento:
 ## Endpoints e operacao
 - Health checks: /health, /readiness, /liveness, /health/detailed.
 - Metricas: /metrics.
-- Rotas de negocio: /api/situacao, /api/documentos, /api/alterar-situacao-documento.
-- Jobs manuais: /jobs/run-pipeline, /jobs/sync-students, /jobs/send-corporate, /jobs/resend-pending-corporate.
-- Rotas de teste: /test/student-flow, /test/query-students, /test/send-to-corporate-v2.
+- Rotas de negocio: /api/v1/situacao, /api/v1/documentos, /api/v1/alterar-situacao-documento.
+- Jobs manuais expostos por HTTP devem seguir namespace versionado: /api/v1/jobs/run-pipeline, /api/v1/jobs/sync-students, /api/v1/jobs/send-corporate, /api/v1/jobs/resend-pending-corporate.
+- Rotas auxiliares de teste/diagnostico, quando necessarias, devem seguir namespace versionado: /api/v1/test/student-flow, /api/v1/test/query-students, /api/v1/test/send-to-corporate-v2.
 
 ## Comandos de desenvolvimento
 - npm install

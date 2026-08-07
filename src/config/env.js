@@ -10,12 +10,19 @@ const rawEnvSchema = z.object({
   ENABLE_BACKGROUND_JOBS: z.string().optional(),
   PRIME_ENABLE_UPDATE: z.string().optional(),
   LOG_LEVEL: z.string().optional(),
+  CORS_ORIGINS: z.string().default('http://localhost:5173'),
   DB_HOST: z.string().default('localhost'),
   DB_PORT: z.string().default('3306'),
   DB_USER: z.string().default('root'),
   DB_PASSWORD: z.string().default('root'),
   DB_NAME: z.string().default('eden_bowls'),
-  BREEDS_TABLE_NAME: z.string().default('wp_hsr_breeds')
+  BREEDS_TABLE_NAME: z.string().default('wp_hsr_breeds'),
+  PRICE_ZONE_POLICY_TABLE_NAME: z.string().default('price_zone_policy'),
+  WP_POSTS_TABLE_NAME: z.string().default('wp_posts'),
+  WP_POSTMETA_TABLE_NAME: z.string().default('wp_postmeta'),
+  WP_TERMS_TABLE_NAME: z.string().default('wp_terms'),
+  WP_TERM_TAXONOMY_TABLE_NAME: z.string().default('wp_term_taxonomy'),
+  WP_TERM_RELATIONSHIPS_TABLE_NAME: z.string().default('wp_term_relationships')
 });
 
 function toBoolean(value, defaultValue = false) {
@@ -33,6 +40,10 @@ function toBoolean(value, defaultValue = false) {
 
 function parseEnv(source = process.env) {
   const rawEnv = rawEnvSchema.parse(source);
+  const corsOrigins = String(rawEnv.CORS_ORIGINS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   return {
     NODE_ENV: rawEnv.NODE_ENV,
@@ -41,12 +52,19 @@ function parseEnv(source = process.env) {
     ENABLE_BACKGROUND_JOBS: toBoolean(rawEnv.ENABLE_BACKGROUND_JOBS),
     PRIME_ENABLE_UPDATE: toBoolean(rawEnv.PRIME_ENABLE_UPDATE),
     LOG_LEVEL: rawEnv.LOG_LEVEL || (rawEnv.NODE_ENV === 'development' ? 'debug' : 'info'),
+    CORS_ORIGINS: corsOrigins,
     DB_HOST: rawEnv.DB_HOST,
     DB_PORT: Number(rawEnv.DB_PORT),
     DB_USER: rawEnv.DB_USER,
     DB_PASSWORD: rawEnv.DB_PASSWORD,
     DB_NAME: rawEnv.DB_NAME,
-    BREEDS_TABLE_NAME: rawEnv.BREEDS_TABLE_NAME
+    BREEDS_TABLE_NAME: rawEnv.BREEDS_TABLE_NAME,
+    PRICE_ZONE_POLICY_TABLE_NAME: rawEnv.PRICE_ZONE_POLICY_TABLE_NAME,
+    WP_POSTS_TABLE_NAME: rawEnv.WP_POSTS_TABLE_NAME,
+    WP_POSTMETA_TABLE_NAME: rawEnv.WP_POSTMETA_TABLE_NAME,
+    WP_TERMS_TABLE_NAME: rawEnv.WP_TERMS_TABLE_NAME,
+    WP_TERM_TAXONOMY_TABLE_NAME: rawEnv.WP_TERM_TAXONOMY_TABLE_NAME,
+    WP_TERM_RELATIONSHIPS_TABLE_NAME: rawEnv.WP_TERM_RELATIONSHIPS_TABLE_NAME
   };
 }
 

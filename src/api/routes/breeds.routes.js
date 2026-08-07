@@ -17,7 +17,6 @@ function registerBreedsRoutes(app, dependencies = {}) {
   };
 
   app.get('/api/v1/breeds', handler);
-  app.get('/wp-json/custom/v1/breeds', handler);
 }
 
 module.exports = {

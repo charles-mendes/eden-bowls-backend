@@ -3,14 +3,44 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const client = require('prom-client');
 const { registerBreedsRoutes } = require('./api/routes/breeds.routes');
+const { registerProductsRoutes } = require('./api/routes/products.routes');
 const { HttpError } = require('./core/http-error');
 
 client.collectDefaultMetrics();
 
+function buildCorsConfig(origins = []) {
+  return {
+    origins: Array.isArray(origins) ? origins : []
+  };
+}
+
+function corsMiddleware(config) {
+  return (request, response, next) => {
+    const origin = request.headers.origin;
+    const isAllowedOrigin = origin && config.origins.includes(origin);
+
+    if (isAllowedOrigin) {
+      response.setHeader('Access-Control-Allow-Origin', origin);
+      response.setHeader('Vary', 'Origin');
+      response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+      response.setHeader('Access-Control-Allow-Headers', 'Accept,Content-Type,Authorization');
+    }
+
+    if (request.method === 'OPTIONS') {
+      response.status(isAllowedOrigin ? 204 : 403).end();
+      return;
+    }
+
+    next();
+  };
+}
+
 function createApp(dependencies = {}) {
   const app = express();
+  const corsConfig = buildCorsConfig(dependencies.corsOrigins);
 
   app.disable('x-powered-by');
+  app.use(corsMiddleware(corsConfig));
   app.use(helmet());
   app.use(express.json({ limit: '1mb' }));
   app.use(
@@ -44,6 +74,7 @@ function createApp(dependencies = {}) {
   });
 
   registerBreedsRoutes(app, dependencies);
+  registerProductsRoutes(app, dependencies);
 
   app.use((request, response, next) => {
     next(new HttpError(404, 'Route not found.'));

@@ -1,0 +1,25 @@
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    ports:
+      - "3310:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: eden_bowls
+      MYSQL_USER: eden_bowls
+      MYSQL_PASSWORD: eden_bowls
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - eden-bowls-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  eden-bowls-mysql-data:
