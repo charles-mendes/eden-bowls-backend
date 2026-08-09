@@ -2,6 +2,8 @@ const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const client = require('prom-client');
+const { buildBearerTokenMiddleware } = require('./api/middleware/bearer-token.middleware');
+const { registerAuthRoutes } = require('./api/routes/auth.routes');
 const { registerBreedsRoutes } = require('./api/routes/breeds.routes');
 const { registerProductsRoutes } = require('./api/routes/products.routes');
 const { HttpError } = require('./core/http-error');
@@ -51,6 +53,10 @@ function createApp(dependencies = {}) {
       legacyHeaders: false
     })
   );
+  app.use(buildBearerTokenMiddleware({
+    authPath: '/api/v1/auth/token',
+    jwt: dependencies.jwt || {}
+  }));
 
   app.get('/health', (request, response) => {
     response.json({ status: 'ok' });
@@ -75,6 +81,7 @@ function createApp(dependencies = {}) {
 
   registerBreedsRoutes(app, dependencies);
   registerProductsRoutes(app, dependencies);
+  registerAuthRoutes(app, dependencies);
 
   app.use((request, response, next) => {
     next(new HttpError(404, 'Route not found.'));

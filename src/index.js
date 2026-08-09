@@ -4,9 +4,11 @@ const { parseEnv } = require('./config/env');
 const { createLogger } = require('./core/logger');
 const { createApp } = require('./app');
 const { createDataSource } = require('./infrastructure/db');
+const { AuthRepository } = require('./infrastructure/repositories/auth.repository');
 const { BreedsRepository } = require('./infrastructure/repositories/breeds.repository');
 const { PriceZonePolicyRepository } = require('./infrastructure/repositories/price-zone-policy.repository');
 const { ProductsRepository } = require('./infrastructure/repositories/products.repository');
+const { AuthService } = require('./services/auth.service');
 const { BreedsService } = require('./services/breeds.service');
 const { ProductsService } = require('./services/products.service');
 
@@ -21,7 +23,19 @@ async function bootstrap() {
   const breedsRepository = new BreedsRepository(dataSource, {
     tableName: env.BREEDS_TABLE_NAME
   });
+  const authRepository = new AuthRepository(dataSource, {
+    usersTableName: env.WP_USERS_TABLE_NAME,
+    usermetaTableName: env.WP_USERMETA_TABLE_NAME
+  });
   const breedsService = new BreedsService(breedsRepository);
+  const authService = new AuthService(authRepository, {
+    jwt: {
+      secret: env.JWT_AUTH_SECRET_KEY,
+      algorithm: env.JWT_AUTH_ALGORITHM,
+      issuer: env.JWT_AUTH_ISSUER,
+      expiresInSeconds: env.JWT_AUTH_EXPIRES_IN_SECONDS
+    }
+  });
   const priceZonePolicyRepository = new PriceZonePolicyRepository(dataSource, {
     tableName: env.PRICE_ZONE_POLICY_TABLE_NAME
   });
@@ -35,8 +49,14 @@ async function bootstrap() {
   });
   const productsService = new ProductsService(productsRepository);
   const app = createApp({
+    authService,
     breedsService,
     productsService,
+    jwt: {
+      secret: env.JWT_AUTH_SECRET_KEY,
+      algorithm: env.JWT_AUTH_ALGORITHM,
+      issuer: env.JWT_AUTH_ISSUER
+    },
     corsOrigins: env.CORS_ORIGINS
   });
 
