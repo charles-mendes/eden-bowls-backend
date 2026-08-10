@@ -11,12 +11,14 @@ const { ProductsRepository } = require('./infrastructure/repositories/products.r
 const { OnboardingAddressAutocompleteRepository } = require('./infrastructure/repositories/onboarding-address-autocomplete.repository');
 const { OnboardingPaymentIntentAckRepository } = require('./infrastructure/repositories/onboarding-payment-intent-ack.repository');
 const { OnboardingPaymentMethodsRepository } = require('./infrastructure/repositories/onboarding-payment-methods.repository');
+const { OnboardingPetCreateRepository } = require('./infrastructure/repositories/onboarding-pets-create.repository');
 const { AuthService } = require('./services/auth.service');
 const { BreedsService } = require('./services/breeds.service');
 const { ProductsService } = require('./services/products.service');
 const { OnboardingAddressAutocompleteService } = require('./services/onboarding-address-autocomplete.service');
 const { OnboardingPaymentIntentAckService } = require('./services/onboarding-payment-intent-ack.service');
 const { OnboardingPaymentMethodsService } = require('./services/onboarding-payment-methods.service');
+const { OnboardingPetCreateService } = require('./services/onboarding-pets-create.service');
 
 async function bootstrap() {
   const env = parseEnv();
@@ -62,6 +64,8 @@ async function bootstrap() {
   const onboardingPaymentIntentAckService = new OnboardingPaymentIntentAckService(onboardingPaymentIntentAckRepository);
   const onboardingPaymentMethodsRepository = new OnboardingPaymentMethodsRepository();
   const onboardingPaymentMethodsService = new OnboardingPaymentMethodsService(onboardingPaymentMethodsRepository);
+  const onboardingPetCreateRepository = new OnboardingPetCreateRepository();
+  const onboardingPetCreateService = new OnboardingPetCreateService(onboardingPetCreateRepository);
   const app = createApp({
     authService,
     breedsService,
@@ -69,6 +73,7 @@ async function bootstrap() {
     onboardingAddressAutocompleteService,
     onboardingPaymentIntentAckService,
     onboardingPaymentMethodsService,
+    onboardingPetCreateService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
       algorithm: env.JWT_AUTH_ALGORITHM,
