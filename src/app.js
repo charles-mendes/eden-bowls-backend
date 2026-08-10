@@ -16,6 +16,7 @@ const { registerOnboardingPlanPreviewRoutes } = require('./api/routes/onboarding
 const { registerOnboardingPlanSelectionRoutes } = require('./api/routes/onboarding-plan-selection.routes');
 const { registerOnboardingPlanSnapshotRoutes } = require('./api/routes/onboarding-plan-snapshot.routes');
 const { registerOnboardingRecommendationRoutes } = require('./api/routes/onboarding-recommendation.routes');
+const { registerOnboardingRecurrenceRoutes } = require('./api/routes/onboarding-recurrence.routes');
 const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
 const { HttpError } = require('./core/http-error');
 
@@ -103,6 +104,7 @@ function createApp(dependencies = {}) {
   registerOnboardingPlanSelectionRoutes(app, dependencies);
   registerOnboardingPlanSnapshotRoutes(app, dependencies);
   registerOnboardingRecommendationRoutes(app, dependencies);
+  registerOnboardingRecurrenceRoutes(app, dependencies);
   registerOnboardingPetDeleteRoutes(app, dependencies);
 
   app.use((request, response, next) => {
