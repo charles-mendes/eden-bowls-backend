@@ -14,6 +14,7 @@ const { OnboardingPaymentMethodsRepository } = require('./infrastructure/reposit
 const { OnboardingPetCreateRepository } = require('./infrastructure/repositories/onboarding-pets-create.repository');
 const { OnboardingPetUpdateRepository } = require('./infrastructure/repositories/onboarding-pets-update.repository');
 const { OnboardingPetsRepository } = require('./infrastructure/repositories/onboarding-pets.repository');
+const { OnboardingPlanPreviewRepository } = require('./infrastructure/repositories/onboarding-plan-preview.repository');
 const { OnboardingPetDeleteRepository } = require('./infrastructure/repositories/onboarding-pets-delete.repository');
 const { AuthService } = require('./services/auth.service');
 const { BreedsService } = require('./services/breeds.service');
@@ -24,6 +25,7 @@ const { OnboardingPaymentMethodsService } = require('./services/onboarding-payme
 const { OnboardingPetCreateService } = require('./services/onboarding-pets-create.service');
 const { OnboardingPetUpdateService } = require('./services/onboarding-pets-update.service');
 const { OnboardingPetsService } = require('./services/onboarding-pets.service');
+const { OnboardingPlanPreviewService } = require('./services/onboarding-plan-preview.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
 
 async function bootstrap() {
@@ -76,6 +78,8 @@ async function bootstrap() {
   const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository);
   const onboardingPetsRepository = new OnboardingPetsRepository();
   const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository);
+  const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository();
+  const onboardingPlanPreviewService = new OnboardingPlanPreviewService(onboardingPlanPreviewRepository);
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository();
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository);
   const app = createApp({
@@ -88,6 +92,7 @@ async function bootstrap() {
     onboardingPetCreateService,
     onboardingPetUpdateService,
     onboardingPetsService,
+    onboardingPlanPreviewService,
     onboardingPetDeleteService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
