@@ -21,7 +21,13 @@ const { registerOnboardingSalesTaxQuoteRoutes } = require('./api/routes/onboardi
 const { registerOnboardingShippingSelectRoutes } = require('./api/routes/onboarding-shipping-select.routes');
 const { registerOnboardingSubscriptionCheckoutRoutes } = require('./api/routes/onboarding-subscription-checkout.routes');
 const { registerOnboardingSubscriptionPreviewRoutes } = require('./api/routes/onboarding-subscription-preview.routes');
+const { registerOnboardingSessionCoreRoutes } = require('./api/routes/onboarding-session-core.routes');
 const { registerOnboardingZipcodeLookupRoutes } = require('./api/routes/onboarding-zipcode-lookup.routes');
+const { registerOnboardingZipcodeRoutes } = require('./api/routes/onboarding-zipcode.routes');
+const { registerSubscriptionsActionsRoutes } = require('./api/routes/subscriptions-actions.routes');
+const { registerSubscriptionsDetailRoutes } = require('./api/routes/subscriptions-detail.routes');
+const { registerSubscriptionsEditPreviewRoutes } = require('./api/routes/subscriptions-edit-preview.routes');
+const { registerSubscriptionsRoutes } = require('./api/routes/subscriptions.routes');
 const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
 const { HttpError } = require('./core/http-error');
 
@@ -114,7 +120,13 @@ function createApp(dependencies = {}) {
   registerOnboardingShippingSelectRoutes(app, dependencies);
   registerOnboardingSubscriptionCheckoutRoutes(app, dependencies);
   registerOnboardingSubscriptionPreviewRoutes(app, dependencies);
+  registerOnboardingSessionCoreRoutes(app, dependencies);
   registerOnboardingZipcodeLookupRoutes(app, dependencies);
+  registerOnboardingZipcodeRoutes(app, dependencies);
+  registerSubscriptionsActionsRoutes(app, dependencies);
+  registerSubscriptionsDetailRoutes(app, dependencies);
+  registerSubscriptionsEditPreviewRoutes(app, dependencies);
+  registerSubscriptionsRoutes(app, dependencies);
   registerOnboardingPetDeleteRoutes(app, dependencies);
 
   app.use((request, response, next) => {

@@ -24,6 +24,12 @@ const { OnboardingShippingSelectRepository } = require('./infrastructure/reposit
 const { OnboardingSubscriptionCheckoutRepository } = require('./infrastructure/repositories/onboarding-subscription-checkout.repository');
 const { OnboardingSubscriptionPreviewRepository } = require('./infrastructure/repositories/onboarding-subscription-preview.repository');
 const { OnboardingZipcodeLookupRepository } = require('./infrastructure/repositories/onboarding-zipcode-lookup.repository');
+const { OnboardingZipcodeRepository } = require('./infrastructure/repositories/onboarding-zipcode.repository');
+const { OnboardingSessionCoreRepository } = require('./infrastructure/repositories/onboarding-session-core.repository');
+const { SubscriptionsActionsRepository } = require('./infrastructure/repositories/subscriptions-actions.repository');
+const { SubscriptionsDetailRepository } = require('./infrastructure/repositories/subscriptions-detail.repository');
+const { SubscriptionsEditPreviewRepository } = require('./infrastructure/repositories/subscriptions-edit-preview.repository');
+const { SubscriptionsRepository } = require('./infrastructure/repositories/subscriptions.repository');
 const { OnboardingPetDeleteRepository } = require('./infrastructure/repositories/onboarding-pets-delete.repository');
 const { AuthService } = require('./services/auth.service');
 const { BreedsService } = require('./services/breeds.service');
@@ -44,6 +50,12 @@ const { OnboardingShippingSelectService } = require('./services/onboarding-shipp
 const { OnboardingSubscriptionCheckoutService } = require('./services/onboarding-subscription-checkout.service');
 const { OnboardingSubscriptionPreviewService } = require('./services/onboarding-subscription-preview.service');
 const { OnboardingZipcodeLookupService } = require('./services/onboarding-zipcode-lookup.service');
+const { OnboardingZipcodeService } = require('./services/onboarding-zipcode.service');
+const { OnboardingSessionCoreService } = require('./services/onboarding-session-core.service');
+const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
+const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
+const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
+const { SubscriptionsService } = require('./services/subscriptions.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
 
 async function bootstrap() {
@@ -116,6 +128,18 @@ async function bootstrap() {
   const onboardingSubscriptionPreviewService = new OnboardingSubscriptionPreviewService(onboardingSubscriptionPreviewRepository);
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository();
   const onboardingZipcodeLookupService = new OnboardingZipcodeLookupService(onboardingZipcodeLookupRepository);
+  const onboardingZipcodeRepository = new OnboardingZipcodeRepository();
+  const onboardingZipcodeService = new OnboardingZipcodeService(onboardingZipcodeRepository);
+  const onboardingSessionCoreRepository = new OnboardingSessionCoreRepository();
+  const onboardingSessionCoreService = new OnboardingSessionCoreService(onboardingSessionCoreRepository);
+  const subscriptionsActionsRepository = new SubscriptionsActionsRepository();
+  const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository);
+  const subscriptionsDetailRepository = new SubscriptionsDetailRepository();
+  const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository);
+  const subscriptionsEditPreviewRepository = new SubscriptionsEditPreviewRepository();
+  const subscriptionsEditPreviewService = new SubscriptionsEditPreviewService(subscriptionsEditPreviewRepository);
+  const subscriptionsRepository = new SubscriptionsRepository();
+  const subscriptionsService = new SubscriptionsService(subscriptionsRepository);
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository();
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository);
   const app = createApp({
@@ -138,6 +162,12 @@ async function bootstrap() {
     onboardingSubscriptionCheckoutService,
     onboardingSubscriptionPreviewService,
     onboardingZipcodeLookupService,
+    onboardingZipcodeService,
+    onboardingSessionCoreService,
+    subscriptionsActionsService,
+    subscriptionsDetailService,
+    subscriptionsEditPreviewService,
+    subscriptionsService,
     onboardingPetDeleteService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
