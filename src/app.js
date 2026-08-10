@@ -10,6 +10,7 @@ const { registerOnboardingAddressAutocompleteRoutes } = require('./api/routes/on
 const { registerOnboardingPaymentIntentAckRoutes } = require('./api/routes/onboarding-payment-intent-ack.routes');
 const { registerOnboardingPaymentMethodsRoutes } = require('./api/routes/onboarding-payment-methods.routes');
 const { registerOnboardingPetCreateRoutes } = require('./api/routes/onboarding-pets-create.routes');
+const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
 const { HttpError } = require('./core/http-error');
 
 client.collectDefaultMetrics();
@@ -90,6 +91,7 @@ function createApp(dependencies = {}) {
   registerOnboardingPaymentIntentAckRoutes(app, dependencies);
   registerOnboardingPaymentMethodsRoutes(app, dependencies);
   registerOnboardingPetCreateRoutes(app, dependencies);
+  registerOnboardingPetDeleteRoutes(app, dependencies);
 
   app.use((request, response, next) => {
     next(new HttpError(404, 'Route not found.'));

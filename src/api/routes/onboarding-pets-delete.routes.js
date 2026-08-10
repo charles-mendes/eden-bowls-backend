@@ -1,0 +1,46 @@
+const { HttpError } = require('../../core/http-error');
+
+function registerOnboardingPetDeleteRoutes(app, dependencies = {}) {
+  app.delete('/api/v1/onboarding/session/:sessionId/pets/:petId', async (request, response, next) => {
+    try {
+      const sessionToken = String(request.headers['x-session-token'] || '').trim();
+      const authorization = String(request.headers.authorization || '').trim();
+      const hasSessionToken = Boolean(sessionToken || authorization);
+
+      if (!hasSessionToken) {
+        response.status(401).json({
+          success: false,
+          message: 'Session access token is required.'
+        });
+        return;
+      }
+
+      if (!dependencies.onboardingPetDeleteService) {
+        throw new HttpError(503, 'Onboarding pet delete service is not available.');
+      }
+
+      const result = await dependencies.onboardingPetDeleteService.deletePet({
+        sessionId: request.params.sessionId,
+        petId: request.params.petId,
+        currentUser: request.currentUser,
+        sessionToken
+      });
+
+      response.status(200).json(result);
+    } catch (error) {
+      if (error instanceof HttpError && error.details && error.details.code) {
+        response.status(error.statusCode).json({
+          success: false,
+          message: error.message
+        });
+        return;
+      }
+
+      next(error);
+    }
+  });
+}
+
+module.exports = {
+  registerOnboardingPetDeleteRoutes
+};
