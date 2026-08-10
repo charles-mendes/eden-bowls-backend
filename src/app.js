@@ -18,6 +18,10 @@ const { registerOnboardingPlanSnapshotRoutes } = require('./api/routes/onboardin
 const { registerOnboardingRecommendationRoutes } = require('./api/routes/onboarding-recommendation.routes');
 const { registerOnboardingRecurrenceRoutes } = require('./api/routes/onboarding-recurrence.routes');
 const { registerOnboardingSalesTaxQuoteRoutes } = require('./api/routes/onboarding-sales-tax-quote.routes');
+const { registerOnboardingShippingSelectRoutes } = require('./api/routes/onboarding-shipping-select.routes');
+const { registerOnboardingSubscriptionCheckoutRoutes } = require('./api/routes/onboarding-subscription-checkout.routes');
+const { registerOnboardingSubscriptionPreviewRoutes } = require('./api/routes/onboarding-subscription-preview.routes');
+const { registerOnboardingZipcodeLookupRoutes } = require('./api/routes/onboarding-zipcode-lookup.routes');
 const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
 const { HttpError } = require('./core/http-error');
 
@@ -107,6 +111,10 @@ function createApp(dependencies = {}) {
   registerOnboardingRecommendationRoutes(app, dependencies);
   registerOnboardingRecurrenceRoutes(app, dependencies);
   registerOnboardingSalesTaxQuoteRoutes(app, dependencies);
+  registerOnboardingShippingSelectRoutes(app, dependencies);
+  registerOnboardingSubscriptionCheckoutRoutes(app, dependencies);
+  registerOnboardingSubscriptionPreviewRoutes(app, dependencies);
+  registerOnboardingZipcodeLookupRoutes(app, dependencies);
   registerOnboardingPetDeleteRoutes(app, dependencies);
 
   app.use((request, response, next) => {

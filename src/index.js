@@ -20,6 +20,10 @@ const { OnboardingPlanSnapshotRepository } = require('./infrastructure/repositor
 const { OnboardingRecommendationRepository } = require('./infrastructure/repositories/onboarding-recommendation.repository');
 const { OnboardingRecurrenceRepository } = require('./infrastructure/repositories/onboarding-recurrence.repository');
 const { OnboardingSalesTaxQuoteRepository } = require('./infrastructure/repositories/onboarding-sales-tax-quote.repository');
+const { OnboardingShippingSelectRepository } = require('./infrastructure/repositories/onboarding-shipping-select.repository');
+const { OnboardingSubscriptionCheckoutRepository } = require('./infrastructure/repositories/onboarding-subscription-checkout.repository');
+const { OnboardingSubscriptionPreviewRepository } = require('./infrastructure/repositories/onboarding-subscription-preview.repository');
+const { OnboardingZipcodeLookupRepository } = require('./infrastructure/repositories/onboarding-zipcode-lookup.repository');
 const { OnboardingPetDeleteRepository } = require('./infrastructure/repositories/onboarding-pets-delete.repository');
 const { AuthService } = require('./services/auth.service');
 const { BreedsService } = require('./services/breeds.service');
@@ -36,6 +40,10 @@ const { OnboardingPlanSnapshotService } = require('./services/onboarding-plan-sn
 const { OnboardingRecommendationService } = require('./services/onboarding-recommendation.service');
 const { OnboardingRecurrenceService } = require('./services/onboarding-recurrence.service');
 const { OnboardingSalesTaxQuoteService } = require('./services/onboarding-sales-tax-quote.service');
+const { OnboardingShippingSelectService } = require('./services/onboarding-shipping-select.service');
+const { OnboardingSubscriptionCheckoutService } = require('./services/onboarding-subscription-checkout.service');
+const { OnboardingSubscriptionPreviewService } = require('./services/onboarding-subscription-preview.service');
+const { OnboardingZipcodeLookupService } = require('./services/onboarding-zipcode-lookup.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
 
 async function bootstrap() {
@@ -100,6 +108,14 @@ async function bootstrap() {
   const onboardingRecurrenceService = new OnboardingRecurrenceService(onboardingRecurrenceRepository);
   const onboardingSalesTaxQuoteRepository = new OnboardingSalesTaxQuoteRepository();
   const onboardingSalesTaxQuoteService = new OnboardingSalesTaxQuoteService(onboardingSalesTaxQuoteRepository);
+  const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository();
+  const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
+  const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository();
+  const onboardingSubscriptionCheckoutService = new OnboardingSubscriptionCheckoutService(onboardingSubscriptionCheckoutRepository);
+  const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository();
+  const onboardingSubscriptionPreviewService = new OnboardingSubscriptionPreviewService(onboardingSubscriptionPreviewRepository);
+  const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository();
+  const onboardingZipcodeLookupService = new OnboardingZipcodeLookupService(onboardingZipcodeLookupRepository);
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository();
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository);
   const app = createApp({
@@ -118,6 +134,10 @@ async function bootstrap() {
     onboardingRecommendationService,
     onboardingRecurrenceService,
     onboardingSalesTaxQuoteService,
+    onboardingShippingSelectService,
+    onboardingSubscriptionCheckoutService,
+    onboardingSubscriptionPreviewService,
+    onboardingZipcodeLookupService,
     onboardingPetDeleteService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
