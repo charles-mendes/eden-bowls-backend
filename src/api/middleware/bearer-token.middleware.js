@@ -2,12 +2,16 @@ const { HttpError } = require('../../core/http-error');
 const { verifyJwtToken } = require('../../core/jwt-token');
 const { AUTH_ERROR } = require('../contracts/auth-errors');
 
+function isSessionAutocompleteRoute(request) {
+  return /^\/api\/v1\/onboarding\/session\/[^/]+\/address\/autocomplete$/.test(request.path);
+}
+
 function buildBearerTokenMiddleware(options = {}) {
   const authPath = options.authPath || '/api/v1/auth/token';
   const jwtOptions = options.jwt || {};
 
   return (request, response, next) => {
-    if (!request.path.startsWith('/api/v1') || request.path === authPath) {
+    if (!request.path.startsWith('/api/v1') || request.path === authPath || isSessionAutocompleteRoute(request)) {
       next();
       return;
     }

@@ -8,9 +8,11 @@ const { AuthRepository } = require('./infrastructure/repositories/auth.repositor
 const { BreedsRepository } = require('./infrastructure/repositories/breeds.repository');
 const { PriceZonePolicyRepository } = require('./infrastructure/repositories/price-zone-policy.repository');
 const { ProductsRepository } = require('./infrastructure/repositories/products.repository');
+const { OnboardingAddressAutocompleteRepository } = require('./infrastructure/repositories/onboarding-address-autocomplete.repository');
 const { AuthService } = require('./services/auth.service');
 const { BreedsService } = require('./services/breeds.service');
 const { ProductsService } = require('./services/products.service');
+const { OnboardingAddressAutocompleteService } = require('./services/onboarding-address-autocomplete.service');
 
 async function bootstrap() {
   const env = parseEnv();
@@ -48,10 +50,15 @@ async function bootstrap() {
     priceZonePolicyRepository
   });
   const productsService = new ProductsService(productsRepository);
+  const onboardingAddressAutocompleteRepository = new OnboardingAddressAutocompleteRepository(dataSource, {
+    sessionTableName: env.ONBOARDING_SESSIONS_TABLE_NAME || 'wp_hsr_onboarding_sessions'
+  });
+  const onboardingAddressAutocompleteService = new OnboardingAddressAutocompleteService(onboardingAddressAutocompleteRepository);
   const app = createApp({
     authService,
     breedsService,
     productsService,
+    onboardingAddressAutocompleteService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
       algorithm: env.JWT_AUTH_ALGORITHM,

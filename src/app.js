@@ -6,6 +6,7 @@ const { buildBearerTokenMiddleware } = require('./api/middleware/bearer-token.mi
 const { registerAuthRoutes } = require('./api/routes/auth.routes');
 const { registerBreedsRoutes } = require('./api/routes/breeds.routes');
 const { registerProductsRoutes } = require('./api/routes/products.routes');
+const { registerOnboardingAddressAutocompleteRoutes } = require('./api/routes/onboarding-address-autocomplete.routes');
 const { HttpError } = require('./core/http-error');
 
 client.collectDefaultMetrics();
@@ -82,6 +83,7 @@ function createApp(dependencies = {}) {
   registerBreedsRoutes(app, dependencies);
   registerProductsRoutes(app, dependencies);
   registerAuthRoutes(app, dependencies);
+  registerOnboardingAddressAutocompleteRoutes(app, dependencies);
 
   app.use((request, response, next) => {
     next(new HttpError(404, 'Route not found.'));
