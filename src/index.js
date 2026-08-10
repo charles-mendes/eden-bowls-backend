@@ -10,11 +10,13 @@ const { PriceZonePolicyRepository } = require('./infrastructure/repositories/pri
 const { ProductsRepository } = require('./infrastructure/repositories/products.repository');
 const { OnboardingAddressAutocompleteRepository } = require('./infrastructure/repositories/onboarding-address-autocomplete.repository');
 const { OnboardingPaymentIntentAckRepository } = require('./infrastructure/repositories/onboarding-payment-intent-ack.repository');
+const { OnboardingPaymentMethodsRepository } = require('./infrastructure/repositories/onboarding-payment-methods.repository');
 const { AuthService } = require('./services/auth.service');
 const { BreedsService } = require('./services/breeds.service');
 const { ProductsService } = require('./services/products.service');
 const { OnboardingAddressAutocompleteService } = require('./services/onboarding-address-autocomplete.service');
 const { OnboardingPaymentIntentAckService } = require('./services/onboarding-payment-intent-ack.service');
+const { OnboardingPaymentMethodsService } = require('./services/onboarding-payment-methods.service');
 
 async function bootstrap() {
   const env = parseEnv();
@@ -58,12 +60,15 @@ async function bootstrap() {
   const onboardingAddressAutocompleteService = new OnboardingAddressAutocompleteService(onboardingAddressAutocompleteRepository);
   const onboardingPaymentIntentAckRepository = new OnboardingPaymentIntentAckRepository();
   const onboardingPaymentIntentAckService = new OnboardingPaymentIntentAckService(onboardingPaymentIntentAckRepository);
+  const onboardingPaymentMethodsRepository = new OnboardingPaymentMethodsRepository();
+  const onboardingPaymentMethodsService = new OnboardingPaymentMethodsService(onboardingPaymentMethodsRepository);
   const app = createApp({
     authService,
     breedsService,
     productsService,
     onboardingAddressAutocompleteService,
     onboardingPaymentIntentAckService,
+    onboardingPaymentMethodsService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
       algorithm: env.JWT_AUTH_ALGORITHM,
