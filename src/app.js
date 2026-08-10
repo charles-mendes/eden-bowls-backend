@@ -11,6 +11,7 @@ const { registerOnboardingPaymentIntentAckRoutes } = require('./api/routes/onboa
 const { registerOnboardingPaymentMethodsRoutes } = require('./api/routes/onboarding-payment-methods.routes');
 const { registerOnboardingPetCreateRoutes } = require('./api/routes/onboarding-pets-create.routes');
 const { registerOnboardingPetUpdateRoutes } = require('./api/routes/onboarding-pets-update.routes');
+const { registerOnboardingPetsRoutes } = require('./api/routes/onboarding-pets.routes');
 const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
 const { HttpError } = require('./core/http-error');
 
@@ -93,6 +94,7 @@ function createApp(dependencies = {}) {
   registerOnboardingPaymentMethodsRoutes(app, dependencies);
   registerOnboardingPetCreateRoutes(app, dependencies);
   registerOnboardingPetUpdateRoutes(app, dependencies);
+  registerOnboardingPetsRoutes(app, dependencies);
   registerOnboardingPetDeleteRoutes(app, dependencies);
 
   app.use((request, response, next) => {
