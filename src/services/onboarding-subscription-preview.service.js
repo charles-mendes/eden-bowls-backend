@@ -31,9 +31,13 @@ class OnboardingSubscriptionPreviewService {
     this.repository = repository;
   }
 
-  async preview({ sessionId, payload = {}, currentUser, sessionToken }) {
+  async preview({ userId, payload = {} }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding subscription preview repository is not available.');
+    }
+
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
     const address = normalizeAddress(payload);
@@ -41,14 +45,14 @@ class OnboardingSubscriptionPreviewService {
       throw new HttpError(400, 'Preview is only available for US addresses.', { code: 'preview_us_only' });
     }
 
-    const fallbackPriceIds = (this.repository.getFallbackPriceIds && await this.repository.getFallbackPriceIds(sessionId, payload, { currentUser, sessionToken })) || [];
+    const fallbackPriceIds = (this.repository.getFallbackPriceIds && await this.repository.getFallbackPriceIds(userId)) || [];
     const priceIds = normalizePriceIds(payload, fallbackPriceIds);
 
     if (priceIds.length === 0) {
       throw new HttpError(422, 'At least one valid price id is required.', { code: 'invalid_price_id' });
     }
 
-    const data = await this.repository.preview(sessionId, { address, priceIds }, { currentUser, sessionToken });
+    const data = await this.repository.preview({ address, priceIds });
 
     return {
       success: true,

@@ -1,11 +1,21 @@
+const { HttpError } = require('../../core/http-error');
+
 class OnboardingSubscriptionCheckoutRepository {
-  async checkout(sessionId, payload = {}, context = {}) {
+  constructor(dataSource, options = {}) {
+    this.dataSource = dataSource;
+    this.tableName = options.tableName || 'onboarding_user_state';
+  }
+
+  async checkout(userId, payload = {}) {
+    if (!this.dataSource || !this.dataSource.isInitialized) {
+      throw new HttpError(503, 'Database connection is not initialized.');
+    }
+
     const billing = payload.billing || {};
     const paymentMethodId = payload.payment_method_id || payload.paymentMethodId || '';
     const checkoutMode = payload.checkout_mode || payload.flow || 'order_first';
 
-    return {
-      session_id: sessionId,
+    const checkout = {
       order_id: 101,
       order_key: 'order-key',
       status: 'pending',
@@ -34,6 +44,13 @@ class OnboardingSubscriptionCheckoutRepository {
       checkout_mode: checkoutMode,
       checkout_trace_id: 'trace-123'
     };
+
+    await this.dataSource.query(
+      `INSERT INTO \`${this.tableName}\` (\`user_id\`, \`checkout_reference\`) VALUES (?, ?) ON DUPLICATE KEY UPDATE \`checkout_reference\` = VALUES(\`checkout_reference\`)`,
+      [userId, JSON.stringify(checkout)]
+    );
+
+    return checkout;
   }
 }
 

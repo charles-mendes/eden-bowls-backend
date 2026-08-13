@@ -5,12 +5,16 @@ class OnboardingPlanSnapshotService {
     this.repository = repository;
   }
 
-  async getSnapshot({ sessionId, currentUser, sessionToken }) {
+  async getSnapshot({ userId }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding plan snapshot repository is not available.');
     }
 
-    const data = await this.repository.getSnapshot(sessionId, { currentUser, sessionToken });
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    const data = await this.repository.getSnapshot(userId);
 
     return {
       success: true,

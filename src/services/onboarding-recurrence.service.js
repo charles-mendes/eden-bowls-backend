@@ -46,7 +46,7 @@ class OnboardingRecurrenceService {
     this.repository = repository;
   }
 
-  async setRecurrence({ sessionId, payload, currentUser, sessionToken }) {
+  async setRecurrence({ userId, payload }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding recurrence repository is not available.');
     }
@@ -54,7 +54,11 @@ class OnboardingRecurrenceService {
     const frequency = normalizeRecurrenceFrequency(payload && payload.frequency);
     const periodDays = resolvePeriodDays(frequency);
 
-    const data = await this.repository.setRecurrence(sessionId, { frequency, periodDays }, { currentUser, sessionToken });
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    const data = await this.repository.setRecurrence(userId, { frequency, periodDays });
 
     return {
       success: true,

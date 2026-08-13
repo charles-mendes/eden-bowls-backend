@@ -1,7 +1,6 @@
 class OnboardingPlanSnapshotRepository {
-  async getSnapshot(sessionId, context = {}) {
+  async getSnapshot(userId) {
     return {
-      session_id: sessionId,
       country: 'US',
       currency: 'USD',
       labels: {

@@ -1,5 +1,5 @@
 class SubscriptionsDetailRepository {
-  async getDetail(subscriptionId, context = {}) {
+  async getDetail(userId, subscriptionId) {
     return {
       subscription: {
         subscription_id: subscriptionId,

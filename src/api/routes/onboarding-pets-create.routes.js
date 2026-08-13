@@ -2,30 +2,20 @@ const { HttpError } = require('../../core/http-error');
 const { parseOnboardingPetCreateInput } = require('../validators/onboarding-pets-create.validator');
 
 function registerOnboardingPetCreateRoutes(app, dependencies = {}) {
-  app.post('/api/v1/onboarding/session/:sessionId/pets', async (request, response, next) => {
+  app.post('/api/v1/onboarding/pets', async (request, response, next) => {
     try {
-      const sessionToken = String(request.headers['x-session-token'] || '').trim();
-      const authorization = String(request.headers.authorization || '').trim();
-      const hasSessionToken = Boolean(sessionToken || authorization);
-
-      if (!hasSessionToken) {
-        response.status(401).json({
-          success: false,
-          message: 'Session access token is required.'
-        });
-        return;
-      }
-
       if (!dependencies.onboardingPetCreateService) {
         throw new HttpError(503, 'Onboarding pet create service is not available.');
       }
 
+      if (!request.currentUser || !request.currentUser.id) {
+        throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+      }
+
       const payload = parseOnboardingPetCreateInput(request.body || {});
       const result = await dependencies.onboardingPetCreateService.createPet({
-        sessionId: request.params.sessionId,
+        userId: request.currentUser.id,
         payload,
-        currentUser: request.currentUser,
-        sessionToken
       });
 
       response.status(200).json(result);

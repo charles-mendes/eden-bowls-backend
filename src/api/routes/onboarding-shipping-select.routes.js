@@ -1,29 +1,19 @@
 const { HttpError } = require('../../core/http-error');
 
 function registerOnboardingShippingSelectRoutes(app, dependencies = {}) {
-  app.post('/api/v1/onboarding/session/:sessionId/shipping/select', async (request, response, next) => {
+  app.post('/api/v1/onboarding/shipping', async (request, response, next) => {
     try {
-      const sessionToken = String(request.headers['x-session-token'] || '').trim();
-      const authorization = String(request.headers.authorization || '').trim();
-      const hasSessionToken = Boolean(sessionToken || authorization);
-
-      if (!hasSessionToken) {
-        response.status(401).json({
-          success: false,
-          message: 'Session access token is required.'
-        });
-        return;
-      }
-
       if (!dependencies.onboardingShippingSelectService) {
         throw new HttpError(503, 'Onboarding shipping select service is not available.');
       }
 
+      if (!request.currentUser || !request.currentUser.id) {
+        throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+      }
+
       const result = await dependencies.onboardingShippingSelectService.selectShipping({
-        sessionId: request.params.sessionId,
+        userId: request.currentUser.id,
         payload: request.body || {},
-        currentUser: request.currentUser,
-        sessionToken
       });
 
       response.status(200).json(result);

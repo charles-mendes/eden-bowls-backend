@@ -1,29 +1,19 @@
 const { HttpError } = require('../../core/http-error');
 
 function registerOnboardingSalesTaxQuoteRoutes(app, dependencies = {}) {
-  app.post('/api/v1/onboarding/session/:sessionId/sales-tax/quote', async (request, response, next) => {
+  app.post('/api/v1/onboarding/sales-tax/quote', async (request, response, next) => {
     try {
-      const sessionToken = String(request.headers['x-session-token'] || '').trim();
-      const authorization = String(request.headers.authorization || '').trim();
-      const hasSessionToken = Boolean(sessionToken || authorization);
-
-      if (!hasSessionToken) {
-        response.status(401).json({
-          success: false,
-          message: 'Session access token is required.'
-        });
-        return;
-      }
-
       if (!dependencies.onboardingSalesTaxQuoteService) {
         throw new HttpError(503, 'Onboarding sales tax quote service is not available.');
       }
 
+      if (!request.currentUser || !request.currentUser.id) {
+        throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+      }
+
       const result = await dependencies.onboardingSalesTaxQuoteService.quote({
-        sessionId: request.params.sessionId,
+        userId: request.currentUser.id,
         payload: request.body || {},
-        currentUser: request.currentUser,
-        sessionToken
       });
 
       response.status(200).json(result);

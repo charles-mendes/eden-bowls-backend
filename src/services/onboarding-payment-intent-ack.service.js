@@ -1,16 +1,27 @@
 const { HttpError } = require('../core/http-error');
 
 class OnboardingPaymentIntentAckService {
-  constructor(repository) {
+  constructor(repository, options = {}) {
     this.repository = repository;
+    this.authService = options.authService || null;
   }
 
-  async acknowledge({ sessionId, payload, currentUser, sessionToken }) {
+  async acknowledge({ userId, payload }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding payment intent ack repository is not available.');
     }
 
-    const result = await this.repository.acknowledge(sessionId, payload, { currentUser, sessionToken });
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    if (!this.authService) {
+      throw new HttpError(503, 'Auth service is not available for critical operations.');
+    }
+
+    await this.authService.assertCriticalOperationAllowed(userId);
+
+    const result = await this.repository.acknowledge(userId, payload);
 
     return {
       success: true,

@@ -1,29 +1,14 @@
 const { HttpError } = require('../../core/http-error');
 
 function registerOnboardingZipcodeLookupRoutes(app, dependencies = {}) {
-  app.post('/api/v1/onboarding/session/:sessionId/zipcode/lookup', async (request, response, next) => {
+  app.post('/api/v1/onboarding/zipcode/lookup', async (request, response, next) => {
     try {
-      const sessionToken = String(request.headers['x-session-token'] || '').trim();
-      const authorization = String(request.headers.authorization || '').trim();
-      const hasSessionToken = Boolean(sessionToken || authorization);
-
-      if (!hasSessionToken) {
-        response.status(401).json({
-          success: false,
-          message: 'Session access token is required.'
-        });
-        return;
-      }
-
       if (!dependencies.onboardingZipcodeLookupService) {
         throw new HttpError(503, 'Onboarding zipcode lookup service is not available.');
       }
 
       const result = await dependencies.onboardingZipcodeLookupService.lookup({
-        sessionId: request.params.sessionId,
-        payload: request.body || {},
-        currentUser: request.currentUser,
-        sessionToken
+        payload: request.body || {}
       });
 
       response.status(200).json(result);

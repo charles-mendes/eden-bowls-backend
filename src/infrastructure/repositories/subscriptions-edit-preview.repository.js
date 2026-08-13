@@ -1,5 +1,5 @@
 class SubscriptionsEditPreviewRepository {
-  async preview(subscriptionId, payload = {}, context = {}) {
+  async preview(userId, subscriptionId, payload = {}) {
     const subscriptionTermMonths = Number(payload.subscription_term_months || 1);
 
     return {

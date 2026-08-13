@@ -10,28 +10,12 @@ function isOnboardingSessionRoute(request) {
   return /^\/api\/v1\/onboarding\/session(?:\/|$)/.test(request.path);
 }
 
-function isSubscriptionActionsRoute(request) {
-  return /^\/api\/v1\/subscriptions\/[^/]+\/actions$/.test(request.path);
-}
-
-function isSubscriptionDetailRoute(request) {
-  return /^\/api\/v1\/subscriptions\/[^/]+\/detail$/.test(request.path);
-}
-
-function isSubscriptionEditPreviewRoute(request) {
-  return /^\/api\/v1\/subscriptions\/[^/]+\/edit\/preview$/.test(request.path);
-}
-
-function isSubscriptionsListRoute(request) {
-  return request.path === '/api/v1/subscriptions';
-}
-
 function buildBearerTokenMiddleware(options = {}) {
   const authPath = options.authPath || '/api/v1/auth/token';
   const jwtOptions = options.jwt || {};
 
   return (request, response, next) => {
-    if (!request.path.startsWith('/api/v1') || request.path === authPath || isSessionAutocompleteRoute(request) || isOnboardingSessionRoute(request) || isSubscriptionActionsRoute(request) || isSubscriptionDetailRoute(request) || isSubscriptionEditPreviewRoute(request) || isSubscriptionsListRoute(request)) {
+    if (!request.path.startsWith('/api/v1') || request.path === authPath || isSessionAutocompleteRoute(request) || isOnboardingSessionRoute(request)) {
       next();
       return;
     }

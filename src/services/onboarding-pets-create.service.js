@@ -1,16 +1,21 @@
 const { HttpError } = require('../core/http-error');
+const crypto = require('crypto');
 
 class OnboardingPetCreateService {
   constructor(repository) {
     this.repository = repository;
   }
 
-  async createPet({ sessionId, payload, currentUser, sessionToken }) {
+  async createPet({ userId, payload }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding pet create repository is not available.');
     }
 
-    const result = await this.repository.createPet(sessionId, payload, { currentUser, sessionToken });
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    const result = await this.repository.createPet(userId, crypto.randomUUID(), payload);
 
     return {
       success: true,

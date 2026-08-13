@@ -7,6 +7,7 @@ const { registerAuthRoutes } = require('./api/routes/auth.routes');
 const { registerBreedsRoutes } = require('./api/routes/breeds.routes');
 const { registerProductsRoutes } = require('./api/routes/products.routes');
 const { registerOnboardingAddressAutocompleteRoutes } = require('./api/routes/onboarding-address-autocomplete.routes');
+const { registerOnboardingDiscountEligibilityRoutes } = require('./api/routes/onboarding-discount-eligibility.routes');
 const { registerOnboardingPaymentIntentAckRoutes } = require('./api/routes/onboarding-payment-intent-ack.routes');
 const { registerOnboardingPaymentMethodsRoutes } = require('./api/routes/onboarding-payment-methods.routes');
 const { registerOnboardingPetCreateRoutes } = require('./api/routes/onboarding-pets-create.routes');
@@ -21,7 +22,6 @@ const { registerOnboardingSalesTaxQuoteRoutes } = require('./api/routes/onboardi
 const { registerOnboardingShippingSelectRoutes } = require('./api/routes/onboarding-shipping-select.routes');
 const { registerOnboardingSubscriptionCheckoutRoutes } = require('./api/routes/onboarding-subscription-checkout.routes');
 const { registerOnboardingSubscriptionPreviewRoutes } = require('./api/routes/onboarding-subscription-preview.routes');
-const { registerOnboardingSessionCoreRoutes } = require('./api/routes/onboarding-session-core.routes');
 const { registerOnboardingZipcodeLookupRoutes } = require('./api/routes/onboarding-zipcode-lookup.routes');
 const { registerOnboardingZipcodeRoutes } = require('./api/routes/onboarding-zipcode.routes');
 const { registerSubscriptionsActionsRoutes } = require('./api/routes/subscriptions-actions.routes');
@@ -47,8 +47,13 @@ function corsMiddleware(config) {
     if (isAllowedOrigin) {
       response.setHeader('Access-Control-Allow-Origin', origin);
       response.setHeader('Vary', 'Origin');
+      response.setHeader('Access-Control-Allow-Credentials', 'true');
       response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-      response.setHeader('Access-Control-Allow-Headers', 'Accept,Content-Type,Authorization');
+      response.setHeader(
+        'Access-Control-Allow-Headers',
+        'Accept,Content-Type,Authorization,Origin,X-Requested-With',
+      );
+      response.setHeader('Access-Control-Expose-Headers', 'content-type');
     }
 
     if (request.method === 'OPTIONS') {
@@ -106,6 +111,7 @@ function createApp(dependencies = {}) {
   registerProductsRoutes(app, dependencies);
   registerAuthRoutes(app, dependencies);
   registerOnboardingAddressAutocompleteRoutes(app, dependencies);
+  registerOnboardingDiscountEligibilityRoutes(app, dependencies);
   registerOnboardingPaymentIntentAckRoutes(app, dependencies);
   registerOnboardingPaymentMethodsRoutes(app, dependencies);
   registerOnboardingPetCreateRoutes(app, dependencies);
@@ -120,7 +126,6 @@ function createApp(dependencies = {}) {
   registerOnboardingShippingSelectRoutes(app, dependencies);
   registerOnboardingSubscriptionCheckoutRoutes(app, dependencies);
   registerOnboardingSubscriptionPreviewRoutes(app, dependencies);
-  registerOnboardingSessionCoreRoutes(app, dependencies);
   registerOnboardingZipcodeLookupRoutes(app, dependencies);
   registerOnboardingZipcodeRoutes(app, dependencies);
   registerSubscriptionsActionsRoutes(app, dependencies);

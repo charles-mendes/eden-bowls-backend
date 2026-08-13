@@ -9,26 +9,37 @@ function getCheckoutMode(payload = {}) {
 }
 
 class OnboardingSubscriptionCheckoutService {
-  constructor(repository) {
+  constructor(repository, options = {}) {
     this.repository = repository;
+    this.authService = options.authService || null;
   }
 
-  async checkout({ sessionId, payload = {}, currentUser, sessionToken }) {
+  async checkout({ userId, payload = {} }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding subscription checkout repository is not available.');
     }
+
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    if (!this.authService) {
+      throw new HttpError(503, 'Auth service is not available for critical operations.');
+    }
+
+    await this.authService.assertCriticalOperationAllowed(userId);
 
     const paymentMethodId = getPaymentMethodId(payload);
     const checkoutMode = getCheckoutMode(payload);
     const billing = payload.billing || {};
 
-    const data = await this.repository.checkout(sessionId, {
+    const data = await this.repository.checkout(userId, {
       ...payload,
       payment_method_id: paymentMethodId,
       paymentMethodId,
       checkout_mode: checkoutMode,
       billing
-    }, { currentUser, sessionToken });
+    });
 
     return {
       success: true,

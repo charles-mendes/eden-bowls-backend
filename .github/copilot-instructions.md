@@ -148,3 +148,15 @@ Dependencias de desenvolvimento:
 
 ## Regras adicionais para o Copilot
 - Nao introduzir ESM, TypeScript ou frameworks novos sem solicitacao explicita.
+
+## Autenticacao e Ownership
+
+- Nao criar, restaurar ou aceitar `sessionId`, `session_token`, `x-session-token` ou rotas `/api/v1/onboarding/session/...`.
+- Access JWT usa `HS256` configurado explicitamente e a verificacao deve fixar o algoritmo esperado; nunca confiar no algoritmo informado por token nao verificado.
+- Access JWT tem TTL curto de 15 minutos. Refresh token e opaco, aleatorio, rotativo, persistido somente como hash SHA-256 via TypeORM/MySQL e enviado apenas em cookie `HttpOnly` com `Path=/api/v1/auth`.
+- Refresh/logout exigem origin permitido e `X-Requested-With: XMLHttpRequest`; CORS com credenciais usa apenas origins exatas configuradas. `Secure=false` e permitido somente em development/test localhost.
+- Rotacao de refresh deve ser atomica. O token imediatamente substituido permite um unico replay por no maximo 5 segundos e retorna o resultado ja emitido; reuso posterior revoga a familia e gera log/metricas estruturados sem material de token.
+- Troca/reset de senha, comprometimento, suspensao e banimento revogam todas as familias de refresh do usuario.
+- Recursos de onboarding e subscriptions pertencem ao usuario autenticado. Toda query de recurso persistido deve filtrar `user_id` diretamente no SQL/TypeORM; nao buscar e filtrar ownership em memoria.
+- Checkout, ACK de PaymentIntent e acoes de subscription devem chamar `AuthService.assertCriticalOperationAllowed(userId)` imediatamente antes da operacao.
+- Usar TypeORM EntitySchema, migrations e repositories para qualquer persistencia nova. Testar casos negativos de IDOR, inclusive IDs de pet/payment intent de outro usuario.

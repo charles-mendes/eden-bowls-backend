@@ -5,12 +5,16 @@ class OnboardingPetsService {
     this.repository = repository;
   }
 
-  async listPets({ sessionId, currentUser, sessionToken }) {
+  async listPets({ userId }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding pets repository is not available.');
     }
 
-    const data = await this.repository.listPets(sessionId, { currentUser, sessionToken });
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    const data = await this.repository.listPets(userId);
 
     return {
       success: true,

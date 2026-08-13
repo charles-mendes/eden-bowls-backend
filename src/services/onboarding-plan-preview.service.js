@@ -5,12 +5,16 @@ class OnboardingPlanPreviewService {
     this.repository = repository;
   }
 
-  async previewPlan({ sessionId, payload, currentUser, sessionToken }) {
+  async previewPlan({ userId, payload }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding plan preview repository is not available.');
     }
 
-    const data = await this.repository.previewPlan(sessionId, payload, { currentUser, sessionToken });
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    const data = await this.repository.previewPlan(userId, payload);
 
     return {
       success: true,

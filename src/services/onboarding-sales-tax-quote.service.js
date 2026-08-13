@@ -42,9 +42,13 @@ class OnboardingSalesTaxQuoteService {
     this.repository = repository;
   }
 
-  async quote({ sessionId, payload, currentUser, sessionToken }) {
+  async quote({ userId, payload }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding sales tax quote repository is not available.');
+    }
+
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
     const address = resolveAddress(payload);
@@ -55,7 +59,7 @@ class OnboardingSalesTaxQuoteService {
       subtotal: 20
     });
 
-    const data = await this.repository.quote(sessionId, taxQuote, { currentUser, sessionToken });
+    const data = await this.repository.quote(taxQuote);
 
     return {
       success: true,

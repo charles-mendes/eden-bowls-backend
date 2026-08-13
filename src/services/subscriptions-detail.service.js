@@ -5,7 +5,7 @@ class SubscriptionsDetailService {
     this.repository = repository;
   }
 
-  async getDetail({ subscriptionId, currentUser, sessionToken }) {
+  async getDetail({ subscriptionId, userId }) {
     if (!this.repository) {
       throw new HttpError(503, 'Subscriptions detail repository is not available.');
     }
@@ -14,11 +14,11 @@ class SubscriptionsDetailService {
       throw new HttpError(422, 'Invalid subscription id.', { code: 'invalid_subscription_id' });
     }
 
-    if (!currentUser || !currentUser.id) {
+    if (!userId) {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
-    const data = await this.repository.getDetail(subscriptionId, { currentUser, sessionToken });
+    const data = await this.repository.getDetail(userId, subscriptionId);
 
     return {
       success: true,

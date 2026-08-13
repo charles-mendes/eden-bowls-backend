@@ -18,8 +18,14 @@ const rawEnvSchema = z.object({
   DB_NAME: z.string().default('eden_bowls'),
   JWT_AUTH_SECRET_KEY: z.string().optional(),
   JWT_AUTH_ALGORITHM: z.string().default('HS256'),
-  JWT_AUTH_EXPIRES_IN_SECONDS: z.string().default('604800'),
+  JWT_AUTH_EXPIRES_IN_SECONDS: z.string().default('900'),
   JWT_AUTH_ISSUER: z.string().default('http://localhost:3000'),
+  AUTH_REFRESH_TOKEN_TTL_SECONDS: z.string().default('2592000'),
+  AUTH_REFRESH_COOKIE_NAME: z.string().default('eden_refresh_token'),
+  AUTH_REFRESH_COOKIE_PATH: z.string().default('/api/v1/auth'),
+  AUTH_REFRESH_COOKIE_DOMAIN: z.string().optional(),
+  AUTH_REFRESH_COOKIE_SAME_SITE: z.enum(['lax', 'strict', 'none']).default('lax'),
+  AUTH_REFRESH_COOKIE_SECURE: z.string().optional(),
   BREEDS_TABLE_NAME: z.string().default('wp_hsr_breeds'),
   PRICE_ZONE_POLICY_TABLE_NAME: z.string().default('price_zone_policy'),
   WP_USERS_TABLE_NAME: z.string().default('wp_users'),
@@ -46,6 +52,16 @@ function toBoolean(value, defaultValue = false) {
 
 function parseEnv(source = process.env) {
   const rawEnv = rawEnvSchema.parse(source);
+  const refreshCookieSecure = toBoolean(rawEnv.AUTH_REFRESH_COOKIE_SECURE, rawEnv.NODE_ENV === 'production');
+
+  if (rawEnv.NODE_ENV === 'production' && !refreshCookieSecure) {
+    throw new Error('AUTH_REFRESH_COOKIE_SECURE must be enabled in production.');
+  }
+
+  if (rawEnv.AUTH_REFRESH_COOKIE_SAME_SITE === 'none' && !refreshCookieSecure) {
+    throw new Error('AUTH_REFRESH_COOKIE_SAME_SITE=none requires AUTH_REFRESH_COOKIE_SECURE.');
+  }
+
   const corsOrigins = String(rawEnv.CORS_ORIGINS || '')
     .split(',')
     .map((value) => value.trim())
@@ -68,6 +84,12 @@ function parseEnv(source = process.env) {
     JWT_AUTH_ALGORITHM: rawEnv.JWT_AUTH_ALGORITHM,
     JWT_AUTH_EXPIRES_IN_SECONDS: Number(rawEnv.JWT_AUTH_EXPIRES_IN_SECONDS),
     JWT_AUTH_ISSUER: rawEnv.JWT_AUTH_ISSUER,
+    AUTH_REFRESH_TOKEN_TTL_SECONDS: Number(rawEnv.AUTH_REFRESH_TOKEN_TTL_SECONDS),
+    AUTH_REFRESH_COOKIE_NAME: rawEnv.AUTH_REFRESH_COOKIE_NAME,
+    AUTH_REFRESH_COOKIE_PATH: rawEnv.AUTH_REFRESH_COOKIE_PATH,
+    AUTH_REFRESH_COOKIE_DOMAIN: rawEnv.AUTH_REFRESH_COOKIE_DOMAIN || '',
+    AUTH_REFRESH_COOKIE_SAME_SITE: rawEnv.AUTH_REFRESH_COOKIE_SAME_SITE,
+    AUTH_REFRESH_COOKIE_SECURE: refreshCookieSecure,
     BREEDS_TABLE_NAME: rawEnv.BREEDS_TABLE_NAME,
     PRICE_ZONE_POLICY_TABLE_NAME: rawEnv.PRICE_ZONE_POLICY_TABLE_NAME,
     WP_USERS_TABLE_NAME: rawEnv.WP_USERS_TABLE_NAME,

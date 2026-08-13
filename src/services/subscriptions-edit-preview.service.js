@@ -5,7 +5,7 @@ class SubscriptionsEditPreviewService {
     this.repository = repository;
   }
 
-  async preview({ subscriptionId, payload = {}, currentUser, sessionToken }) {
+  async preview({ subscriptionId, payload = {}, userId }) {
     if (!this.repository) {
       throw new HttpError(503, 'Subscriptions edit preview repository is not available.');
     }
@@ -14,11 +14,11 @@ class SubscriptionsEditPreviewService {
       throw new HttpError(422, 'Invalid subscription id.', { code: 'invalid_subscription_id' });
     }
 
-    if (!currentUser || !currentUser.id) {
+    if (!userId) {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
-    const data = await this.repository.preview(subscriptionId, payload, { currentUser, sessionToken });
+    const data = await this.repository.preview(userId, subscriptionId, payload);
 
     return {
       success: true,

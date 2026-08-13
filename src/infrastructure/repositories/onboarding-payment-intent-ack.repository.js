@@ -1,11 +1,16 @@
 const { HttpError } = require('../../core/http-error');
 
 class OnboardingPaymentIntentAckRepository {
-  constructor() {
-    this.sessionTableName = 'wp_hsr_onboarding_sessions';
+  constructor(dataSource, options = {}) {
+    this.dataSource = dataSource;
+    this.tableName = options.tableName || 'onboarding_user_state';
   }
 
-  async acknowledge(sessionId, payload = {}, context = {}) {
+  async acknowledge(userId, payload = {}) {
+    if (!this.dataSource || !this.dataSource.isInitialized) {
+      throw new HttpError(503, 'Database connection is not initialized.');
+    }
+
     const paymentIntentId = String(payload.paymentIntentId || '').trim();
     const paymentIntentStatus = String(payload.paymentIntentStatus || '').trim();
 
@@ -27,13 +32,50 @@ class OnboardingPaymentIntentAckRepository {
       throw new HttpError(422, 'Invalid payment intent status.', { code: 'invalid_payment_intent_status' });
     }
 
+    const rows = await this.dataSource.query(
+      `SELECT \`checkout_reference\` FROM \`${this.tableName}\` WHERE \`user_id\` = ? LIMIT 1`,
+      [userId]
+    );
+    const checkout = this.parseJson(Array.isArray(rows) && rows[0] ? rows[0].checkout_reference : null);
+    const expectedPaymentIntentId = String(checkout && (checkout.stripe_payment_intent_id || checkout.payment_intent_id) || '').trim();
+
+    if (expectedPaymentIntentId && expectedPaymentIntentId !== paymentIntentId) {
+      throw new HttpError(404, 'Payment intent not found.', { code: 'payment_intent_not_found' });
+    }
+
+    const updatedCheckout = {
+      ...(checkout || {}),
+      stripe_payment_intent_id: paymentIntentId,
+      stripe_payment_intent_status: paymentIntentStatus,
+      payment_state: paymentIntentStatus === 'succeeded' || paymentIntentStatus === 'processing' ? 'paid' : 'pending',
+      payment_acknowledged_at: new Date().toISOString()
+    };
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`checkout_reference\` = ? WHERE \`user_id\` = ?`,
+      [JSON.stringify(updatedCheckout), userId]
+    );
+
     return {
-      orderId: 42,
+      orderId: Number(updatedCheckout.order_id || 0),
       stripePaymentIntentId: paymentIntentId,
       stripePaymentIntentStatus: paymentIntentStatus,
-      paymentState: paymentIntentStatus === 'succeeded' || paymentIntentStatus === 'processing' ? 'paid' : 'pending',
+      paymentState: updatedCheckout.payment_state,
       acked: true
     };
+  }
+
+  parseJson(value) {
+    if (!value) {
+      return null;
+    }
+    if (typeof value === 'object') {
+      return value;
+    }
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
   }
 }
 

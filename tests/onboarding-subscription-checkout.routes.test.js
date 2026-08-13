@@ -1,113 +1,46 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
+const { issueJwtToken } = require('../src/core/jwt-token');
+
+const corsOrigins = ['http://localhost:5173'];
+const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
+
+function issueAccessToken(userId) {
+  return issueJwtToken(
+    { data: { user: { id: userId } } },
+    { ...jwt, ttlSeconds: 900, now: Math.floor(Date.now() / 1000) }
+  );
+}
 
 describe('onboarding subscription checkout routes', () => {
-  const corsOrigins = ['http://localhost:5173'];
-
-  test('creates a subscription checkout for a valid session', async () => {
+  test('creates checkout for the authenticated user', async () => {
+    const payload = { billing: { first_name: 'Jane', last_name: 'Doe', email: 'jane@example.com' }, paymentMethodId: 'pm_123', checkout_mode: 'subscription_first' };
     const onboardingSubscriptionCheckoutService = {
       checkout: jest.fn().mockResolvedValue({
         success: true,
-        data: {
-          session_id: 'session-123',
-          order_id: 101,
-          order_key: 'order-key',
-          status: 'pending',
-          total: 29.99,
-          subtotal: 25,
-          product_tax: 2.5,
-          shipping_total: 2.49,
-          shipping_tax: 0.25,
-          shipping_total_with_tax: 2.74,
-          currency: 'USD',
-          subscription_ids: [1],
-          flexible_subscription_id: 7,
-          stripe_subscription_id: 'sub_123',
-          payment_state: 'requires_payment_method',
-          has_payment_method: false,
-          reused: false
-        }
+        data: { order_id: 101, order_key: 'order-key', status: 'pending', total: 29.99, currency: 'USD', payment_state: 'requires_confirmation' }
       })
     };
-
-    const app = createApp({
-      onboardingSubscriptionCheckoutService,
-      corsOrigins,
-      jwt: { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' }
-    });
+    const app = createApp({ onboardingSubscriptionCheckoutService, corsOrigins, jwt });
 
     const response = await request(app)
-      .post('/api/v1/onboarding/session/session-123/subscription/checkout')
-      .set('x-session-token', 'token-123')
-      .send({
-        billing: {
-          first_name: 'Jane',
-          last_name: 'Doe',
-          email: 'jane@example.com'
-        },
-        paymentMethodId: 'pm_123',
-        checkout_mode: 'subscription_first'
-      });
+      .post('/api/v1/onboarding/subscription/checkout')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .send(payload);
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      success: true,
-      data: {
-        session_id: 'session-123',
-        order_id: 101,
-        order_key: 'order-key',
-        status: 'pending',
-        total: 29.99,
-        subtotal: 25,
-        product_tax: 2.5,
-        shipping_total: 2.49,
-        shipping_tax: 0.25,
-        shipping_total_with_tax: 2.74,
-        currency: 'USD',
-        subscription_ids: [1],
-        flexible_subscription_id: 7,
-        stripe_subscription_id: 'sub_123',
-        payment_state: 'requires_payment_method',
-        has_payment_method: false,
-        reused: false
-      }
-    });
-    expect(onboardingSubscriptionCheckoutService.checkout).toHaveBeenCalledWith({
-      sessionId: 'session-123',
-      payload: {
-        billing: {
-          first_name: 'Jane',
-          last_name: 'Doe',
-          email: 'jane@example.com'
-        },
-        paymentMethodId: 'pm_123',
-        checkout_mode: 'subscription_first'
-      },
-      currentUser: undefined,
-      sessionToken: 'token-123'
-    });
+    expect(response.body.data.session_id).toBeUndefined();
+    expect(response.body.data.order_id).toBe(101);
+    expect(onboardingSubscriptionCheckoutService.checkout).toHaveBeenCalledWith({ userId: 7, payload });
   });
 
-  test('returns 401 when the session token is missing', async () => {
-    const onboardingSubscriptionCheckoutService = {
-      checkout: jest.fn()
-    };
+  test('requires bearer authentication', async () => {
+    const onboardingSubscriptionCheckoutService = { checkout: jest.fn() };
+    const app = createApp({ onboardingSubscriptionCheckoutService, corsOrigins, jwt });
 
-    const app = createApp({
-      onboardingSubscriptionCheckoutService,
-      corsOrigins,
-      jwt: { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' }
-    });
-
-    const response = await request(app)
-      .post('/api/v1/onboarding/session/session-123/subscription/checkout')
-      .send({ paymentMethodId: 'pm_123' });
+    const response = await request(app).post('/api/v1/onboarding/subscription/checkout').send({});
 
     expect(response.status).toBe(401);
-    expect(response.body).toEqual({
-      success: false,
-      message: 'Session access token is required.'
-    });
     expect(onboardingSubscriptionCheckoutService.checkout).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,6 @@
 class OnboardingSalesTaxQuoteRepository {
-  async quote(sessionId, quote, context = {}) {
+  async quote(quote) {
     return {
-      session_id: sessionId,
       subtotal: quote.subtotal,
       product_tax: quote.productTax,
       product_tax_percent: quote.productTaxPercent,

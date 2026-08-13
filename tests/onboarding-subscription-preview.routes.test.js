@@ -1,85 +1,42 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
+const { issueJwtToken } = require('../src/core/jwt-token');
+
+const corsOrigins = ['http://localhost:5173'];
+const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
+
+function issueAccessToken(userId) {
+  return issueJwtToken(
+    { data: { user: { id: userId } } },
+    { ...jwt, ttlSeconds: 900, now: Math.floor(Date.now() / 1000) }
+  );
+}
 
 describe('onboarding subscription preview routes', () => {
-  const corsOrigins = ['http://localhost:5173'];
-
-  test('returns a subscription preview for a valid US session', async () => {
+  test('returns a subscription preview for an authenticated US user', async () => {
+    const payload = { address: { country: 'US', state: 'CA', postal_code: '94105' }, price_ids: ['price_123'] };
     const onboardingSubscriptionPreviewService = {
-      preview: jest.fn().mockResolvedValue({
-        success: true,
-        data: {
-          subtotal: 25,
-          tax: 2.5,
-          total: 27.5,
-          currency: 'usd'
-        }
-      })
+      preview: jest.fn().mockResolvedValue({ success: true, data: { subtotal: 25, tax: 2.5, total: 27.5, currency: 'usd' } })
     };
-
-    const app = createApp({
-      onboardingSubscriptionPreviewService,
-      corsOrigins,
-      jwt: { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' }
-    });
+    const app = createApp({ onboardingSubscriptionPreviewService, corsOrigins, jwt });
 
     const response = await request(app)
-      .post('/api/v1/onboarding/session/session-123/subscription/preview')
-      .set('x-session-token', 'token-123')
-      .send({
-        address: {
-          country: 'US',
-          state: 'CA',
-          postal_code: '94105'
-        },
-        price_ids: ['price_123']
-      });
+      .post('/api/v1/onboarding/subscription/preview')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .send(payload);
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      success: true,
-      data: {
-        subtotal: 25,
-        tax: 2.5,
-        total: 27.5,
-        currency: 'usd'
-      }
-    });
-    expect(onboardingSubscriptionPreviewService.preview).toHaveBeenCalledWith({
-      sessionId: 'session-123',
-      payload: {
-        address: {
-          country: 'US',
-          state: 'CA',
-          postal_code: '94105'
-        },
-        price_ids: ['price_123']
-      },
-      currentUser: undefined,
-      sessionToken: 'token-123'
-    });
+    expect(response.body.data.total).toBe(27.5);
+    expect(onboardingSubscriptionPreviewService.preview).toHaveBeenCalledWith({ userId: 7, payload });
   });
 
-  test('returns 401 when the session token is missing', async () => {
-    const onboardingSubscriptionPreviewService = {
-      preview: jest.fn()
-    };
+  test('requires bearer authentication', async () => {
+    const onboardingSubscriptionPreviewService = { preview: jest.fn() };
+    const app = createApp({ onboardingSubscriptionPreviewService, corsOrigins, jwt });
 
-    const app = createApp({
-      onboardingSubscriptionPreviewService,
-      corsOrigins,
-      jwt: { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' }
-    });
-
-    const response = await request(app)
-      .post('/api/v1/onboarding/session/session-123/subscription/preview')
-      .send({ address: { country: 'US', state: 'CA', postal_code: '94105' } });
+    const response = await request(app).post('/api/v1/onboarding/subscription/preview').send({});
 
     expect(response.status).toBe(401);
-    expect(response.body).toEqual({
-      success: false,
-      message: 'Session access token is required.'
-    });
     expect(onboardingSubscriptionPreviewService.preview).not.toHaveBeenCalled();
   });
 });

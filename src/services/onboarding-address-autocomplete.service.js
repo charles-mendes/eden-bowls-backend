@@ -5,12 +5,12 @@ class OnboardingAddressAutocompleteService {
     this.repository = repository;
   }
 
-  async autocomplete({ sessionId, payload }) {
+  async autocomplete({ payload }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding address autocomplete repository is not available.');
     }
 
-    const result = await this.repository.autocomplete(sessionId, payload);
+    const result = await this.repository.autocomplete(payload);
 
     return {
       success: true,

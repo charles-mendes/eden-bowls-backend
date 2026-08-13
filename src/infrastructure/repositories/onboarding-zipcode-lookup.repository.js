@@ -1,5 +1,5 @@
 class OnboardingZipcodeLookupRepository {
-  async lookup(sessionId, payload = {}, context = {}) {
+  async lookup(payload = {}) {
     return {
       status: 'found',
       country: payload.country || 'US',

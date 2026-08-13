@@ -1,5 +1,5 @@
 class OnboardingPaymentMethodsRepository {
-  async listSavedPaymentMethods(sessionId, context = {}) {
+  async listSavedPaymentMethods(userId) {
     return [
       {
         id: 'pm_123',

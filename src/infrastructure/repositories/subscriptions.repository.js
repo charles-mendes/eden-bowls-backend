@@ -1,5 +1,5 @@
 class SubscriptionsRepository {
-  async listMine(context = {}) {
+  async listMine({ userId }) {
     return {
       subscriptions: [
         {

@@ -5,10 +5,12 @@ const { createLogger } = require('./core/logger');
 const { createApp } = require('./app');
 const { createDataSource } = require('./infrastructure/db');
 const { AuthRepository } = require('./infrastructure/repositories/auth.repository');
+const { AuthRefreshTokenRepository } = require('./infrastructure/repositories/auth-refresh-token.repository');
 const { BreedsRepository } = require('./infrastructure/repositories/breeds.repository');
 const { PriceZonePolicyRepository } = require('./infrastructure/repositories/price-zone-policy.repository');
 const { ProductsRepository } = require('./infrastructure/repositories/products.repository');
 const { OnboardingAddressAutocompleteRepository } = require('./infrastructure/repositories/onboarding-address-autocomplete.repository');
+const { OnboardingDiscountEligibilityRepository } = require('./infrastructure/repositories/onboarding-discount-eligibility.repository');
 const { OnboardingPaymentIntentAckRepository } = require('./infrastructure/repositories/onboarding-payment-intent-ack.repository');
 const { OnboardingPaymentMethodsRepository } = require('./infrastructure/repositories/onboarding-payment-methods.repository');
 const { OnboardingPetCreateRepository } = require('./infrastructure/repositories/onboarding-pets-create.repository');
@@ -25,7 +27,6 @@ const { OnboardingSubscriptionCheckoutRepository } = require('./infrastructure/r
 const { OnboardingSubscriptionPreviewRepository } = require('./infrastructure/repositories/onboarding-subscription-preview.repository');
 const { OnboardingZipcodeLookupRepository } = require('./infrastructure/repositories/onboarding-zipcode-lookup.repository');
 const { OnboardingZipcodeRepository } = require('./infrastructure/repositories/onboarding-zipcode.repository');
-const { OnboardingSessionCoreRepository } = require('./infrastructure/repositories/onboarding-session-core.repository');
 const { SubscriptionsActionsRepository } = require('./infrastructure/repositories/subscriptions-actions.repository');
 const { SubscriptionsDetailRepository } = require('./infrastructure/repositories/subscriptions-detail.repository');
 const { SubscriptionsEditPreviewRepository } = require('./infrastructure/repositories/subscriptions-edit-preview.repository');
@@ -35,6 +36,7 @@ const { AuthService } = require('./services/auth.service');
 const { BreedsService } = require('./services/breeds.service');
 const { ProductsService } = require('./services/products.service');
 const { OnboardingAddressAutocompleteService } = require('./services/onboarding-address-autocomplete.service');
+const { OnboardingDiscountEligibilityService } = require('./services/onboarding-discount-eligibility.service');
 const { OnboardingPaymentIntentAckService } = require('./services/onboarding-payment-intent-ack.service');
 const { OnboardingPaymentMethodsService } = require('./services/onboarding-payment-methods.service');
 const { OnboardingPetCreateService } = require('./services/onboarding-pets-create.service');
@@ -51,7 +53,6 @@ const { OnboardingSubscriptionCheckoutService } = require('./services/onboarding
 const { OnboardingSubscriptionPreviewService } = require('./services/onboarding-subscription-preview.service');
 const { OnboardingZipcodeLookupService } = require('./services/onboarding-zipcode-lookup.service');
 const { OnboardingZipcodeService } = require('./services/onboarding-zipcode.service');
-const { OnboardingSessionCoreService } = require('./services/onboarding-session-core.service');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
 const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
@@ -73,6 +74,7 @@ async function bootstrap() {
     usersTableName: env.WP_USERS_TABLE_NAME,
     usermetaTableName: env.WP_USERMETA_TABLE_NAME
   });
+  const authRefreshTokenRepository = new AuthRefreshTokenRepository(dataSource);
   const breedsService = new BreedsService(breedsRepository);
   const authService = new AuthService(authRepository, {
     jwt: {
@@ -80,7 +82,9 @@ async function bootstrap() {
       algorithm: env.JWT_AUTH_ALGORITHM,
       issuer: env.JWT_AUTH_ISSUER,
       expiresInSeconds: env.JWT_AUTH_EXPIRES_IN_SECONDS
-    }
+    },
+    refreshTokenRepository: authRefreshTokenRepository,
+    refreshTokenTtlSeconds: env.AUTH_REFRESH_TOKEN_TTL_SECONDS
   });
   const priceZonePolicyRepository = new PriceZonePolicyRepository(dataSource, {
     tableName: env.PRICE_ZONE_POLICY_TABLE_NAME
@@ -94,59 +98,66 @@ async function bootstrap() {
     priceZonePolicyRepository
   });
   const productsService = new ProductsService(productsRepository);
-  const onboardingAddressAutocompleteRepository = new OnboardingAddressAutocompleteRepository(dataSource, {
-    sessionTableName: env.ONBOARDING_SESSIONS_TABLE_NAME || 'wp_hsr_onboarding_sessions'
-  });
+  const onboardingAddressAutocompleteRepository = new OnboardingAddressAutocompleteRepository();
   const onboardingAddressAutocompleteService = new OnboardingAddressAutocompleteService(onboardingAddressAutocompleteRepository);
-  const onboardingPaymentIntentAckRepository = new OnboardingPaymentIntentAckRepository();
-  const onboardingPaymentIntentAckService = new OnboardingPaymentIntentAckService(onboardingPaymentIntentAckRepository);
+  const onboardingDiscountEligibilityRepository = new OnboardingDiscountEligibilityRepository();
+  const onboardingDiscountEligibilityService = new OnboardingDiscountEligibilityService(onboardingDiscountEligibilityRepository);
+  const onboardingPaymentIntentAckRepository = new OnboardingPaymentIntentAckRepository(dataSource);
+  const onboardingPaymentIntentAckService = new OnboardingPaymentIntentAckService(onboardingPaymentIntentAckRepository, { authService });
   const onboardingPaymentMethodsRepository = new OnboardingPaymentMethodsRepository();
   const onboardingPaymentMethodsService = new OnboardingPaymentMethodsService(onboardingPaymentMethodsRepository);
-  const onboardingPetCreateRepository = new OnboardingPetCreateRepository();
+  const onboardingPetCreateRepository = new OnboardingPetCreateRepository(dataSource);
   const onboardingPetCreateService = new OnboardingPetCreateService(onboardingPetCreateRepository);
-  const onboardingPetUpdateRepository = new OnboardingPetUpdateRepository();
+  const onboardingPetUpdateRepository = new OnboardingPetUpdateRepository(dataSource);
   const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository);
-  const onboardingPetsRepository = new OnboardingPetsRepository();
+  const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
   const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository();
   const onboardingPlanPreviewService = new OnboardingPlanPreviewService(onboardingPlanPreviewRepository);
-  const onboardingPlanSelectionRepository = new OnboardingPlanSelectionRepository();
+  const onboardingPlanSelectionRepository = new OnboardingPlanSelectionRepository(dataSource);
   const onboardingPlanSelectionService = new OnboardingPlanSelectionService(onboardingPlanSelectionRepository);
   const onboardingPlanSnapshotRepository = new OnboardingPlanSnapshotRepository();
   const onboardingPlanSnapshotService = new OnboardingPlanSnapshotService(onboardingPlanSnapshotRepository);
   const onboardingRecommendationRepository = new OnboardingRecommendationRepository();
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
-  const onboardingRecurrenceRepository = new OnboardingRecurrenceRepository();
+  const onboardingRecurrenceRepository = new OnboardingRecurrenceRepository(dataSource);
   const onboardingRecurrenceService = new OnboardingRecurrenceService(onboardingRecurrenceRepository);
   const onboardingSalesTaxQuoteRepository = new OnboardingSalesTaxQuoteRepository();
   const onboardingSalesTaxQuoteService = new OnboardingSalesTaxQuoteService(onboardingSalesTaxQuoteRepository);
-  const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository();
+  const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository(dataSource);
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
-  const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository();
-  const onboardingSubscriptionCheckoutService = new OnboardingSubscriptionCheckoutService(onboardingSubscriptionCheckoutRepository);
-  const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository();
+  const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
+  const onboardingSubscriptionCheckoutService = new OnboardingSubscriptionCheckoutService(onboardingSubscriptionCheckoutRepository, { authService });
+  const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository(dataSource);
   const onboardingSubscriptionPreviewService = new OnboardingSubscriptionPreviewService(onboardingSubscriptionPreviewRepository);
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository();
   const onboardingZipcodeLookupService = new OnboardingZipcodeLookupService(onboardingZipcodeLookupRepository);
-  const onboardingZipcodeRepository = new OnboardingZipcodeRepository();
+  const onboardingZipcodeRepository = new OnboardingZipcodeRepository(dataSource);
   const onboardingZipcodeService = new OnboardingZipcodeService(onboardingZipcodeRepository);
-  const onboardingSessionCoreRepository = new OnboardingSessionCoreRepository();
-  const onboardingSessionCoreService = new OnboardingSessionCoreService(onboardingSessionCoreRepository);
   const subscriptionsActionsRepository = new SubscriptionsActionsRepository();
-  const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository);
+  const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository, { authService });
   const subscriptionsDetailRepository = new SubscriptionsDetailRepository();
   const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository);
   const subscriptionsEditPreviewRepository = new SubscriptionsEditPreviewRepository();
   const subscriptionsEditPreviewService = new SubscriptionsEditPreviewService(subscriptionsEditPreviewRepository);
   const subscriptionsRepository = new SubscriptionsRepository();
   const subscriptionsService = new SubscriptionsService(subscriptionsRepository);
-  const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository();
+  const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository(dataSource);
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository);
   const app = createApp({
     authService,
+    authCookie: {
+      name: env.AUTH_REFRESH_COOKIE_NAME,
+      path: env.AUTH_REFRESH_COOKIE_PATH,
+      domain: env.AUTH_REFRESH_COOKIE_DOMAIN,
+      sameSite: env.AUTH_REFRESH_COOKIE_SAME_SITE,
+      secure: env.AUTH_REFRESH_COOKIE_SECURE,
+      maxAgeSeconds: env.AUTH_REFRESH_TOKEN_TTL_SECONDS
+    },
     breedsService,
     productsService,
     onboardingAddressAutocompleteService,
+    onboardingDiscountEligibilityService,
     onboardingPaymentIntentAckService,
     onboardingPaymentMethodsService,
     onboardingPetCreateService,
@@ -163,7 +174,6 @@ async function bootstrap() {
     onboardingSubscriptionPreviewService,
     onboardingZipcodeLookupService,
     onboardingZipcodeService,
-    onboardingSessionCoreService,
     subscriptionsActionsService,
     subscriptionsDetailService,
     subscriptionsEditPreviewService,

@@ -36,9 +36,13 @@ class OnboardingZipcodeService {
     this.repository = repository;
   }
 
-  async setZipcode({ sessionId, payload = {}, currentUser, sessionToken }) {
+  async setZipcode({ userId, payload = {} }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding zipcode repository is not available.');
+    }
+
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
     const country = normalizeCountry(payload.country);
@@ -83,7 +87,7 @@ class OnboardingZipcodeService {
       address_line2: String(payload.complement || payload.address_line2 || '').trim()
     };
 
-    const data = await this.repository.saveZipcode(sessionId, normalizedPayload, { currentUser, sessionToken });
+    const data = await this.repository.saveZipcode(userId, normalizedPayload);
 
     return {
       success: true,

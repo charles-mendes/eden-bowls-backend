@@ -1,8 +1,17 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
+const { issueJwtToken } = require('../src/core/jwt-token');
 
 describe('subscriptions actions routes', () => {
   const corsOrigins = ['http://localhost:5173'];
+  const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
+
+  function issueAccessToken(userId) {
+    return issueJwtToken(
+      { data: { user: { id: userId } } },
+      { ...jwt, ttlSeconds: 900, now: Math.floor(Date.now() / 1000) }
+    );
+  }
 
   test('executes a supported subscription action for an authenticated user', async () => {
     const subscriptionsActionsService = {
@@ -24,12 +33,12 @@ describe('subscriptions actions routes', () => {
     const app = createApp({
       subscriptionsActionsService,
       corsOrigins,
-      jwt: { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' }
+      jwt
     });
 
     const response = await request(app)
       .post('/api/v1/subscriptions/sub_123/actions')
-      .set('Authorization', 'Bearer token-123')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
       .send({ action: 'pause' });
 
     expect(response.status).toBe(200);
@@ -49,8 +58,7 @@ describe('subscriptions actions routes', () => {
     expect(subscriptionsActionsService.executeAction).toHaveBeenCalledWith({
       subscriptionId: 'sub_123',
       payload: { action: 'pause' },
-      currentUser: undefined,
-      sessionToken: ''
+      userId: 7
     });
   });
 
@@ -62,7 +70,7 @@ describe('subscriptions actions routes', () => {
     const app = createApp({
       subscriptionsActionsService,
       corsOrigins,
-      jwt: { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' }
+      jwt
     });
 
     const response = await request(app)
@@ -72,7 +80,8 @@ describe('subscriptions actions routes', () => {
     expect(response.status).toBe(401);
     expect(response.body).toEqual({
       success: false,
-      message: 'Authentication is required.'
+      message: 'Authentication is required.',
+      details: { code: 'unauthorized' }
     });
     expect(subscriptionsActionsService.executeAction).not.toHaveBeenCalled();
   });

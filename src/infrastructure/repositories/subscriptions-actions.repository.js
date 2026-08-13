@@ -1,5 +1,5 @@
 class SubscriptionsActionsRepository {
-  async executeAction(subscriptionId, payload = {}, context = {}) {
+  async executeAction(userId, subscriptionId, payload = {}) {
     return {
       action: payload.action,
       pending_webhook_confirmation: true,

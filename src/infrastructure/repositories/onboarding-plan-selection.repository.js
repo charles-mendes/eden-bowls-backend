@@ -1,37 +1,27 @@
+const { HttpError } = require('../../core/http-error');
+
 class OnboardingPlanSelectionRepository {
-  async setPlanSelection(sessionId, payload = {}, context = {}) {
+  constructor(dataSource, options = {}) {
+    this.dataSource = dataSource;
+    this.tableName = options.tableName || 'onboarding_user_state';
+  }
+
+  async setPlanSelection(userId, payload = {}) {
+    if (!this.dataSource || !this.dataSource.isInitialized) {
+      throw new HttpError(503, 'Database connection is not initialized.');
+    }
+
+    const planSelection = {
+      ...payload,
+      updated_at: new Date().toISOString()
+    };
+    await this.dataSource.query(
+      `INSERT INTO \`${this.tableName}\` (\`user_id\`, \`plan_selection\`) VALUES (?, ?) ON DUPLICATE KEY UPDATE \`plan_selection\` = VALUES(\`plan_selection\`)`,
+      [userId, JSON.stringify(planSelection)]
+    );
+
     return {
-      session_id: sessionId,
-      plan_selection: {
-        subscription_term_months: payload.subscription_term_months || 1,
-        catalog_pricing: {
-          source: 'custom_meal_plan_builder',
-          country: 'US',
-          currency: 'USD',
-          line_items: [
-            {
-              pet_id: 'pet-1',
-              flavor: 'chicken',
-              quantity: 2,
-              unit_price: 10,
-              line_total: 20
-            }
-          ],
-          subtotal: 20,
-          discounted_first_month_total: 20
-        },
-        flavors_by_pet: [
-          { pet_id: 'pet-1', flavors: ['chicken'] }
-        ],
-        pets: [
-          { pet_id: 'pet-1', pet_name: 'Milo', enabled: true }
-        ],
-        validated_with: {
-          recommendation_version: 'v1',
-          validated_at: '2026-08-09T00:00:00.000Z'
-        },
-        updated_at: '2026-08-09T00:00:00.000Z'
-      }
+      plan_selection: planSelection
     };
   }
 }

@@ -24,11 +24,12 @@ function normalizeEnabled(payload = {}) {
 }
 
 class SubscriptionsActionsService {
-  constructor(repository) {
+  constructor(repository, options = {}) {
     this.repository = repository;
+    this.authService = options.authService || null;
   }
 
-  async executeAction({ subscriptionId, payload = {}, currentUser, sessionToken }) {
+  async executeAction({ subscriptionId, payload = {}, userId }) {
     if (!this.repository) {
       throw new HttpError(503, 'Subscriptions actions repository is not available.');
     }
@@ -39,11 +40,17 @@ class SubscriptionsActionsService {
       throw new HttpError(422, 'Invalid subscription id.', { code: 'invalid_subscription_id' });
     }
 
-    if (!currentUser || !currentUser.id) {
+    if (!userId) {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
-    const data = await this.repository.executeAction(subscriptionId, {
+    if (!this.authService) {
+      throw new HttpError(503, 'Auth service is not available for critical operations.');
+    }
+
+    await this.authService.assertCriticalOperationAllowed(userId);
+
+    const data = await this.repository.executeAction(userId, subscriptionId, {
       action,
       enabled: normalizeEnabled(payload),
       new_variation_id: payload.new_variation_id,
@@ -53,7 +60,7 @@ class SubscriptionsActionsService {
       proration_behavior: payload.proration_behavior || payload.prorationBehavior,
       payment_method_id: payload.payment_method_id || payload.paymentMethodId,
       request_fingerprint: payload.request_fingerprint || payload.requestFingerprint
-    }, { currentUser, sessionToken });
+    });
 
     return {
       success: true,

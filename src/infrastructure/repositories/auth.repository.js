@@ -43,6 +43,41 @@ class AuthRepository {
       activation_status: String(user.activation_status || '').trim().toLowerCase()
     };
   }
+
+  async findUserById(userId) {
+    if (!this.dataSource || !this.dataSource.isInitialized) {
+      throw new HttpError(503, 'Database connection is not initialized.');
+    }
+
+    const normalizedUserId = Number(userId);
+    if (!Number.isSafeInteger(normalizedUserId) || normalizedUserId < 1) {
+      return null;
+    }
+
+    const sql = [
+      'SELECT u.ID AS id, u.user_email, u.user_nicename, u.display_name,',
+      "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS activation_status",
+      `FROM \`${this.tableNames.users}\` u`,
+      `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
+      'WHERE u.ID = ?',
+      'GROUP BY u.ID, u.user_email, u.user_nicename, u.display_name',
+      'LIMIT 1'
+    ].join(' ');
+    const rows = await this.dataSource.query(sql, [normalizedUserId]);
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return null;
+    }
+
+    const user = rows[0];
+    return {
+      id: Number(user.id),
+      user_email: String(user.user_email || ''),
+      user_nicename: String(user.user_nicename || ''),
+      display_name: String(user.display_name || ''),
+      activation_status: String(user.activation_status || '').trim().toLowerCase()
+    };
+  }
 }
 
 module.exports = {

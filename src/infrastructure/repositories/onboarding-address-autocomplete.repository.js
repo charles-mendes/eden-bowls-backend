@@ -1,14 +1,5 @@
-const { HttpError } = require('../../core/http-error');
-
 class OnboardingAddressAutocompleteRepository {
-  constructor(dataSource, options = {}) {
-    this.dataSource = dataSource;
-    this.sessionTableName = options.sessionTableName || 'wp_hsr_onboarding_sessions';
-  }
-
-  async autocomplete(sessionId, payload = {}) {
-    this.ensureDataSourceReady();
-
+  async autocomplete(payload = {}) {
     const resolvedCountry = this.resolveCountry(payload);
 
     if (resolvedCountry !== 'US') {
@@ -33,12 +24,6 @@ class OnboardingAddressAutocompleteRepository {
       };
     }
 
-    const session = await this.findSession(sessionId);
-
-    if (!session) {
-      throw new HttpError(404, 'Session not found.', { code: 'session_not_found' });
-    }
-
     const normalizedQuery = this.normalizeQuery(query, payload);
     const suggestions = this.buildSuggestions(normalizedQuery);
 
@@ -61,12 +46,6 @@ class OnboardingAddressAutocompleteRepository {
     };
   }
 
-  ensureDataSourceReady() {
-    if (!this.dataSource || !this.dataSource.isInitialized) {
-      throw new HttpError(503, 'Database connection is not initialized.');
-    }
-  }
-
   resolveCountry(payload = {}) {
     const inputCountry = String(payload.country || '').trim().toUpperCase();
     if (inputCountry === 'US' || inputCountry === 'BR') {
@@ -74,12 +53,6 @@ class OnboardingAddressAutocompleteRepository {
     }
 
     return 'US';
-  }
-
-  async findSession(sessionId) {
-    const sql = `SELECT session_id AS sessionId, country FROM \`${this.sessionTableName}\` WHERE session_id = ? LIMIT 1`;
-    const rows = await this.dataSource.query(sql, [sessionId]);
-    return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
   }
 
   normalizeQuery(query, payload = {}) {

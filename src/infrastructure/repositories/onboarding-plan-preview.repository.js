@@ -1,7 +1,6 @@
 class OnboardingPlanPreviewRepository {
-  async previewPlan(sessionId, payload = {}, context = {}) {
+  async previewPlan(userId, payload = {}) {
     return {
-      session_id: sessionId,
       subscription_term_months: payload.subscription_term_months || 1,
       currency: 'USD',
       totals: {

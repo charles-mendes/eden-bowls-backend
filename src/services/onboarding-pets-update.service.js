@@ -5,16 +5,23 @@ class OnboardingPetUpdateService {
     this.repository = repository;
   }
 
-  async updatePet({ sessionId, petId, payload, currentUser, sessionToken }) {
+  async updatePet({ userId, petId, payload }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding pet update repository is not available.');
     }
 
-    const result = await this.repository.updatePet(sessionId, petId, payload, { currentUser, sessionToken });
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    const pet = await this.repository.updatePet(userId, petId, payload);
+    if (!pet) {
+      throw new HttpError(404, 'Pet not found.', { code: 'pet_not_found' });
+    }
 
     return {
       success: true,
-      data: result
+      data: { pet }
     };
   }
 }

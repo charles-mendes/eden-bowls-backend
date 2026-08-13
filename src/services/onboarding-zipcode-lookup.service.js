@@ -61,7 +61,7 @@ class OnboardingZipcodeLookupService {
     this.repository = repository;
   }
 
-  async lookup({ sessionId, payload = {}, currentUser, sessionToken }) {
+  async lookup({ payload = {} }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding zipcode lookup repository is not available.');
     }
@@ -126,7 +126,7 @@ class OnboardingZipcodeLookupService {
       };
     }
 
-    const data = await this.repository.lookup(sessionId, { country, zipcode: normalizedInput }, { currentUser, sessionToken });
+    const data = await this.repository.lookup({ country, zipcode: normalizedInput });
     return {
       success: true,
       data

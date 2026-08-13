@@ -54,13 +54,17 @@ class OnboardingShippingSelectService {
     this.repository = repository;
   }
 
-  async selectShipping({ sessionId, payload, currentUser, sessionToken }) {
+  async selectShipping({ userId, payload }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding shipping select repository is not available.');
     }
 
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
     const shipping = normalizeShippingPayload(payload);
-    const data = await this.repository.selectShipping(sessionId, shipping, { currentUser, sessionToken });
+    const data = await this.repository.selectShipping(userId, shipping);
 
     return {
       success: true,

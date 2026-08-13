@@ -5,12 +5,16 @@ class OnboardingRecommendationService {
     this.repository = repository;
   }
 
-  async getRecommendation({ sessionId, currentUser, sessionToken }) {
+  async getRecommendation({ userId }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding recommendation repository is not available.');
     }
 
-    const data = await this.repository.getRecommendation(sessionId, { currentUser, sessionToken });
+    if (!userId) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    const data = await this.repository.getRecommendation(userId);
 
     return {
       success: true,

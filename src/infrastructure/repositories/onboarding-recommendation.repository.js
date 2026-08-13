@@ -1,7 +1,6 @@
 class OnboardingRecommendationRepository {
-  async getRecommendation(sessionId, context = {}) {
+  async getRecommendation(userId) {
     return {
-      session_id: sessionId,
       country: 'US',
       recommendations: [
         {

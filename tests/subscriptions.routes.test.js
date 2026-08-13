@@ -1,8 +1,17 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
+const { issueJwtToken } = require('../src/core/jwt-token');
 
 describe('subscriptions routes', () => {
   const corsOrigins = ['http://localhost:5173'];
+  const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
+
+  function issueAccessToken(userId) {
+    return issueJwtToken(
+      { data: { user: { id: userId } } },
+      { ...jwt, ttlSeconds: 900, now: Math.floor(Date.now() / 1000) }
+    );
+  }
 
   test('returns the current user subscriptions', async () => {
     const subscriptionsService = {
@@ -26,12 +35,12 @@ describe('subscriptions routes', () => {
     const app = createApp({
       subscriptionsService,
       corsOrigins,
-      jwt: { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' }
+      jwt
     });
 
     const response = await request(app)
       .get('/api/v1/subscriptions')
-      .set('Authorization', 'Bearer token-123');
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`);
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
@@ -50,8 +59,7 @@ describe('subscriptions routes', () => {
       }
     });
     expect(subscriptionsService.listMine).toHaveBeenCalledWith({
-      currentUser: undefined,
-      sessionToken: ''
+      userId: 7
     });
   });
 
@@ -61,7 +69,7 @@ describe('subscriptions routes', () => {
     const app = createApp({
       subscriptionsService,
       corsOrigins,
-      jwt: { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' }
+      jwt
     });
 
     const response = await request(app)
@@ -70,7 +78,8 @@ describe('subscriptions routes', () => {
     expect(response.status).toBe(401);
     expect(response.body).toEqual({
       success: false,
-      message: 'Authentication is required.'
+      message: 'Authentication is required.',
+      details: { code: 'unauthorized' }
     });
     expect(subscriptionsService.listMine).not.toHaveBeenCalled();
   });
