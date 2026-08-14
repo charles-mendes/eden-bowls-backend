@@ -48,6 +48,38 @@ class OnboardingPetCreateRepository {
       }
     };
   }
+
+  async syncPets(userId, pets = []) {
+    if (!this.dataSource || !this.dataSource.isInitialized) {
+      throw new HttpError(503, 'Database connection is not initialized.');
+    }
+
+    const results = [];
+    for (const payload of pets) {
+      const petId = payload.pet_id || require('crypto').randomUUID();
+      await this.dataSource.query(
+        `INSERT INTO \`${this.tableName}\` (\`id\`, \`user_id\`, \`local_id\`, \`name\`, \`breed\`, \`age_years\`, \`age_months\`, \`weight_input\`, \`weight_unit\`, \`size\`, \`activity_level\`, \`pet_condition\`, \`neutered\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE \`name\` = VALUES(\`name\`), \`breed\` = VALUES(\`breed\`), \`age_years\` = VALUES(\`age_years\`), \`age_months\` = VALUES(\`age_months\`), \`weight_input\` = VALUES(\`weight_input\`), \`weight_unit\` = VALUES(\`weight_unit\`), \`size\` = VALUES(\`size\`), \`activity_level\` = VALUES(\`activity_level\`), \`pet_condition\` = VALUES(\`pet_condition\`), \`neutered\` = VALUES(\`neutered\`), \`deleted_at\` = NULL`,
+        [
+          petId,
+          userId,
+          payload.local_id,
+          payload.name,
+          payload.breed || '',
+          Number(payload.age_years || 0),
+          Number(payload.age_months || 0),
+          Number(payload.weight || 0),
+          payload.weight_unit || 'kg',
+          payload.size || 'medium',
+          payload.activity_level || 'medium',
+          payload.pet_condition || 'ideal',
+          payload.neutered ? 1 : 0
+        ]
+      );
+      results.push({ local_id: payload.local_id, id: petId });
+    }
+
+    return { pets: results };
+  }
 }
 
 module.exports = {

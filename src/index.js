@@ -58,6 +58,8 @@ const { SubscriptionsDetailService } = require('./services/subscriptions-detail.
 const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
 const { SubscriptionsService } = require('./services/subscriptions.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
+const { OnboardingPetsSyncService } = require('./services/onboarding-pets-sync.service');
+const { OnboardingQuotesRepository } = require('./infrastructure/repositories/onboarding-quotes.repository');
 
 async function bootstrap() {
   const env = parseEnv();
@@ -113,7 +115,10 @@ async function bootstrap() {
   const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
   const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository();
-  const onboardingPlanPreviewService = new OnboardingPlanPreviewService(onboardingPlanPreviewRepository);
+  const onboardingQuotesRepository = new OnboardingQuotesRepository(dataSource);
+  const onboardingPlanPreviewService = new OnboardingPlanPreviewService(onboardingPlanPreviewRepository, {
+    quotesRepository: onboardingQuotesRepository
+  });
   const onboardingPlanSelectionRepository = new OnboardingPlanSelectionRepository(dataSource);
   const onboardingPlanSelectionService = new OnboardingPlanSelectionService(onboardingPlanSelectionRepository);
   const onboardingPlanSnapshotRepository = new OnboardingPlanSnapshotRepository();
@@ -144,6 +149,7 @@ async function bootstrap() {
   const subscriptionsService = new SubscriptionsService(subscriptionsRepository);
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository(dataSource);
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository);
+  const onboardingPetsSyncService = new OnboardingPetsSyncService(onboardingPetCreateRepository);
   const app = createApp({
     authService,
     authCookie: {
@@ -179,6 +185,7 @@ async function bootstrap() {
     subscriptionsEditPreviewService,
     subscriptionsService,
     onboardingPetDeleteService,
+    onboardingPetsSyncService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
       algorithm: env.JWT_AUTH_ALGORITHM,

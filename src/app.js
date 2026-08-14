@@ -29,6 +29,7 @@ const { registerSubscriptionsDetailRoutes } = require('./api/routes/subscription
 const { registerSubscriptionsEditPreviewRoutes } = require('./api/routes/subscriptions-edit-preview.routes');
 const { registerSubscriptionsRoutes } = require('./api/routes/subscriptions.routes');
 const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
+const { registerOnboardingPetsSyncRoutes } = require('./api/routes/onboarding-pets-sync.routes');
 const { HttpError } = require('./core/http-error');
 
 client.collectDefaultMetrics();
@@ -133,6 +134,7 @@ function createApp(dependencies = {}) {
   registerSubscriptionsEditPreviewRoutes(app, dependencies);
   registerSubscriptionsRoutes(app, dependencies);
   registerOnboardingPetDeleteRoutes(app, dependencies);
+  registerOnboardingPetsSyncRoutes(app, dependencies);
 
   app.use((request, response, next) => {
     next(new HttpError(404, 'Route not found.'));

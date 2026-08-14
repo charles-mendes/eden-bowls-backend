@@ -1,19 +1,25 @@
 const { HttpError } = require('../../core/http-error');
+const rateLimit = require('express-rate-limit');
+const { parseOnboardingPlanPreviewInput } = require('../validators/onboarding-plan-preview.validator');
 
 function registerOnboardingPlanPreviewRoutes(app, dependencies = {}) {
-  app.post('/api/v1/onboarding/plan/preview', async (request, response, next) => {
+  const limiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false
+  });
+
+  app.post('/api/v1/onboarding/plan/preview', limiter, async (request, response, next) => {
     try {
       if (!dependencies.onboardingPlanPreviewService) {
         throw new HttpError(503, 'Onboarding plan preview service is not available.');
       }
 
-      if (!request.currentUser || !request.currentUser.id) {
-        throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
-      }
-
+      const payload = parseOnboardingPlanPreviewInput(request.body || {});
       const result = await dependencies.onboardingPlanPreviewService.previewPlan({
-        userId: request.currentUser.id,
-        payload: request.body || {},
+        userId: request.currentUser && request.currentUser.id ? request.currentUser.id : null,
+        payload,
       });
 
       response.status(200).json(result);
