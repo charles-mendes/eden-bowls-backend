@@ -41,4 +41,15 @@ describe('user-owned pet mutation repositories', () => {
 
     await expect(repository.deletePet(7, 'foreign-pet', '2026-08-13T00:00:00.000Z')).resolves.toBeNull();
   });
+
+  test('returns null when a foreign or missing pet cannot be updated', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValue({ affectedRows: 0 }) };
+    const repository = new OnboardingPetUpdateRepository(dataSource);
+
+    await expect(repository.updatePet(7, 'foreign-pet', { name: 'Luna' })).resolves.toBeNull();
+    expect(dataSource.query).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE `id` = ? AND `user_id` = ? AND `deleted_at` IS NULL'),
+      ['Luna', 'foreign-pet', 7]
+    );
+  });
 });

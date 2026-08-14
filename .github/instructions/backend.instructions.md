@@ -9,8 +9,8 @@ description: "Padroes para API, servicos, infraestrutura e operacao do backend."
 
 - Todo endpoint de negocio novo deve usar o namespace versionado `/api/v1`.
 - Nao criar rotas de negocio com prefixos legados como `/wp-json`, `/custom`, `/test` ou `/jobs`.
-- Rotas existentes incluem `/api/v1/situacao`, `/api/v1/documentos` e `/api/v1/alterar-situacao-documento`.
-- Jobs HTTP usam `/api/v1/jobs/...`; rotas auxiliares de diagnostico usam `/api/v1/test/...`.
+- Rotas de onboarding, subscriptions, checkout, frete e catalogo devem permanecer no namespace `/api/v1`.
+- Rotas auxiliares de diagnostico, quando indispensaveis, devem ser versionadas e separadas do contrato de negocio.
 - Preserve os health checks `/health`, `/readiness`, `/liveness`, `/health/detailed` e as metricas em `/metrics`.
 
 ## Camadas e observabilidade
@@ -18,9 +18,11 @@ description: "Padroes para API, servicos, infraestrutura e operacao do backend."
 - `src/index.js` inicializa a aplicacao, o banco e o modo de execucao.
 - `src/api` contem HTTP; `src/services` contem regras de negocio e orquestracao; `src/infrastructure` contem acesso a dados, scheduler e event processor.
 - Nao registre dados sensiveis; respeite o redaction do logger.
-- Em scheduler/worker, use logs estruturados com contexto de `correlationId`, `cronId` e `executionId`.
+- Em fluxos assincronos, use logs estruturados com contexto de `correlationId` ou `executionId`.
 
-## Operacao
+## Dominio ecommerce
 
-- Compose: `api` usa `MODE=http`, `cron` usa `MODE=cron` e `worker` usa `MODE=worker`.
-- Dockerfile e manifestos Kubernetes existentes devem ser preservados; nao alterar infraestrutura sem necessidade direta.
+- Recursos de onboarding e subscriptions pertencem ao usuario autenticado e devem filtrar ownership diretamente no SQL/TypeORM.
+- Checkout e ACK de PaymentIntent devem chamar `AuthService.assertCriticalOperationAllowed(userId)` imediatamente antes da operacao.
+- Nao alterar contratos de Stripe, frete, checkout ou subscriptions ao corrigir uma rota de pets sem necessidade direta.
+- Dockerfile e compose existentes devem ser preservados; nao alterar infraestrutura sem necessidade direta.

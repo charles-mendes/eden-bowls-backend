@@ -1,8 +1,7 @@
 # Copilot Instructions
 
 ## Objetivo do sistema
-- Microsservico Node.js para validacao de documentos academicos.
-- Orquestra integracoes com Prime API, Azure Blob Storage, Azure Event Hub e servico corporativo de validacao.
+- Microsservico Node.js para para vender produtos de ecommerce, com checkout, calculo de frete, integracao com Stripe
 - Mantem trilha de processamento e status em MySQL.
 
 ## Stack principal
