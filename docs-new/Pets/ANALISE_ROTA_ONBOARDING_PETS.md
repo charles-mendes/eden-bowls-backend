@@ -74,11 +74,16 @@ Path params:
 
 Query params:
 
-- nenhum
+- `country` opcional: `US` | `BR`
+- `domain` opcional: `com` | `com.br`
 
 Headers:
 
 - Authorization: Bearer token (obrigatorio)
+- `X-Eden-Country`: `US` | `BR` (opcional)
+- `X-Eden-Domain`: `com` | `com.br` (opcional)
+
+O mercado segue a regra da Home: `.com` = US/USD/`lb`, `.com.br` = BR/BRL/`kg`. Dominio vence pais. Sem contexto, o fallback e US.
 
 Body:
 
@@ -194,8 +199,9 @@ O frontend consome `data.pets` e mapeia para `PetDraft` em `mapSessionPetToDraft
 3. Sem merge historico
 - nao busca pets em pedidos, usermeta ou outras sessoes.
 
-4. Sem conversao de peso
-- `weight` e `weight_input` sao o mesmo numero persistido; nao ha `weight_kg`.
+4. Peso no formato do pais escolhido
+- a listagem converte `weight` / `weight_input` / `weight_unit` para a unidade do mercado (`kg` no BR, `lb` no US).
+- a resposta tambem inclui `country` e `currency`.
 
 5. Sem inferencia de porte
 - `size` volta exatamente como esta gravado.

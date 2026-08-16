@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { parseRequestMarket } = require('../validators/market.validator');
 
 function registerOnboardingPetsRoutes(app, dependencies = {}) {
   app.get('/api/v1/onboarding/pets', async (request, response, next) => {
@@ -11,8 +12,10 @@ function registerOnboardingPetsRoutes(app, dependencies = {}) {
         throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
       }
 
+      const market = parseRequestMarket(request);
       const result = await dependencies.onboardingPetsService.listPets({
-        userId: request.currentUser.id
+        userId: request.currentUser.id,
+        market
       });
 
       response.status(200).json(result);

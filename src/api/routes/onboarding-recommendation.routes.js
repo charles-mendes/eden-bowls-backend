@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { parseRequestMarket } = require('../validators/market.validator');
 
 function registerOnboardingRecommendationRoutes(app, dependencies = {}) {
   app.get('/api/v1/onboarding/recommendation', async (request, response, next) => {
@@ -7,8 +8,10 @@ function registerOnboardingRecommendationRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Onboarding recommendation service is not available.');
       }
 
+      const market = parseRequestMarket(request);
       const result = await dependencies.onboardingRecommendationService.getRecommendation({
-        userId: request.currentUser && request.currentUser.id ? request.currentUser.id : null
+        userId: request.currentUser && request.currentUser.id ? request.currentUser.id : null,
+        market
       });
 
       response.status(200).json(result);

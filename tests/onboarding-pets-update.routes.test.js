@@ -1,6 +1,7 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
+const { MARKETS } = require('../src/core/market');
 
 const corsOrigins = ['http://localhost:5173'];
 const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
@@ -32,7 +33,8 @@ describe('onboarding pets update routes', () => {
     expect(onboardingPetUpdateService.updatePet).toHaveBeenCalledWith({
       userId: 7,
       petId: 'pet-1',
-      payload: { name: 'Milo', age_years: 3, weight_unit: 'kg' }
+      payload: { name: 'Milo', age_years: 3, weight_unit: 'kg' },
+      market: MARKETS.US
     });
   });
 

@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { MARKETS } = require('../../core/market');
 
 const petSchema = z.object({
   local_id: z.string().trim().min(1).max(36),
@@ -14,8 +15,19 @@ const petSchema = z.object({
   neutered: z.boolean().optional()
 });
 
-function parseOnboardingPetsSyncInput(payload = {}) {
-  return z.object({ pets: z.array(petSchema).min(1).max(20) }).parse(payload || {});
+function parseOnboardingPetsSyncInput(payload = {}, market = MARKETS.US) {
+  const parsed = z.object({
+    pets: z.array(petSchema).min(1).max(20),
+    country: z.enum(['US', 'BR']).optional(),
+    domain: z.enum(['com', 'com.br']).optional()
+  }).parse(payload || {});
+
+  return {
+    pets: parsed.pets.map((pet) => ({
+      ...pet,
+      weight_unit: pet.weight_unit || market.weightUnit
+    }))
+  };
 }
 
 module.exports = {

@@ -1,6 +1,9 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
+const { MARKETS } = require('../src/core/market');
+const { OnboardingRecommendationService } = require('../src/services/onboarding-recommendation.service');
+const { OnboardingRecommendationRepository } = require('../src/infrastructure/repositories/onboarding-recommendation.repository');
 
 const corsOrigins = ['http://localhost:5173'];
 const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
@@ -34,7 +37,7 @@ describe('onboarding recommendation routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.session_id).toBeUndefined();
     expect(response.body.data.country).toBe('US');
-    expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: 7 });
+    expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: 7, market: MARKETS.US });
   });
 
   test('returns a recommendation without bearer authentication', async () => {
@@ -49,6 +52,23 @@ describe('onboarding recommendation routes', () => {
     const response = await request(app).get('/api/v1/onboarding/recommendation');
 
     expect(response.status).toBe(200);
-    expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: null });
+    expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: null, market: MARKETS.US });
+  });
+
+  test('returns Brazil labels when the chosen market is BR', async () => {
+    const app = createApp({
+      onboardingRecommendationService: new OnboardingRecommendationService(new OnboardingRecommendationRepository()),
+      corsOrigins,
+      jwt
+    });
+
+    const response = await request(app)
+      .get('/api/v1/onboarding/recommendation')
+      .set('X-Eden-Domain', 'com.br');
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.country).toBe('BR');
+    expect(response.body.data.simplified.labels.monthly).toBe('Por mês');
+    expect(response.body.data.simplified.pets[0].packs.formatted).toBe('2 pacotes');
   });
 });

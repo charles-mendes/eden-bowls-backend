@@ -1,12 +1,13 @@
 const { HttpError } = require('../core/http-error');
 const crypto = require('crypto');
+const { MARKETS, formatPetForMarket } = require('../core/market');
 
 class OnboardingPetCreateService {
   constructor(repository) {
     this.repository = repository;
   }
 
-  async createPet({ userId, payload }) {
+  async createPet({ userId, payload, market = MARKETS.US }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding pet create repository is not available.');
     }
@@ -19,7 +20,10 @@ class OnboardingPetCreateService {
 
     return {
       success: true,
-      data: result
+      data: {
+        country: market.country,
+        pet: formatPetForMarket(result.pet, market)
+      }
     };
   }
 }

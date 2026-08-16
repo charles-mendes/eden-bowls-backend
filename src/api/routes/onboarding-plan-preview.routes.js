@@ -1,5 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const rateLimit = require('express-rate-limit');
+const { parseRequestMarket } = require('../validators/market.validator');
 const { parseOnboardingPlanPreviewInput } = require('../validators/onboarding-plan-preview.validator');
 
 function registerOnboardingPlanPreviewRoutes(app, dependencies = {}) {
@@ -16,10 +17,12 @@ function registerOnboardingPlanPreviewRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Onboarding plan preview service is not available.');
       }
 
+      const market = parseRequestMarket(request, request.body || {});
       const payload = parseOnboardingPlanPreviewInput(request.body || {});
       const result = await dependencies.onboardingPlanPreviewService.previewPlan({
         userId: request.currentUser && request.currentUser.id ? request.currentUser.id : null,
         payload,
+        market
       });
 
       response.status(200).json(result);

@@ -1,7 +1,11 @@
+const { formatMass, formatPacks, resolveMarket } = require('../../core/market');
+
 class OnboardingRecommendationRepository {
-  async getRecommendation(userId) {
+  async getRecommendation(userId, marketInput) {
+    const market = marketInput && marketInput.country ? marketInput : resolveMarket(marketInput);
+
     return {
-      country: 'US',
+      country: market.country,
       recommendations: [
         {
           pet_id: 'pet-1',
@@ -25,20 +29,22 @@ class OnboardingRecommendationRepository {
         }
       },
       simplified: {
-        country: 'US',
+        country: market.country,
         period_days: 30,
-        labels: {
-          daily: 'Per day',
-          monthly: 'Per month',
-          packs: 'Packs'
-        },
+        labels: market.labels,
         pets: [
           {
             pet_id: 'pet-1',
             pet_name: 'Milo',
-            daily: { value: 200, unit: 'g', grams: 200, formatted: '200 g' },
-            monthly: { value: 6000, unit: 'g', grams: 6000, formatted: '6,000 g' },
-            packs: { count: 2, pack_size_grams: 500, pack_size_value: 2, pack_size_unit: 'pack', formatted: '2 packs' }
+            daily: { value: 200, unit: 'g', grams: 200, formatted: formatMass(200, market) },
+            monthly: { value: 6000, unit: 'g', grams: 6000, formatted: formatMass(6000, market) },
+            packs: {
+              count: 2,
+              pack_size_grams: 500,
+              pack_size_value: 2,
+              pack_size_unit: 'pack',
+              formatted: formatPacks(2, market)
+            }
           }
         ]
       },

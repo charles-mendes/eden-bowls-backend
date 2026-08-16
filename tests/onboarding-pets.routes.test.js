@@ -1,6 +1,7 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
+const { MARKETS } = require('../src/core/market');
 
 describe('onboarding pets routes', () => {
   const corsOrigins = ['http://localhost:5173'];
@@ -77,7 +78,26 @@ describe('onboarding pets routes', () => {
       }
     });
     expect(onboardingPetsService.listPets).toHaveBeenCalledWith({
-      userId: 7
+      userId: 7,
+      market: MARKETS.US
+    });
+  });
+
+  test('forwards the Brazil market when the country header is sent', async () => {
+    const onboardingPetsService = {
+      listPets: jest.fn().mockResolvedValue({ success: true, data: { country: 'BR', pets: [] } })
+    };
+    const app = createApp({ onboardingPetsService, corsOrigins, jwt: { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' } });
+
+    const response = await request(app)
+      .get('/api/v1/onboarding/pets')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .set('X-Eden-Country', 'BR');
+
+    expect(response.status).toBe(200);
+    expect(onboardingPetsService.listPets).toHaveBeenCalledWith({
+      userId: 7,
+      market: MARKETS.BR
     });
   });
 

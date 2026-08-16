@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { parseRequestMarket } = require('../validators/market.validator');
 const { parseOnboardingPetsSyncInput } = require('../validators/onboarding-pets-sync.validator');
 
 function registerOnboardingPetsSyncRoutes(app, dependencies = {}) {
@@ -12,10 +13,12 @@ function registerOnboardingPetsSyncRoutes(app, dependencies = {}) {
         throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
       }
 
-      const payload = parseOnboardingPetsSyncInput(request.body || {});
+      const market = parseRequestMarket(request, request.body || {});
+      const payload = parseOnboardingPetsSyncInput(request.body || {}, market);
       const result = await dependencies.onboardingPetsSyncService.syncPets({
         userId: request.currentUser.id,
-        payload
+        payload,
+        market
       });
 
       response.status(200).json(result);

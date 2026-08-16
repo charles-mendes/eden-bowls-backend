@@ -1,8 +1,14 @@
+const { resolveMarket } = require('../../core/market');
+
 class OnboardingPlanPreviewRepository {
-  async previewPlan(userId, payload = {}) {
+  async previewPlan(userId, payload = {}, marketInput) {
+    const market = marketInput && marketInput.country ? marketInput : resolveMarket(marketInput);
+    const currency = market.currency;
+
     return {
       subscription_term_months: payload.subscription_term_months || 1,
-      currency: 'USD',
+      country: market.country,
+      currency,
       totals: {
         grand_total: 20,
         grand_total_monthly: 20,
@@ -35,7 +41,7 @@ class OnboardingPlanPreviewRepository {
           pack_size_label: '500 g',
           variation_id: 100,
           product_id: 200,
-          currency: 'USD',
+          currency,
           unit_price: 10,
           line_total: 20
         }

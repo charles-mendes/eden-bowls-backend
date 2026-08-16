@@ -136,7 +136,8 @@ O frontend usa esse mapa para preencher `pet.petId`.
 - `pet_condition`: `ideal`
 - `neutered`: `false`
 
-4. Sem upload de imagem e sem conversao de peso.
+4. Sem upload de imagem.
+5. `weight_unit` omitido usa o mercado da Home (`lb` em US, `kg` em BR). Pais chega por body, query, `X-Eden-Country` ou `X-Eden-Domain`.
 
 ## Relacao com as outras rotas de pets
 

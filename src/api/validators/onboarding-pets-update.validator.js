@@ -15,7 +15,9 @@ const onboardingPetUpdatePayloadSchema = z.object({
   ageMonths: z.union([z.string(), z.number()]).optional(),
   weightUnit: z.enum(['kg', 'lb']).optional(),
   activityLevel: z.enum(['low', 'medium', 'high']).optional(),
-  weightCondition: z.enum(['underweight', 'ideal', 'overweight']).optional()
+  weightCondition: z.enum(['underweight', 'ideal', 'overweight']).optional(),
+  country: z.enum(['US', 'BR']).optional(),
+  domain: z.enum(['com', 'com.br']).optional()
 });
 
 function parseOnboardingPetUpdateInput(payload = {}) {

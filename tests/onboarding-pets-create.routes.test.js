@@ -1,6 +1,7 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
+const { MARKETS } = require('../src/core/market');
 
 describe('onboarding pets create routes', () => {
   const corsOrigins = ['http://localhost:5173'];
@@ -57,7 +58,47 @@ describe('onboarding pets create routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.pet.id).toBe('pet-1');
     expect(response.body.data.session).toBeUndefined();
-    expect(onboardingPetCreateService.createPet).toHaveBeenCalledWith({ userId: 7, payload });
+    expect(onboardingPetCreateService.createPet).toHaveBeenCalledWith({ userId: 7, payload, market: MARKETS.US });
+  });
+
+  test('defaults weight_unit to lb for the US market', async () => {
+    const onboardingPetCreateService = {
+      createPet: jest.fn().mockResolvedValue({ success: true, data: { pet: { id: 'pet-1', weight_unit: 'lb' } } })
+    };
+    const app = createApp({ onboardingPetCreateService, corsOrigins, jwt });
+
+    const response = await request(app)
+      .post('/api/v1/onboarding/pets')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .set('X-Eden-Country', 'US')
+      .send({ name: 'Milo', weight: 22 });
+
+    expect(response.status).toBe(200);
+    expect(onboardingPetCreateService.createPet).toHaveBeenCalledWith({
+      userId: 7,
+      payload: expect.objectContaining({ name: 'Milo', weight: 22, weight_unit: 'lb' }),
+      market: MARKETS.US
+    });
+  });
+
+  test('defaults weight_unit to kg for the Brazil market', async () => {
+    const onboardingPetCreateService = {
+      createPet: jest.fn().mockResolvedValue({ success: true, data: { pet: { id: 'pet-1', weight_unit: 'kg' } } })
+    };
+    const app = createApp({ onboardingPetCreateService, corsOrigins, jwt });
+
+    const response = await request(app)
+      .post('/api/v1/onboarding/pets')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .set('X-Eden-Domain', 'com.br')
+      .send({ name: 'Milo', weight: 10 });
+
+    expect(response.status).toBe(200);
+    expect(onboardingPetCreateService.createPet).toHaveBeenCalledWith({
+      userId: 7,
+      payload: expect.objectContaining({ name: 'Milo', weight: 10, weight_unit: 'kg' }),
+      market: MARKETS.BR
+    });
   });
 
   test('returns 401 without bearer authentication', async () => {

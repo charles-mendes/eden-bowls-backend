@@ -5,7 +5,7 @@ class OnboardingDiscountEligibilityService {
     this.repository = repository;
   }
 
-  async getEligibility({ userId }) {
+  async getEligibility({ userId, market }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding discount eligibility repository is not available.');
     }

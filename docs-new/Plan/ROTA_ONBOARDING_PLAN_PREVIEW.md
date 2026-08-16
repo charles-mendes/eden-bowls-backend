@@ -47,7 +47,7 @@ Diferenca essencial para `plan-selection`: preview nao grava o plano no usuario;
 | Pricing / catalogo / recommendation | stub |
 | Desconto no first month | stub (`first_month_total` = `grand_total`) |
 
-O pricing stub ignora sabores/pesos reais e devolve sempre `USD` / total `20`.
+O pricing stub ignora sabores/pesos reais e devolve total `20`. A moeda agora segue o mercado da Home: `USD` em `.com` / `US`, `BRL` em `.com.br` / `BR`.
 
 ## Endpoint, controller e permissao
 
@@ -277,7 +277,7 @@ const onboardingPlanPreviewService = new OnboardingPlanPreviewService(
 
 ## Regras de preco no stub
 
-- `currency` sempre `USD`
+- `currency` e `country` do mercado escolhido (`USD`/`US` ou `BRL`/`BR`)
 - `grand_total` / `first_month_total` sempre `20`
 - `subscription_term_months` ecoa o payload (default `1`)
 - line item fixo: chicken, 2 un, 500 g, `unit_price` 10

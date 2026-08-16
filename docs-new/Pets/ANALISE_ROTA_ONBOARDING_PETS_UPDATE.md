@@ -153,7 +153,6 @@ Nao ha o erro WordPress `invalid_pet_update` para body vazio.
 
 - faixa de idade
 - faixa de peso
-- unidade de peso por pais
 - revalidacao do pet consolidado
 - limpeza de `size` quando `breed` muda
 - upload/substituicao de imagem
@@ -215,9 +214,10 @@ A resposta atual nao inclui `session`.
 3. Soft-deleted nao pode ser editado
 - a clausula `deleted_at IS NULL` impede mutacao.
 
-4. Peso sem conversao
-- `weight` do payload vira `weight_input`
-- a leitura devolve o mesmo valor em `weight_input` e `weight`
+4. Peso no formato do pais escolhido
+- `weight` do payload vira `weight_input` como enviado
+- a resposta converte `weight` / `weight_unit` para o mercado (`kg` no BR, `lb` no US)
+- pais chega por body, query, `X-Eden-Country` ou `X-Eden-Domain`
 
 5. Aliases camelCase
 - o validator aceita os nomes usados em formularios antigos.

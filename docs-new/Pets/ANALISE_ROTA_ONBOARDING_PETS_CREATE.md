@@ -120,7 +120,7 @@ Se o campo nao vier, o validator preenche:
 - `age_years`: `0`
 - `age_months`: `0`
 - `weight`: `0`
-- `weight_unit`: `kg`
+- `weight_unit`: unidade do mercado (`lb` em US, `kg` em BR)
 - `size`: `medium`
 - `activity_level`: `medium`
 - `pet_condition`: `ideal`
@@ -130,9 +130,10 @@ Nao ha hoje as validacoes fortes do WordPress:
 
 - faixa de idade 0..30 / 0..11
 - faixa de peso 0.1..200
-- unidade obrigatoria por pais (US=`lb`, BR=`kg`)
 - campos obrigatorios de dominio
 - upload de imagem
+
+A unidade default agora respeita o mercado da Home: omitir `weight_unit` em `.com` grava `lb`; em `.com.br` grava `kg`. Pais chega por `country` no body, query, `X-Eden-Country` ou `X-Eden-Domain`.
 
 ## Fluxo da requisicao
 

@@ -130,6 +130,8 @@ sequenceDiagram
 
 O backend aceita qualquer objeto. Campos extras no body tambem sao persistidos.
 
+O service acrescenta `country` e `currency` do mercado da Home (`.com` = US/USD, `.com.br` = BR/BRL) antes de gravar. Pais pode vir no body, query, `X-Eden-Country` ou `X-Eden-Domain`.
+
 No legado o service montava `catalog_pricing`, `flavors_by_pet` e `validated_with`. Isso **nao** e reconstruido no Node: so o que o cliente mandar e gravado.
 
 ## Validacoes

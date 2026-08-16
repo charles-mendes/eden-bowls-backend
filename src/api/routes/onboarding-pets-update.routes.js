@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { parseRequestMarket } = require('../validators/market.validator');
 const { parseOnboardingPetUpdateInput } = require('../validators/onboarding-pets-update.validator');
 
 function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
@@ -12,11 +13,13 @@ function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
         throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
       }
 
+      const market = parseRequestMarket(request, request.body || {});
       const payload = parseOnboardingPetUpdateInput(request.body || {});
       const result = await dependencies.onboardingPetUpdateService.updatePet({
         userId: request.currentUser.id,
         petId: request.params.petId,
-        payload
+        payload,
+        market
       });
 
       response.status(200).json(result);

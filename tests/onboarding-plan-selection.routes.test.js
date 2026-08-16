@@ -1,6 +1,7 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
+const { MARKETS } = require('../src/core/market');
 
 const corsOrigins = ['http://localhost:5173'];
 const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
@@ -31,7 +32,11 @@ describe('onboarding plan selection routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.session_id).toBeUndefined();
     expect(response.body.data.plan_selection.pets).toHaveLength(1);
-    expect(onboardingPlanSelectionService.setPlanSelection).toHaveBeenCalledWith({ userId: 7, payload });
+    expect(onboardingPlanSelectionService.setPlanSelection).toHaveBeenCalledWith({
+      userId: 7,
+      payload,
+      market: MARKETS.US
+    });
   });
 
   test('accepts a plan selection without bearer authentication', async () => {
@@ -49,7 +54,8 @@ describe('onboarding plan selection routes', () => {
     expect(response.status).toBe(200);
     expect(onboardingPlanSelectionService.setPlanSelection).toHaveBeenCalledWith({
       userId: null,
-      payload
+      payload,
+      market: MARKETS.US
     });
   });
 });

@@ -1,5 +1,6 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
+const { MARKETS } = require('../src/core/market');
 
 describe('public onboarding plan preview route', () => {
   const payload = {
@@ -28,7 +29,29 @@ describe('public onboarding plan preview route', () => {
     expect(response.status).toBe(200);
     expect(onboardingPlanPreviewService.previewPlan).toHaveBeenCalledWith({
       userId: null,
-      payload
+      payload,
+      market: MARKETS.US
+    });
+  });
+
+  test('uses BRL when the Brazil market is selected', async () => {
+    const onboardingPlanPreviewService = {
+      previewPlan: jest.fn().mockResolvedValue({
+        success: true,
+        data: { currency: 'BRL', quote_id: 'q_1' }
+      })
+    };
+    const app = createApp({ onboardingPlanPreviewService, corsOrigins: ['http://localhost:5173'] });
+
+    const response = await request(app)
+      .post('/api/v1/onboarding/plan/preview')
+      .send({ ...payload, country: 'BR' });
+
+    expect(response.status).toBe(200);
+    expect(onboardingPlanPreviewService.previewPlan).toHaveBeenCalledWith({
+      userId: null,
+      payload: { ...payload, country: 'BR' },
+      market: MARKETS.BR
     });
   });
 

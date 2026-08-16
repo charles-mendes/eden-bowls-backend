@@ -29,7 +29,7 @@ class OnboardingPlanPreviewService {
     this.quoteTtlSeconds = Number(options.quoteTtlSeconds || DEFAULT_QUOTE_TTL_SECONDS);
   }
 
-  async previewPlan({ userId = null, payload }) {
+  async previewPlan({ userId = null, payload, market }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding plan preview repository is not available.');
     }
@@ -38,7 +38,7 @@ class OnboardingPlanPreviewService {
       throw new HttpError(503, 'Onboarding quotes repository is not available.');
     }
 
-    const data = await this.repository.previewPlan(userId, payload);
+    const data = await this.repository.previewPlan(userId, payload, market);
     const expiresAt = new Date(Date.now() + this.quoteTtlSeconds * 1000);
     const payloadHash = hashPayload(payload);
     const quote = await this.quotesRepository.createQuote({

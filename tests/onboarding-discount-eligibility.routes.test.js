@@ -1,6 +1,7 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
+const { MARKETS } = require('../src/core/market');
 
 const corsOrigins = ['http://localhost:5173'];
 const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
@@ -25,7 +26,7 @@ describe('onboarding discount eligibility routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ success: true, data: { validated: true, eligible: true, reason: null } });
-    expect(onboardingDiscountEligibilityService.getEligibility).toHaveBeenCalledWith({ userId: 7 });
+    expect(onboardingDiscountEligibilityService.getEligibility).toHaveBeenCalledWith({ userId: 7, market: MARKETS.US });
   });
 
   test('returns eligibility without bearer authentication', async () => {
@@ -44,6 +45,6 @@ describe('onboarding discount eligibility routes', () => {
       success: true,
       data: { validated: false, eligible: null, reason: 'NOT_AUTHENTICATED' }
     });
-    expect(onboardingDiscountEligibilityService.getEligibility).toHaveBeenCalledWith({ userId: null });
+    expect(onboardingDiscountEligibilityService.getEligibility).toHaveBeenCalledWith({ userId: null, market: MARKETS.US });
   });
 });

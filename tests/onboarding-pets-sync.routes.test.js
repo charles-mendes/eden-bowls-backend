@@ -1,6 +1,7 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
+const { MARKETS } = require('../src/core/market');
 
 describe('onboarding pets sync routes', () => {
   const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
@@ -24,7 +25,8 @@ describe('onboarding pets sync routes', () => {
     expect(response.status).toBe(200);
     expect(onboardingPetsSyncService.syncPets).toHaveBeenCalledWith({
       userId: 7,
-      payload: { pets: [{ local_id: 'local-1', name: 'Luna' }] }
+      payload: { pets: [{ local_id: 'local-1', name: 'Luna', weight_unit: 'lb' }] },
+      market: MARKETS.US
     });
   });
 

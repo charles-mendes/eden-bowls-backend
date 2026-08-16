@@ -102,11 +102,17 @@ sequenceDiagram
 
 ## Parametros
 
-Path / query / body: nenhum.
+Path / body: nenhum.
+
+Query / headers de mercado (regra da Home):
+
+- `country=US|BR` ou `domain=com|com.br`
+- `X-Eden-Country` / `X-Eden-Domain`
 
 Contexto injetado:
 
 - `userId` = `request.currentUser.id`
+- `market` resolvido do pais/dominio escolhido (`.com` = US, `.com.br` = BR)
 
 ## Validacoes
 
@@ -228,7 +234,7 @@ export async function fetchOnboardingRecommendation(authToken?: string) {
 | GET com side effect | hidrata `questionnaire_json` e salva | sem escrita |
 | Calculadora nutricional | `NutritionRecommendationService` | stub |
 | Packaging / SKU | algoritmo 300g/500g + WooCommerce | payload fixo, sem `checkout_items` |
-| Pais / labels | BR/US a partir da sessao | sempre `US` no stub |
+| Pais / labels | BR/US a partir da sessao | mercado da Home; fallback `US` |
 
 ## Testes existentes
 

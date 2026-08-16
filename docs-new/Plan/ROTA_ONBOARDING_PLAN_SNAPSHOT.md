@@ -100,7 +100,14 @@ sequenceDiagram
 
 ## Parametros
 
-Nenhum path/query/body. Contexto: `userId` do JWT.
+Nenhum path/body. Contexto: `userId` do JWT + mercado da Home.
+
+Query / headers:
+
+- `country=US|BR` ou `domain=com|com.br`
+- `X-Eden-Country` / `X-Eden-Domain`
+
+Regra: `.com` = US/USD/labels EN; `.com.br` = BR/BRL/labels PT. Dominio vence pais. Sem contexto, fallback US.
 
 ## Validacoes
 
@@ -225,7 +232,7 @@ O front exige `flavor_options` (ou equivalente). Sem sabores, trata como contrat
 | `session_id` | presente | removido |
 | GET com escrita | hidrata questionnaire | sem escrita |
 | Catalogo CMPB | obrigatorio; vazio = 502 | stub com 1 sabor |
-| Country/currency | BR/BRL ou US/USD | sempre US/USD no stub |
+| Country/currency | BR/BRL ou US/USD | mercado da Home (`country` / `domain` / header); fallback US/USD |
 | `plan_terms` | 10 / 25 / 40 | igual no stub |
 
 ## Testes existentes

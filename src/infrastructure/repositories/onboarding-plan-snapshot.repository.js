@@ -1,40 +1,37 @@
+const { MARKETS, formatMass, formatPacks, resolveMarket } = require('../../core/market');
+
+function buildConsumptionPet(market) {
+  return {
+    pet_id: 'pet-1',
+    pet_name: 'Milo',
+    daily: { value: 200, unit: 'g', grams: 200, formatted: formatMass(200, market) },
+    monthly: { value: 6000, unit: 'g', grams: 6000, formatted: formatMass(6000, market) },
+    packs: {
+      count: 2,
+      pack_size_grams: 500,
+      pack_size_value: 2,
+      pack_size_unit: 'pack',
+      formatted: formatPacks(2, market)
+    }
+  };
+}
+
 class OnboardingPlanSnapshotRepository {
-  async getSnapshot(userId) {
+  async getSnapshot(userId, marketInput) {
+    const market = marketInput && marketInput.country ? marketInput : resolveMarket(marketInput);
+    const pet = buildConsumptionPet(market);
+
     return {
-      country: 'US',
-      currency: 'USD',
-      labels: {
-        daily: 'Per day',
-        monthly: 'Per month',
-        packs: 'Packs'
-      },
+      country: market.country,
+      currency: market.currency,
+      labels: market.labels,
       consumption: {
-        labels: {
-          daily: 'Per day',
-          monthly: 'Per month',
-          packs: 'Packs'
-        },
-        pets: [
-          {
-            pet_id: 'pet-1',
-            pet_name: 'Milo',
-            daily: { value: 200, unit: 'g', grams: 200, formatted: '200 g' },
-            monthly: { value: 6000, unit: 'g', grams: 6000, formatted: '6,000 g' },
-            packs: { count: 2, pack_size_grams: 500, pack_size_value: 2, pack_size_unit: 'pack', formatted: '2 packs' }
-          }
-        ]
+        labels: market.labels,
+        pets: [pet]
       },
-      pets: [
-        {
-          pet_id: 'pet-1',
-          pet_name: 'Milo',
-          daily: { value: 200, unit: 'g', grams: 200, formatted: '200 g' },
-          monthly: { value: 6000, unit: 'g', grams: 6000, formatted: '6,000 g' },
-          packs: { count: 2, pack_size_grams: 500, pack_size_value: 2, pack_size_unit: 'pack', formatted: '2 packs' }
-        }
-      ],
+      pets: [pet],
       flavor_options: [
-        { key: 'chicken', label: 'Chicken' }
+        { key: 'chicken', label: market.flavorLabels.chicken }
       ],
       plan_terms: [
         { subscription_term_months: 1, discount_percent: 10 },
@@ -46,5 +43,6 @@ class OnboardingPlanSnapshotRepository {
 }
 
 module.exports = {
-  OnboardingPlanSnapshotRepository
+  OnboardingPlanSnapshotRepository,
+  MARKETS
 };

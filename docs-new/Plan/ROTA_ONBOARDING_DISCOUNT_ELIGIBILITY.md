@@ -119,7 +119,7 @@ sequenceDiagram
 
 ## Parametros
 
-Nenhum path/query/body. Contexto: `userId` do JWT.
+Nenhum path/body. Contexto: `userId` do JWT + mercado da Home (`country` / `domain` / `X-Eden-Country` / `X-Eden-Domain`). O contrato de elegibilidade nao muda por pais; pais invalido retorna 400.
 
 ## Validacoes
 

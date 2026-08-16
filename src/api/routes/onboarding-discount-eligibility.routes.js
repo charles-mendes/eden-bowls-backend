@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { parseRequestMarket } = require('../validators/market.validator');
 
 function registerOnboardingDiscountEligibilityRoutes(app, dependencies = {}) {
   app.get('/api/v1/onboarding/discount/eligibility', async (request, response, next) => {
@@ -7,8 +8,10 @@ function registerOnboardingDiscountEligibilityRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Onboarding discount eligibility service is not available.');
       }
 
+      const market = parseRequestMarket(request);
       const result = await dependencies.onboardingDiscountEligibilityService.getEligibility({
-        userId: request.currentUser && request.currentUser.id ? request.currentUser.id : null
+        userId: request.currentUser && request.currentUser.id ? request.currentUser.id : null,
+        market
       });
 
       response.status(200).json(result);

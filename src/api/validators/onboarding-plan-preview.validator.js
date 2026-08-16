@@ -10,7 +10,9 @@ const planPreviewPetSchema = z.object({
 
 const planPreviewPayloadSchema = z.object({
   subscription_term_months: z.union([z.literal(1), z.literal(3), z.literal(6)]),
-  pets: z.array(planPreviewPetSchema).min(1).max(20)
+  pets: z.array(planPreviewPetSchema).min(1).max(20),
+  country: z.enum(['US', 'BR']).optional(),
+  domain: z.enum(['com', 'com.br']).optional()
 });
 
 function parseOnboardingPlanPreviewInput(payload = {}) {
