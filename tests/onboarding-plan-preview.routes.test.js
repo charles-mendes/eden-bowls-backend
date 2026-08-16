@@ -1,5 +1,6 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
+const { HttpError } = require('../src/core/http-error');
 const { MARKETS } = require('../src/core/market');
 
 describe('public onboarding plan preview route', () => {
@@ -65,5 +66,31 @@ describe('public onboarding plan preview route', () => {
 
     expect(response.status).toBe(400);
     expect(onboardingPlanPreviewService.previewPlan).not.toHaveBeenCalled();
+  });
+
+  test('forwards semantic preview errors with a public code', async () => {
+    const onboardingPlanPreviewService = {
+      previewPlan: jest.fn().mockRejectedValue(new HttpError(
+        422,
+        'Plan preview payload is invalid.',
+        { code: 'invalid_plan_preview_payload', errors: { 'pets.0.selected_flavors': 'At least one flavor is required.' } }
+      ))
+    };
+    const app = createApp({ onboardingPlanPreviewService, corsOrigins: ['http://localhost:5173'] });
+
+    const response = await request(app)
+      .post('/api/v1/onboarding/plan/preview')
+      .send(payload);
+
+    expect(response.status).toBe(422);
+    expect(response.body).toEqual({
+      success: false,
+      message: 'Plan preview payload is invalid.',
+      code: 'invalid_plan_preview_payload',
+      data: {
+        status: 422,
+        errors: { 'pets.0.selected_flavors': 'At least one flavor is required.' }
+      }
+    });
   });
 });

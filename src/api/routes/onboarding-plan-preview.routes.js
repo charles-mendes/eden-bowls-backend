@@ -30,7 +30,12 @@ function registerOnboardingPlanPreviewRoutes(app, dependencies = {}) {
       if (error instanceof HttpError && error.details && error.details.code) {
         response.status(error.statusCode).json({
           success: false,
-          message: error.message
+          message: error.message,
+          code: error.details.code,
+          data: {
+            status: error.statusCode,
+            errors: error.details.errors || undefined
+          }
         });
         return;
       }

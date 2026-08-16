@@ -114,15 +114,18 @@ async function bootstrap() {
   const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository);
   const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
   const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository);
-  const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository();
+  const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository);
+  const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
+  const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
+    recommendationRepository: onboardingRecommendationRepository,
+    productsRepository
+  });
   const onboardingQuotesRepository = new OnboardingQuotesRepository(dataSource);
   const onboardingPlanPreviewService = new OnboardingPlanPreviewService(onboardingPlanPreviewRepository, {
     quotesRepository: onboardingQuotesRepository
   });
   const onboardingPlanSelectionRepository = new OnboardingPlanSelectionRepository(dataSource);
   const onboardingPlanSelectionService = new OnboardingPlanSelectionService(onboardingPlanSelectionRepository);
-  const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository);
-  const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
   const onboardingPlanSnapshotRepository = new OnboardingPlanSnapshotRepository({
     recommendationRepository: onboardingRecommendationRepository
   });

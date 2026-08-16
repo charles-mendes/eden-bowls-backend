@@ -1,16 +1,28 @@
-# Rota atual: Onboarding Plan Preview
+# POST `/api/v1/onboarding/plan/preview`
 
-## Escopo
+Logica da rota Node de preview de preco mensal do plano. Rota **publica**: JWT opcional, sem `session_id`, sem `x-session-token`.
 
-Rota atual no backend Node:
+O pricing usa o catalogo `flavors` (fallback `listFlavorVariations`). Convertido do legado WordPress (`POST /custom/v1/onboarding/session/{session_id}/plan/preview`).
 
-- `POST /api/v1/onboarding/plan/preview`
+---
 
-Origem no front-end:
+## 1) Identidade
 
-- `eden-bowls/src/services/onboardingApi.ts` (`fetchPlanPreviewFromApi`)
+```
+POST /api/v1/onboarding/plan/preview
+```
 
-Arquivos principais:
+| Item | Valor |
+|---|---|
+| Metodo | `POST` |
+| Path param | nenhum |
+| Auth | publica; JWT opcional |
+| Rate limit | 30 req / 60s (`express-rate-limit`) |
+| Registrar | `registerOnboardingPlanPreviewRoutes` |
+| Validator | `parseOnboardingPlanPreviewInput` (Zod) + regras semanticas abaixo |
+| Service | `OnboardingPlanPreviewService.previewPlan` (`persist = false`) |
+
+Arquivos:
 
 - `src/api/routes/onboarding-plan-preview.routes.js`
 - `src/api/validators/onboarding-plan-preview.validator.js`
@@ -19,74 +31,20 @@ Arquivos principais:
 - `src/infrastructure/repositories/onboarding-quotes.repository.js`
 - `src/infrastructure/repositories/onboarding-recommendation.repository.js`
 - `src/infrastructure/repositories/products.repository.js`
-- `src/infrastructure/entities/onboarding-quote.entity.js`
-- `src/infrastructure/migrations/1700000000006-create-onboarding-quotes-table.js`
 - `src/core/flavors.js`
 - `src/core/simplified-consumption.js`
-- `src/core/plan-catalog-pricing.js`
-- `tests/onboarding-plan-preview.routes.test.js`
-- `tests/onboarding-plan-preview.service.test.js`
-- `tests/onboarding-plan-preview.repository.test.js`
-- `tests/plan-catalog-pricing.test.js`
-- `tests/onboarding-quotes.repository.test.js`
 
-Rota legado WordPress (substituida):
+Objetivo: devolver o **preco mensal** da assinatura para a UI `/mes` (ex.: `R$ 299 /mês`) **sem persistir** `plan_selection`.
 
-- `POST /custom/v1/onboarding/session/:sessionId/plan/preview`
+O Node tambem grava um **quote** temporario em `onboarding_quotes` (`quote_id`, TTL 10 min) para o checkout reutilizar o mesmo pricing. Isso nao existia no WordPress.
 
-Nao ha `session_id` na URL nem na resposta. Nao ha `x-session-token`.
-
-## Responsabilidade
-
-Devolver o **preco mensal** da assinatura para a UI `/mes` **sem persistir** `plan_selection`, e gravar um **quote** temporario em `onboarding_quotes` (TTL 10 min) para o checkout reutilizar o mesmo pricing.
-
-Diferenca essencial para `plan-selection`: preview nao grava o plano no usuario; so cria quote.
-
-Esta rota **nao** devolve consumo (`kg/mês`, packs). Consumo vem de `GET /api/v1/onboarding/recommendation` ou `GET /api/v1/onboarding/plan/snapshot`.
+Nao devolve consumo (`kg/mês`, packs). Consumo vem de `GET /api/v1/onboarding/recommendation` ou `GET /api/v1/onboarding/plan/snapshot`.
 
 Nao confundir com `POST /api/v1/onboarding/subscription/preview` (imposto Stripe, somente US).
 
-## Estado de implementacao
+---
 
-| Parte | Status |
-|---|---|
-| Endpoint publico + rate limit 30/min | implementado |
-| Mercado (`country` / `domain` / headers) | implementado |
-| Validacao Zod do payload | implementada |
-| Persistencia de quote | implementada |
-| Pricing / catalogo / recommendation | implementado |
-| Regras semanticas 422 (sabores/pesos/match) | implementado |
-| Contrato 502 (subtotal / totais por pet) | implementado |
-| Desconto de prazo no first month | **nao aplicar** (mesmo no contrato final) |
-
-O repository casa sabores/pesos com o catalogo `flavors` (fallback `listFlavorVariations`) e devolve o subtotal real. A moeda segue o mercado da Home: `USD` em `.com` / `US`, `BRL` em `.com.br` / `BR`.
-
-O restante deste documento e o contrato Node de como o pricing calcula.
-
-## Endpoint, controller e permissao
-
-### Registro
-
-- Path: `/api/v1/onboarding/plan/preview`
-- Method: `POST`
-- Rate limit proprio: 30 req / 60s (`express-rate-limit`)
-- Registrar: `registerOnboardingPlanPreviewRoutes`
-- Validator: `parseOnboardingPlanPreviewInput` (Zod) + regras semanticas no service
-- Service: `OnboardingPlanPreviewService.previewPlan` (`persist = false`)
-
-### Controller
-
-1. Exige service injetado (`503`).
-2. Resolve mercado com `parseRequestMarket(request, body)`.
-3. Valida body com `parseOnboardingPlanPreviewInput` (Zod).
-4. Chama `previewPlan({ userId, payload, market })`.
-   - `userId` vem de `request.currentUser.id` se houver JWT.
-   - Sem JWT, `userId` e `null`.
-5. Responde `200` com o envelope.
-
-**Nao exige autenticacao.** As cinco rotas de plano sao publicas; esta e a que tambem persiste quote com `user_id` nulo.
-
-## Autenticacao
+## 2) Autenticacao
 
 JWT e opcional. A rota **nao** devolve `401` sem Bearer.
 
@@ -94,15 +52,98 @@ JWT e opcional. A rota **nao** devolve `401` sem Bearer.
 Authorization: Bearer <jwt-de-usuario>
 ```
 
-- Sem JWT: `userId = null`. Preview publico. Quote com `user_id = null`. Precificacao usa so o body + catalogo (nao exige pets no banco). Pack size cai no fallback `300` g.
-- Com JWT valido: `userId = request.currentUser.id`. Quote associado ao usuario. Pack size e match de pets vêm da recommendation em `onboarding_pets`.
+- Sem JWT: `userId = null`. Preview publico. Quote com `user_id = null`. Precificacao usa so o body + catalogo (nao exige pets no banco).
+- Com JWT valido: `userId = request.currentUser.id`. Quote associado ao usuario. Pack size vem da recommendation dos pets em `onboarding_pets`.
 - JWT invalido: o middleware rejeita antes da rota.
 
-Nao ha `x-session-token`. Nao ha `session_id`.
+Nao ha `x-session-token`. Nao ha `session_id` na URL nem na resposta.
 
-## Fluxo da requisicao
+O front chama com ou sem Bearer (`fetchPlanPreviewFromApi(payload, authToken?)`).
 
-Contrato Node (o que o service/repository devem fazer):
+---
+
+## 3) Body
+
+JSON (`Content-Type: application/json`).
+
+```json
+{
+  "subscription_term_months": 1,
+  "pets": [
+    {
+      "pet_id": "pet-1",
+      "pet_name": "Luna",
+      "enabled": true,
+      "selected_flavors": ["beef"],
+      "flavor_weights": [8]
+    }
+  ]
+}
+```
+
+Mercado (mesmo contrato das outras rotas de plano):
+
+- body `country=US|BR` / `domain=com|com.br`
+- headers `X-Eden-Country` / `X-Eden-Domain`
+- `.com` = US/USD; `.com.br` = BR/BRL; dominio vence pais; fallback US
+
+### 3.1 Campos
+
+| Campo | Obrigatorio | Regras |
+|---|---|---|
+| `subscription_term_months` | sim | Inteiro. Somente `1`, `3` ou `6`. |
+| `pets` | sim | Array nao vazio, max 20. |
+| `pets[].enabled` | sim (Zod) | Boolean. Se `false`, o pet e ignorado. |
+| `pets[].pet_id` | recomendado | Usado para casar com a recommendation quando ha JWT. |
+| `pets[].pet_name` | sim | Match case-insensitive se `pet_id` nao casar. |
+| `pets[].selected_flavors` | sim (pet enabled) | Array nao vazio de slugs (`beef`, `fish`, `pork`, `turkey`). |
+| `pets[].flavor_weights` | sim (pet enabled) | Array numerico com **o mesmo length** de `selected_flavors`. Pelo menos um valor `> 0`. |
+
+### 3.2 Semantica de `flavor_weights`
+
+Cada peso e **quantidade de packs** daquele sabor (nao percentual).
+
+Pipeline:
+
+1. `weight` do indice `i` associa ao sabor `selected_flavors[i]`.
+2. Pesos `<= 0` sao descartados.
+3. Slug do sabor e normalizado (`trim` + `toLowerCase` + slug).
+4. Pesos do mesmo sabor sao somados.
+5. Quantidade enviada ao catalogo: `(int) Math.round(weight)`.
+
+O tamanho do pack **nao vem do body**.
+
+- Com JWT: `simplified.pets[].packs.pack_size_grams` da recommendation (300 g ou 500 g).
+- Sem JWT: fallback `300` g (mesmo pack da UI anonima).
+
+Regra do pack recomendado (30 dias, igual a `selectLocalPackForMonth`):
+
+```
+usa_pack_500    = (monthly_grams / 300) > 8
+pack_size_grams = usa_pack_500 ? 500 : 300
+```
+
+### 3.3 Validacao de entrada
+
+Zod na rota (`400` `Invalid request payload.`):
+
+- prazo fora de `{1,3,6}`
+- `pets` ausente/vazio/nao-array
+- `pet_name` vazio
+- `enabled` nao boolean
+- arrays acima do maximo
+
+Regras semanticas no service (`422` `invalid_plan_preview_payload`), pets `enabled: false` pulados:
+
+- pet enabled sem sabores → `pets.{i}.selected_flavors`
+- `flavor_weights` ausente, nao-array, ou length diferente dos sabores → `pets.{i}.flavor_weights`
+- peso nao numerico, ou todos `<= 0` → `pets.{i}.flavor_weights`
+
+A resposta 422 inclui `errors` com as chaves acima.
+
+---
+
+## 4) Fluxo
 
 ```
 POST /api/v1/onboarding/plan/preview
@@ -132,135 +173,17 @@ POST /api/v1/onboarding/plan/preview
 ```
 
 O preview **nao grava** `onboarding_user_state.plan_selection`.  
-Para persistir a escolha, o cliente chama `POST /api/v1/onboarding/plan-selection` com o mesmo body (persistencia so com JWT).
+Para persistir a escolha, o front chama `POST /api/v1/onboarding/plan-selection` com o mesmo body (persistencia so com JWT).
 
 Sem escrita de questionnaire. A recommendation Node usa os campos do pet (`activity_level`, `pet_condition`, `neutered`) e nao hidrata sessao.
 
-## Parametros
+---
 
-### Headers
+## 5) Resolucao da selecao (`resolvePlanSelection`)
 
-- `Content-Type: application/json`
-- `Authorization: Bearer <jwt>` (opcional)
-- `X-Eden-Country` / `X-Eden-Domain` (opcionais)
+`persist = false`. A estrutura montada e a mesma que `plan-selection` usaria, mas so serve para a resposta e para o JSON do quote.
 
-### Mercado
-
-Mesmo contrato das outras rotas de plano (`parseRequestMarket` / `resolveMarket`):
-
-1. `domain=com.br` ou `X-Eden-Domain: com.br` → `BR` / `BRL`
-2. `domain=com` → `US` / `USD`
-3. `country=BR|US` no body, query ou `X-Eden-Country`
-4. fallback → `US` / `USD`
-
-Pais invalido → `400`.
-
-### Body
-
-```json
-{
-  "subscription_term_months": 1,
-  "pets": [
-    {
-      "pet_id": "pet-1",
-      "pet_name": "Luna",
-      "enabled": true,
-      "selected_flavors": ["beef"],
-      "flavor_weights": [8]
-    }
-  ]
-}
-```
-
-| Campo | Obrigatorio | Regras |
-|---|---|---|
-| `subscription_term_months` | sim | Inteiro. Somente `1`, `3` ou `6`. |
-| `pets` | sim | Array nao vazio, max 20. |
-| `pets[].enabled` | sim (Zod) | Boolean. Se `false`, o pet e ignorado. |
-| `pets[].pet_id` | recomendado | Usado para casar com a recommendation quando ha JWT. |
-| `pets[].pet_name` | sim | Match case-insensitive se `pet_id` nao casar. |
-| `pets[].selected_flavors` | sim (pet enabled) | Array nao vazio de slugs (`beef`, `fish`, `pork`, `turkey`). |
-| `pets[].flavor_weights` | sim (pet enabled) | Array numerico com **o mesmo length** de `selected_flavors`. Pelo menos um valor `> 0`. |
-| `country` / `domain` | nao | Mercado da Home. |
-
-Schema Zod (`onboarding-plan-preview.validator.js`):
-
-- `subscription_term_months`: literal `1 | 3 | 6`
-- `pets`: array `min(1)` `max(20)`
-- cada pet:
-  - `pet_id` opcional, string ate 64
-  - `pet_name` obrigatorio, 1–120
-  - `enabled` boolean obrigatorio
-  - `selected_flavors` array de strings, max 20
-  - `flavor_weights` array de numeros finitos `>= 0`, max 20
-  - `country` / `domain` opcionais no payload raiz
-
-O validator **nao** exige `selected_flavors` nao vazio nem `flavor_weights.length === selected_flavors.length`. Essas regras semanticas ficam no service (`422`).
-
-## Semantica de `flavor_weights`
-
-Cada peso e **quantidade de packs** daquele sabor (nao percentual).
-
-Pipeline:
-
-1. `weight` do indice `i` associa ao sabor `selected_flavors[i]`.
-2. Pesos `<= 0` sao descartados.
-3. Slug do sabor e normalizado (`trim` + `toLowerCase` + slug).
-4. Pesos do mesmo sabor sao somados.
-5. Quantidade enviada ao catalogo: `(int) Math.round(weight)`.
-
-O tamanho do pack **nao vem do body**.
-
-- Com JWT: `simplified.pets[].packs.pack_size_grams` da recommendation (300 g ou 500 g).
-- Sem JWT: fallback `300` g.
-
-Regra do pack recomendado (30 dias, igual a `selectLocalPackForMonth`):
-
-```
-usa_pack_500    = (monthly_grams / 300) > 8
-pack_size_grams = usa_pack_500 ? 500 : 300
-```
-
-## Validacoes
-
-| Camada | Regra | HTTP | Status |
-|---|---|---|---|
-| Rota | rate limit 30/min | 429 | implementado |
-| Rota | mercado invalido | 400 | implementado |
-| Validator | schema Zod | 400 | implementado |
-| Service | repository de preview | 503 | implementado |
-| Service | `quotesRepository` | 503 | implementado |
-| Quotes repo | DataSource inicializado | 503 | implementado |
-| Service | prazo 1/3/6 (segunda checagem) | 422 `invalid_subscription_term` | implementado |
-| Service | pet enabled sem sabores / pesos inconsistentes | 422 `invalid_plan_preview_payload` | implementado |
-| Service | nenhum pet enabled apos filtro | 422 `invalid_plan_selection` | implementado |
-| Service | pet/sabor/pack/peso nao casa | 422 `plan_selection_snapshot_mismatch` | implementado |
-| Catalogo | `listByCategory('flavors')` falhou | 422 `catalog_pricing_unavailable` | implementado |
-| Contrato | subtotal `<= 0` ou nenhum total por pet | 502 `invalid_plan_preview_contract` | implementado |
-
-Zod na rota (`400` `Invalid request payload.`):
-
-- prazo fora de `{1,3,6}`
-- `pets` ausente/vazio/nao-array
-- `pet_name` vazio
-- `enabled` nao boolean
-- arrays acima do maximo
-
-Regras semanticas no service (`422` `invalid_plan_preview_payload`), pets `enabled: false` pulados:
-
-- pet enabled sem sabores → `pets.{i}.selected_flavors`
-- `flavor_weights` ausente, nao-array, ou length diferente dos sabores → `pets.{i}.flavor_weights`
-- peso nao numerico, ou todos `<= 0` → `pets.{i}.flavor_weights`
-
-A resposta 422 inclui `errors` com as chaves acima.
-
-Codigos de sessao WordPress **nao existem** nesta rota: `session_unauthorized`, `session_token_*`, `session_forbidden`, `session_not_found`, `pets_required`. Rotas de plano publicas devolvem vazio ou mismatch, nunca exigem sessao.
-
-## Resolucao da selecao (`resolvePlanSelection`)
-
-`persist = false`. A estrutura montada e a mesma que `plan-selection` usaria, mas so serve para a resposta e para o JSON do quote. Nao chama o repository de `plan-selection`.
-
-### Recommendation interna
+### 5.1 Recommendation interna
 
 Chama `OnboardingRecommendationRepository.getRecommendation(userId, market)` — o mesmo calculo de `GET /recommendation`.
 
@@ -270,9 +193,11 @@ Chama `OnboardingRecommendationRepository.getRecommendation(userId, market)` —
 | Com JWT, sem pets em `onboarding_pets` | `simplified.pets = []`. Pets do body nao casam → `422 plan_selection_snapshot_mismatch`. |
 | Com JWT, com pets | `buildForPet` + `buildSimplifiedRecommendation` (periodo 30 dias). |
 
+Nao existe `404 session_not_found` nem `422 pets_required`. Rotas de plano publicas devolvem vazio ou mismatch, nunca exigem sessao.
+
 Se `simplified.pets` vier vazio **e** houver JWT, o match de cada pet enabled falha (mismatch). Sem JWT isso nao se aplica.
 
-### Match de pets
+### 5.2 Match de pets
 
 Para cada item de `payload.pets` com `enabled !== false`:
 
@@ -288,7 +213,7 @@ Nao consulta recommendation. O `pet_id` / `pet_name` do body entram direto no `c
 
 Pets `enabled: false` sao pulados. Itens que nao sao objeto tambem.
 
-### Sabores e pesos
+### 5.3 Sabores e pesos
 
 1. `selected_flavors` passa por lista sanitizada (`trim`, lowercase, unique).
 2. `flavor_weights` vira indices reindexados.
@@ -300,11 +225,11 @@ Pets `enabled: false` sao pulados. Itens que nao sao objeto tambem.
 5. Sem nenhum peso positivo restante → mismatch.
 6. Com JWT: `packs.pack_size_grams` do pet da recommendation `<= 0` → mismatch.
 
-`sanitize` remove duplicatas. Se o cliente enviar o mesmo sabor duas vezes, o length pode divergir de `flavor_weights` e a rota falha com mismatch.
+`sanitize` remove duplicatas. Se o front enviar o mesmo sabor duas vezes, o length pode divergir de `flavor_weights` e a rota falha com mismatch.
 
 Slugs Node do catalogo atual: `beef`, `fish`, `pork`, `turkey`. Sabor fora dessa lista falha no passo de catalogo.
 
-### Pedidos de linha para o catalogo
+### 5.4 Pedidos de linha para o catalogo
 
 Um `catalogLineRequest` por sabor com peso positivo:
 
@@ -318,7 +243,18 @@ Um `catalogLineRequest` por sabor com peso positivo:
 
 Se, ao final, nao houver nenhum request (todos disabled / pesos zero) → mismatch.
 
-### Estrutura interna (nao persistida em `plan_selection`)
+### 5.5 Pais e moeda
+
+`parseRequestMarket` / `resolveMarket` (regra da Home):
+
+1. `domain=com.br` ou `X-Eden-Domain: com.br` → `BR` / `BRL`
+2. `domain=com` → `US` / `USD`
+3. `country=BR|US` no body, query ou `X-Eden-Country`
+4. fallback → `US` / `USD`
+
+Pais invalido → `400`.
+
+### 5.6 Estrutura interna (nao persistida em `plan_selection`)
 
 ```
 plan_selection = {
@@ -331,11 +267,13 @@ plan_selection = {
 }
 ```
 
-`previewPlan` usa isso so para montar a resposta e o JSON `pricing` do quote.
+`previewPlan` usa isso so para montar a resposta e o JSON `pricing` do quote. Nao chama o repository de `plan-selection`.
 
-## Precificacao (`buildCatalogPricingSnapshot`)
+---
 
-### Catalogo
+## 6) Precificacao (`buildCatalogPricingSnapshot`)
+
+### 6.1 Catalogo
 
 Fonte primaria: `ProductsRepository.listByCategory({ categorySlug: 'flavors', country, currency })` — o mesmo catalogo de `GET /api/v1/products`.
 
@@ -360,7 +298,7 @@ Indexa variacoes por sabor + peso:
 - peso: label (`500g`, `500 g`, `10.6oz`, `17.6 oz`) parseado para gramas (`oz * 28.3495`);
 - preco: `variation.price`.
 
-### Match sabor / pack
+### 6.2 Match sabor / pack
 
 Para cada `catalogLineRequest`:
 
@@ -391,7 +329,7 @@ Line item gerado:
 
 `pack_size_label` segue o mercado: BR em gramas (`500 g`); US em oz (`17.6 oz`).
 
-### Desconto de prazo — nao aplicar
+### 6.3 Desconto de prazo — nao aplicar
 
 `subscription_term_months` e aceito, validado e ecoado na resposta.
 
@@ -412,24 +350,9 @@ O total e o preco de catalogo `unit_price × packs`, sem promocao de prazo e sem
 
 `GET /discount/eligibility` tambem **nao entra** neste calculo.
 
-### Resumo da logica de preco
+---
 
-```
-grand_total_monthly
-  = soma( unit_price_catalogo(sabor, pack_mais_proximo_do_alvo) × qtd_packs )
-  = catalog_pricing.subtotal
-  = first_month_total
-```
-
-Onde:
-
-- `qtd_packs` = `flavor_weights` arredondados;
-- `pack_alvo` = `simplified.pets[].packs.pack_size_grams` se houver JWT/pet, senao `300`;
-- `unit_price` = variacao `flavors` do mercado (`ProductsRepository` ou `FLAVOR_CATALOG`);
-- desconto de prazo (10/25/40%), imposto e frete **nao entram**;
-- JWT **nao e obrigatorio**.
-
-## Contrato da resposta publica (`buildPlanPreviewResponse`)
+## 7) Resposta publica (`buildPlanPreviewResponse`)
 
 Envelope HTTP 200:
 
@@ -440,14 +363,14 @@ Envelope HTTP 200:
 }
 ```
 
-### Regras de contrato (502 se falhar)
+### 7.1 Regras de contrato (502 se falhar)
 
 1. `catalog_pricing.subtotal` arredondado, `Math.max(0, ...)`. Se `<= 0` → `invalid_plan_preview_contract` (missing grand total).
 2. `first_month_total` e igual ao grand total; se `<= 0` → mesmo code (missing first month total).
 3. Agrega `line_items` por `pet_id` somando `line_total`. Ignora item sem `pet_id` ou com `line_total <= 0`.
 4. Sem nenhum total por pet → `invalid_plan_preview_contract` (missing per-pet totals).
 
-### Campos de `data`
+### 7.2 Campos de `data`
 
 | Campo | Tipo | Significado |
 |---|---|---|
@@ -474,9 +397,9 @@ Envelope HTTP 200:
 
 Nao existe `session_id`.
 
-Formatacao `R$ 299 /mês` e responsabilidade do cliente (`currency` + `grand_total_monthly`).
+Formatacao `R$ 299 /mês` e responsabilidade do front (`currency` + `grand_total_monthly`).
 
-### Exemplo (JWT, pet com 8 packs de 500 g beef, BR)
+### 7.3 Exemplo (JWT, pet com 8 packs de 500 g beef, BR)
 
 ```json
 {
@@ -531,17 +454,9 @@ Formatacao `R$ 299 /mês` e responsabilidade do cliente (`currency` + `grand_tot
 
 Sem JWT o shape e o mesmo. `pet_id` / `pet_name` vêm do body; `pack_size_grams` cai em `300` se nao houver recommendation.
 
-Payload invalido `400`:
+---
 
-```json
-{
-  "success": false,
-  "message": "Invalid request payload.",
-  "details": [/* issues Zod */]
-}
-```
-
-## Persistencia do quote
+## 8) Quote
 
 Tabela `onboarding_quotes` (migration `1700000000006`):
 
@@ -556,18 +471,11 @@ Tabela `onboarding_quotes` (migration `1700000000006`):
 | `expires_at` | agora + 600s |
 | `consumed_at` | preenchido por `consumeQuote` |
 
-Canonicalizacao: objetos tem chaves ordenadas antes do hash, para o mesmo payload gerar o mesmo `payload_hash` independente da ordem das keys.
-
-O repository de quotes tambem expoe:
-
-- `findActiveQuote(id)` — `status = active` e `expires_at > now`
-- `consumeQuote(id)` — marca `consumed` uma unica vez
-
-Nenhuma outra rota de onboarding consome o quote ainda. A infraestrutura ja esta pronta para checkout.
-
 Preview **nao** grava `onboarding_user_state.plan_selection`.
 
-## Erros
+---
+
+## 9) Erros
 
 | HTTP | code | Quando |
 |---|---|---|
@@ -582,6 +490,8 @@ Preview **nao** grava `onboarding_user_state.plan_selection`.
 | 502 | `invalid_plan_preview_contract` | subtotal `<= 0` ou nenhum total por pet |
 | 503 | — | service / repository / DataSource ausente |
 
+Codigos de sessao WordPress **nao existem** nesta rota: `session_unauthorized`, `session_token_*`, `session_forbidden`, `session_not_found`, `pets_required`.
+
 Mensagens tipicas em `plan_selection_snapshot_mismatch.errors.pets`:
 
 - pet nao encontrado na recommendation atual (so com JWT)
@@ -592,7 +502,9 @@ Mensagens tipicas em `plan_selection_snapshot_mismatch.errors.pets`:
 - sabor fora do catalogo
 - pack size indisponivel para o sabor
 
-## Relacao com outras rotas Node
+---
+
+## 10) Relacao com outras rotas Node
 
 | Rota | Relacao |
 |---|---|
@@ -611,7 +523,9 @@ POST /api/v1/onboarding/plan/preview       → preco /mes + quote (nao persiste 
 POST /api/v1/onboarding/plan-selection     → grava a selecao (so com JWT)
 ```
 
-## Camadas
+---
+
+## 11) Camadas (como deve ficar)
 
 | Camada | Classe / funcao | Papel |
 |---|---|---|
@@ -623,9 +537,8 @@ POST /api/v1/onboarding/plan-selection     → grava a selecao (so com JWT)
 | Products repo | `ProductsRepository.listByCategory` | precos `flavors` |
 | Flavors | `listFlavorVariations(country)` | fallback de catalogo |
 | Quotes repo | `OnboardingQuotesRepository.createQuote` | INSERT `onboarding_quotes` |
-| Catalog pricing | `src/core/plan-catalog-pricing.js` | slug, pack match, snapshot, contrato 502 |
 
-Wiring em `src/index.js`:
+Wiring:
 
 ```js
 const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
@@ -639,53 +552,45 @@ const onboardingPlanPreviewService = new OnboardingPlanPreviewService(
 );
 ```
 
-## Consumo no front
+---
 
-O cliente exige `grand_total` / `grand_total_monthly`, `first_month_total` e totais por pet. Campos de quote sao extras.
+## 12) Consumo no front
+
+```ts
+export async function fetchPlanPreviewFromApi(payload, authToken?: string) {
+  const response = await fetch(`${base}/api/v1/onboarding/plan/preview`, {
+    method: 'POST',
+    headers: buildAuthHeaders(authToken, true),
+    body: JSON.stringify({
+      subscription_term_months: payload.subscriptionTermMonths,
+      country: resolveMarketCountry(),
+      pets: normalizedPets,
+    }),
+  })
+  if ([404, 405, 501].includes(response.status)) return null
+  return assertPlanPreviewContract((await response.json())?.data)
+}
+```
+
+O front exige `grand_total` / `grand_total_monthly`, `first_month_total` e totais por pet. Campos de quote sao extras.
 
 Campo a renderizar na UI `/mes`: `data.grand_total_monthly` (aliases em `data.totals` e `data.pricing`).
 
-## Diferencas em relacao ao WordPress
+---
 
-| Tema | WordPress | Node |
-|---|---|---|
-| URL | `/session/:sessionId/plan/preview` | `/plan/preview` |
-| Auth | token de sessao obrigatorio | publica; JWT opcional |
-| Persistencia | nenhuma (so side effect de questionnaire) | quote em `onboarding_quotes` |
-| Pricing | catalogo CMPB + WCPBC | catalogo `flavors` + fallback `listFlavorVariations` |
-| Pack size | recommendation da sessao | recommendation do usuario se JWT; senao `300` g |
-| Validacao vs recommendation | mismatch 422 | contrato: so com JWT |
-| Totais zero | 502 contrato | contrato: `invalid_plan_preview_contract` |
-| `session_id` | presente | removido |
-| Quote | nao existia | `quote_id` + TTL 10 min |
-| Desconto de prazo | nao no preview | **nao aplicar** |
-| Imposto / frete | nao | **nao aplicar** |
+## 13) Resumo da logica de preco
 
-## Testes existentes
+```
+grand_total_monthly
+  = soma( unit_price_catalogo(sabor, pack_mais_proximo_do_alvo) × qtd_packs )
+  = catalog_pricing.subtotal
+  = first_month_total
+```
 
-`tests/onboarding-plan-preview.routes.test.js`:
+Onde:
 
-1. Cria quote **sem** Bearer; service recebe `userId: null` e `market: US`.
-2. Body com `country: BR` encaminha `market: BR`.
-3. Payload invalido (`term = 2`, `pets = []`) retorna `400` e nao chama o service.
-4. HttpError semantico devolve `code` e `data.errors`.
-
-`tests/onboarding-plan-preview.service.test.js`:
-
-1. Quote anonimo com totais de catalogo.
-2. 422 `invalid_plan_preview_payload` / `invalid_plan_selection` / `invalid_subscription_term`.
-3. 502 `invalid_plan_preview_contract` nao cria quote.
-
-`tests/onboarding-plan-preview.repository.test.js`:
-
-1. Anonimo usa pack 300 g; JWT casa o pet e usa 500 g.
-2. Prazo 6 meses nao aplica desconto.
-3. Catalogo DB, fallback `catalog_not_initialized`, e 422 `catalog_pricing_unavailable`.
-4. JWT sem pet na recommendation e sabores duplicados → mismatch.
-
-`tests/plan-catalog-pricing.test.js` cobre slug, parse de peso, match BR 500 g e contrato 502.
-
-`tests/onboarding-quotes.repository.test.js`:
-
-1. INSERT aceita `user_id` nulo.
-2. `consumeQuote` so atualiza quote `active` e nao expirado.
+- `qtd_packs` = `flavor_weights` arredondados;
+- `pack_alvo` = `simplified.pets[].packs.pack_size_grams` se houver JWT/pet, senao `300`;
+- `unit_price` = variacao `flavors` do mercado (`ProductsRepository` ou `FLAVOR_CATALOG`);
+- desconto de prazo (10/25/40%), imposto e frete **nao entram**;
+- JWT **nao e obrigatorio**.
