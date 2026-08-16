@@ -10,7 +10,9 @@
     "migrate": "node src/scripts/run-migrations.js",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand",
-    "test:integration": "RUN_DB_INTEGRATION_TESTS=true jest --runInBand --testPathPattern=tests/integration"
+    "test:integration": "RUN_DB_INTEGRATION_TESTS=true jest --runInBand --testPathPattern=tests/integration",
+    "test:related": "jest --findRelatedTests",
+    "test:changed": "jest --changedSince=HEAD"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
