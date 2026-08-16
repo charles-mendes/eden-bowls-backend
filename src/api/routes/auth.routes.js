@@ -1,5 +1,46 @@
 const { HttpError } = require('../../core/http-error');
 const { parseAuthTokenInput } = require('../validators/auth-token.validator');
+const {
+  parseEmailExistsInput,
+  parseRegisterInput,
+  parseOtpVerifyInput,
+  parseOtpResendInput
+} = require('../validators/auth-register.validator');
+
+function sendSignupError(response, error) {
+  const status = Number(error.statusCode || 500);
+  const details = error.details || {};
+  const data = {};
+
+  if (details.field) {
+    data.field = details.field;
+    data.fields = { [details.field]: error.message };
+  }
+
+  if (details.uid) {
+    data.uid = details.uid;
+  }
+
+  if (details.data && typeof details.data === 'object') {
+    Object.assign(data, details.data);
+  }
+
+  response.status(status).json({
+    success: false,
+    error: {
+      code: details.code,
+      message: error.message,
+      data
+    }
+  });
+}
+
+function sendSignupSuccess(response, status, data) {
+  response.status(status).json({
+    success: true,
+    data
+  });
+}
 
 function sendAuthError(response, status, code, message) {
   response.status(status).json({
@@ -78,6 +119,82 @@ function requireCookieRequestOrigin(request, origins = []) {
 }
 
 function registerAuthRoutes(app, dependencies = {}) {
+  app.post('/api/v1/auth/account/email-exists', async (request, response, next) => {
+    try {
+      if (!dependencies.authService) {
+        throw new HttpError(503, 'Auth service is not available.');
+      }
+
+      const payload = parseEmailExistsInput(request.body || {});
+      const result = await dependencies.authService.checkEmailExists(payload.email);
+      sendSignupSuccess(response, 200, result);
+    } catch (error) {
+      if (error instanceof HttpError && error.details && error.details.code) {
+        sendSignupError(response, error);
+        return;
+      }
+
+      next(error);
+    }
+  });
+
+  app.post('/api/v1/auth/register', async (request, response, next) => {
+    try {
+      if (!dependencies.authService) {
+        throw new HttpError(503, 'Auth service is not available.');
+      }
+
+      const payload = parseRegisterInput(request.body || {});
+      const result = await dependencies.authService.register(payload);
+      sendSignupSuccess(response, 201, result);
+    } catch (error) {
+      if (error instanceof HttpError && error.details && error.details.code) {
+        sendSignupError(response, error);
+        return;
+      }
+
+      next(error);
+    }
+  });
+
+  app.post('/api/v1/auth/otp/verify', async (request, response, next) => {
+    try {
+      if (!dependencies.authService) {
+        throw new HttpError(503, 'Auth service is not available.');
+      }
+
+      const payload = parseOtpVerifyInput(request.body || {});
+      const result = await dependencies.authService.verifyOtp(payload);
+      sendSignupSuccess(response, 200, result);
+    } catch (error) {
+      if (error instanceof HttpError && error.details && error.details.code) {
+        sendSignupError(response, error);
+        return;
+      }
+
+      next(error);
+    }
+  });
+
+  app.post('/api/v1/auth/otp/resend', async (request, response, next) => {
+    try {
+      if (!dependencies.authService) {
+        throw new HttpError(503, 'Auth service is not available.');
+      }
+
+      const payload = parseOtpResendInput(request.body || {});
+      const result = await dependencies.authService.resendOtp(payload);
+      sendSignupSuccess(response, 200, result);
+    } catch (error) {
+      if (error instanceof HttpError && error.details && error.details.code) {
+        sendSignupError(response, error);
+        return;
+      }
+
+      next(error);
+    }
+  });
+
   app.post('/api/v1/auth/token', async (request, response, next) => {
     try {
       if (!dependencies.authService) {
@@ -170,6 +287,8 @@ function registerAuthRoutes(app, dependencies = {}) {
 module.exports = {
   registerAuthRoutes,
   sendAuthError,
+  sendSignupError,
+  sendSignupSuccess,
   setRefreshCookie,
   clearRefreshCookie,
   readCookie,

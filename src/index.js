@@ -33,6 +33,7 @@ const { SubscriptionsEditPreviewRepository } = require('./infrastructure/reposit
 const { SubscriptionsRepository } = require('./infrastructure/repositories/subscriptions.repository');
 const { OnboardingPetDeleteRepository } = require('./infrastructure/repositories/onboarding-pets-delete.repository');
 const { AuthService } = require('./services/auth.service');
+const { createOtpMailer } = require('./infrastructure/mailers/otp-mailer');
 const { BreedsService } = require('./services/breeds.service');
 const { ProductsService } = require('./services/products.service');
 const { OnboardingAddressAutocompleteService } = require('./services/onboarding-address-autocomplete.service');
@@ -86,7 +87,10 @@ async function bootstrap() {
       expiresInSeconds: env.JWT_AUTH_EXPIRES_IN_SECONDS
     },
     refreshTokenRepository: authRefreshTokenRepository,
-    refreshTokenTtlSeconds: env.AUTH_REFRESH_TOKEN_TTL_SECONDS
+    refreshTokenTtlSeconds: env.AUTH_REFRESH_TOKEN_TTL_SECONDS,
+    otpTtlSeconds: env.AUTH_OTP_TTL_SECONDS,
+    otpMaxAttempts: env.AUTH_OTP_MAX_ATTEMPTS,
+    otpMailer: createOtpMailer({ logger, nodeEnv: env.NODE_ENV })
   });
   const priceZonePolicyRepository = new PriceZonePolicyRepository(dataSource, {
     tableName: env.PRICE_ZONE_POLICY_TABLE_NAME

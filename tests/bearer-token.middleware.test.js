@@ -90,4 +90,26 @@ describe('bearer token middleware', () => {
     expect(response.status).toBe(200);
     expect(authService.authenticate).toHaveBeenCalled();
   });
+
+  test('does not apply bearer validation to register and OTP endpoints', async () => {
+    const authService = {
+      register: jest.fn().mockResolvedValue({
+        uid: 12,
+        email: 'jane@example.com',
+        otp_expires_in: 600
+      })
+    };
+    const app = createApp({ authService, corsOrigins, jwt });
+    const response = await request(app)
+      .post('/api/v1/auth/register')
+      .set('Authorization', 'Token invalid')
+      .send({
+        username: 'jane_doe_1234',
+        email: 'jane@example.com',
+        password: 'EdenBowl8'
+      });
+
+    expect(response.status).toBe(201);
+    expect(authService.register).toHaveBeenCalled();
+  });
 });

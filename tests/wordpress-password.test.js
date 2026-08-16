@@ -1,4 +1,4 @@
-const { verifyWordpressPassword } = require('../src/core/wordpress-password');
+const { hashWordpressPassword, verifyWordpressPassword } = require('../src/core/wordpress-password');
 
 describe('verifyWordpressPassword', () => {
   test('supports md5 hashes for seeded demo users', () => {
@@ -8,5 +8,14 @@ describe('verifyWordpressPassword', () => {
 
   test('supports portable phpass hashes', () => {
     expect(verifyWordpressPassword('test', '$P$B5D7j7R6Q6JmKfXg4LO7xwVj3P8nlq0')).toBe(false);
+  });
+
+  test('hashes passwords with portable phpass so login can verify them', () => {
+    const hashed = hashWordpressPassword('EdenBowl8');
+
+    expect(hashed.startsWith('$P$')).toBe(true);
+    expect(hashed).toHaveLength(34);
+    expect(verifyWordpressPassword('EdenBowl8', hashed)).toBe(true);
+    expect(verifyWordpressPassword('wrong', hashed)).toBe(false);
   });
 });

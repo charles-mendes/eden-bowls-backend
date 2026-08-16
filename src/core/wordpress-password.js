@@ -44,6 +44,46 @@ function encode64(inputBuffer, count) {
   return output;
 }
 
+function hashPortablePhpass(password, setting) {
+  const countLog2 = ITOA64.indexOf(setting[3]);
+
+  if (countLog2 < 7 || countLog2 > 30) {
+    return '';
+  }
+
+  const salt = setting.slice(4, 12);
+  let digest = md5Buffer(Buffer.concat([Buffer.from(salt), Buffer.from(password)]));
+  let count = 1 << countLog2;
+
+  while (count > 0) {
+    digest = md5Buffer(Buffer.concat([digest, Buffer.from(password)]));
+    count -= 1;
+  }
+
+  return (setting.slice(0, 12) + encode64(digest, 16)).slice(0, 34);
+}
+
+function generatePhpassSetting(countLog2 = 8) {
+  const id = Math.min(30, Math.max(7, Number(countLog2) || 8));
+  return `$P$${ITOA64[id]}${encode64(crypto.randomBytes(6), 6)}`;
+}
+
+function hashWordpressPassword(password, options = {}) {
+  const normalizedPassword = String(password || '');
+
+  if (!normalizedPassword || normalizedPassword.length > 4096) {
+    return '*';
+  }
+
+  const setting = String(options.setting || generatePhpassSetting(options.countLog2)).slice(0, 12);
+
+  if (!setting.startsWith('$P$') && !setting.startsWith('$H$')) {
+    return '*';
+  }
+
+  return hashPortablePhpass(normalizedPassword, setting);
+}
+
 function verifyPortablePhpass(password, storedHash) {
   const hash = String(storedHash || '');
 
@@ -57,23 +97,7 @@ function verifyPortablePhpass(password, storedHash) {
     return false;
   }
 
-  const countLog2 = ITOA64.indexOf(setting[3]);
-
-  if (countLog2 < 7 || countLog2 > 30) {
-    return false;
-  }
-
-  const salt = setting.slice(4, 12);
-  let digest = md5Buffer(Buffer.concat([Buffer.from(salt), Buffer.from(password)]));
-  let count = 1 << countLog2;
-
-  while (count > 0) {
-    digest = md5Buffer(Buffer.concat([digest, Buffer.from(password)]));
-    count -= 1;
-  }
-
-  const encoded = setting + encode64(digest, 16);
-  return encoded.slice(0, 34) === hash;
+  return hashPortablePhpass(password, setting) === hash;
 }
 
 function verifyWordpressPassword(password, storedHash) {
@@ -95,6 +119,7 @@ function verifyWordpressPassword(password, storedHash) {
 }
 
 module.exports = {
+  hashWordpressPassword,
   verifyWordpressPassword,
   verifyPortablePhpass
 };

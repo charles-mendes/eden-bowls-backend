@@ -274,4 +274,163 @@ describe('AuthService', () => {
       details: { code: 'jwt_auth_bad_config' }
     });
   });
+
+  test('reports whether an e-mail is already registered', async () => {
+    const repository = { emailExists: jest.fn().mockResolvedValue(true) };
+    const service = new AuthService(repository);
+
+    await expect(service.checkEmailExists('jane@example.com')).resolves.toEqual({
+      email: 'jane@example.com',
+      exists: true
+    });
+  });
+
+  test('creates a pending user, stores only the OTP hash, and e-mails the code', async () => {
+    const repository = {
+      emailExists: jest.fn().mockResolvedValue(false),
+      createPendingUser: jest.fn().mockResolvedValue({ id: 12, user_email: 'jane@example.com' })
+    };
+    const otpMailer = { sendOtpEmail: jest.fn().mockResolvedValue(undefined) };
+    const service = new AuthService(repository, {
+      jwt: { secret: 'test-secret' },
+      otpMailer,
+      otpTtlSeconds: 600,
+      hashPassword: (password) => `hashed:${password}`,
+      randomOtp: () => '847291',
+      nowProvider: () => 1722990000
+    });
+
+    await expect(service.register({
+      username: 'jane_doe_1234',
+      email: 'jane@example.com',
+      password: 'EdenBowl8'
+    })).resolves.toEqual({
+      uid: 12,
+      email: 'jane@example.com',
+      otp_expires_in: 600
+    });
+
+    expect(repository.createPendingUser).toHaveBeenCalledWith(expect.objectContaining({
+      userLogin: 'jane_doe_1234',
+      userPass: 'hashed:EdenBowl8',
+      userEmail: 'jane@example.com',
+      otpExpiresAt: 1722990600
+    }));
+    expect(repository.createPendingUser.mock.calls[0][0].otpHash).not.toBe('847291');
+    expect(otpMailer.sendOtpEmail).toHaveBeenCalledWith({
+      to: 'jane@example.com',
+      otp: '847291',
+      expiresInSeconds: 600
+    });
+  });
+
+  test('keeps the pending account and returns otp_email_failed with uid when e-mail sending fails', async () => {
+    const repository = {
+      emailExists: jest.fn().mockResolvedValue(false),
+      createPendingUser: jest.fn().mockResolvedValue({ id: 12, user_email: 'jane@example.com' })
+    };
+    const service = new AuthService(repository, {
+      jwt: { secret: 'test-secret' },
+      otpMailer: { sendOtpEmail: jest.fn().mockRejectedValue(new Error('smtp down')) },
+      hashPassword: (password) => password,
+      randomOtp: () => '847291'
+    });
+
+    await expect(service.register({
+      username: 'jane_doe_1234',
+      email: 'jane@example.com',
+      password: 'EdenBowl8'
+    })).rejects.toMatchObject({
+      statusCode: 503,
+      details: { code: 'otp_email_failed', uid: 12 }
+    });
+    expect(repository.createPendingUser).toHaveBeenCalled();
+  });
+
+  test('activates a pending account when the OTP and terms are valid', async () => {
+    const serviceProbe = new AuthService({}, { jwt: { secret: 'test-secret' } });
+    const repository = {
+      findUserForOtp: jest.fn().mockResolvedValue({
+        id: 12,
+        user_email: 'jane@example.com',
+        activation_status: 'pending',
+        otp_hash: serviceProbe.hashOtpValue('847291'),
+        otp_expires_at: 1722990600,
+        otp_attempts: 0
+      }),
+      activateUser: jest.fn().mockResolvedValue(undefined)
+    };
+    const service = new AuthService(repository, {
+      jwt: { secret: 'test-secret' },
+      nowProvider: () => 1722990000
+    });
+
+    await expect(service.verifyOtp({
+      uid: 12,
+      otp: '847291',
+      marketingOptIn: true,
+      termsAccepted: true,
+      privacyAccepted: true
+    })).resolves.toEqual({
+      token_endpoint: '/api/v1/auth/token'
+    });
+    expect(repository.activateUser).toHaveBeenCalledWith(12, {
+      marketingOptIn: true,
+      termsAccepted: true,
+      privacyAccepted: true
+    });
+  });
+
+  test('rejects OTP verification without terms and does not issue a JWT', async () => {
+    const repository = { findUserForOtp: jest.fn(), activateUser: jest.fn() };
+    const service = new AuthService(repository);
+
+    await expect(service.verifyOtp({
+      uid: 12,
+      otp: '847291',
+      marketingOptIn: true,
+      termsAccepted: false,
+      privacyAccepted: false
+    })).rejects.toMatchObject({
+      details: { code: 'terms_not_accepted' }
+    });
+    expect(repository.findUserForOtp).not.toHaveBeenCalled();
+    expect(repository.activateUser).not.toHaveBeenCalled();
+  });
+
+  test('resets OTP attempts and e-mails a new code on resend', async () => {
+    const repository = {
+      findUserForOtp: jest.fn().mockResolvedValue({
+        id: 12,
+        user_email: 'jane@example.com',
+        activation_status: 'pending',
+        otp_hash: 'old-hash',
+        otp_expires_at: 1,
+        otp_attempts: 4
+      }),
+      saveOtpChallenge: jest.fn().mockResolvedValue(undefined)
+    };
+    const otpMailer = { sendOtpEmail: jest.fn().mockResolvedValue(undefined) };
+    const service = new AuthService(repository, {
+      jwt: { secret: 'test-secret' },
+      otpMailer,
+      otpTtlSeconds: 600,
+      randomOtp: () => '111222',
+      nowProvider: () => 1722990000
+    });
+
+    await expect(service.resendOtp({ uid: 12 })).resolves.toEqual({
+      uid: 12,
+      otp_expires_in: 600
+    });
+    expect(repository.saveOtpChallenge).toHaveBeenCalledWith(12, expect.objectContaining({
+      otpExpiresAt: 1722990600,
+      attempts: 0
+    }));
+    expect(otpMailer.sendOtpEmail).toHaveBeenCalledWith({
+      to: 'jane@example.com',
+      otp: '111222',
+      expiresInSeconds: 600
+    });
+  });
 });

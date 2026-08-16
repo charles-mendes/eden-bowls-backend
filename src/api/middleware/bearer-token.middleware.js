@@ -2,6 +2,14 @@ const { HttpError } = require('../../core/http-error');
 const { verifyJwtToken } = require('../../core/jwt-token');
 const { AUTH_ERROR } = require('../contracts/auth-errors');
 
+const PUBLIC_AUTH_PATHS = new Set([
+  '/api/v1/auth/token',
+  '/api/v1/auth/account/email-exists',
+  '/api/v1/auth/register',
+  '/api/v1/auth/otp/verify',
+  '/api/v1/auth/otp/resend'
+]);
+
 function isSessionAutocompleteRoute(request) {
   return /^\/api\/v1\/onboarding\/session\/[^/]+\/address\/autocomplete$/.test(request.path);
 }
@@ -10,12 +18,24 @@ function isOnboardingSessionRoute(request) {
   return /^\/api\/v1\/onboarding\/session(?:\/|$)/.test(request.path);
 }
 
+function isPublicAuthRoute(request, extraAuthPath) {
+  if (request.method !== 'POST') {
+    return false;
+  }
+
+  if (PUBLIC_AUTH_PATHS.has(request.path)) {
+    return true;
+  }
+
+  return Boolean(extraAuthPath) && request.path === extraAuthPath;
+}
+
 function buildBearerTokenMiddleware(options = {}) {
   const authPath = options.authPath || '/api/v1/auth/token';
   const jwtOptions = options.jwt || {};
 
   return (request, response, next) => {
-    if (!request.path.startsWith('/api/v1') || request.path === authPath || isSessionAutocompleteRoute(request) || isOnboardingSessionRoute(request)) {
+    if (!request.path.startsWith('/api/v1') || isPublicAuthRoute(request, authPath) || isSessionAutocompleteRoute(request) || isOnboardingSessionRoute(request)) {
       next();
       return;
     }
@@ -48,5 +68,6 @@ function buildBearerTokenMiddleware(options = {}) {
 }
 
 module.exports = {
-  buildBearerTokenMiddleware
+  buildBearerTokenMiddleware,
+  PUBLIC_AUTH_PATHS
 };

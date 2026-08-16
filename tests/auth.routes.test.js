@@ -209,4 +209,174 @@ describe('auth routes', () => {
     expect(response.headers['access-control-allow-headers']).toContain('X-Requested-With');
     expect(response.headers['access-control-allow-headers']).not.toContain('x-session-token');
   });
+
+  test('reports e-mail availability without cookies or bearer', async () => {
+    const authService = {
+      checkEmailExists: jest.fn().mockResolvedValue({ email: 'jane@example.com', exists: false })
+    };
+    const app = createApp({ authService, corsOrigins });
+    const response = await request(app)
+      .post('/api/v1/auth/account/email-exists')
+      .send({ email: 'jane@example.com' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      success: true,
+      data: { email: 'jane@example.com', exists: false }
+    });
+    expect(authService.checkEmailExists).toHaveBeenCalledWith('jane@example.com');
+  });
+
+  test('creates a pending account with the signup envelope the modal already parses', async () => {
+    const authService = {
+      register: jest.fn().mockResolvedValue({
+        uid: 12,
+        email: 'jane@example.com',
+        otp_expires_in: 600
+      })
+    };
+    const app = createApp({ authService, corsOrigins });
+    const response = await request(app)
+      .post('/api/v1/auth/register')
+      .send({
+        username: 'jane_doe_1234',
+        email: 'jane@example.com',
+        password: 'EdenBowl8',
+        recaptchaToken: ''
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toEqual({
+      success: true,
+      data: {
+        uid: 12,
+        email: 'jane@example.com',
+        otp_expires_in: 600
+      }
+    });
+    expect(authService.register).toHaveBeenCalledWith({
+      username: 'jane_doe_1234',
+      email: 'jane@example.com',
+      password: 'EdenBowl8',
+      recaptchaToken: ''
+    });
+  });
+
+  test('returns a field error when register finds an existing e-mail', async () => {
+    const authService = {
+      register: jest.fn().mockRejectedValue(
+        new HttpError(409, 'This e-mail is already registered.', {
+          code: 'account_email_exists',
+          field: 'email'
+        })
+      )
+    };
+    const app = createApp({ authService, corsOrigins });
+    const response = await request(app)
+      .post('/api/v1/auth/register')
+      .send({
+        username: 'jane_doe_1234',
+        email: 'jane@example.com',
+        password: 'EdenBowl8'
+      });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toEqual({
+      success: false,
+      error: {
+        code: 'account_email_exists',
+        message: 'This e-mail is already registered.',
+        data: {
+          field: 'email',
+          fields: { email: 'This e-mail is already registered.' }
+        }
+      }
+    });
+  });
+
+  test('keeps uid on otp_email_failed so resend remains possible', async () => {
+    const authService = {
+      register: jest.fn().mockRejectedValue(
+        new HttpError(503, 'Unable to send the verification code right now.', {
+          code: 'otp_email_failed',
+          uid: 12
+        })
+      )
+    };
+    const app = createApp({ authService, corsOrigins });
+    const response = await request(app)
+      .post('/api/v1/auth/register')
+      .send({
+        username: 'jane_doe_1234',
+        email: 'jane@example.com',
+        password: 'EdenBowl8'
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('otp_email_failed');
+    expect(response.body.error.data.uid).toBe(12);
+  });
+
+  test('verifies OTP without issuing a JWT', async () => {
+    const authService = {
+      verifyOtp: jest.fn().mockResolvedValue({ token_endpoint: '/api/v1/auth/token' })
+    };
+    const app = createApp({ authService, corsOrigins });
+    const response = await request(app)
+      .post('/api/v1/auth/otp/verify')
+      .send({
+        uid: 12,
+        otp: '847291',
+        marketingOptIn: true,
+        termsAccepted: true,
+        privacyAccepted: true
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      success: true,
+      data: { token_endpoint: '/api/v1/auth/token' }
+    });
+    expect(response.body.data.token).toBeUndefined();
+    expect(authService.verifyOtp).toHaveBeenCalledWith({
+      uid: 12,
+      otp: '847291',
+      marketingOptIn: true,
+      termsAccepted: true,
+      privacyAccepted: true
+    });
+  });
+
+  test('resends OTP and returns the TTL the modal uses', async () => {
+    const authService = {
+      resendOtp: jest.fn().mockResolvedValue({ uid: 12, otp_expires_in: 600 })
+    };
+    const app = createApp({ authService, corsOrigins });
+    const response = await request(app)
+      .post('/api/v1/auth/otp/resend')
+      .send({ uid: 12 });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      success: true,
+      data: { uid: 12, otp_expires_in: 600 }
+    });
+  });
+
+  test('rejects weak register passwords before calling the service', async () => {
+    const authService = { register: jest.fn() };
+    const app = createApp({ authService, corsOrigins });
+    const response = await request(app)
+      .post('/api/v1/auth/register')
+      .send({
+        username: 'jane_doe_1234',
+        email: 'jane@example.com',
+        password: 'short'
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.success).toBe(false);
+    expect(response.body.message).toBe('Invalid request payload.');
+    expect(authService.register).not.toHaveBeenCalled();
+  });
 });

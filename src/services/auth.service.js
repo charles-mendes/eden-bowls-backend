@@ -1,6 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const crypto = require('crypto');
-const { verifyWordpressPassword } = require('../core/wordpress-password');
+const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
+const { generateOtp, hashOtp, otpMatches } = require('../core/otp');
 const { issueJwtToken } = require('../core/jwt-token');
 const { AUTH_ERROR } = require('../api/contracts/auth-errors');
 
@@ -12,7 +13,200 @@ class AuthService {
     this.refreshTokenRepository = options.refreshTokenRepository || null;
     this.jwt = options.jwt || {};
     this.refreshTokenTtlSeconds = Number(options.refreshTokenTtlSeconds || 30 * 24 * 60 * 60);
+    this.otpTtlSeconds = Number(options.otpTtlSeconds || 600);
+    this.otpMaxAttempts = Number(options.otpMaxAttempts || 5);
+    this.otpMailer = options.otpMailer || null;
+    this.hashPassword = typeof options.hashPassword === 'function' ? options.hashPassword : hashWordpressPassword;
+    this.randomOtp = typeof options.randomOtp === 'function' ? options.randomOtp : generateOtp;
     this.nowProvider = typeof options.nowProvider === 'function' ? options.nowProvider : () => Math.floor(Date.now() / 1000);
+  }
+
+  async checkEmailExists(email) {
+    if (!this.repository) {
+      throw new HttpError(503, 'Auth repository is not available.');
+    }
+
+    const exists = await this.repository.emailExists(email);
+
+    return {
+      email,
+      exists: Boolean(exists)
+    };
+  }
+
+  async register(payload) {
+    if (!this.repository) {
+      throw new HttpError(503, 'Auth repository is not available.');
+    }
+
+    const exists = await this.repository.emailExists(payload.email);
+    if (exists) {
+      throw new HttpError(AUTH_ERROR.EMAIL_EXISTS.status, AUTH_ERROR.EMAIL_EXISTS.message, {
+        code: AUTH_ERROR.EMAIL_EXISTS.code,
+        field: 'email'
+      });
+    }
+
+    const issuedAt = this.nowProvider();
+    const otp = this.randomOtp();
+    const otpExpiresAt = issuedAt + this.otpTtlSeconds;
+    const user = await this.repository.createPendingUser({
+      userLogin: payload.username,
+      userPass: this.hashPassword(payload.password),
+      userNicename: this.toNicename(payload.username),
+      userEmail: payload.email,
+      displayName: payload.username,
+      otpHash: this.hashOtpValue(otp),
+      otpExpiresAt
+    });
+
+    try {
+      await this.sendOtpEmail({
+        to: user.user_email,
+        otp,
+        expiresInSeconds: this.otpTtlSeconds
+      });
+    } catch (error) {
+      throw new HttpError(AUTH_ERROR.OTP_EMAIL_FAILED.status, AUTH_ERROR.OTP_EMAIL_FAILED.message, {
+        code: AUTH_ERROR.OTP_EMAIL_FAILED.code,
+        uid: user.id
+      });
+    }
+
+    return {
+      uid: user.id,
+      email: user.user_email,
+      otp_expires_in: this.otpTtlSeconds
+    };
+  }
+
+  async verifyOtp(payload) {
+    if (!this.repository) {
+      throw new HttpError(503, 'Auth repository is not available.');
+    }
+
+    if (!payload.termsAccepted || !payload.privacyAccepted) {
+      throw new HttpError(AUTH_ERROR.TERMS_NOT_ACCEPTED.status, AUTH_ERROR.TERMS_NOT_ACCEPTED.message, {
+        code: AUTH_ERROR.TERMS_NOT_ACCEPTED.code
+      });
+    }
+
+    const user = await this.repository.findUserForOtp(payload.uid);
+    if (!user) {
+      throw new HttpError(AUTH_ERROR.USER_NOT_FOUND.status, AUTH_ERROR.USER_NOT_FOUND.message, {
+        code: AUTH_ERROR.USER_NOT_FOUND.code
+      });
+    }
+
+    if (user.activation_status === 'active') {
+      throw new HttpError(AUTH_ERROR.ACCOUNT_ALREADY_ACTIVE.status, AUTH_ERROR.ACCOUNT_ALREADY_ACTIVE.message, {
+        code: AUTH_ERROR.ACCOUNT_ALREADY_ACTIVE.code
+      });
+    }
+
+    if (user.otp_attempts >= this.otpMaxAttempts) {
+      throw new HttpError(AUTH_ERROR.OTP_ATTEMPTS_EXCEEDED.status, AUTH_ERROR.OTP_ATTEMPTS_EXCEEDED.message, {
+        code: AUTH_ERROR.OTP_ATTEMPTS_EXCEEDED.code
+      });
+    }
+
+    const now = this.nowProvider();
+    if (!user.otp_hash || !user.otp_expires_at || now >= user.otp_expires_at) {
+      throw new HttpError(AUTH_ERROR.OTP_EXPIRED.status, AUTH_ERROR.OTP_EXPIRED.message, {
+        code: AUTH_ERROR.OTP_EXPIRED.code
+      });
+    }
+
+    if (!otpMatches(payload.otp, user.otp_hash, this.otpSecret())) {
+      await this.repository.saveOtpAttempts(user.id, user.otp_attempts + 1);
+      throw new HttpError(AUTH_ERROR.OTP_INVALID.status, AUTH_ERROR.OTP_INVALID.message, {
+        code: AUTH_ERROR.OTP_INVALID.code
+      });
+    }
+
+    await this.repository.activateUser(user.id, {
+      marketingOptIn: Boolean(payload.marketingOptIn),
+      termsAccepted: true,
+      privacyAccepted: true
+    });
+
+    return {
+      token_endpoint: '/api/v1/auth/token'
+    };
+  }
+
+  async resendOtp(payload) {
+    if (!this.repository) {
+      throw new HttpError(503, 'Auth repository is not available.');
+    }
+
+    const user = await this.repository.findUserForOtp(payload.uid);
+    if (!user) {
+      throw new HttpError(AUTH_ERROR.USER_NOT_FOUND.status, AUTH_ERROR.USER_NOT_FOUND.message, {
+        code: AUTH_ERROR.USER_NOT_FOUND.code
+      });
+    }
+
+    if (user.activation_status === 'active') {
+      throw new HttpError(AUTH_ERROR.ACCOUNT_ALREADY_ACTIVE.status, AUTH_ERROR.ACCOUNT_ALREADY_ACTIVE.message, {
+        code: AUTH_ERROR.ACCOUNT_ALREADY_ACTIVE.code
+      });
+    }
+
+    const issuedAt = this.nowProvider();
+    const otp = this.randomOtp();
+    const otpExpiresAt = issuedAt + this.otpTtlSeconds;
+
+    await this.repository.saveOtpChallenge(user.id, {
+      otpHash: this.hashOtpValue(otp),
+      otpExpiresAt,
+      attempts: 0
+    });
+
+    try {
+      await this.sendOtpEmail({
+        to: user.user_email,
+        otp,
+        expiresInSeconds: this.otpTtlSeconds
+      });
+    } catch (error) {
+      throw new HttpError(AUTH_ERROR.OTP_EMAIL_FAILED.status, AUTH_ERROR.OTP_EMAIL_FAILED.message, {
+        code: AUTH_ERROR.OTP_EMAIL_FAILED.code,
+        uid: user.id
+      });
+    }
+
+    return {
+      uid: user.id,
+      otp_expires_in: this.otpTtlSeconds
+    };
+  }
+
+  async sendOtpEmail(payload) {
+    if (!this.otpMailer || typeof this.otpMailer.sendOtpEmail !== 'function') {
+      throw new Error('OTP mailer is not configured.');
+    }
+
+    await this.otpMailer.sendOtpEmail(payload);
+  }
+
+  hashOtpValue(otp) {
+    return hashOtp(otp, this.otpSecret());
+  }
+
+  otpSecret() {
+    return String(this.jwt.secret || 'otp');
+  }
+
+  toNicename(username) {
+    const slug = String(username || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 50);
+
+    return slug || 'user';
   }
 
   async authenticate(credentials) {
