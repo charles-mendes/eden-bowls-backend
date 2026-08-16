@@ -37,7 +37,7 @@ describe('onboarding recommendation routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.session_id).toBeUndefined();
     expect(response.body.data.country).toBe('US');
-    expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: 7, market: MARKETS.US });
+    expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: 7, market: MARKETS.US, pets: undefined });
   });
 
   test('returns a recommendation without bearer authentication', async () => {
@@ -52,7 +52,7 @@ describe('onboarding recommendation routes', () => {
     const response = await request(app).get('/api/v1/onboarding/recommendation');
 
     expect(response.status).toBe(200);
-    expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: null, market: MARKETS.US });
+    expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: null, market: MARKETS.US, pets: undefined });
   });
 
   test('returns Brazil labels when the chosen market is BR', async () => {
@@ -70,5 +70,42 @@ describe('onboarding recommendation routes', () => {
     expect(response.body.data.country).toBe('BR');
     expect(response.body.data.simplified.labels.monthly).toBe('Mensal');
     expect(response.body.data.simplified.pets).toEqual([]);
+  });
+
+  test('calculates recommendation pets from the posted draft list without JWT', async () => {
+    const app = createApp({
+      onboardingRecommendationService: new OnboardingRecommendationService(new OnboardingRecommendationRepository()),
+      corsOrigins,
+      jwt
+    });
+
+    const response = await request(app)
+      .post('/api/v1/onboarding/recommendation')
+      .set('X-Eden-Country', 'BR')
+      .send({
+        country: 'BR',
+        pets: [{
+          pet_id: '30709249-0598-40b3-bb49-591e4fdd5b8b',
+          name: 'luna',
+          breed: 'Maltese',
+          age_years: 2,
+          age_months: 0,
+          weight: 13,
+          weight_unit: 'kg',
+          size: 'small',
+          activity_level: 'high',
+          pet_condition: 'overweight',
+          neutered: false
+        }]
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.country).toBe('BR');
+    expect(response.body.data.simplified.pets).toHaveLength(1);
+    expect(response.body.data.simplified.pets[0]).toMatchObject({
+      pet_id: '30709249-0598-40b3-bb49-591e4fdd5b8b',
+      pet_name: 'luna'
+    });
+    expect(response.body.data.simplified.pets[0].daily.grams).toBeGreaterThan(0);
   });
 });

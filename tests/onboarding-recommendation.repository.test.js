@@ -16,6 +16,30 @@ describe('OnboardingRecommendationRepository', () => {
     expect(data.version).toBe('v1');
   });
 
+  test('calculates from posted draft pets without querying the user pets table', async () => {
+    const petsRepository = { listPets: jest.fn() };
+    const repository = new OnboardingRecommendationRepository(petsRepository);
+
+    const data = await repository.getRecommendation(null, MARKETS.BR, [{
+      pet_id: 'local-luna',
+      name: 'luna',
+      breed: 'Maltese',
+      age_years: 2,
+      weight: 13,
+      weight_unit: 'kg',
+      size: 'small',
+      activity_level: 'high',
+      pet_condition: 'overweight',
+      neutered: false
+    }]);
+
+    expect(petsRepository.listPets).not.toHaveBeenCalled();
+    expect(data.country).toBe('BR');
+    expect(data.recommendations[0].pet_id).toBe('local-luna');
+    expect(data.recommendations[0].quantidade_g_dia).toBeGreaterThan(0);
+    expect(data.simplified.pets[0].pet_name).toBe('luna');
+  });
+
   test('calculates daily grams from the user pets', async () => {
     const petsRepository = {
       listPets: jest.fn().mockResolvedValue({

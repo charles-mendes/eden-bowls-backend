@@ -5,12 +5,12 @@ class OnboardingRecommendationService {
     this.repository = repository;
   }
 
-  async getRecommendation({ userId, market }) {
+  async getRecommendation({ userId, market, pets }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding recommendation repository is not available.');
     }
 
-    const data = await this.repository.getRecommendation(userId || null, market);
+    const data = await this.repository.getRecommendation(userId || null, market, pets);
 
     return {
       success: true,

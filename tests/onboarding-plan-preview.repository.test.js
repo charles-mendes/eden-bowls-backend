@@ -1,6 +1,7 @@
 const { HttpError } = require('../src/core/http-error');
 const { MARKETS } = require('../src/core/market');
 const { OnboardingPlanPreviewRepository } = require('../src/infrastructure/repositories/onboarding-plan-preview.repository');
+const { OnboardingRecommendationRepository } = require('../src/infrastructure/repositories/onboarding-recommendation.repository');
 
 function anonymousPayload(overrides = {}) {
   return {
@@ -58,6 +59,35 @@ describe('OnboardingPlanPreviewRepository', () => {
       unit_price: 45,
       line_total: 360
     });
+    expect(resolved.validated_with.recommendation_version).toBe('v1');
+  });
+
+  test('uses recommended pack size for anonymous pets that include a nutritional profile', async () => {
+    const repository = new OnboardingPlanPreviewRepository({
+      recommendationRepository: new OnboardingRecommendationRepository()
+    });
+
+    const resolved = await repository.previewPlan(null, {
+      subscription_term_months: 1,
+      pets: [{
+        pet_id: 'local-luna',
+        pet_name: 'luna',
+        enabled: true,
+        selected_flavors: ['fish'],
+        flavor_weights: [2],
+        weight: 13,
+        weight_unit: 'kg',
+        activity_level: 'high',
+        pet_condition: 'overweight',
+        neutered: false
+      }]
+    }, MARKETS.BR);
+
+    expect(resolved.pets[0]).toMatchObject({
+      pet_id: 'local-luna',
+      pet_name: 'luna'
+    });
+    expect(resolved.catalog_pricing.line_items[0].pack_size_grams).toBeGreaterThan(0);
     expect(resolved.validated_with.recommendation_version).toBe('v1');
   });
 

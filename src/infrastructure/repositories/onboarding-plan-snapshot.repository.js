@@ -13,10 +13,10 @@ class OnboardingPlanSnapshotRepository {
     this.recommendationRepository = options.recommendationRepository || null;
   }
 
-  async getSnapshot(userId, marketInput) {
+  async getSnapshot(userId, marketInput, petsOverride) {
     const market = marketInput && marketInput.country ? marketInput : resolveMarket(marketInput);
     const recommendation = this.recommendationRepository
-      ? await this.recommendationRepository.getRecommendation(userId, market)
+      ? await this.recommendationRepository.getRecommendation(userId, market, petsOverride)
       : null;
     const simplified = recommendation && recommendation.simplified
       ? recommendation.simplified

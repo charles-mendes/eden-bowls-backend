@@ -4,6 +4,7 @@ const { issueJwtToken } = require('../src/core/jwt-token');
 const { MARKETS } = require('../src/core/market');
 const { OnboardingPlanSnapshotService } = require('../src/services/onboarding-plan-snapshot.service');
 const { OnboardingPlanSnapshotRepository } = require('../src/infrastructure/repositories/onboarding-plan-snapshot.repository');
+const { OnboardingRecommendationRepository } = require('../src/infrastructure/repositories/onboarding-recommendation.repository');
 
 const corsOrigins = ['http://localhost:5173'];
 const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
@@ -36,7 +37,7 @@ describe('onboarding plan snapshot routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.session_id).toBeUndefined();
     expect(response.body.data.currency).toBe('USD');
-    expect(onboardingPlanSnapshotService.getSnapshot).toHaveBeenCalledWith({ userId: 7, market: MARKETS.US });
+    expect(onboardingPlanSnapshotService.getSnapshot).toHaveBeenCalledWith({ userId: 7, market: MARKETS.US, pets: undefined });
   });
 
   test('returns a plan snapshot without bearer authentication', async () => {
@@ -51,7 +52,7 @@ describe('onboarding plan snapshot routes', () => {
     const response = await request(app).get('/api/v1/onboarding/plan/snapshot');
 
     expect(response.status).toBe(200);
-    expect(onboardingPlanSnapshotService.getSnapshot).toHaveBeenCalledWith({ userId: null, market: MARKETS.US });
+    expect(onboardingPlanSnapshotService.getSnapshot).toHaveBeenCalledWith({ userId: null, market: MARKETS.US, pets: undefined });
   });
 
   test('returns Brazil labels and currency when the chosen market is BR', async () => {
@@ -99,5 +100,39 @@ describe('onboarding plan snapshot routes', () => {
       { key: 'pork', label: 'Pork' },
       { key: 'turkey', label: 'Turkey' }
     ]);
+  });
+
+  test('calculates snapshot consumption from the posted draft pets without JWT', async () => {
+    const app = createApp({
+      onboardingPlanSnapshotService: new OnboardingPlanSnapshotService(new OnboardingPlanSnapshotRepository({
+        recommendationRepository: new OnboardingRecommendationRepository()
+      })),
+      corsOrigins,
+      jwt
+    });
+
+    const response = await request(app)
+      .post('/api/v1/onboarding/plan/snapshot')
+      .send({
+        country: 'BR',
+        pets: [{
+          pet_id: 'local-luna',
+          name: 'luna',
+          weight: 13,
+          weight_unit: 'kg',
+          activity_level: 'high',
+          pet_condition: 'overweight',
+          neutered: false
+        }]
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.country).toBe('BR');
+    expect(response.body.data.pets).toHaveLength(1);
+    expect(response.body.data.pets[0]).toMatchObject({
+      pet_id: 'local-luna',
+      pet_name: 'luna'
+    });
+    expect(response.body.data.consumption.pets[0].daily.grams).toBeGreaterThan(0);
   });
 });

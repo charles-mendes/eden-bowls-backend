@@ -1,4 +1,5 @@
 const { resolveMarket } = require('../../core/market');
+const { normalizeDraftPets, petHasNutritionalProfile } = require('../../core/onboarding-draft-pets');
 const {
   ANONYMOUS_PACK_SIZE_GRAMS,
   buildCatalogPricingSnapshot,
@@ -17,12 +18,18 @@ class OnboardingPlanPreviewRepository {
 
   async previewPlan(userId, payload = {}, marketInput) {
     const market = marketInput && marketInput.country ? marketInput : resolveMarket(marketInput);
-    const recommendation = userId && this.recommendationRepository
-      ? await this.recommendationRepository.getRecommendation(userId, market)
+    const draftPets = normalizeDraftPets(payload.pets).filter(petHasNutritionalProfile);
+    const recommendation = this.recommendationRepository
+      ? await this.recommendationRepository.getRecommendation(
+        userId,
+        market,
+        draftPets.length > 0 ? draftPets : undefined
+      )
       : null;
     const simplifiedPets = recommendation && recommendation.simplified && Array.isArray(recommendation.simplified.pets)
       ? recommendation.simplified.pets
       : [];
+    const canMatchRecommendation = Boolean(userId) || simplifiedPets.length > 0;
 
     const catalogLineRequests = [];
     const flavorsByPet = [];
@@ -33,7 +40,7 @@ class OnboardingPlanPreviewRepository {
         continue;
       }
 
-      const matchedPet = userId
+      const matchedPet = canMatchRecommendation
         ? this.matchRecommendedPet(petInput, simplifiedPets)
         : {
           pet_id: String(petInput.pet_id || ''),
@@ -42,14 +49,14 @@ class OnboardingPlanPreviewRepository {
         };
 
       const packSizeGrams = Number(matchedPet.packs && matchedPet.packs.pack_size_grams);
-      if (userId && (!Number.isFinite(packSizeGrams) || packSizeGrams <= 0)) {
+      if (canMatchRecommendation && (!Number.isFinite(packSizeGrams) || packSizeGrams <= 0)) {
         throwPlanError(422, 'plan_selection_snapshot_mismatch', 'Plan selection does not match the current recommendation.', {
           pets: 'pack size recomendado ausente'
         });
       }
 
       const flavorQuantities = this.buildFlavorQuantities(petInput);
-      const targetPackSizeGrams = userId ? packSizeGrams : ANONYMOUS_PACK_SIZE_GRAMS;
+      const targetPackSizeGrams = canMatchRecommendation ? packSizeGrams : ANONYMOUS_PACK_SIZE_GRAMS;
       const petId = String(matchedPet.pet_id || petInput.pet_id || '');
       const petName = String(matchedPet.pet_name || petInput.pet_name || '');
 
