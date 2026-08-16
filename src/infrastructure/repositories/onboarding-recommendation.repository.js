@@ -1,53 +1,33 @@
-const { formatMass, formatPacks, resolveMarket } = require('../../core/market');
+const { buildForPet } = require('../../core/nutrition-recommendation');
+const { buildPackagingRecommendation, buildSimplifiedRecommendation } = require('../../core/simplified-consumption');
+const { resolveMarket } = require('../../core/market');
 
 class OnboardingRecommendationRepository {
+  constructor(petsRepository) {
+    this.petsRepository = petsRepository || null;
+  }
+
+  async loadPets(userId) {
+    if (!userId || !this.petsRepository) {
+      return [];
+    }
+
+    const data = await this.petsRepository.listPets(userId);
+    return Array.isArray(data && data.pets) ? data.pets : [];
+  }
+
   async getRecommendation(userId, marketInput) {
     const market = marketInput && marketInput.country ? marketInput : resolveMarket(marketInput);
+    const pets = await this.loadPets(userId);
+    const recommendations = pets.map((pet) => buildForPet(pet, null, market.locale));
+    const simplified = buildSimplifiedRecommendation(recommendations, market);
+    const packaging = buildPackagingRecommendation(recommendations);
 
     return {
       country: market.country,
-      recommendations: [
-        {
-          pet_id: 'pet-1',
-          pet_name: 'Milo',
-          energy_kcal_dia: 500,
-          quantidade_g_dia: 300,
-          porte: 'medium',
-          especie: 'dog'
-        }
-      ],
-      packaging: {
-        selected_frequency: 'monthly',
-        period_days: 30,
-        suggested_frequency: 'monthly',
-        suggested_period_days: 30,
-        package_sizes_grams: [300, 500],
-        total_target_grams: 300,
-        suggested_bags_by_size: {
-          300: 1,
-          500: 0
-        }
-      },
-      simplified: {
-        country: market.country,
-        period_days: 30,
-        labels: market.labels,
-        pets: [
-          {
-            pet_id: 'pet-1',
-            pet_name: 'Milo',
-            daily: { value: 200, unit: 'g', grams: 200, formatted: formatMass(200, market) },
-            monthly: { value: 6000, unit: 'g', grams: 6000, formatted: formatMass(6000, market) },
-            packs: {
-              count: 2,
-              pack_size_grams: 500,
-              pack_size_value: 2,
-              pack_size_unit: 'pack',
-              formatted: formatPacks(2, market)
-            }
-          }
-        ]
-      },
+      recommendations,
+      packaging,
+      simplified,
       version: 'v1'
     };
   }

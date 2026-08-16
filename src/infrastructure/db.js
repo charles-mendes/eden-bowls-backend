@@ -14,6 +14,7 @@ const { CreateAuthUserTables1700000000003 } = require('./migrations/170000000000
 const { CreateUserOwnedOnboardingTables1700000000004 } = require('./migrations/1700000000004-create-user-owned-onboarding-tables');
 const { CreateAuthRefreshTokensTable1700000000005 } = require('./migrations/1700000000005-create-auth-refresh-tokens-table');
 const { CreateOnboardingQuotesTable1700000000006 } = require('./migrations/1700000000006-create-onboarding-quotes-table');
+const { SeedCurrentAppFlavorsCatalog1700000000007 } = require('./migrations/1700000000007-seed-current-app-flavors-catalog');
 
 function buildDataSourceOptions(env) {
   return {
@@ -40,7 +41,8 @@ function buildDataSourceOptions(env) {
       CreateAuthUserTables1700000000003,
       CreateUserOwnedOnboardingTables1700000000004,
       CreateAuthRefreshTokensTable1700000000005,
-      CreateOnboardingQuotesTable1700000000006
+      CreateOnboardingQuotesTable1700000000006,
+      SeedCurrentAppFlavorsCatalog1700000000007
     ],
     synchronize: false,
     logging: false,

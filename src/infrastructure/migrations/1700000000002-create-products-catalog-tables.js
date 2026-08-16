@@ -1,4 +1,5 @@
 const { Table, TableIndex } = require('typeorm');
+const { seedFlavorCatalog } = require('./helpers/seed-flavor-catalog');
 
 class CreateProductsCatalogTables1700000000002 {
   name = 'CreateProductsCatalogTables1700000000002';
@@ -272,38 +273,7 @@ class CreateProductsCatalogTables1700000000002 {
   }
 
   async seedCatalog(queryRunner) {
-    await queryRunner.query(
-      "INSERT IGNORE INTO `wp_terms` (`term_id`, `name`, `slug`) VALUES (10, 'Flavors', 'flavors'), (20, 'frango', 'frango')"
-    );
-
-    await queryRunner.query(
-      "INSERT IGNORE INTO `wp_term_taxonomy` (`term_taxonomy_id`, `term_id`, `taxonomy`) VALUES (100, 10, 'product_cat'), (200, 20, 'product_tag')"
-    );
-
-    await queryRunner.query(
-      "INSERT IGNORE INTO `wp_posts` (`ID`, `post_parent`, `post_type`, `post_status`, `post_title`, `post_name`, `menu_order`) VALUES " +
-      "(100, 0, 'product', 'publish', 'Plano Premium', 'plano-premium', 1), " +
-      "(1001, 100, 'product_variation', 'publish', '', '', 1)"
-    );
-
-    await queryRunner.query(
-      "INSERT IGNORE INTO `wp_term_relationships` (`object_id`, `term_taxonomy_id`) VALUES (100, 100), (100, 200)"
-    );
-
-    await queryRunner.query(
-      "INSERT IGNORE INTO `wp_postmeta` (`post_id`, `meta_key`, `meta_value`) VALUES " +
-      "(100, '_cmpb_plan_country', 'BR')," +
-      "(100, '_cmpb_plan_days', '30')," +
-      "(1001, '_br_sale_price', '29.90')," +
-      "(1001, '_br_regular_price', '34.90')," +
-      "(1001, '_br_sale_price_dates_from', '1754006400')," +
-      "(1001, '_br_sale_price_dates_to', '1798761600')," +
-      "(1001, '_stripe_product_id', 'prod_seed_abc')," +
-      "(1001, '_stripe_price_id', 'price_seed_abc')," +
-      "(1001, '_stripe_price_ids_by_currency', '{\"brl\":\"price_seed_abc\"}')," +
-      "(1001, 'attribute_pa_flavor', 'Frango')," +
-      "(1001, 'attribute_pa_weight', '300g')"
-    );
+    await seedFlavorCatalog(queryRunner);
   }
 }
 

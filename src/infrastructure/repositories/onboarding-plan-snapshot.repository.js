@@ -1,48 +1,51 @@
-const { MARKETS, formatMass, formatPacks, resolveMarket } = require('../../core/market');
+const { listFlavorOptions } = require('../../core/flavors');
+const { MARKETS, resolveMarket } = require('../../core/market');
+const { consumptionLabels } = require('../../core/simplified-consumption');
 
-function buildConsumptionPet(market) {
-  return {
-    pet_id: 'pet-1',
-    pet_name: 'Milo',
-    daily: { value: 200, unit: 'g', grams: 200, formatted: formatMass(200, market) },
-    monthly: { value: 6000, unit: 'g', grams: 6000, formatted: formatMass(6000, market) },
-    packs: {
-      count: 2,
-      pack_size_grams: 500,
-      pack_size_value: 2,
-      pack_size_unit: 'pack',
-      formatted: formatPacks(2, market)
-    }
-  };
-}
+const PLAN_TERMS = [
+  { subscription_term_months: 1, discount_percent: 10 },
+  { subscription_term_months: 3, discount_percent: 25 },
+  { subscription_term_months: 6, discount_percent: 40 }
+];
 
 class OnboardingPlanSnapshotRepository {
+  constructor(options = {}) {
+    this.recommendationRepository = options.recommendationRepository || null;
+  }
+
   async getSnapshot(userId, marketInput) {
     const market = marketInput && marketInput.country ? marketInput : resolveMarket(marketInput);
-    const pet = buildConsumptionPet(market);
+    const recommendation = this.recommendationRepository
+      ? await this.recommendationRepository.getRecommendation(userId, market)
+      : null;
+    const simplified = recommendation && recommendation.simplified
+      ? recommendation.simplified
+      : {
+        country: market.country,
+        period_days: 30,
+        labels: consumptionLabels(market),
+        pets: []
+      };
+    const labels = simplified.labels || consumptionLabels(market);
+    const pets = Array.isArray(simplified.pets) ? simplified.pets : [];
 
     return {
       country: market.country,
       currency: market.currency,
-      labels: market.labels,
+      labels,
       consumption: {
-        labels: market.labels,
-        pets: [pet]
+        labels,
+        pets
       },
-      pets: [pet],
-      flavor_options: [
-        { key: 'chicken', label: market.flavorLabels.chicken }
-      ],
-      plan_terms: [
-        { subscription_term_months: 1, discount_percent: 10 },
-        { subscription_term_months: 3, discount_percent: 25 },
-        { subscription_term_months: 6, discount_percent: 40 }
-      ]
+      pets,
+      flavor_options: listFlavorOptions(market),
+      plan_terms: PLAN_TERMS
     };
   }
 }
 
 module.exports = {
   OnboardingPlanSnapshotRepository,
-  MARKETS
+  MARKETS,
+  PLAN_TERMS
 };

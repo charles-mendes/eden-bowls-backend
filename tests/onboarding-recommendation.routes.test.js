@@ -68,7 +68,7 @@ describe('onboarding recommendation routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.data.country).toBe('BR');
-    expect(response.body.data.simplified.labels.monthly).toBe('Por mês');
-    expect(response.body.data.simplified.pets[0].packs.formatted).toBe('2 pacotes');
+    expect(response.body.data.simplified.labels.monthly).toBe('Mensal');
+    expect(response.body.data.simplified.pets).toEqual([]);
   });
 });

@@ -121,10 +121,12 @@ async function bootstrap() {
   });
   const onboardingPlanSelectionRepository = new OnboardingPlanSelectionRepository(dataSource);
   const onboardingPlanSelectionService = new OnboardingPlanSelectionService(onboardingPlanSelectionRepository);
-  const onboardingPlanSnapshotRepository = new OnboardingPlanSnapshotRepository();
-  const onboardingPlanSnapshotService = new OnboardingPlanSnapshotService(onboardingPlanSnapshotRepository);
-  const onboardingRecommendationRepository = new OnboardingRecommendationRepository();
+  const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository);
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
+  const onboardingPlanSnapshotRepository = new OnboardingPlanSnapshotRepository({
+    recommendationRepository: onboardingRecommendationRepository
+  });
+  const onboardingPlanSnapshotService = new OnboardingPlanSnapshotService(onboardingPlanSnapshotRepository);
   const onboardingRecurrenceRepository = new OnboardingRecurrenceRepository(dataSource);
   const onboardingRecurrenceService = new OnboardingRecurrenceService(onboardingRecurrenceRepository);
   const onboardingSalesTaxQuoteRepository = new OnboardingSalesTaxQuoteRepository();

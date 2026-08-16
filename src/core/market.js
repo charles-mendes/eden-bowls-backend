@@ -13,10 +13,10 @@ const MARKETS = {
       packs: 'Packs'
     },
     flavorLabels: {
-      chicken: 'Chicken',
       beef: 'Beef',
+      fish: 'Fish',
       pork: 'Pork',
-      fish: 'Fish'
+      turkey: 'Turkey'
     }
   },
   BR: {
@@ -31,10 +31,10 @@ const MARKETS = {
       packs: 'Pacotes'
     },
     flavorLabels: {
-      chicken: 'Frango',
-      beef: 'Carne',
+      beef: 'Bovino',
+      fish: 'Peixe',
       pork: 'Porco',
-      fish: 'Peixe'
+      turkey: 'Peru'
     }
   }
 };
