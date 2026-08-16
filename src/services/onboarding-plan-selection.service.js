@@ -11,7 +11,15 @@ class OnboardingPlanSelectionService {
     }
 
     if (!userId) {
-      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+      return {
+        success: true,
+        data: {
+          plan_selection: {
+            ...(payload || {}),
+            updated_at: new Date().toISOString()
+          }
+        }
+      };
     }
 
     const data = await this.repository.setPlanSelection(userId, payload);

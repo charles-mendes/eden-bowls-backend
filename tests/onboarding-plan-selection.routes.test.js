@@ -34,13 +34,22 @@ describe('onboarding plan selection routes', () => {
     expect(onboardingPlanSelectionService.setPlanSelection).toHaveBeenCalledWith({ userId: 7, payload });
   });
 
-  test('requires bearer authentication', async () => {
-    const onboardingPlanSelectionService = { setPlanSelection: jest.fn() };
+  test('accepts a plan selection without bearer authentication', async () => {
+    const payload = { subscription_term_months: 1, pets: [] };
+    const onboardingPlanSelectionService = {
+      setPlanSelection: jest.fn().mockResolvedValue({
+        success: true,
+        data: { plan_selection: { ...payload, updated_at: '2026-08-15T23:52:00.000Z' } }
+      })
+    };
     const app = createApp({ onboardingPlanSelectionService, corsOrigins, jwt });
 
-    const response = await request(app).post('/api/v1/onboarding/plan-selection').send({ pets: [] });
+    const response = await request(app).post('/api/v1/onboarding/plan-selection').send(payload);
 
-    expect(response.status).toBe(401);
-    expect(onboardingPlanSelectionService.setPlanSelection).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(onboardingPlanSelectionService.setPlanSelection).toHaveBeenCalledWith({
+      userId: null,
+      payload
+    });
   });
 });

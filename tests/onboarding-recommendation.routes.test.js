@@ -37,13 +37,18 @@ describe('onboarding recommendation routes', () => {
     expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: 7 });
   });
 
-  test('requires bearer authentication', async () => {
-    const onboardingRecommendationService = { getRecommendation: jest.fn() };
+  test('returns a recommendation without bearer authentication', async () => {
+    const onboardingRecommendationService = {
+      getRecommendation: jest.fn().mockResolvedValue({
+        success: true,
+        data: { country: 'US', version: 'v1' }
+      })
+    };
     const app = createApp({ onboardingRecommendationService, corsOrigins, jwt });
 
     const response = await request(app).get('/api/v1/onboarding/recommendation');
 
-    expect(response.status).toBe(401);
-    expect(onboardingRecommendationService.getRecommendation).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(onboardingRecommendationService.getRecommendation).toHaveBeenCalledWith({ userId: null });
   });
 });

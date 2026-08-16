@@ -58,19 +58,22 @@ Nao ha hoje:
 ### Controller
 
 1. Exige service injetado (`503`).
-2. Exige `request.currentUser.id` (`401 unauthorized`).
-3. Chama `onboardingPlanSnapshotService.getSnapshot({ userId })`.
-4. Responde `200` com o envelope.
+2. Chama `onboardingPlanSnapshotService.getSnapshot({ userId })`.
+   - `userId` vem de `request.currentUser.id` se houver JWT.
+   - Sem JWT, `userId` e `null`.
+3. Responde `200` com o envelope.
 
 ## Autenticacao
+
+JWT e opcional.
 
 ```http
 Authorization: Bearer <jwt-de-usuario>
 ```
 
-Sem JWT a rota devolve `401`. Nao ha `x-session-token`.
+Sem JWT a rota segue com `userId = null` e devolve o stub. Nao ha `x-session-token`.
 
-O front envia o token via `buildAuthHeaders`. Se a rota responder `404`, `405` ou `501`, o cliente trata como "snapshot indisponivel" e retorna `null` (fallback local).
+O front envia o token via `buildAuthHeaders` quando houver. Se a rota responder `404`, `405` ou `501`, o cliente trata como "snapshot indisponivel" e retorna `null` (fallback local).
 
 ## Fluxo da requisicao
 
@@ -82,15 +85,11 @@ sequenceDiagram
   participant RP as PlanSnapshotRepository
 
   FE->>RT: GET /api/v1/onboarding/plan/snapshot + JWT
-  alt sem currentUser
-    RT-->>FE: 401
-  else autenticado
-    RT->>SV: getSnapshot({ userId })
-    SV->>RP: getSnapshot(userId)
-    RP-->>SV: snapshot stub
-    SV-->>RT: { success: true, data }
-    RT-->>FE: 200
-  end
+  RT->>SV: getSnapshot({ userId ou null })
+  SV->>RP: getSnapshot(userId)
+  RP-->>SV: snapshot stub
+  SV-->>RT: { success: true, data }
+  RT-->>FE: 200
 ```
 
 1. Front chama `fetchPlanSnapshotFromApi(authToken)`.
@@ -108,7 +107,7 @@ Nenhum path/query/body. Contexto: `userId` do JWT.
 | Camada | Regra | Status |
 |---|---|---|
 | Rota | service injetado | 503 |
-| Rota / service | `userId` presente | 401 |
+| Rota / service | `userId` opcional | — |
 | Service | repository injetado | 503 |
 | Negocio | pets existentes, catalogo nao vazio | **nao implementado** |
 
@@ -222,7 +221,7 @@ O front exige `flavor_options` (ou equivalente). Sem sabores, trata como contrat
 | Tema | WordPress | Node atual |
 |---|---|---|
 | URL | `/session/:sessionId/plan/snapshot` | `/plan/snapshot` |
-| Auth | token de sessao | JWT de usuario |
+| Auth | token de sessao | JWT opcional |
 | `session_id` | presente | removido |
 | GET com escrita | hidrata questionnaire | sem escrita |
 | Catalogo CMPB | obrigatorio; vazio = 502 | stub com 1 sabor |
@@ -234,4 +233,4 @@ O front exige `flavor_options` (ou equivalente). Sem sabores, trata como contrat
 `tests/onboarding-plan-snapshot.routes.test.js`:
 
 1. Usuario autenticado recebe snapshot sem `session_id`, com `currency`.
-2. Sem Bearer retorna `401`.
+2. Sem Bearer retorna `200` e o service e chamado com `{ userId: null }`.

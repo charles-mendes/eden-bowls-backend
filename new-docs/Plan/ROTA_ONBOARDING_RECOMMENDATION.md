@@ -54,8 +54,9 @@ Nao ha hoje:
 ### Controller
 
 1. Exige `dependencies.onboardingRecommendationService` (senao `503`).
-2. Exige `request.currentUser.id` (senao `401` com `code: unauthorized`).
-3. Chama `onboardingRecommendationService.getRecommendation({ userId })`.
+2. Chama `onboardingRecommendationService.getRecommendation({ userId })`.
+   - `userId` vem de `request.currentUser.id` se houver JWT.
+   - Sem JWT, `userId` e `null`.
 4. Responde `200` com o envelope do service.
 
 Nao ha `session_id` na URL nem no body.
@@ -68,7 +69,7 @@ Header:
 Authorization: Bearer <jwt-de-usuario>
 ```
 
-O middleware (`buildBearerTokenMiddleware`) so popula `request.currentUser` se o JWT for valido. Sem header, a rota recusa com `401`. Token malformado ou invalido cai no error handler de auth.
+JWT e opcional. Sem header, a rota segue com `userId = null` e devolve o stub. Token malformado ou invalido cai no error handler de auth.
 
 Diferenca do legado: nao existe mais `x-session-token` nem vinculo token-sessao.
 
@@ -84,15 +85,11 @@ sequenceDiagram
 
   FE->>MW: GET /api/v1/onboarding/recommendation
   MW->>RT: request.currentUser
-  alt sem usuario
-    RT-->>FE: 401 unauthorized
-  else autenticado
-    RT->>SV: getRecommendation({ userId })
-    SV->>RP: getRecommendation(userId)
-    RP-->>SV: payload stub
-    SV-->>RT: { success: true, data }
-    RT-->>FE: 200
-  end
+  RT->>SV: getRecommendation({ userId ou null })
+  SV->>RP: getRecommendation(userId)
+  RP-->>SV: payload stub
+  SV-->>RT: { success: true, data }
+  RT-->>FE: 200
 ```
 
 1. Front chama `fetchOnboardingRecommendation(authToken)`.
@@ -116,7 +113,7 @@ Contexto injetado:
 | Camada | Regra | Status |
 |---|---|---|
 | Rota | service injetado | 503 |
-| Rota / service | `userId` presente | 401 |
+| Rota / service | `userId` opcional | — |
 | Service | repository injetado | 503 |
 | Negocio | sessao existente, pets obrigatorios, questionario | **nao implementado** |
 
@@ -180,16 +177,7 @@ Sucesso `200`:
 }
 ```
 
-Erro `401`:
-
-```json
-{
-  "success": false,
-  "message": "Authentication is required."
-}
-```
-
-O teste de rota afirma explicitamente que `data.session_id` **nao existe**.
+O teste de rota afirma explicitamente que `data.session_id` **nao existe**. Sem JWT a rota tambem devolve `200` com o stub.
 
 ## Camadas
 
@@ -234,7 +222,7 @@ export async function fetchOnboardingRecommendation(authToken?: string) {
 | Tema | WordPress | Node atual |
 |---|---|---|
 | URL | `/onboarding/session/:sessionId/recommendation` | `/onboarding/recommendation` |
-| Auth | token de sessao | JWT de usuario |
+| Auth | token de sessao | JWT opcional |
 | `session_id` na resposta | sim | removido |
 | Pets obrigatorios | `422 pets_required` | nao validado |
 | GET com side effect | hidrata `questionnaire_json` e salva | sem escrita |
@@ -247,4 +235,4 @@ export async function fetchOnboardingRecommendation(authToken?: string) {
 `tests/onboarding-recommendation.routes.test.js`:
 
 1. Usuario autenticado recebe `200`, sem `session_id`, e o service e chamado com `{ userId }`.
-2. Sem Bearer retorna `401` e o service nao e chamado.
+2. Sem Bearer retorna `200` e o service e chamado com `{ userId: null }`.

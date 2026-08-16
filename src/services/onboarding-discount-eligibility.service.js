@@ -10,11 +10,7 @@ class OnboardingDiscountEligibilityService {
       throw new HttpError(503, 'Onboarding discount eligibility repository is not available.');
     }
 
-    if (!userId) {
-      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
-    }
-
-    const data = await this.repository.getEligibility(userId);
+    const data = await this.repository.getEligibility(userId || null);
     return {
       success: true,
       data

@@ -54,7 +54,7 @@ Nao ha hoje:
 - consulta a assinatura Stripe (`active` / `trialing`)
 - exclusao de pedido atual da sessao
 - fallback por email
-- estado funcional `NOT_AUTHENTICATED` (sem usuario a rota devolve `401`)
+- consulta real de historico; sem JWT o stub devolve `NOT_AUTHENTICATED`
 
 ## Endpoint, controller e permissao
 
@@ -67,27 +67,28 @@ Nao ha hoje:
 ### Controller
 
 1. Exige service injetado (`503`).
-2. Exige `request.currentUser.id` (`401 unauthorized`).
-3. Chama `getEligibility({ userId })`.
-4. Responde `200` com o envelope.
+2. Chama `getEligibility({ userId })`.
+   - `userId` vem de `request.currentUser.id` se houver JWT.
+   - Sem JWT, `userId` e `null` e o stub devolve `NOT_AUTHENTICATED`.
+3. Responde `200` com o envelope.
 
 Em `HttpError` com `details.code`, a rota devolve tambem `details` no JSON (diferente de recommendation/snapshot, que omitem `details`).
 
 ## Autenticacao
 
+JWT e opcional.
+
 ```http
 Authorization: Bearer <jwt-de-usuario>
 ```
 
-Sem JWT: `401`. Nao ha `x-session-token`.
-
-Mudanca critica vs WordPress: no legado, usuario nao resolvido **nao era erro HTTP**. Era estado:
+Sem JWT a rota **nao** devolve `401`. Devolve `200` com o estado legado:
 
 - `validated=false`
 - `eligible=null`
 - `reason=NOT_AUTHENTICATED`
 
-No Node, ausencia de usuario e `401`. O front atual ja trata a rota como autenticada (`buildAuthHeaders`).
+Nao ha `x-session-token`. O front chama a rota com ou sem Bearer.
 
 ## Fluxo da requisicao
 
@@ -98,16 +99,16 @@ sequenceDiagram
   participant SV as DiscountEligibilityService
   participant RP as DiscountEligibilityRepository
 
-  FE->>RT: GET /api/v1/onboarding/discount/eligibility + JWT
-  alt sem currentUser
-    RT-->>FE: 401 + details.code unauthorized
+  FE->>RT: GET /api/v1/onboarding/discount/eligibility
+  RT->>SV: getEligibility({ userId ou null })
+  SV->>RP: getEligibility(userId)
+  alt sem userId
+    RP-->>SV: { validated: false, eligible: null, reason: NOT_AUTHENTICATED }
   else autenticado
-    RT->>SV: getEligibility({ userId })
-    SV->>RP: getEligibility(userId)
     RP-->>SV: { validated: true, eligible: true, reason: null }
-    SV-->>RT: { success: true, data }
-    RT-->>FE: 200
   end
+  SV-->>RT: { success: true, data }
+  RT-->>FE: 200
 ```
 
 1. Front chama `fetchDiscountEligibilityFromApi(authToken)`.
@@ -125,7 +126,7 @@ Nenhum path/query/body. Contexto: `userId` do JWT.
 | Camada | Regra | Status |
 |---|---|---|
 | Rota | service injetado | 503 |
-| Rota / service | `userId` presente | 401 |
+| Rota / service | `userId` opcional | sem JWT devolve `NOT_AUTHENTICATED` |
 | Service | repository injetado | 503 |
 | Negocio | historico de pedido / assinatura ativa | **nao implementado** |
 
@@ -204,7 +205,7 @@ Com o stub atual, o front sempre recebe usuario elegivel quando autenticado.
 |---|---|---|
 | URL | `/session/:sessionId/discount/eligibility` | `/discount/eligibility` |
 | Auth | token de sessao | JWT de usuario |
-| Sem usuario | `200` + `NOT_AUTHENTICATED` | `401` |
+| Sem usuario | `200` + `NOT_AUTHENTICATED` | `200` + `NOT_AUTHENTICATED` |
 | Pedido previo | inelegivel | nao consultado |
 | Assinatura ativa | inelegivel (userId depois email) | nao consultado |
 | Exclui pedido da sessao | sim (`checkout_order_id`) | nao se aplica (sem sessao) |
@@ -215,4 +216,4 @@ Com o stub atual, o front sempre recebe usuario elegivel quando autenticado.
 `tests/onboarding-discount-eligibility.routes.test.js`:
 
 1. Usuario autenticado recebe `{ validated: true, eligible: true, reason: null }`.
-2. Sem Bearer retorna `401` e o service nao e chamado.
+2. Sem Bearer retorna `200` com `{ validated: false, eligible: null, reason: "NOT_AUTHENTICATED" }`.

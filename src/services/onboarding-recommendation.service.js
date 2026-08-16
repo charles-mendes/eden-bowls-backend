@@ -10,11 +10,7 @@ class OnboardingRecommendationService {
       throw new HttpError(503, 'Onboarding recommendation repository is not available.');
     }
 
-    if (!userId) {
-      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
-    }
-
-    const data = await this.repository.getRecommendation(userId);
+    const data = await this.repository.getRecommendation(userId || null);
 
     return {
       success: true,

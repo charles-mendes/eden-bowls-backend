@@ -36,13 +36,18 @@ describe('onboarding plan snapshot routes', () => {
     expect(onboardingPlanSnapshotService.getSnapshot).toHaveBeenCalledWith({ userId: 7 });
   });
 
-  test('requires bearer authentication', async () => {
-    const onboardingPlanSnapshotService = { getSnapshot: jest.fn() };
+  test('returns a plan snapshot without bearer authentication', async () => {
+    const onboardingPlanSnapshotService = {
+      getSnapshot: jest.fn().mockResolvedValue({
+        success: true,
+        data: { country: 'US', currency: 'USD', flavor_options: [{ key: 'chicken', label: 'Chicken' }] }
+      })
+    };
     const app = createApp({ onboardingPlanSnapshotService, corsOrigins, jwt });
 
     const response = await request(app).get('/api/v1/onboarding/plan/snapshot');
 
-    expect(response.status).toBe(401);
-    expect(onboardingPlanSnapshotService.getSnapshot).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(onboardingPlanSnapshotService.getSnapshot).toHaveBeenCalledWith({ userId: null });
   });
 });

@@ -7,12 +7,8 @@ function registerOnboardingPlanSelectionRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Onboarding plan selection service is not available.');
       }
 
-      if (!request.currentUser || !request.currentUser.id) {
-        throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
-      }
-
       const result = await dependencies.onboardingPlanSelectionService.setPlanSelection({
-        userId: request.currentUser.id,
+        userId: request.currentUser && request.currentUser.id ? request.currentUser.id : null,
         payload: request.body || {},
       });
 

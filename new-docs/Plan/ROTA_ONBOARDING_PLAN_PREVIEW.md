@@ -67,7 +67,7 @@ O pricing stub ignora sabores/pesos reais e devolve sempre `USD` / total `20`.
    - Sem JWT, `userId` e `null`.
 4. Responde `200` com o envelope.
 
-**Nao exige autenticacao.** E a unica das cinco rotas que funciona anonima.
+**Nao exige autenticacao.** As cinco rotas de plano sao publicas; esta e a que tambem persiste quote com `user_id` nulo.
 
 ## Autenticacao
 

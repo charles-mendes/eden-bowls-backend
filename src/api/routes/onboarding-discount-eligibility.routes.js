@@ -7,12 +7,8 @@ function registerOnboardingDiscountEligibilityRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Onboarding discount eligibility service is not available.');
       }
 
-      if (!request.currentUser || !request.currentUser.id) {
-        throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
-      }
-
       const result = await dependencies.onboardingDiscountEligibilityService.getEligibility({
-        userId: request.currentUser.id
+        userId: request.currentUser && request.currentUser.id ? request.currentUser.id : null
       });
 
       response.status(200).json(result);

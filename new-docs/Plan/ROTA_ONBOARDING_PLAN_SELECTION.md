@@ -57,19 +57,22 @@ O repository espalha o body recebido, acrescenta `updated_at` e grava o JSON.
 ### Controller
 
 1. Exige service injetado (`503`).
-2. Exige `request.currentUser.id` (`401 unauthorized`).
-3. Chama `setPlanSelection({ userId, payload: request.body || {} })`.
-4. Responde `200` com o envelope.
+2. Chama `setPlanSelection({ userId, payload: request.body || {} })`.
+   - `userId` vem de `request.currentUser.id` se houver JWT.
+   - Sem JWT, `userId` e `null`: a rota ecoa o payload e **nao** grava no banco.
+3. Responde `200` com o envelope.
 
 Nao ha rate limit dedicado alem do global (300 req/min).
 
 ## Autenticacao
 
+JWT e opcional.
+
 ```http
 Authorization: Bearer <jwt-de-usuario>
 ```
 
-Sem JWT: `401`. O front so chama esta rota com usuario logado (`authToken` obrigatorio na assinatura de `syncLocalPlanSelectionToApi`).
+Sem JWT a rota aceita o body e devolve `200` sem persistir. Com JWT, faz UPSERT em `onboarding_user_state.plan_selection`. O front envia Bearer quando houver.
 
 ## Fluxo da requisicao
 
@@ -81,11 +84,12 @@ sequenceDiagram
   participant RP as PlanSelectionRepository
   participant DB as onboarding_user_state
 
-  FE->>RT: POST /plan-selection + JWT + payload
-  alt sem currentUser
-    RT-->>FE: 401
+  FE->>RT: POST /plan-selection + payload
+  RT->>SV: setPlanSelection({ userId ou null, payload })
+  alt sem userId
+    SV-->>RT: ecoa plan_selection sem gravar
+    RT-->>FE: 200
   else autenticado
-    RT->>SV: setPlanSelection({ userId, payload })
     SV->>RP: setPlanSelection(userId, payload)
     RP->>DB: INSERT ... ON DUPLICATE KEY UPDATE plan_selection
     RP-->>SV: { plan_selection }
@@ -132,7 +136,7 @@ No legado o service montava `catalog_pricing`, `flavors_by_pet` e `validated_wit
 
 | Camada | Regra | Status |
 |---|---|---|
-| Rota / service | `userId` presente | 401 |
+| Rota / service | `userId` opcional | sem JWT ecoa e nao persiste |
 | Service | repository injetado | 503 |
 | Repository | DataSource inicializado | 503 |
 | Payload | termo 1/3/6, pets, pesos | **nao implementado** |
@@ -198,14 +202,7 @@ Sucesso `200`:
 
 O teste afirma que `data.session_id` **nao existe**.
 
-Erro `401`:
-
-```json
-{
-  "success": false,
-  "message": "Authentication is required."
-}
-```
+Sem JWT a resposta e `200` com o mesmo envelope, sem gravar no banco.
 
 ## Camadas
 
@@ -253,7 +250,7 @@ O front nao usa o body de resposta; so confirma o `2xx`.
 | Tema | WordPress | Node atual |
 |---|---|---|
 | URL | `/session/:sessionId/plan-selection` | `/plan-selection` |
-| Auth | token de sessao | JWT de usuario |
+| Auth | token de sessao | JWT opcional; persistencia so com JWT |
 | Persistencia | `plan_selection_json` da sessao | `onboarding_user_state.plan_selection` por `user_id` |
 | Pricing | service monta `catalog_pricing` | nao monta; grava o body |
 | Snapshot vs recommendation | 422 mismatch | nao validado |
@@ -266,4 +263,4 @@ O front nao usa o body de resposta; so confirma o `2xx`.
 `tests/onboarding-plan-selection.routes.test.js`:
 
 1. Usuario autenticado persiste o payload; resposta sem `session_id`; service chamado com `{ userId, payload }`.
-2. Sem Bearer retorna `401` e o service nao e chamado.
+2. Sem Bearer retorna `200` e o service e chamado com `{ userId: null, payload }`.

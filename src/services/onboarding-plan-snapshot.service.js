@@ -10,11 +10,7 @@ class OnboardingPlanSnapshotService {
       throw new HttpError(503, 'Onboarding plan snapshot repository is not available.');
     }
 
-    if (!userId) {
-      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
-    }
-
-    const data = await this.repository.getSnapshot(userId);
+    const data = await this.repository.getSnapshot(userId || null);
 
     return {
       success: true,
