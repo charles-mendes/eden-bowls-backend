@@ -73,6 +73,16 @@ const AUTH_ERROR = {
     status: 403,
     code: 'terms_not_accepted',
     message: 'You must accept the terms of use and privacy policy to continue.'
+  },
+  ALREADY_ACTIVE: {
+    status: 400,
+    code: 'already_active',
+    message: 'This account is already active.'
+  },
+  OTP_RESEND_RATE_LIMITED: {
+    status: 429,
+    code: 'otp_resend_rate_limited',
+    message: 'Too many verification code requests. Try again later.'
   }
 };
 

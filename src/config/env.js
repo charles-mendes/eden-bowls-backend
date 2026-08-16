@@ -1,5 +1,6 @@
 const dotenv = require('dotenv');
 const { z } = require('zod');
+const { effectiveOtpTtlSeconds } = require('../core/otp-email');
 
 dotenv.config();
 
@@ -28,6 +29,27 @@ const rawEnvSchema = z.object({
   AUTH_REFRESH_COOKIE_SECURE: z.string().optional(),
   AUTH_OTP_TTL_SECONDS: z.string().default('600'),
   AUTH_OTP_MAX_ATTEMPTS: z.string().default('5'),
+  AUTH_OTP_PEPPER: z.string().optional(),
+  AUTH_OTP_RESEND_MAX_ATTEMPTS: z.string().default('3'),
+  AUTH_OTP_RESEND_WINDOW_SECONDS: z.string().default('3600'),
+  AUTH_SMTP_HOST: z.string().optional(),
+  AUTH_SMTP_PORT: z.string().optional(),
+  AUTH_SMTP_USER: z.string().optional(),
+  AUTH_SMTP_PASS: z.string().optional(),
+  AUTH_SMTP_ENCRYPTION: z.string().optional(),
+  AUTH_SMTP_AUTH: z.string().optional(),
+  AUTH_MAIL_FROM: z.string().optional(),
+  AUTH_MAIL_FROM_NAME: z.string().optional(),
+  HSR_SMTP_HOST: z.string().optional(),
+  HSR_SMTP_PORT: z.string().optional(),
+  HSR_SMTP_USER: z.string().optional(),
+  HSR_SMTP_PASS: z.string().optional(),
+  HSR_SMTP_ENCRYPTION: z.string().optional(),
+  HSR_SMTP_AUTH: z.string().optional(),
+  HSR_MAIL_FROM: z.string().optional(),
+  HSR_MAIL_FROM_NAME: z.string().optional(),
+  HSR_ACTIVATION_TTL: z.string().optional(),
+  AUTH_SALT: z.string().optional(),
   BREEDS_TABLE_NAME: z.string().default('wp_hsr_breeds'),
   PRICE_ZONE_POLICY_TABLE_NAME: z.string().default('price_zone_policy'),
   WP_USERS_TABLE_NAME: z.string().default('wp_users'),
@@ -38,6 +60,21 @@ const rawEnvSchema = z.object({
   WP_TERM_TAXONOMY_TABLE_NAME: z.string().default('wp_term_taxonomy'),
   WP_TERM_RELATIONSHIPS_TABLE_NAME: z.string().default('wp_term_relationships')
 });
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+
+    const normalized = String(value).trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return '';
+}
 
 function toBoolean(value, defaultValue = false) {
   if (value === undefined || value === null || value === '') {
@@ -69,6 +106,8 @@ function parseEnv(source = process.env) {
     .map((value) => value.trim())
     .filter(Boolean);
 
+  const smtpAuthRaw = firstNonEmpty(rawEnv.AUTH_SMTP_AUTH, rawEnv.HSR_SMTP_AUTH);
+
   return {
     NODE_ENV: rawEnv.NODE_ENV,
     PORT: Number(rawEnv.PORT),
@@ -92,8 +131,19 @@ function parseEnv(source = process.env) {
     AUTH_REFRESH_COOKIE_DOMAIN: rawEnv.AUTH_REFRESH_COOKIE_DOMAIN || '',
     AUTH_REFRESH_COOKIE_SAME_SITE: rawEnv.AUTH_REFRESH_COOKIE_SAME_SITE,
     AUTH_REFRESH_COOKIE_SECURE: refreshCookieSecure,
-    AUTH_OTP_TTL_SECONDS: Number(rawEnv.AUTH_OTP_TTL_SECONDS),
+    AUTH_OTP_TTL_SECONDS: effectiveOtpTtlSeconds(firstNonEmpty(rawEnv.HSR_ACTIVATION_TTL, rawEnv.AUTH_OTP_TTL_SECONDS)),
     AUTH_OTP_MAX_ATTEMPTS: Number(rawEnv.AUTH_OTP_MAX_ATTEMPTS),
+    AUTH_OTP_PEPPER: firstNonEmpty(rawEnv.AUTH_OTP_PEPPER, rawEnv.AUTH_SALT, rawEnv.JWT_AUTH_SECRET_KEY) || 'hsr-default-salt',
+    AUTH_OTP_RESEND_MAX_ATTEMPTS: Number(rawEnv.AUTH_OTP_RESEND_MAX_ATTEMPTS),
+    AUTH_OTP_RESEND_WINDOW_SECONDS: Number(rawEnv.AUTH_OTP_RESEND_WINDOW_SECONDS),
+    AUTH_SMTP_HOST: firstNonEmpty(rawEnv.AUTH_SMTP_HOST, rawEnv.HSR_SMTP_HOST),
+    AUTH_SMTP_PORT: Number(firstNonEmpty(rawEnv.AUTH_SMTP_PORT, rawEnv.HSR_SMTP_PORT, '587')),
+    AUTH_SMTP_USER: firstNonEmpty(rawEnv.AUTH_SMTP_USER, rawEnv.HSR_SMTP_USER),
+    AUTH_SMTP_PASS: firstNonEmpty(rawEnv.AUTH_SMTP_PASS, rawEnv.HSR_SMTP_PASS),
+    AUTH_SMTP_ENCRYPTION: firstNonEmpty(rawEnv.AUTH_SMTP_ENCRYPTION, rawEnv.HSR_SMTP_ENCRYPTION, 'tls'),
+    AUTH_SMTP_AUTH: smtpAuthRaw === '' ? true : toBoolean(smtpAuthRaw, true),
+    AUTH_MAIL_FROM: firstNonEmpty(rawEnv.AUTH_MAIL_FROM, rawEnv.HSR_MAIL_FROM),
+    AUTH_MAIL_FROM_NAME: firstNonEmpty(rawEnv.AUTH_MAIL_FROM_NAME, rawEnv.HSR_MAIL_FROM_NAME, 'Eden Bowls'),
     BREEDS_TABLE_NAME: rawEnv.BREEDS_TABLE_NAME,
     PRICE_ZONE_POLICY_TABLE_NAME: rawEnv.PRICE_ZONE_POLICY_TABLE_NAME,
     WP_USERS_TABLE_NAME: rawEnv.WP_USERS_TABLE_NAME,

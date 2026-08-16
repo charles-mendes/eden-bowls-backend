@@ -3,9 +3,12 @@ const { AUTH_ERROR } = require('../../api/contracts/auth-errors');
 
 const OTP_META_KEYS = {
   activationStatus: 'hsr_activation_status',
-  otpHash: 'hsr_otp_hash',
-  otpExpiresAt: 'hsr_otp_expires_at',
-  otpAttempts: 'hsr_otp_attempts',
+  otpHash: 'hsr_activation_otp_hash',
+  otpExpiresAt: 'hsr_activation_otp_expires',
+  otpAttempts: 'hsr_activation_otp_attempts',
+  otpResendCount: 'hsr_activation_otp_resend_count',
+  otpResendWindowStart: 'hsr_activation_otp_resend_window_start',
+  emailVerifiedAt: 'hsr_email_verified_at',
   marketingOptIn: 'hsr_marketing_opt_in',
   termsAccepted: 'hsr_terms_accepted',
   privacyAccepted: 'hsr_privacy_accepted'
@@ -178,7 +181,9 @@ class AuthRepository {
       `MAX(CASE WHEN um.meta_key = '${OTP_META_KEYS.activationStatus}' THEN um.meta_value END) AS activation_status,`,
       `MAX(CASE WHEN um.meta_key = '${OTP_META_KEYS.otpHash}' THEN um.meta_value END) AS otp_hash,`,
       `MAX(CASE WHEN um.meta_key = '${OTP_META_KEYS.otpExpiresAt}' THEN um.meta_value END) AS otp_expires_at,`,
-      `MAX(CASE WHEN um.meta_key = '${OTP_META_KEYS.otpAttempts}' THEN um.meta_value END) AS otp_attempts`,
+      `MAX(CASE WHEN um.meta_key = '${OTP_META_KEYS.otpAttempts}' THEN um.meta_value END) AS otp_attempts,`,
+      `MAX(CASE WHEN um.meta_key = '${OTP_META_KEYS.otpResendCount}' THEN um.meta_value END) AS otp_resend_count,`,
+      `MAX(CASE WHEN um.meta_key = '${OTP_META_KEYS.otpResendWindowStart}' THEN um.meta_value END) AS otp_resend_window_start`,
       `FROM \`${this.tableNames.users}\` u`,
       `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
       'WHERE u.ID = ?',
@@ -198,7 +203,9 @@ class AuthRepository {
       activation_status: String(user.activation_status || '').trim().toLowerCase(),
       otp_hash: String(user.otp_hash || ''),
       otp_expires_at: Number(user.otp_expires_at || 0),
-      otp_attempts: Number(user.otp_attempts || 0)
+      otp_attempts: Number(user.otp_attempts || 0),
+      otp_resend_count: Number(user.otp_resend_count || 0),
+      otp_resend_window_start: Number(user.otp_resend_window_start || 0)
     };
   }
 
@@ -217,17 +224,29 @@ class AuthRepository {
     await this.upsertUserMeta(userId, OTP_META_KEYS.otpAttempts, String(attempts));
   }
 
+  async saveOtpResendState(userId, state) {
+    this.ensureDataSource();
+
+    await this.dataSource.transaction(async (manager) => {
+      await this.upsertUserMetaWithManager(manager, userId, OTP_META_KEYS.otpResendCount, String(state.count || 0));
+      await this.upsertUserMetaWithManager(manager, userId, OTP_META_KEYS.otpResendWindowStart, String(state.windowStart || 0));
+    });
+  }
+
   async activateUser(userId, consents = {}) {
     this.ensureDataSource();
 
     await this.dataSource.transaction(async (manager) => {
       await this.upsertUserMetaWithManager(manager, userId, OTP_META_KEYS.activationStatus, 'active');
+      await this.upsertUserMetaWithManager(manager, userId, OTP_META_KEYS.emailVerifiedAt, consents.emailVerifiedAt || new Date().toISOString());
       await this.upsertUserMetaWithManager(manager, userId, OTP_META_KEYS.marketingOptIn, consents.marketingOptIn ? '1' : '0');
       await this.upsertUserMetaWithManager(manager, userId, OTP_META_KEYS.termsAccepted, consents.termsAccepted ? '1' : '0');
       await this.upsertUserMetaWithManager(manager, userId, OTP_META_KEYS.privacyAccepted, consents.privacyAccepted ? '1' : '0');
       await this.deleteUserMetaWithManager(manager, userId, OTP_META_KEYS.otpHash);
       await this.deleteUserMetaWithManager(manager, userId, OTP_META_KEYS.otpExpiresAt);
       await this.deleteUserMetaWithManager(manager, userId, OTP_META_KEYS.otpAttempts);
+      await this.deleteUserMetaWithManager(manager, userId, OTP_META_KEYS.otpResendCount);
+      await this.deleteUserMetaWithManager(manager, userId, OTP_META_KEYS.otpResendWindowStart);
     });
   }
 

@@ -7,7 +7,7 @@ function createLogger(options = {}) {
   return pino({
     level,
     redact: {
-      paths: ['req.headers.authorization', 'req.headers.cookie', 'password', 'DB_PASSWORD'],
+      paths: ['req.headers.authorization', 'req.headers.cookie', 'password', 'otp', 'text', 'DB_PASSWORD', 'AUTH_SMTP_PASS', 'HSR_SMTP_PASS'],
       remove: true
     },
     transport: isDevelopment

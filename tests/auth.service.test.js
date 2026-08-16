@@ -307,20 +307,21 @@ describe('AuthService', () => {
     })).resolves.toEqual({
       uid: 12,
       email: 'jane@example.com',
-      otp_expires_in: 600
+      otp_expires_in: 900,
+      requires_email_verification: true
     });
 
     expect(repository.createPendingUser).toHaveBeenCalledWith(expect.objectContaining({
       userLogin: 'jane_doe_1234',
       userPass: 'hashed:EdenBowl8',
       userEmail: 'jane@example.com',
-      otpExpiresAt: 1722990600
+      otpExpiresAt: 1722990900
     }));
     expect(repository.createPendingUser.mock.calls[0][0].otpHash).not.toBe('847291');
     expect(otpMailer.sendOtpEmail).toHaveBeenCalledWith({
       to: 'jane@example.com',
       otp: '847291',
-      expiresInSeconds: 600
+      expiresInSeconds: 900
     });
   });
 
@@ -342,7 +343,7 @@ describe('AuthService', () => {
       password: 'EdenBowl8'
     })).rejects.toMatchObject({
       statusCode: 503,
-      details: { code: 'otp_email_failed', uid: 12 }
+      details: { code: 'otp_email_failed', uid: 12, account_created: true }
     });
     expect(repository.createPendingUser).toHaveBeenCalled();
   });
@@ -377,7 +378,8 @@ describe('AuthService', () => {
     expect(repository.activateUser).toHaveBeenCalledWith(12, {
       marketingOptIn: true,
       termsAccepted: true,
-      privacyAccepted: true
+      privacyAccepted: true,
+      emailVerifiedAt: '2024-08-07T00:20:00.000Z'
     });
   });
 
@@ -408,7 +410,8 @@ describe('AuthService', () => {
         otp_expires_at: 1,
         otp_attempts: 4
       }),
-      saveOtpChallenge: jest.fn().mockResolvedValue(undefined)
+      saveOtpChallenge: jest.fn().mockResolvedValue(undefined),
+      saveOtpResendState: jest.fn().mockResolvedValue(undefined)
     };
     const otpMailer = { sendOtpEmail: jest.fn().mockResolvedValue(undefined) };
     const service = new AuthService(repository, {
@@ -421,16 +424,48 @@ describe('AuthService', () => {
 
     await expect(service.resendOtp({ uid: 12 })).resolves.toEqual({
       uid: 12,
-      otp_expires_in: 600
+      otp_expires_in: 900
+    });
+    expect(repository.saveOtpResendState).toHaveBeenCalledWith(12, {
+      count: 1,
+      windowStart: 1722990000
     });
     expect(repository.saveOtpChallenge).toHaveBeenCalledWith(12, expect.objectContaining({
-      otpExpiresAt: 1722990600,
+      otpExpiresAt: 1722990900,
       attempts: 0
     }));
     expect(otpMailer.sendOtpEmail).toHaveBeenCalledWith({
       to: 'jane@example.com',
       otp: '111222',
-      expiresInSeconds: 600
+      expiresInSeconds: 900
     });
+  });
+
+  test('rate-limits OTP resend to 3 attempts per hour without resetting the counter on issue', async () => {
+    const repository = {
+      findUserForOtp: jest.fn().mockResolvedValue({
+        id: 12,
+        user_email: 'jane@example.com',
+        activation_status: 'pending',
+        otp_hash: 'old-hash',
+        otp_expires_at: 1,
+        otp_attempts: 0,
+        otp_resend_count: 3,
+        otp_resend_window_start: 1722990000
+      }),
+      saveOtpChallenge: jest.fn(),
+      saveOtpResendState: jest.fn()
+    };
+    const service = new AuthService(repository, {
+      jwt: { secret: 'test-secret' },
+      otpMailer: { sendOtpEmail: jest.fn() },
+      nowProvider: () => 1722990000 + 10
+    });
+
+    await expect(service.resendOtp({ uid: 12 })).rejects.toMatchObject({
+      statusCode: 429,
+      details: { code: 'otp_resend_rate_limited' }
+    });
+    expect(repository.saveOtpChallenge).not.toHaveBeenCalled();
   });
 });

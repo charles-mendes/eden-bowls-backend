@@ -96,7 +96,7 @@ describe('bearer token middleware', () => {
       register: jest.fn().mockResolvedValue({
         uid: 12,
         email: 'jane@example.com',
-        otp_expires_in: 600
+        otp_expires_in: 900
       })
     };
     const app = createApp({ authService, corsOrigins, jwt });

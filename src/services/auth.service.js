@@ -2,6 +2,7 @@ const { HttpError } = require('../core/http-error');
 const crypto = require('crypto');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { generateOtp, hashOtp, otpMatches } = require('../core/otp');
+const { effectiveOtpTtlSeconds } = require('../core/otp-email');
 const { issueJwtToken } = require('../core/jwt-token');
 const { AUTH_ERROR } = require('../api/contracts/auth-errors');
 
@@ -13,8 +14,11 @@ class AuthService {
     this.refreshTokenRepository = options.refreshTokenRepository || null;
     this.jwt = options.jwt || {};
     this.refreshTokenTtlSeconds = Number(options.refreshTokenTtlSeconds || 30 * 24 * 60 * 60);
-    this.otpTtlSeconds = Number(options.otpTtlSeconds || 600);
+    this.otpTtlSeconds = effectiveOtpTtlSeconds(options.otpTtlSeconds);
     this.otpMaxAttempts = Number(options.otpMaxAttempts || 5);
+    this.otpResendMaxAttempts = Number(options.otpResendMaxAttempts || 3);
+    this.otpResendWindowSeconds = Number(options.otpResendWindowSeconds || 3600);
+    this.otpPepper = String(options.otpPepper || options.jwt && options.jwt.secret || 'hsr-default-salt');
     this.otpMailer = options.otpMailer || null;
     this.hashPassword = typeof options.hashPassword === 'function' ? options.hashPassword : hashWordpressPassword;
     this.randomOtp = typeof options.randomOtp === 'function' ? options.randomOtp : generateOtp;
@@ -69,14 +73,16 @@ class AuthService {
     } catch (error) {
       throw new HttpError(AUTH_ERROR.OTP_EMAIL_FAILED.status, AUTH_ERROR.OTP_EMAIL_FAILED.message, {
         code: AUTH_ERROR.OTP_EMAIL_FAILED.code,
-        uid: user.id
+        uid: user.id,
+        account_created: true
       });
     }
 
     return {
       uid: user.id,
       email: user.user_email,
-      otp_expires_in: this.otpTtlSeconds
+      otp_expires_in: this.otpTtlSeconds,
+      requires_email_verification: true
     };
   }
 
@@ -127,7 +133,8 @@ class AuthService {
     await this.repository.activateUser(user.id, {
       marketingOptIn: Boolean(payload.marketingOptIn),
       termsAccepted: true,
-      privacyAccepted: true
+      privacyAccepted: true,
+      emailVerifiedAt: new Date(this.nowProvider() * 1000).toISOString()
     });
 
     return {
@@ -148,10 +155,12 @@ class AuthService {
     }
 
     if (user.activation_status === 'active') {
-      throw new HttpError(AUTH_ERROR.ACCOUNT_ALREADY_ACTIVE.status, AUTH_ERROR.ACCOUNT_ALREADY_ACTIVE.message, {
-        code: AUTH_ERROR.ACCOUNT_ALREADY_ACTIVE.code
+      throw new HttpError(AUTH_ERROR.ALREADY_ACTIVE.status, AUTH_ERROR.ALREADY_ACTIVE.message, {
+        code: AUTH_ERROR.ALREADY_ACTIVE.code
       });
     }
+
+    await this.consumeResend(user);
 
     const issuedAt = this.nowProvider();
     const otp = this.randomOtp();
@@ -182,6 +191,29 @@ class AuthService {
     };
   }
 
+  async consumeResend(user) {
+    const now = this.nowProvider();
+    const windowStart = Number(user.otp_resend_window_start || 0);
+    const count = Number(user.otp_resend_count || 0);
+    const windowExpired = !windowStart || now - windowStart >= this.otpResendWindowSeconds;
+
+    if (windowExpired) {
+      await this.repository.saveOtpResendState(user.id, { count: 1, windowStart: now });
+      return;
+    }
+
+    if (count >= this.otpResendMaxAttempts) {
+      throw new HttpError(AUTH_ERROR.OTP_RESEND_RATE_LIMITED.status, AUTH_ERROR.OTP_RESEND_RATE_LIMITED.message, {
+        code: AUTH_ERROR.OTP_RESEND_RATE_LIMITED.code
+      });
+    }
+
+    await this.repository.saveOtpResendState(user.id, {
+      count: count + 1,
+      windowStart
+    });
+  }
+
   async sendOtpEmail(payload) {
     if (!this.otpMailer || typeof this.otpMailer.sendOtpEmail !== 'function') {
       throw new Error('OTP mailer is not configured.');
@@ -195,7 +227,7 @@ class AuthService {
   }
 
   otpSecret() {
-    return String(this.jwt.secret || 'otp');
+    return String(this.otpPepper || this.jwt.secret || 'hsr-default-salt');
   }
 
   toNicename(username) {

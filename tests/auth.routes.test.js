@@ -232,7 +232,8 @@ describe('auth routes', () => {
       register: jest.fn().mockResolvedValue({
         uid: 12,
         email: 'jane@example.com',
-        otp_expires_in: 600
+        otp_expires_in: 900,
+        requires_email_verification: true
       })
     };
     const app = createApp({ authService, corsOrigins });
@@ -251,7 +252,8 @@ describe('auth routes', () => {
       data: {
         uid: 12,
         email: 'jane@example.com',
-        otp_expires_in: 600
+        otp_expires_in: 900,
+        requires_email_verification: true
       }
     });
     expect(authService.register).toHaveBeenCalledWith({
@@ -299,7 +301,8 @@ describe('auth routes', () => {
       register: jest.fn().mockRejectedValue(
         new HttpError(503, 'Unable to send the verification code right now.', {
           code: 'otp_email_failed',
-          uid: 12
+          uid: 12,
+          account_created: true
         })
       )
     };
@@ -315,6 +318,7 @@ describe('auth routes', () => {
     expect(response.status).toBe(503);
     expect(response.body.error.code).toBe('otp_email_failed');
     expect(response.body.error.data.uid).toBe(12);
+    expect(response.body.error.data.account_created).toBe(true);
   });
 
   test('verifies OTP without issuing a JWT', async () => {
@@ -349,7 +353,7 @@ describe('auth routes', () => {
 
   test('resends OTP and returns the TTL the modal uses', async () => {
     const authService = {
-      resendOtp: jest.fn().mockResolvedValue({ uid: 12, otp_expires_in: 600 })
+      resendOtp: jest.fn().mockResolvedValue({ uid: 12, otp_expires_in: 900 })
     };
     const app = createApp({ authService, corsOrigins });
     const response = await request(app)
@@ -359,7 +363,7 @@ describe('auth routes', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       success: true,
-      data: { uid: 12, otp_expires_in: 600 }
+      data: { uid: 12, otp_expires_in: 900 }
     });
   });
 

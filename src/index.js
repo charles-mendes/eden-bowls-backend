@@ -90,7 +90,23 @@ async function bootstrap() {
     refreshTokenTtlSeconds: env.AUTH_REFRESH_TOKEN_TTL_SECONDS,
     otpTtlSeconds: env.AUTH_OTP_TTL_SECONDS,
     otpMaxAttempts: env.AUTH_OTP_MAX_ATTEMPTS,
-    otpMailer: createOtpMailer({ logger, nodeEnv: env.NODE_ENV })
+    otpPepper: env.AUTH_OTP_PEPPER,
+    otpResendMaxAttempts: env.AUTH_OTP_RESEND_MAX_ATTEMPTS,
+    otpResendWindowSeconds: env.AUTH_OTP_RESEND_WINDOW_SECONDS,
+    otpMailer: createOtpMailer({
+      logger,
+      nodeEnv: env.NODE_ENV,
+      smtp: {
+        host: env.AUTH_SMTP_HOST,
+        port: env.AUTH_SMTP_PORT,
+        user: env.AUTH_SMTP_USER,
+        pass: env.AUTH_SMTP_PASS,
+        encryption: env.AUTH_SMTP_ENCRYPTION,
+        auth: env.AUTH_SMTP_AUTH,
+        from: env.AUTH_MAIL_FROM,
+        fromName: env.AUTH_MAIL_FROM_NAME
+      }
+    })
   });
   const priceZonePolicyRepository = new PriceZonePolicyRepository(dataSource, {
     tableName: env.PRICE_ZONE_POLICY_TABLE_NAME

@@ -42,7 +42,7 @@ describe('AuthRepository registration helpers', () => {
 
     expect(manager.query.mock.calls[0][0]).toContain('INSERT INTO `wp_users`');
     expect(manager.query.mock.calls.some((call) => String(call[1] && call[1][1]) === 'hsr_activation_status' && call[1][2] === 'pending')).toBe(true);
-    expect(manager.query.mock.calls.some((call) => String(call[1] && call[1][1]) === 'hsr_otp_hash' && call[1][2] === 'otp-hash')).toBe(true);
+    expect(manager.query.mock.calls.some((call) => String(call[1] && call[1][1]) === 'hsr_activation_otp_hash' && call[1][2] === 'otp-hash')).toBe(true);
   });
 
   test('authenticates by e-mail regardless of casing', async () => {

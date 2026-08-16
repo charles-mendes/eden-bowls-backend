@@ -21,6 +21,10 @@ function sendSignupError(response, error) {
     data.uid = details.uid;
   }
 
+  if (details.account_created) {
+    data.account_created = true;
+  }
+
   if (details.data && typeof details.data === 'object') {
     Object.assign(data, details.data);
   }
