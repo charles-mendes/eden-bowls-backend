@@ -8,11 +8,11 @@ Nao existe sessao PHP, `sessionId`, `session_token` nem `x-session-token` neste 
 
 | Fluxo | Onde vive | Auth |
 |---|---|---|
-| Login, refresh, logout, me | Node `api/v1/auth` | JWT + cookie de refresh |
-| Signup / OTP | ainda WordPress `custom/v1` | publico, sem cookie, sem Bearer |
+| Login, refresh, logout, me | Node `http://localhost:3000/api/v1/auth` | JWT + cookie de refresh |
+| Signup / OTP | Node `http://localhost:3000/api/v1/auth` | publico, sem cookie, sem Bearer |
 | Rotas de onboarding/subscriptions depois do login | Node `api/v1/*` | `Authorization: Bearer <jwt>` |
 
-O `eden-bowls-backend` **nao** registra `/custom/v1/*`. Signup/OTP continuam no WP ate existir `/api/v1/auth/register|otp/*`. Depois do OTP, o login automatico ja e Node.
+O `eden-bowls-backend` **nao** registra `/custom/v1/*`. Signup, OTP, login, refresh e logout vao para o Node.
 
 Fontes:
 
@@ -30,8 +30,7 @@ Fontes:
 | Refresh | `src/infrastructure/repositories/auth-refresh-token.repository.js` (`auth_refresh_tokens`) |
 | Bearer nas demais rotas | `src/api/middleware/bearer-token.middleware.js` |
 
-Namespace WP (so signup/OTP): `custom/v1` via `VITE_API_BASE_URL`.  
-Namespace Node: `api/v1/auth` via `VITE_AUTH_API_BASE_URL` (senao a origin do browser).
+Namespace Node: `http://localhost:3000/api/v1/auth` via `VITE_AUTH_API_BASE_URL` (senao `VITE_API_BASE_URL`, senao `http://localhost:3000` no Vite dev). Nao usar a origin `http://localhost:5173`.
 
 ---
 
@@ -60,25 +59,25 @@ cookie HttpOnly            -->  so em /api/v1/auth/refresh e /logout
 
 ### 1.1 Criar conta (`AuthModal` → `onboardingApi.ts`)
 
-Todas `POST`. Base: `VITE_API_BASE_URL` (`resolveBaseUrl()`). Sem cookie, sem Bearer.
+Todas `POST`. Base: `VITE_AUTH_API_BASE_URL` → `http://localhost:3000`. Sem cookie, sem Bearer.
 
 | Metodo | Rota | Quando | Backend |
 |---|---|---|---|
-| POST | `/custom/v1/account/email-exists` | Submit do signup, antes de criar | WordPress |
-| POST | `/custom/v1/register` | E-mail livre | WordPress |
-| POST | `/custom/v1/otp/verify` | Tela OTP, codigo + termos | WordPress |
-| POST | `/custom/v1/otp/resend` | Reenvio (opcional, countdown 10 s) | WordPress |
-| POST | `/api/v1/auth/token` | Login automatico apos OTP | **Node** |
+| POST | `/api/v1/auth/account/email-exists` | Submit do signup, antes de criar | Node |
+| POST | `/api/v1/auth/register` | E-mail livre | Node |
+| POST | `/api/v1/auth/otp/verify` | Tela OTP, codigo + termos | Node |
+| POST | `/api/v1/auth/otp/resend` | Reenvio (opcional, countdown 10 s) | Node |
+| POST | `/api/v1/auth/token` | Login automatico apos OTP | Node |
 
 ### 1.2 Entrar na conta (`AuthModal` → `AuthContext`)
 
-Base: `VITE_AUTH_API_BASE_URL` (senao `window.location.origin`). Sempre `credentials: 'include'`.
+Base: `VITE_AUTH_API_BASE_URL` (senao `VITE_API_BASE_URL` / `http://localhost:3000` no dev). Sempre `credentials: 'include'`.
 
 | Metodo | Rota | Quando | Backend |
 |---|---|---|---|
-| POST | `/api/v1/auth/token` | Submit do login **e** apos OTP no signup | Node |
-| POST | `/api/v1/auth/refresh` | Ao carregar o app e ~80% da vida do JWT | Node |
-| POST | `/api/v1/auth/logout` | Sign out | Node |
+| POST | `http://localhost:3000/api/v1/auth/token` | Submit do login **e** apos OTP no signup | Node |
+| POST | `http://localhost:3000/api/v1/auth/refresh` | Ao carregar o app e ~80% da vida do JWT | Node |
+| POST | `http://localhost:3000/api/v1/auth/logout` | Sign out | Node |
 
 Refresh e logout ficam no `AuthContext`, nao no modal.
 
@@ -108,11 +107,11 @@ Log in (/, /plan ou /onboarding)
 
 ```
 Signup
-  → POST /custom/v1/account/email-exists
-  → POST /custom/v1/register
+  → POST http://localhost:3000/api/v1/auth/account/email-exists
+  → POST http://localhost:3000/api/v1/auth/register
   → tela OTP
-  → POST /custom/v1/otp/verify
-  → POST /api/v1/auth/token   (login automatico Node)
+  → POST http://localhost:3000/api/v1/auth/otp/verify
+  → POST http://localhost:3000/api/v1/auth/token   (login automatico)
 ```
 
 1. Validacao local (nome, e-mail, senha, confirmacao).
@@ -146,10 +145,10 @@ Conta pendente **nao** autentica no Node: `AuthService.authenticate` devolve `40
 
 | Fluxo | Env | Default | Cookie |
 |---|---|---|---|
-| Signup/OTP (`/custom/v1`) | `VITE_API_BASE_URL` | origin do browser | nao |
-| Auth Node (`/api/v1/auth`) | `VITE_AUTH_API_BASE_URL` | origin do browser (`localhost:3000` no SSR) | sim (`credentials: 'include'`) |
+| Signup/OTP (`/api/v1/auth`) | `VITE_AUTH_API_BASE_URL` | `VITE_API_BASE_URL` / `http://localhost:3000` no dev | nao |
+| Auth Node (`/api/v1/auth`) | `VITE_AUTH_API_BASE_URL` | `VITE_API_BASE_URL` / `http://localhost:3000` no dev | sim (`credentials: 'include'`) |
 
-Envelope WordPress (`/custom/v1`):
+Envelope de signup Node (`/api/v1/auth/register|otp/*|email-exists`):
 
 ```json
 {
@@ -176,7 +175,7 @@ Envelope Node (`/api/v1/auth/token` e `/refresh`):
 Erro Node de auth (`HttpError` com `details.code`): `{ "code", "message", "data": { "status" } }` (sem wrapper `success`).  
 Validacao 400 do token (Zod): `{ "success": false, "message": "Invalid request payload." }`.
 
-O WP `register` / `otp/verify` ainda pode devolver `data.token_endpoint = jwt-auth/v1/token`. O front **ignora** e chama `/api/v1/auth/token`.
+O WP `register` / `otp/verify` ainda pode devolver `data.token_endpoint = jwt-auth/v1/token`. O front **ignora** e chama `http://localhost:3000/api/v1/auth/token`.
 
 ---
 
@@ -197,11 +196,11 @@ Nas rotas Node de onboarding/subscriptions o front manda o access JWT em `Author
 
 ---
 
-## 5) Signup/OTP legado (`/custom/v1`) — o Node nao implementa
+## 5) Signup/OTP Node (`http://localhost:3000/api/v1/auth`)
 
-Contrato que o front ainda chama. O backend Node nao tem essas rotas. Detalhe de handler WP nao e fonte de verdade para migracao Node.
+Contrato que o front chama. Envelope `{ success, data }` / `{ success: false, error }`.
 
-### POST `/custom/v1/account/email-exists`
+### POST `http://localhost:3000/api/v1/auth/account/email-exists`
 
 Body: `{ "email": "user@example.com" }`.
 
@@ -209,7 +208,7 @@ Sucesso `200`: `{ "success": true, "data": { "email": "...", "exists": false } }
 
 Front: `exists === true` → erro no campo e-mail (`This e-mail is already registered.`) e aborta o signup.
 
-### POST `/custom/v1/register`
+### POST `http://localhost:3000/api/v1/auth/register`
 
 Body enviado pelo front:
 
@@ -224,13 +223,13 @@ Body enviado pelo front:
 
 O front **nao** pede username. Gera slug do nome (`[^a-z0-9_]` → `_`), senao local-part do e-mail, senao `eden_user`; corta em 48 chars; sufixo `_{ultimos 4 do Date.now()}`.
 
-Validacao local do modal: senha minimo **8**, maiuscula e digito. O WP pode recusar com `422` (minimo 12 + simbolo).
+Validacao local do modal: senha minimo **8**, maiuscula e digito. O Node recusa com `400` se a senha nao passar no Zod.
 
-Sucesso `201`: `data.uid`, `data.email`, `data.otp_expires_in`. Front exige `uid >= 1`. Fallback de TTL no cliente: 600 s.
+Sucesso `201`: `data.uid`, `data.email`, `data.otp_expires_in` (900), `data.requires_email_verification`. Front exige `uid >= 1`.
 
-Usuario fica `hsr_activation_status = pending` ate o OTP. O Node so **le** esse meta no login/refresh/`me`.
+Usuario fica `hsr_activation_status = pending` ate o OTP. O Node **grava** as metas de OTP e **le** o status no login/refresh/`me`.
 
-### POST `/custom/v1/otp/verify`
+### POST `http://localhost:3000/api/v1/auth/otp/verify`
 
 ```json
 {
@@ -244,9 +243,9 @@ Usuario fica `hsr_activation_status = pending` ate o OTP. O Node so **le** esse 
 
 O modal tem um checkbox de termos. Esse valor preenche `termsAccepted` **e** `privacyAccepted`. Marketing e outro checkbox (default `true`). Botao Confirmar so habilita com 6 digitos + termos.
 
-Conta ativa ainda **nao** esta autenticada. Sem o `POST /api/v1/auth/token` seguinte, o app continua anonimo.
+Conta ativa ainda **nao** esta autenticada. Sem o `POST http://localhost:3000/api/v1/auth/token` seguinte, o app continua anonimo.
 
-### POST `/custom/v1/otp/resend`
+### POST `http://localhost:3000/api/v1/auth/otp/resend`
 
 Body: `{ "uid": 123 }`. Countdown de **10 s** no cliente (independente do TTL do OTP). Front so usa `otpExpiresIn`.
 
@@ -400,7 +399,7 @@ Checkout, ACK de PaymentIntent e acoes de subscription ainda chamam `AuthService
 
 ## 11) Persistencia
 
-O Node **nao** escreve metas de ativacao. So le `hsr_activation_status` no login/refresh/`me`.
+O Node **grava** metas de OTP no register/resend/verify e **le** `hsr_activation_status` no login/refresh/`me`.
 
 | Onde | Papel |
 |---|---|
@@ -422,7 +421,7 @@ Refresh token cru nunca e persistido. JS nunca le o cookie.
 | replay grace | 5 s | rotacao atomica |
 | refresh preventivo no front | 80% da vida do JWT | `AuthContext` |
 | countdown UI de resend | 10 s | `AuthModal` |
-| `register` / OTP | limites WP | ainda no WordPress |
+| `register` / OTP | teto de resend 3/3600 s + 5 tentativas por emissao | Node |
 
 ---
 
@@ -432,37 +431,36 @@ Refresh token cru nunca e persistido. JS nunca le o cookie.
 sequenceDiagram
     autonumber
     participant UI as AuthModal
-    participant API as onboardingApi /custom/v1
-    participant WP as WP register/OTP
+    participant API as onboardingApi /api/v1/auth
+    participant NodeAuth as http://localhost:3000
     participant Auth as AuthContext
-    participant Node as /api/v1/auth
     participant Store as authTokenStore
 
     Note over UI,Store: Criar conta
     UI->>API: POST account/email-exists
-    API->>WP: email existe?
-    WP-->>UI: exists false
+    API->>NodeAuth: email existe?
+    NodeAuth-->>UI: exists false
     UI->>API: POST register
-    WP->>WP: user pending + OTP e-mail
-    WP-->>UI: uid + otp_expires_in
+    NodeAuth->>NodeAuth: user pending + OTP e-mail
+    NodeAuth-->>UI: uid + otp_expires_in
     UI->>UI: tela OTP
     UI->>API: POST otp/verify (codigo + termos)
-    WP->>WP: status active
+    NodeAuth->>NodeAuth: status active
     UI->>Auth: login(email, password)
-    Auth->>Node: POST /auth/token
-    Node-->>Auth: JWT + Set-Cookie refresh
+    Auth->>NodeAuth: POST /auth/token
+    NodeAuth-->>Auth: JWT + Set-Cookie refresh
     Auth->>Store: access JWT em memoria
 
     Note over UI,Store: Entrar
     UI->>Auth: login(email, password)
-    Auth->>Node: POST /auth/token
-    Node-->>Auth: JWT + cookie
+    Auth->>NodeAuth: POST /auth/token
+    NodeAuth-->>Auth: JWT + cookie
     Auth->>Store: access JWT em memoria
 
-    Note over Auth,Node: Fora do modal
-    Auth->>Node: POST /auth/refresh (mount e 80% TTL)
-    Node-->>Auth: novo JWT
-    Auth->>Node: POST /auth/logout
+    Note over Auth,NodeAuth: Fora do modal
+    Auth->>NodeAuth: POST /auth/refresh (mount e 80% TTL)
+    NodeAuth-->>Auth: novo JWT
+    Auth->>NodeAuth: POST /auth/logout
 ```
 
 ---
@@ -470,7 +468,7 @@ sequenceDiagram
 ## 14) Pontos de atencao
 
 1. Nao ha sessao. Access JWT em memoria + refresh opaco no cookie. Reload depende de `POST /auth/refresh`, nao de cookie de sessao.
-2. Signup/OTP ainda dependem do WP. Migrar para `/api/v1/auth/register|otp/*` exige mudar `onboardingApi.ts`; o Node hoje nao tem essas rotas.
+2. Signup/OTP e login apontam para `http://localhost:3000/api/v1/auth`. Se o DevTools mostrar `localhost:5173/api/...`, falta `VITE_AUTH_API_BASE_URL` (ou `VITE_API_BASE_URL`) e o Vite precisa reiniciar.
 3. `token_endpoint` do WP aponta para `jwt-auth/v1/token` e e letra morta no front.
 4. Politica de senha: UI 8 chars vs WP 12 + simbolo.
 5. Mesmo checkbox de termos alimenta `termsAccepted` e `privacyAccepted`.

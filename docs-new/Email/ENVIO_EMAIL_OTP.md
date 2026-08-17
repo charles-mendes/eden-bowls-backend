@@ -4,10 +4,13 @@
 
 Unico e-mail transacional do backend Node: codigo OTP de 6 digitos no cadastro e no reenvio.
 
-Origem no front-end (ainda no namespace WP):
+Origem no front-end (Node em `http://localhost:3000`):
 
 - `eden-bowls/src/components/ui/AuthModal.tsx`
-- `eden-bowls/src/services/onboardingApi.ts` (`registerAccount`, `resendOtpCode`, `verifyOtpCode`)
+- `eden-bowls/src/services/onboardingApi.ts` (`checkEmailExists`, `registerAccount`, `resendOtpCode`, `verifyOtpCode`)
+- `eden-bowls/src/contexts/AuthContext.tsx` (`login`, refresh, logout)
+
+Base: `VITE_AUTH_API_BASE_URL` (senao `VITE_API_BASE_URL`, senao `http://localhost:3000` no `vite` dev). Nao usar `http://localhost:5173/api/...` — o Vite nao faz proxy de `/api`.
 
 Contrato legado analisado:
 
@@ -71,7 +74,7 @@ Paths **nao** registrados (e nao devem ser, pelo contrato Node):
 - `/custom/v1/otp/resend`
 - `/custom/v1/otp/verify`
 
-O front ainda chama `/custom/v1`. Ate `onboardingApi.ts` mudar, o SMTP Node nao entra no fluxo da UI.
+O front chama `http://localhost:3000/api/v1/auth/*` (signup, OTP, token, refresh, logout).
 
 ---
 
@@ -117,14 +120,25 @@ Host vazio:
 
 Permission: publica. Sem cookie, sem Bearer. O middleware JWT ignora essas paths.
 
+Host local: `http://localhost:3000`.
+
 | Metodo | Rota | Handler | Quando envia |
 |---|---|---|---|
-| POST | `/api/v1/auth/register` | `AuthService.register` | depois de criar usuario pendente |
-| POST | `/api/v1/auth/otp/resend` | `AuthService.resendOtp` | reemissao |
+| POST | `http://localhost:3000/api/v1/auth/register` | `AuthService.register` | depois de criar usuario pendente |
+| POST | `http://localhost:3000/api/v1/auth/otp/resend` | `AuthService.resendOtp` | reemissao |
 
-`POST /api/v1/auth/otp/verify` **nao** envia. So consome o codigo.
+`POST http://localhost:3000/api/v1/auth/otp/verify` **nao** envia. So consome o codigo.
 
-`POST /api/v1/auth/account/email-exists` **nao** envia.
+`POST http://localhost:3000/api/v1/auth/account/email-exists` **nao** envia.
+
+Login e sessao (tambem no Node, sem e-mail):
+
+| Metodo | Rota |
+|---|---|
+| POST | `http://localhost:3000/api/v1/auth/token` |
+| POST | `http://localhost:3000/api/v1/auth/refresh` |
+| POST | `http://localhost:3000/api/v1/auth/logout` |
+| GET | `http://localhost:3000/api/v1/auth/me` |
 
 ---
 
@@ -167,7 +181,7 @@ Body: `{ "uid": 123 }`.
 
 Compara HMAC, exige `termsAccepted` e `privacyAccepted`, marca `hsr_activation_status = active`, grava consents + `hsr_email_verified_at`, apaga hash/expiracao/attempts/resend.
 
-A conta **ainda nao esta autenticada**. O front precisa chamar `POST /api/v1/auth/token`.
+A conta **ainda nao esta autenticada**. O front precisa chamar `POST http://localhost:3000/api/v1/auth/token`.
 
 Usuario `pending` no login/refresh/`me` → `403 account_pending_activation` / `401 unauthorized`.
 
@@ -255,7 +269,7 @@ Sem retry. O usuario chama `/otp/resend` (countdown de 10 s no `AuthModal`).
 sequenceDiagram
     autonumber
     participant UI as AuthModal
-    participant API as POST /api/v1/auth
+    participant API as POST http://localhost:3000/api/v1/auth
     participant AS as AuthService
     participant DB as wp_users / wp_usermeta
     participant M as otp-mailer
@@ -302,7 +316,7 @@ sequenceDiagram
 | Link de ativacao | env morta |
 | `PUT /profile/email` + novo OTP | **nao** |
 | Rate limit HTTP dedicado de register/verify | **nao** (so global 300/60 e teto de resend por uid) |
-| Front em `/api/v1/auth/register\|otp/*` | **nao**. `onboardingApi.ts` ainda usa `/custom/v1` |
+| Front em `/api/v1/auth/register\|otp/*` | **sim**. `onboardingApi.ts` usa `http://localhost:3000/api/v1/auth` |
 
 ---
 
@@ -316,4 +330,4 @@ sequenceDiagram
 6. Sem HTML, sem `List-Unsubscribe`. Corpo so com o codigo em claro.
 7. `email-exists` continua sem rate limit proprio (enumeracao).
 8. Recaptcha do WP (`HSR_RECAPTCHA_ENABLED`) nao foi portado: o campo chega vazio e e ignorado.
-9. O `AuthModal` so passa a usar este SMTP quando `onboardingApi.ts` apontar para `/api/v1/auth`.
+9. O `AuthModal` chama o Node em `http://localhost:3000`. Se o DevTools mostrar `http://localhost:5173/api/v1/auth/...`, `VITE_AUTH_API_BASE_URL` / `VITE_API_BASE_URL` nao esta definido e o Vite precisa ser reiniciado.
