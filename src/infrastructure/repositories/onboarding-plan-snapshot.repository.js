@@ -1,12 +1,7 @@
+const { PLAN_TERMS } = require('../../core/first-purchase-discount');
 const { listFlavorOptions } = require('../../core/flavors');
 const { MARKETS, resolveMarket } = require('../../core/market');
 const { consumptionLabels } = require('../../core/simplified-consumption');
-
-const PLAN_TERMS = [
-  { subscription_term_months: 1, discount_percent: 10 },
-  { subscription_term_months: 3, discount_percent: 25 },
-  { subscription_term_months: 6, discount_percent: 40 }
-];
 
 class OnboardingPlanSnapshotRepository {
   constructor(options = {}) {

@@ -7,6 +7,10 @@ const { buildOnboardingPetEntitySchema } = require('./entities/onboarding-pet.en
 const { buildOnboardingUserStateEntitySchema } = require('./entities/onboarding-user-state.entity');
 const { buildAuthRefreshTokenEntitySchema } = require('./entities/auth-refresh-token.entity');
 const { buildOnboardingQuoteEntitySchema } = require('./entities/onboarding-quote.entity');
+const {
+  buildStripeFirstPurchasePromoEntitySchema,
+  buildStripeFirstPurchasePromoMetricEntitySchema
+} = require('./entities/stripe-first-purchase-promo.entity');
 const { CreateBreedsTable1700000000000 } = require('./migrations/1700000000000-create-breeds-table');
 const { CreatePriceZonePolicyTable1700000000001 } = require('./migrations/1700000000001-create-price-zone-policy-table');
 const { CreateProductsCatalogTables1700000000002 } = require('./migrations/1700000000002-create-products-catalog-tables');
@@ -15,6 +19,7 @@ const { CreateUserOwnedOnboardingTables1700000000004 } = require('./migrations/1
 const { CreateAuthRefreshTokensTable1700000000005 } = require('./migrations/1700000000005-create-auth-refresh-tokens-table');
 const { CreateOnboardingQuotesTable1700000000006 } = require('./migrations/1700000000006-create-onboarding-quotes-table');
 const { SeedCurrentAppFlavorsCatalog1700000000007 } = require('./migrations/1700000000007-seed-current-app-flavors-catalog');
+const { CreateStripeFirstPurchasePromosTable1700000000008 } = require('./migrations/1700000000008-create-stripe-first-purchase-promos-table');
 
 function buildDataSourceOptions(env) {
   return {
@@ -32,7 +37,9 @@ function buildDataSourceOptions(env) {
       buildOnboardingPetEntitySchema(),
       buildOnboardingUserStateEntitySchema(),
       buildAuthRefreshTokenEntitySchema(),
-      buildOnboardingQuoteEntitySchema()
+      buildOnboardingQuoteEntitySchema(),
+      buildStripeFirstPurchasePromoEntitySchema(),
+      buildStripeFirstPurchasePromoMetricEntitySchema()
     ],
     migrations: [
       CreateBreedsTable1700000000000,
@@ -42,7 +49,8 @@ function buildDataSourceOptions(env) {
       CreateUserOwnedOnboardingTables1700000000004,
       CreateAuthRefreshTokensTable1700000000005,
       CreateOnboardingQuotesTable1700000000006,
-      SeedCurrentAppFlavorsCatalog1700000000007
+      SeedCurrentAppFlavorsCatalog1700000000007,
+      CreateStripeFirstPurchasePromosTable1700000000008
     ],
     synchronize: false,
     logging: false,

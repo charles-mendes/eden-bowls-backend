@@ -61,6 +61,8 @@ const { SubscriptionsService } = require('./services/subscriptions.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
 const { OnboardingPetsSyncService } = require('./services/onboarding-pets-sync.service');
 const { OnboardingQuotesRepository } = require('./infrastructure/repositories/onboarding-quotes.repository');
+const { StripeFirstPurchasePromosRepository } = require('./infrastructure/repositories/stripe-first-purchase-promos.repository');
+const { StripeCouponService } = require('./services/stripe-coupon.service');
 
 async function bootstrap() {
   const env = parseEnv();
@@ -122,7 +124,20 @@ async function bootstrap() {
   const productsService = new ProductsService(productsRepository);
   const onboardingAddressAutocompleteRepository = new OnboardingAddressAutocompleteRepository();
   const onboardingAddressAutocompleteService = new OnboardingAddressAutocompleteService(onboardingAddressAutocompleteRepository);
-  const onboardingDiscountEligibilityRepository = new OnboardingDiscountEligibilityRepository();
+  const stripeFirstPurchasePromosRepository = new StripeFirstPurchasePromosRepository(dataSource);
+  const stripeCouponService = new StripeCouponService(stripeFirstPurchasePromosRepository, {
+    envMapping: {
+      1: env.STRIPE_FIRST_PURCHASE_PROMO_1M,
+      3: env.STRIPE_FIRST_PURCHASE_PROMO_3M,
+      6: env.STRIPE_FIRST_PURCHASE_PROMO_6M
+    }
+  });
+  const onboardingDiscountEligibilityRepository = new OnboardingDiscountEligibilityRepository(dataSource, {
+    postsTableName: env.WP_POSTS_TABLE_NAME,
+    postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
+    usersTableName: env.WP_USERS_TABLE_NAME,
+    subscriptionsTableName: env.WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME
+  });
   const onboardingDiscountEligibilityService = new OnboardingDiscountEligibilityService(onboardingDiscountEligibilityRepository);
   const onboardingPaymentIntentAckRepository = new OnboardingPaymentIntentAckRepository(dataSource);
   const onboardingPaymentIntentAckService = new OnboardingPaymentIntentAckService(onboardingPaymentIntentAckRepository, { authService });
@@ -157,7 +172,11 @@ async function bootstrap() {
   const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository(dataSource);
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
   const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
-  const onboardingSubscriptionCheckoutService = new OnboardingSubscriptionCheckoutService(onboardingSubscriptionCheckoutRepository, { authService });
+  const onboardingSubscriptionCheckoutService = new OnboardingSubscriptionCheckoutService(onboardingSubscriptionCheckoutRepository, {
+    authService,
+    discountEligibilityRepository: onboardingDiscountEligibilityRepository,
+    stripeCouponService
+  });
   const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository(dataSource);
   const onboardingSubscriptionPreviewService = new OnboardingSubscriptionPreviewService(onboardingSubscriptionPreviewRepository);
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository();

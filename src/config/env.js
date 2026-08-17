@@ -58,7 +58,11 @@ const rawEnvSchema = z.object({
   WP_POSTMETA_TABLE_NAME: z.string().default('wp_postmeta'),
   WP_TERMS_TABLE_NAME: z.string().default('wp_terms'),
   WP_TERM_TAXONOMY_TABLE_NAME: z.string().default('wp_term_taxonomy'),
-  WP_TERM_RELATIONSHIPS_TABLE_NAME: z.string().default('wp_term_relationships')
+  WP_TERM_RELATIONSHIPS_TABLE_NAME: z.string().default('wp_term_relationships'),
+  WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME: z.string().default('wp_hsr_stripe_subscriptions'),
+  STRIPE_FIRST_PURCHASE_PROMO_1M: z.string().optional(),
+  STRIPE_FIRST_PURCHASE_PROMO_3M: z.string().optional(),
+  STRIPE_FIRST_PURCHASE_PROMO_6M: z.string().optional()
 });
 
 function firstNonEmpty(...values) {
@@ -152,7 +156,11 @@ function parseEnv(source = process.env) {
     WP_POSTMETA_TABLE_NAME: rawEnv.WP_POSTMETA_TABLE_NAME,
     WP_TERMS_TABLE_NAME: rawEnv.WP_TERMS_TABLE_NAME,
     WP_TERM_TAXONOMY_TABLE_NAME: rawEnv.WP_TERM_TAXONOMY_TABLE_NAME,
-    WP_TERM_RELATIONSHIPS_TABLE_NAME: rawEnv.WP_TERM_RELATIONSHIPS_TABLE_NAME
+    WP_TERM_RELATIONSHIPS_TABLE_NAME: rawEnv.WP_TERM_RELATIONSHIPS_TABLE_NAME,
+    WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME: rawEnv.WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME,
+    STRIPE_FIRST_PURCHASE_PROMO_1M: firstNonEmpty(rawEnv.STRIPE_FIRST_PURCHASE_PROMO_1M),
+    STRIPE_FIRST_PURCHASE_PROMO_3M: firstNonEmpty(rawEnv.STRIPE_FIRST_PURCHASE_PROMO_3M),
+    STRIPE_FIRST_PURCHASE_PROMO_6M: firstNonEmpty(rawEnv.STRIPE_FIRST_PURCHASE_PROMO_6M)
   };
 }
 
