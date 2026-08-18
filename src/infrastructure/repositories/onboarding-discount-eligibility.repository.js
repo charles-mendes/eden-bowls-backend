@@ -47,6 +47,7 @@ class OnboardingDiscountEligibilityRepository {
       postmeta: options.postmetaTableName || 'wp_postmeta',
       users: options.usersTableName || 'wp_users',
       subscriptions: options.subscriptionsTableName || 'wp_hsr_stripe_subscriptions',
+      nodeSubscriptions: options.nodeSubscriptionsTableName || 'stripe_subscriptions',
       userState: options.userStateTableName || 'onboarding_user_state'
     };
   }
@@ -148,9 +149,29 @@ class OnboardingDiscountEligibilityRepository {
   }
 
   async hasActiveSubscription(userId, email) {
+    const nodeResult = await this.queryActiveSubscription(
+      this.tableNames.nodeSubscriptions,
+      'user_id',
+      userId,
+      email
+    );
+    if (nodeResult === true) {
+      return true;
+    }
+
+    const wpResult = await this.queryActiveSubscription(
+      this.tableNames.subscriptions,
+      'wp_user_id',
+      userId,
+      email
+    );
+    return wpResult === true;
+  }
+
+  async queryActiveSubscription(tableName, userColumn, userId, email) {
     try {
       const byUser = await this.dataSource.query(
-        `SELECT 1 AS ok FROM \`${this.tableNames.subscriptions}\` WHERE wp_user_id = ? AND status IN ('active', 'trialing') LIMIT 1`,
+        `SELECT 1 AS ok FROM \`${tableName}\` WHERE \`${userColumn}\` = ? AND status IN ('active', 'trialing') LIMIT 1`,
         [userId]
       );
       if (Array.isArray(byUser) && byUser.length > 0) {
@@ -163,13 +184,13 @@ class OnboardingDiscountEligibilityRepository {
       }
 
       const byEmail = await this.dataSource.query(
-        `SELECT 1 AS ok FROM \`${this.tableNames.subscriptions}\` WHERE customer_email = ? AND status IN ('active', 'trialing') LIMIT 1`,
+        `SELECT 1 AS ok FROM \`${tableName}\` WHERE customer_email = ? AND status IN ('active', 'trialing') LIMIT 1`,
         [normalizedEmail]
       );
       return Array.isArray(byEmail) && byEmail.length > 0;
     } catch (error) {
       if (isMissingTableError(error)) {
-        return false;
+        return null;
       }
 
       throw error;

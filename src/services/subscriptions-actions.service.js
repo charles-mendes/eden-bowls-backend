@@ -1,6 +1,6 @@
 const { HttpError } = require('../core/http-error');
 
-const SUPPORTED_ACTIONS = ['pause', 'reactivate', 'cancel', 'toggle_auto_renew', 'change_plan', 'change_billing_frequency', 'update_payment_method'];
+const SUPPORTED_ACTIONS = ['pause', 'reactivate', 'cancel', 'toggle_auto_renew', 'update_payment_method'];
 
 function normalizeAction(payload = {}) {
   const action = String(payload.action || '').trim().toLowerCase();
@@ -49,6 +49,11 @@ class SubscriptionsActionsService {
     }
 
     await this.authService.assertCriticalOperationAllowed(userId);
+
+    const paymentMethodId = payload.payment_method_id || payload.paymentMethodId;
+    if (action === 'update_payment_method' && !String(paymentMethodId || '').startsWith('pm_')) {
+      throw new HttpError(422, 'A valid payment method id is required.', { code: 'invalid_payment_method' });
+    }
 
     const data = await this.repository.executeAction(userId, subscriptionId, {
       action,

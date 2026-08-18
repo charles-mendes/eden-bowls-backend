@@ -19,6 +19,9 @@ class SubscriptionsDetailService {
     }
 
     const data = await this.repository.getDetail(userId, subscriptionId);
+    if (!data || !data.subscription) {
+      throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
+    }
 
     return {
       success: true,

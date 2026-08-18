@@ -1,50 +1,78 @@
+const { toIsoDate } = require('../../core/stripe-subscription-map');
+const { mapLedgerToDashboardDetail } = require('../../core/subscription-dashboard');
+
 class SubscriptionsDetailRepository {
+  constructor(options = {}) {
+    this.ledgerRepository = options.ledgerRepository || null;
+    this.stripeBilling = options.stripeBilling || null;
+  }
+
   async getDetail(userId, subscriptionId) {
-    return {
-      subscription: {
-        subscription_id: subscriptionId,
-        stripe_subscription_id: subscriptionId,
-        legacy_subscription_id: null,
-        slug: 'premium-plan',
-        plan_label: 'Premium',
-        status: 'active',
-        stripe_subscription_status: 'active',
-        contract_label: 'Premium plan',
-        start_date: '2026-01-01T00:00:00.000Z',
-        end_date: null,
-        end_date_source: null,
-        current_period_start: '2026-08-01T00:00:00.000Z',
-        current_period_end: '2026-09-01T00:00:00.000Z',
-        next_billing_date: '2026-09-01T00:00:00.000Z',
-        next_billing_source: 'stripe',
-        next_shipment_date: '2026-08-15T00:00:00.000Z',
-        next_shipment_source: 'plan_selection',
-        next_shipment_context: {
-          shipping_window: 'weekly'
-        },
-        pets_names: ['Milo'],
-        pet_ids: ['pet_1'],
-        pets: [{ id: 'pet_1', name: 'Milo' }],
-        packs_per_month: 2,
-        order_total_per_month: 60,
-        packs_per_delivery: 2,
-        frequency: 'monthly',
-        active_flavors: ['chicken'],
-        price_per_cycle: 30,
-        cycle_unit: 'month',
-        payment_method_brand: 'visa',
-        payment_method_last4: '4242',
-        delivery_address: 'Rua Teste, 123',
-        auto_renew: true,
-        current_cycle: 1,
-        total_cycles: 3,
-        billing_history: [],
-        plan_items: [],
-        plan_items_source: 'plan_selection',
-        stripe_timeline: [],
-        edit_payment_pending: false,
-        subscription_term_months: 1
+    if (!this.ledgerRepository) {
+      return null;
+    }
+
+    let row = await this.ledgerRepository.findByUserIdAndSubscriptionId(userId, subscriptionId);
+    if (!row) {
+      return null;
+    }
+
+    if ((!row.petsSnapshot || !row.planSelection || !row.address) && this.ledgerRepository.findUserStateByUserId) {
+      const state = await this.ledgerRepository.findUserStateByUserId(userId);
+      if (state) {
+        row = {
+          ...row,
+          petsSnapshot: row.petsSnapshot,
+          planSelection: row.planSelection || state.planSelection,
+          address: row.address || state.address,
+          shipping: row.shipping || state.shipping
+        };
       }
+    }
+
+    const extras = {
+      paymentMethodBrand: row.paymentMethodBrand,
+      paymentMethodLast4: row.paymentMethodLast4,
+      billingHistory: [],
+      stripeTimeline: []
+    };
+
+    if (this.stripeBilling && this.stripeBilling.retrieveSubscription) {
+      try {
+        const subscription = await this.stripeBilling.retrieveSubscription(subscriptionId);
+        const pm = subscription.default_payment_method && typeof subscription.default_payment_method === 'object'
+          ? subscription.default_payment_method.card || {}
+          : {};
+        if (pm.last4) {
+          extras.paymentMethodLast4 = String(pm.last4);
+        }
+        if (pm.brand) {
+          extras.paymentMethodBrand = String(pm.brand);
+        }
+      } catch (_error) {
+        // ledger remains the source of truth
+      }
+    }
+
+    if (this.stripeBilling && this.stripeBilling.listInvoicesForSubscription) {
+      try {
+        const invoices = await this.stripeBilling.listInvoicesForSubscription(subscriptionId);
+        extras.billingHistory = invoices.map((invoice) => ({
+          order_id: 0,
+          invoice_id: invoice.id,
+          date: toIsoDate(invoice.created),
+          amount: Number(((invoice.amount_paid || invoice.total || 0) / 100).toFixed(2)),
+          currency: String(invoice.currency || 'usd').toUpperCase(),
+          status: String(invoice.status || ''),
+          items: []
+        }));
+      } catch (_error) {
+        extras.billingHistory = [];
+      }
+    }
+
+    return {
+      subscription: mapLedgerToDashboardDetail(row, extras)
     };
   }
 }

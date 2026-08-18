@@ -28,8 +28,10 @@ const { registerOnboardingZipcodeRoutes } = require('./api/routes/onboarding-zip
 const { registerShippingRoutes } = require('./api/routes/shipping.routes');
 const { registerSubscriptionsActionsRoutes } = require('./api/routes/subscriptions-actions.routes');
 const { registerSubscriptionsDetailRoutes } = require('./api/routes/subscriptions-detail.routes');
+const { registerSubscriptionsEditCommitRoutes } = require('./api/routes/subscriptions-edit-commit.routes');
 const { registerSubscriptionsEditPreviewRoutes } = require('./api/routes/subscriptions-edit-preview.routes');
 const { registerSubscriptionsRoutes } = require('./api/routes/subscriptions.routes');
+const { registerStripeWebhookRoutes } = require('./api/routes/stripe-webhook.routes');
 const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
 const { registerOnboardingPetsSyncRoutes } = require('./api/routes/onboarding-pets-sync.routes');
 const { HttpError } = require('./core/http-error');
@@ -75,6 +77,7 @@ function createApp(dependencies = {}) {
   app.disable('x-powered-by');
   app.use(corsMiddleware(corsConfig));
   app.use(helmet());
+  app.use('/stripe/v1/webhook', express.raw({ type: 'application/json' }));
   app.use(express.json({ limit: '1mb' }));
   app.use(
     rateLimit({
@@ -136,7 +139,9 @@ function createApp(dependencies = {}) {
   registerSubscriptionsActionsRoutes(app, dependencies);
   registerSubscriptionsDetailRoutes(app, dependencies);
   registerSubscriptionsEditPreviewRoutes(app, dependencies);
+  registerSubscriptionsEditCommitRoutes(app, dependencies);
   registerSubscriptionsRoutes(app, dependencies);
+  registerStripeWebhookRoutes(app, dependencies);
   registerOnboardingPetDeleteRoutes(app, dependencies);
   registerOnboardingPetsSyncRoutes(app, dependencies);
 

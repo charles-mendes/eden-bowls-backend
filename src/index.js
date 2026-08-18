@@ -37,8 +37,11 @@ const { StripeBillingClient } = require('./infrastructure/stripe/stripe-billing-
 const { StripeCustomerStore } = require('./infrastructure/stripe/stripe-customer-store');
 const { SubscriptionsActionsRepository } = require('./infrastructure/repositories/subscriptions-actions.repository');
 const { SubscriptionsDetailRepository } = require('./infrastructure/repositories/subscriptions-detail.repository');
+const { SubscriptionsEditCommitRepository } = require('./infrastructure/repositories/subscriptions-edit-commit.repository');
 const { SubscriptionsEditPreviewRepository } = require('./infrastructure/repositories/subscriptions-edit-preview.repository');
 const { SubscriptionsRepository } = require('./infrastructure/repositories/subscriptions.repository');
+const { SubscriptionLedgerRepository } = require('./infrastructure/repositories/subscription-ledger.repository');
+const { StripeWebhookEventsRepository } = require('./infrastructure/repositories/stripe-webhook-events.repository');
 const { OnboardingPetDeleteRepository } = require('./infrastructure/repositories/onboarding-pets-delete.repository');
 const { AuthService } = require('./services/auth.service');
 const { createOtpMailer } = require('./infrastructure/mailers/otp-mailer');
@@ -65,8 +68,10 @@ const { OnboardingZipcodeService } = require('./services/onboarding-zipcode.serv
 const { ShippingService } = require('./services/shipping.service');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
+const { SubscriptionsEditCommitService } = require('./services/subscriptions-edit-commit.service');
 const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
 const { SubscriptionsService } = require('./services/subscriptions.service');
+const { StripeWebhookService } = require('./services/stripe-webhook.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
 const { OnboardingPetsSyncService } = require('./services/onboarding-pets-sync.service');
 const { OnboardingQuotesRepository } = require('./infrastructure/repositories/onboarding-quotes.repository');
@@ -214,12 +219,24 @@ async function bootstrap() {
   const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository(dataSource);
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
   const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
+  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
+  const stripeWebhookEventsRepository = new StripeWebhookEventsRepository(dataSource);
+  const stripeWebhookService = new StripeWebhookService({
+    stripeBilling,
+    webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+    eventsRepository: stripeWebhookEventsRepository,
+    ledgerRepository: subscriptionLedgerRepository,
+    customerStore: stripeCustomerStore,
+    shippingProductId: env.STRIPE_SHIPPING_PRODUCT_ID,
+    logger
+  });
   const onboardingSubscriptionCheckoutService = new OnboardingSubscriptionCheckoutService(onboardingSubscriptionCheckoutRepository, {
     authService,
     discountEligibilityRepository: onboardingDiscountEligibilityRepository,
     stripeCouponService,
     stripeBilling,
-    customerStore: stripeCustomerStore
+    customerStore: stripeCustomerStore,
+    ledgerRepository: subscriptionLedgerRepository
   });
   const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository(dataSource, {
     stripeBilling
@@ -232,13 +249,38 @@ async function bootstrap() {
   const onboardingZipcodeLookupService = new OnboardingZipcodeLookupService(onboardingZipcodeLookupRepository);
   const onboardingZipcodeRepository = new OnboardingZipcodeRepository(dataSource);
   const onboardingZipcodeService = new OnboardingZipcodeService(onboardingZipcodeRepository);
-  const subscriptionsActionsRepository = new SubscriptionsActionsRepository();
+  const subscriptionsActionsRepository = new SubscriptionsActionsRepository({
+    ledgerRepository: subscriptionLedgerRepository,
+    stripeBilling
+  });
   const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository, { authService });
-  const subscriptionsDetailRepository = new SubscriptionsDetailRepository();
+  const subscriptionsDetailRepository = new SubscriptionsDetailRepository({
+    ledgerRepository: subscriptionLedgerRepository,
+    stripeBilling
+  });
   const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository);
-  const subscriptionsEditPreviewRepository = new SubscriptionsEditPreviewRepository();
-  const subscriptionsEditPreviewService = new SubscriptionsEditPreviewService(subscriptionsEditPreviewRepository);
-  const subscriptionsRepository = new SubscriptionsRepository();
+  const subscriptionsEditPreviewRepository = new SubscriptionsEditPreviewRepository({
+    ledgerRepository: subscriptionLedgerRepository,
+    stripeBilling,
+    planPreviewRepository: onboardingPlanPreviewRepository,
+    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection)
+  });
+  const subscriptionsEditPreviewService = new SubscriptionsEditPreviewService(subscriptionsEditPreviewRepository, {
+    ledgerRepository: subscriptionLedgerRepository
+  });
+  const subscriptionsEditCommitRepository = new SubscriptionsEditCommitRepository({
+    ledgerRepository: subscriptionLedgerRepository,
+    stripeBilling,
+    planPreviewRepository: onboardingPlanPreviewRepository,
+    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection)
+  });
+  const subscriptionsEditCommitService = new SubscriptionsEditCommitService(subscriptionsEditCommitRepository, {
+    authService,
+    ledgerRepository: subscriptionLedgerRepository
+  });
+  const subscriptionsRepository = new SubscriptionsRepository({
+    ledgerRepository: subscriptionLedgerRepository
+  });
   const subscriptionsService = new SubscriptionsService(subscriptionsRepository);
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository(dataSource);
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository);
@@ -286,7 +328,9 @@ async function bootstrap() {
     subscriptionsActionsService,
     subscriptionsDetailService,
     subscriptionsEditPreviewService,
+    subscriptionsEditCommitService,
     subscriptionsService,
+    stripeWebhookService,
     onboardingPetDeleteService,
     onboardingPetsSyncService,
     geoService,

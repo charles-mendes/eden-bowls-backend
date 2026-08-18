@@ -273,6 +273,15 @@ class StripeBillingClient {
       });
     }
 
+    const metadata = {
+      wp_user_id: String(input.userId || ''),
+      user_id: String(input.userId || ''),
+      source: 'eden_bowls_node'
+    };
+    if (input.subscriptionTermMonths) {
+      metadata.subscription_term_months = String(input.subscriptionTermMonths);
+    }
+
     const subscriptionParams = {
       customer: customerId,
       items: items.map((item) => ({
@@ -280,11 +289,8 @@ class StripeBillingClient {
         quantity: Math.max(1, Number(item.quantity) || 1)
       })),
       payment_behavior: 'default_incomplete',
-      expand: ['latest_invoice.payment_intent', 'latest_invoice.discounts', 'discounts'],
-      metadata: {
-        wp_user_id: String(input.userId || ''),
-        source: 'eden_bowls_node'
-      }
+      expand: ['latest_invoice.payment_intent', 'latest_invoice.discounts', 'discounts', 'items.data.price'],
+      metadata
     };
 
     if (paymentMethodId) {
@@ -304,11 +310,15 @@ class StripeBillingClient {
       try {
         const productId = await this.ensureShippingProduct();
         const currency = String(input.currency || 'usd').toLowerCase();
+        const amountMinor = Math.round(shippingCost * 100);
+        subscriptionParams.metadata.shipping_amount_minor = String(amountMinor);
+        subscriptionParams.metadata.shipping_currency = currency;
+        subscriptionParams.metadata.shipping_product_id = String(productId);
         subscriptionParams.add_invoice_items = [{
           price_data: {
             currency,
             product: productId,
-            unit_amount: Math.round(shippingCost * 100),
+            unit_amount: amountMinor,
             tax_behavior: 'exclusive'
           },
           quantity: 1
@@ -350,6 +360,7 @@ class StripeBillingClient {
     return {
       customerId,
       shippingProductId: this.shippingProductId || '',
+      subscription,
       checkout: {
         order_id: Date.now(),
         order_key: `sub_${subscription.id || 'pending'}`,
@@ -374,6 +385,222 @@ class StripeBillingClient {
         reused: false
       }
     };
+  }
+
+  constructEvent(rawBody, signature, secret) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    if (!secret) {
+      throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
+        code: 'stripe_webhook_secret_missing'
+      });
+    }
+    if (!signature) {
+      throw new HttpError(400, 'Missing Stripe-Signature header.', {
+        code: 'stripe_webhook_signature_invalid'
+      });
+    }
+
+    try {
+      return stripe.webhooks.constructEvent(rawBody, signature, secret);
+    } catch (error) {
+      throw new HttpError(400, this.stripeMessage(error, 'Invalid Stripe signature.'), {
+        code: 'stripe_webhook_signature_invalid'
+      });
+    }
+  }
+
+  async retrieveSubscription(subscriptionId, options = {}) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const id = String(subscriptionId || '').trim();
+    if (!id.startsWith('sub_')) {
+      throw new HttpError(422, 'Invalid subscription id.', { code: 'invalid_subscription_id' });
+    }
+
+    try {
+      return await stripe.subscriptions.retrieve(id, {
+        expand: options.expand || ['items.data.price', 'default_payment_method', 'latest_invoice.payment_intent']
+      });
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe subscription.'), {
+        code: 'stripe_subscription_retrieve_failed'
+      });
+    }
+  }
+
+  async listByCustomer(customerId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const id = String(customerId || '').trim();
+    if (!id.startsWith('cus_')) {
+      return [];
+    }
+
+    try {
+      const listed = await stripe.subscriptions.list({
+        customer: id,
+        status: 'all',
+        limit: 100
+      });
+      return listed && Array.isArray(listed.data) ? listed.data : [];
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to list Stripe subscriptions.'), {
+        code: 'stripe_subscriptions_list_failed'
+      });
+    }
+  }
+
+  async pauseSubscription(subscriptionId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    try {
+      return await stripe.subscriptions.update(subscriptionId, {
+        pause_collection: { behavior: 'void' }
+      });
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to pause Stripe subscription.'), {
+        code: 'stripe_subscription_pause_failed'
+      });
+    }
+  }
+
+  async resumeSubscription(subscriptionId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    try {
+      return await stripe.subscriptions.update(subscriptionId, {
+        pause_collection: ''
+      });
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to resume Stripe subscription.'), {
+        code: 'stripe_subscription_resume_failed'
+      });
+    }
+  }
+
+  async setCancelAtPeriodEnd(subscriptionId, cancelAtPeriodEnd) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    try {
+      return await stripe.subscriptions.update(subscriptionId, {
+        cancel_at_period_end: Boolean(cancelAtPeriodEnd)
+      });
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to update auto-renew on Stripe subscription.'), {
+        code: 'stripe_subscription_cancel_at_period_end_failed'
+      });
+    }
+  }
+
+  async cancelSubscription(subscriptionId) {
+    return this.setCancelAtPeriodEnd(subscriptionId, true);
+  }
+
+  async updateDefaultPaymentMethod(customerId, paymentMethodId, subscriptionId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const attached = await this.attachPaymentMethod(customerId, paymentMethodId);
+    try {
+      await stripe.customers.update(customerId, {
+        invoice_settings: { default_payment_method: attached }
+      });
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to update default payment method.'), {
+        code: 'stripe_payment_method_default_failed'
+      });
+    }
+
+    if (subscriptionId) {
+      try {
+        await stripe.subscriptions.update(subscriptionId, {
+          default_payment_method: attached
+        });
+      } catch (error) {
+        throw new HttpError(502, this.stripeMessage(error, 'Unable to update subscription payment method.'), {
+          code: 'stripe_subscription_payment_method_failed'
+        });
+      }
+    }
+
+    return attached;
+  }
+
+  async addShippingInvoiceItem({ invoiceId, customerId, productId, amount, currency }) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    try {
+      return await stripe.invoiceItems.create({
+        customer: customerId,
+        invoice: invoiceId,
+        price_data: {
+          currency: String(currency || 'usd').toLowerCase(),
+          product: productId,
+          unit_amount: Math.round(Number(amount) || 0),
+          tax_behavior: 'exclusive'
+        },
+        quantity: 1
+      });
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to add shipping invoice item.'), {
+        code: 'stripe_shipping_invoice_item_failed'
+      });
+    }
+  }
+
+  async previewProration({ subscriptionId, items, prorationBehavior = 'create_prorations' }) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    try {
+      return await stripe.invoices.createPreview({
+        subscription: subscriptionId,
+        subscription_details: {
+          items,
+          proration_behavior: prorationBehavior
+        }
+      });
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to preview subscription proration.'), {
+        code: 'stripe_proration_preview_failed'
+      });
+    }
+  }
+
+  async updateSubscriptionItems({ subscriptionId, items, metadata, prorationBehavior = 'create_prorations' }) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const params = {
+      items,
+      proration_behavior: prorationBehavior,
+      expand: ['latest_invoice.payment_intent', 'items.data.price', 'default_payment_method']
+    };
+    if (metadata && typeof metadata === 'object') {
+      params.metadata = metadata;
+    }
+
+    try {
+      return await stripe.subscriptions.update(subscriptionId, params);
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to update Stripe subscription.'), {
+        code: 'stripe_subscription_update_failed'
+      });
+    }
+  }
+
+  async listInvoicesForSubscription(subscriptionId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    try {
+      const listed = await stripe.invoices.list({
+        subscription: subscriptionId,
+        limit: 12
+      });
+      return listed && Array.isArray(listed.data) ? listed.data : [];
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to list Stripe invoices.'), {
+        code: 'stripe_invoices_list_failed'
+      });
+    }
   }
 }
 

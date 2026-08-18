@@ -1,16 +1,17 @@
 const { HttpError } = require('../core/http-error');
-const { parseSubscriptionsEditPreviewInput } = require('../api/validators/subscriptions-edit.validator');
+const { parseSubscriptionsEditCommitInput } = require('../api/validators/subscriptions-edit.validator');
 const { validatePreviewPayload, validateSubscriptionTerm } = require('./onboarding-plan-preview.service');
 
-class SubscriptionsEditPreviewService {
+class SubscriptionsEditCommitService {
   constructor(repository, options = {}) {
     this.repository = repository;
+    this.authService = options.authService || null;
     this.ledgerRepository = options.ledgerRepository || null;
   }
 
-  async preview({ subscriptionId, payload = {}, userId }) {
+  async commit({ subscriptionId, payload = {}, userId }) {
     if (!this.repository) {
-      throw new HttpError(503, 'Subscriptions edit preview repository is not available.');
+      throw new HttpError(503, 'Subscriptions edit commit repository is not available.');
     }
 
     if (!subscriptionId || !/^sub_[A-Za-z0-9]+$/.test(subscriptionId)) {
@@ -21,7 +22,13 @@ class SubscriptionsEditPreviewService {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
-    const parsed = parseSubscriptionsEditPreviewInput(payload);
+    if (!this.authService) {
+      throw new HttpError(503, 'Auth service is not available for critical operations.');
+    }
+
+    await this.authService.assertCriticalOperationAllowed(userId);
+
+    const parsed = parseSubscriptionsEditCommitInput(payload);
     validateSubscriptionTerm(parsed);
     try {
       validatePreviewPayload(parsed);
@@ -38,26 +45,8 @@ class SubscriptionsEditPreviewService {
     const row = this.ledgerRepository
       ? await this.ledgerRepository.findByUserIdAndSubscriptionId(userId, subscriptionId)
       : null;
-    if (this.ledgerRepository && !row) {
-      throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
-    }
-    this.assertEditable(row);
-
-    if (row) {
-      await this.assertPetsNotBlocked(userId, subscriptionId, parsed.pets);
-    }
-
-    const data = await this.repository.preview(userId, subscriptionId, parsed, row);
-
-    return {
-      success: true,
-      data
-    };
-  }
-
-  assertEditable(row) {
     if (!row) {
-      return;
+      throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
     }
     if (row.status === 'canceled') {
       throw new HttpError(422, 'This subscription cannot be edited.', {
@@ -69,6 +58,15 @@ class SubscriptionsEditPreviewService {
         code: 'edit_payment_pending'
       });
     }
+
+    await this.assertPetsNotBlocked(userId, subscriptionId, parsed.pets);
+
+    const data = await this.repository.commit(userId, subscriptionId, parsed, row);
+
+    return {
+      success: true,
+      data
+    };
   }
 
   async assertPetsNotBlocked(userId, subscriptionId, pets) {
@@ -105,5 +103,5 @@ class SubscriptionsEditPreviewService {
 }
 
 module.exports = {
-  SubscriptionsEditPreviewService
+  SubscriptionsEditCommitService
 };

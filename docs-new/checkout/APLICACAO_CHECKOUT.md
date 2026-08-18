@@ -298,7 +298,7 @@ A tela quebra hoje na ordem do usuario: Address (lookup stub aceitavel) → Ship
 6. Payment methods Stripe reais (`[]` se nao houver customer).
 7. Subscription preview Stripe Tax.
 8. Checkout Stripe real + validacao de estado do usuario + `stripe_client_secret` no fluxo que o front usa.
-9. Webhook de invoice paid + dashboard de assinatura (ainda nao convertido). Guia: [docs/other-routers](../../docs/other-routers/README.md).
+9. Webhook de invoice paid + dashboard de assinatura (ainda nao convertido). Guia: [docs-new/other-routers](../other-routers/README.md).
 
 ## 7. Env sugerido (alvo)
 

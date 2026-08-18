@@ -200,6 +200,24 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     }));
   });
 
+  test('upserts an incomplete ledger row after Stripe create', async () => {
+    const ledgerRepository = {
+      listByUserId: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn().mockResolvedValue({})
+    };
+    const { service } = buildService();
+    service.ledgerRepository = ledgerRepository;
+
+    await service.checkout({ userId: 7, payload: {} });
+
+    expect(ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      stripeCustomerId: 'cus_1',
+      status: 'incomplete'
+    }));
+  });
+
   test('rejects checkout when the user state is incomplete', async () => {
     const { service, repository } = buildService({
       repository: {

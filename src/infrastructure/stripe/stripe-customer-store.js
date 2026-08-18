@@ -50,6 +50,22 @@ class StripeCustomerStore {
       [userId, STRIPE_CUSTOMER_META_KEY, value]
     );
   }
+
+  async findUserIdByCustomerId(customerId) {
+    this.ensureDataSource();
+    const value = String(customerId || '').trim();
+    if (!value.startsWith('cus_')) {
+      return null;
+    }
+
+    const rows = await this.dataSource.query(
+      `SELECT \`user_id\` FROM \`${this.usermetaTableName}\` WHERE \`meta_key\` = ? AND \`meta_value\` = ? LIMIT 1`,
+      [STRIPE_CUSTOMER_META_KEY, value]
+    );
+    const row = Array.isArray(rows) ? rows[0] : null;
+    const userId = Number(row && row.user_id);
+    return Number.isSafeInteger(userId) && userId > 0 ? userId : null;
+  }
 }
 
 module.exports = {

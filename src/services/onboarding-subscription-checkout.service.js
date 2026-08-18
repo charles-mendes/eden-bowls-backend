@@ -4,6 +4,7 @@ const {
   applyFirstPurchaseDiscount,
   expectedPercentForTerm
 } = require('../core/first-purchase-discount');
+const { buildPetsSnapshot, extractSubscriptionPeriod } = require('../core/stripe-subscription-map');
 
 function getPaymentMethodId(payload = {}) {
   return payload.payment_method_id || payload.paymentMethodId || '';
@@ -37,6 +38,7 @@ class OnboardingSubscriptionCheckoutService {
     this.stripeCouponService = options.stripeCouponService || null;
     this.stripeBilling = options.stripeBilling || null;
     this.customerStore = options.customerStore || null;
+    this.ledgerRepository = options.ledgerRepository || null;
   }
 
   async checkout({ userId, payload = {} }) {
@@ -115,7 +117,8 @@ class OnboardingSubscriptionCheckoutService {
       address: context.address || {},
       shipping: context.shipping || {},
       currency: catalogPricing && catalogPricing.currency ? catalogPricing.currency : 'usd',
-      promotionCodeId: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null
+      promotionCodeId: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null,
+      subscriptionTermMonths: termMonths
     });
 
     if (this.customerStore && created.customerId) {
@@ -148,6 +151,29 @@ class OnboardingSubscriptionCheckoutService {
         ? [{ promotion_code: promotion.promotion_code_id }]
         : []
     };
+
+    if (this.ledgerRepository && checkout.stripe_subscription_id) {
+      const existing = await this.ledgerRepository.listByUserId(userId);
+      const period = extractSubscriptionPeriod(created.subscription || {});
+      const firstItem = Array.isArray(items) ? items[0] : null;
+      await this.ledgerRepository.upsert({
+        userId,
+        customerEmail: checkout.billing && checkout.billing.email ? checkout.billing.email : (user && user.email),
+        stripeSubscriptionId: checkout.stripe_subscription_id,
+        stripeCustomerId: created.customerId,
+        status: String((created.subscription && created.subscription.status) || checkout.status || 'incomplete'),
+        planLabel: `Plan #${existing.length + 1}`,
+        stripePriceId: firstItem && firstItem.price ? firstItem.price : null,
+        currentPeriodStart: period.start,
+        currentPeriodEnd: period.end,
+        cancelAtPeriodEnd: Boolean(created.subscription && created.subscription.cancel_at_period_end),
+        petsSnapshot: buildPetsSnapshot(nextPlanSelection, context.pets),
+        planSelection: nextPlanSelection,
+        shipping: context.shipping || {},
+        address: context.address || {},
+        subscriptionTermMonths: Number.isFinite(termMonths) ? termMonths : null
+      });
+    }
 
     const data = await this.repository.checkout(userId, {
       ...payload,
