@@ -68,7 +68,8 @@ function buildService(overrides = {}) {
       stripeCouponService,
       stripeBilling,
       customerStore,
-      lockStore
+      lockStore,
+      planPreviewRepository: overrides.planPreviewRepository || null
     }),
     repository,
     authService,
@@ -331,6 +332,47 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       details: { code: 'session_incomplete' }
     });
     expect(repository.checkout).not.toHaveBeenCalled();
+  });
+
+  test('prices a stored plan selection that is missing catalog_pricing', async () => {
+    const unpricedContext = {
+      ...validContext,
+      planSelection: {
+        subscription_term_months: 1,
+        pets: [{
+          pet_id: 'pet-1',
+          pet_name: 'Luna',
+          enabled: true,
+          selected_flavors: ['chicken'],
+          flavor_weights: [8]
+        }]
+      }
+    };
+    const planPreviewRepository = {
+      previewPlan: jest.fn().mockResolvedValue({
+        subscription_term_months: 1,
+        catalog_pricing: validContext.planSelection.catalog_pricing,
+        flavors_by_pet: [{ pet_id: 'pet-1', flavors: { chicken: 8 } }]
+      })
+    };
+    const { service, stripeBilling } = buildService({
+      planPreviewRepository,
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout),
+        getCheckoutContext: jest.fn().mockResolvedValue(unpricedContext),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+
+    const result = await service.checkout({ userId: 7, payload });
+
+    expect(result.success).toBe(true);
+    expect(planPreviewRepository.previewPlan).toHaveBeenCalledWith(7, expect.objectContaining({
+      subscription_term_months: 1,
+      pets: unpricedContext.planSelection.pets
+    }), expect.objectContaining({ country: 'US' }));
+    expect(stripeBilling.createOnboardingSubscription).toHaveBeenCalledTimes(1);
   });
 
   test('rejects an invalid customer email', async () => {

@@ -4,8 +4,7 @@ function hasPets(context = {}) {
   return Array.isArray(context.pets) && context.pets.length > 0;
 }
 
-function hasPlanSelection(context = {}) {
-  const plan = context.planSelection;
+function isPricedPlanSelection(plan = null) {
   const catalog = plan && plan.catalog_pricing;
   if (!plan || !catalog) {
     return false;
@@ -14,6 +13,27 @@ function hasPlanSelection(context = {}) {
   const lineItems = Array.isArray(catalog.line_items) ? catalog.line_items : [];
   const subtotal = Number(catalog.subtotal);
   return lineItems.length > 0 || (Number.isFinite(subtotal) && subtotal > 0);
+}
+
+function hasPlanSelection(context = {}) {
+  return isPricedPlanSelection(context.planSelection);
+}
+
+function canResolvePlanSelection(plan = null) {
+  if (!plan || typeof plan !== 'object') {
+    return false;
+  }
+
+  const pets = Array.isArray(plan.pets) ? plan.pets : [];
+  return pets.some((pet) => {
+    if (!pet || typeof pet !== 'object' || pet.enabled === false) {
+      return false;
+    }
+
+    const flavors = Array.isArray(pet.selected_flavors) ? pet.selected_flavors : [];
+    const weights = Array.isArray(pet.flavor_weights) ? pet.flavor_weights : [];
+    return flavors.length > 0 && weights.length === flavors.length;
+  });
 }
 
 function hasAddress(context = {}) {
@@ -101,6 +121,8 @@ function collectPriceItems(planSelection = {}) {
 }
 
 module.exports = {
+  canResolvePlanSelection,
   collectPriceItems,
+  isPricedPlanSelection,
   validateCheckoutState
 };

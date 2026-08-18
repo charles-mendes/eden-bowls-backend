@@ -1,5 +1,10 @@
 const { HttpError } = require('../core/http-error');
-const { validateCheckoutState } = require('../core/checkout-state');
+const {
+  canResolvePlanSelection,
+  isPricedPlanSelection,
+  validateCheckoutState
+} = require('../core/checkout-state');
+const { resolveMarket } = require('../core/market');
 const {
   applyFirstPurchaseDiscount,
   expectedPercentForTerm
@@ -72,6 +77,7 @@ class OnboardingSubscriptionCheckoutService {
     this.customerStore = options.customerStore || null;
     this.ledgerRepository = options.ledgerRepository || null;
     this.lockStore = options.lockStore || defaultCheckoutLockStore;
+    this.planPreviewRepository = options.planPreviewRepository || null;
   }
 
   async checkout({ userId, payload = {} }) {
@@ -104,9 +110,10 @@ class OnboardingSubscriptionCheckoutService {
       });
     }
 
-    const context = this.repository.getCheckoutContext
+    const rawContext = this.repository.getCheckoutContext
       ? await this.repository.getCheckoutContext(userId)
       : { planSelection: this.repository.getPlanSelection ? await this.repository.getPlanSelection(userId) : null };
+    const context = await this.ensurePricedPlanSelection(userId, rawContext);
     validateCheckoutState(context);
 
     const eligibility = await this.discountEligibilityRepository.getEligibility(userId);
@@ -291,6 +298,40 @@ class OnboardingSubscriptionCheckoutService {
     } finally {
       releaseLock();
     }
+  }
+
+  async ensurePricedPlanSelection(userId, context = {}) {
+    if (isPricedPlanSelection(context.planSelection) || !canResolvePlanSelection(context.planSelection)) {
+      return context;
+    }
+
+    if (!this.planPreviewRepository) {
+      return context;
+    }
+
+    const planSelection = context.planSelection || {};
+    const address = context.address || {};
+    const market = resolveMarket({
+      country: address.country || planSelection.country
+    });
+    const resolved = await this.planPreviewRepository.previewPlan(userId, {
+      subscription_term_months: planSelection.subscription_term_months,
+      pets: planSelection.pets,
+      country: market.country
+    }, market);
+
+    return {
+      ...context,
+      planSelection: {
+        ...planSelection,
+        ...resolved,
+        pets: planSelection.pets,
+        catalog_pricing: resolved.catalog_pricing,
+        flavors_by_pet: resolved.flavors_by_pet,
+        country: market.country,
+        currency: market.currency
+      }
+    };
   }
 
   decorateCheckout({

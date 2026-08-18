@@ -205,7 +205,9 @@ async function bootstrap() {
     quotesRepository: onboardingQuotesRepository
   });
   const onboardingPlanSelectionRepository = new OnboardingPlanSelectionRepository(dataSource);
-  const onboardingPlanSelectionService = new OnboardingPlanSelectionService(onboardingPlanSelectionRepository);
+  const onboardingPlanSelectionService = new OnboardingPlanSelectionService(onboardingPlanSelectionRepository, {
+    planPreviewRepository: onboardingPlanPreviewRepository
+  });
   const onboardingPlanSnapshotRepository = new OnboardingPlanSnapshotRepository({
     recommendationRepository: onboardingRecommendationRepository
   });
@@ -241,7 +243,8 @@ async function bootstrap() {
     stripeCouponService,
     stripeBilling,
     customerStore: stripeCustomerStore,
-    ledgerRepository: subscriptionLedgerRepository
+    ledgerRepository: subscriptionLedgerRepository,
+    planPreviewRepository: onboardingPlanPreviewRepository
   });
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository({
     viaCepClient,
