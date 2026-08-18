@@ -2,7 +2,7 @@
 
 Documentacao para **implementar** webhook Stripe + dashboard de assinatura no `eden-bowls-backend`.
 
-Checkout, ACK, frete, lookup, cartoes e preview Stripe ja estao em [../checkout](../checkout/). Este diretorio cobre o bloco seguinte: **cobranca fecha no webhook** e **Meu Plano / Edit** leem o ledger.
+Checkout, ACK, frete, lookup, cartoes e preview Stripe ja estao em [../checkout](../checkout/). Place Order (create Stripe + gaps): [../subscription-checkout](../subscription-checkout/README.md). Este diretorio cobre o bloco seguinte: **cobranca fecha no webhook** e **Meu Plano / Edit** leem o ledger.
 
 Identidade: **JWT**. Sem `session_id`. Sem Woo `fsb_subscription`. Persistencia alvo: ledger `stripe_subscriptions` por `user_id` + `onboarding_user_state.checkout_reference` ja gravado no Place Order.
 

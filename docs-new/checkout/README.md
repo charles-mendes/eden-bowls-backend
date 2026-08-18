@@ -12,6 +12,8 @@ Analises WP legado: `docs/checkout/`.
 
 Transicao WP → Node (codigo vivo do plugin + o que criar/alterar): [APLICACAO_CHECKOUT.md](./APLICACAO_CHECKOUT.md).
 
+Place Order Stripe (JWT, sem sessao, sem Woo): [../subscription-checkout/README.md](../subscription-checkout/README.md).
+
 ## Mudanca de modelo
 
 | Aspecto | WordPress (legado) | Node (atual) |
@@ -39,7 +41,7 @@ O front (`eden-bowls/src/services/onboardingApi.ts`) ja chama os paths novos, se
 | `/api/v1/onboarding/sales-tax/quote` | POST | JWT obrigatorio | Nenhuma | stub (CA 10%, resto 0) | [ROTA_ONBOARDING_SALES_TAX_QUOTE.md](./ROTA_ONBOARDING_SALES_TAX_QUOTE.md) |
 | `/api/v1/onboarding/subscription/preview` | POST | JWT obrigatorio | Le `plan_selection` | stub (totais fixos, so US) | [ROTA_ONBOARDING_SUBSCRIPTION_PREVIEW.md](./ROTA_ONBOARDING_SUBSCRIPTION_PREVIEW.md) |
 | `/api/v1/onboarding/payment-methods` | GET | JWT obrigatorio | Nenhuma | stub (Visa 4242) | [ROTA_ONBOARDING_PAYMENT_METHODS.md](./ROTA_ONBOARDING_PAYMENT_METHODS.md) |
-| `/api/v1/onboarding/subscription/checkout` | POST | JWT obrigatorio + conta ativa | `checkout_reference` (+ `plan_selection` se houver) | stub Stripe; desconto 1a compra real | [ROTA_ONBOARDING_SUBSCRIPTION_CHECKOUT.md](./ROTA_ONBOARDING_SUBSCRIPTION_CHECKOUT.md) |
+| `/api/v1/onboarding/subscription/checkout` | POST | JWT obrigatorio + conta ativa | `checkout_reference` + ledger `incomplete` | Stripe real; gaps em [../subscription-checkout](../subscription-checkout/README.md) | [ROTA_ONBOARDING_SUBSCRIPTION_CHECKOUT.md](./ROTA_ONBOARDING_SUBSCRIPTION_CHECKOUT.md) |
 | `/api/v1/onboarding/payment-intent/ack` | POST | JWT obrigatorio + conta ativa | atualiza `checkout_reference` | persistencia real | [ROTA_ONBOARDING_PAYMENT_INTENT_ACK.md](./ROTA_ONBOARDING_PAYMENT_INTENT_ACK.md) |
 
 Regras de tela (paineis, Place Order, fonte de verdade de total): [CHECKOUT_RULES.md](./CHECKOUT_RULES.md).

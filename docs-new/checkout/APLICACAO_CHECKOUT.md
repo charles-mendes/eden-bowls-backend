@@ -201,6 +201,9 @@ Alvo Node: customer Stripe persistido no usuario (usermeta ou tabela billing ja 
 
 ### 4.9 `POST /api/v1/onboarding/subscription/checkout` (JWT + conta ativa)
 
+Serie de implementacao (pipeline, Stripe-first, o que nao portar, webhook): [../subscription-checkout/README.md](../subscription-checkout/README.md).
+
+
 WP `CheckoutService::checkout`:
 
 1. Woo obrigatorio.

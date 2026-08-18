@@ -8,6 +8,8 @@ Contrato do front: `eden-bowls/src/services/onboardingApi.ts`, `subscriptionEdit
 
 Este arquivo e o guia de implementacao. Nao copiar PHP. Nao recriar `fsb_subscription` / `wc_create_order`.
 
+Create no Place Order (antes deste bloco): [../subscription-checkout/README.md](../subscription-checkout/README.md).
+
 ## 1. O que ja existe no Node e o que falta
 
 | Responsabilidade | Node (hoje) | Node (alvo) |

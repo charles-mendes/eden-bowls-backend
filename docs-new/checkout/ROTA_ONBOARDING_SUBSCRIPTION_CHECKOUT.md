@@ -1,5 +1,7 @@
 # Rota atual: Onboarding Subscription Checkout
 
+Guia de implementacao (JWT, sem sessao, sem Woo, unico fluxo Stripe-first): [../subscription-checkout/README.md](../subscription-checkout/README.md).
+
 ## Escopo
 
 Rota atual no backend Node:
@@ -43,10 +45,12 @@ Fonte de verdade de cobranca: esta rota, nao o `grandTotal` do `navigate(state)`
 | Eligibility + `stripeCouponService.resolveFirstPurchasePromotionForCheckout` | implementado no service |
 | Regrava `catalog_pricing.discounted_first_month_total` | implementado |
 | UPSERT `checkout_reference` | implementado |
-| Pedido Woo / Subscription Stripe reais | **stub** (totais fixos `29.99` / `subtotal 25`) |
-| Webhook Stripe | **nao existe** |
+| `StripeBillingClient.createOnboardingSubscription` | implementado (`default_incomplete` + `client_secret`) |
+| Ledger `incomplete` | implementado |
+| Webhook Stripe | implementado em `/stripe/v1/webhook` |
+| Idempotencia / reuse / `pm_` obrigatorio / `order_id: 0` | **falta** — ver [../subscription-checkout](../subscription-checkout/README.md) |
 
-O front **nao** envia `checkout_mode`. Default no service: `order_first` (stub **sem** `stripe_client_secret`). `subscription_first` so aparece se o body mandar `checkout_mode` ou `flow`.
+O front **nao** envia `checkout_mode`. O service ainda defaulta `order_first` no JSON, mas **sempre** cria Subscription Stripe. Alvo: persistir `subscription_first` e ignorar o campo.
 
 ## Endpoint, controller e permissao
 
@@ -120,46 +124,17 @@ Percent aplicado:
 
 O front re-sincroniza shipping **antes** deste POST.
 
-## Response (stub)
+## Response
 
-Campos que o front consome (`SubscriptionCheckoutResponse`). Node **nao** devolve `session_id`.
+Campos que o front consome (`SubscriptionCheckoutResponse`). Node **nao** devolve `session_id`. Totais vem da invoice Stripe (`amount_due` / `total`), nao de constantes `29.99`.
 
-```json
-{
-  "success": true,
-  "data": {
-    "order_id": 101,
-    "order_key": "order-key",
-    "status": "pending",
-    "total": 29.99,
-    "subtotal": 25,
-    "product_tax": 2.5,
-    "shipping_total": 2.49,
-    "shipping_tax": 0.25,
-    "shipping_total_with_tax": 2.74,
-    "currency": "USD",
-    "payment_url": "https://checkout.stripe.test/pay",
-    "subscription_ids": [1],
-    "flexible_subscription_id": 7,
-    "stripe_subscription_id": "sub_456",
-    "payment_state": "requires_confirmation",
-    "has_payment_method": true,
-    "reused": false,
-    "discount_applied_percent": 25,
-    "stripe_promotion_code_id": "promo_xxx",
-    "stripe_discount_amount": 6.25,
-    "discounts": [{ "promotion_code": "promo_xxx" }]
-  }
-}
-```
+Shape alvo e gaps: [../subscription-checkout/01-onboarding-subscription-checkout.md](../subscription-checkout/01-onboarding-subscription-checkout.md) secao 3.3.
 
-Com `payment_method_id`: `payment_state = requires_confirmation`, `has_payment_method = true`, `payment_url` preenchida.
+Com `payment_method_id` (`pm_`): `payment_state = requires_confirmation`, `has_payment_method = true`, `stripe_client_secret` preenchido.
 
-Sem payment method: `requires_payment_method`, sem `payment_url`.
+Sem payment method: alvo **422** `invalid_payment_method` (hoje o client ainda aceita vazio).
 
-`checkout_mode === 'subscription_first'`: `stripe_client_secret` + `stripe_subscription_id: sub_123`. Default `order_first`: **sem** client secret — o ramo Stripe do front nao roda.
-
-Totais do stub (`29.99`, shipping `2.49`) **nao** leem `onboarding_user_state.shipping` nem o preview da Plan.
+`checkout_mode` no body e ignorado no fluxo real. Residual: o JSON ainda pode gravar `order_first` — corrigir para `subscription_first`.
 
 ## Persistencia
 
@@ -186,6 +161,6 @@ Senao, so `checkout_reference`.
 | Antes (WP) | Hoje (Node) |
 |---|---|
 | sessao + token | JWT + conta ativa |
-| Woo order + Stripe reais | stub |
+| Woo order + Stripe reais | Stripe Subscription + `checkout_reference` + ledger; sem Woo |
 | `session_id` na resposta | **proibido** (teste) |
 | desconto Woo coupon | Stripe promotion 1a compra no service |
