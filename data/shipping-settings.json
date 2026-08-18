@@ -1,0 +1,29 @@
+{
+  "br": {
+    "enabled": true,
+    "label": "Entrega Eden Bowl",
+    "center": {
+      "name": "CD",
+      "lat": 0,
+      "lng": 0,
+      "version": "1"
+    },
+    "rule": {
+      "per_km": 0.95,
+      "road_factor": 1.3,
+      "min_fee": 0,
+      "max_fee": null,
+      "max_distance_km": 500,
+      "km_per_day": 80,
+      "min_days": 2,
+      "max_days": 10
+    }
+  },
+  "us": {
+    "enabled": true,
+    "cost": 12.9,
+    "label": "FedEx 3–5 business days",
+    "carrier": "FedEx",
+    "delivery": "3–5 business days"
+  }
+}

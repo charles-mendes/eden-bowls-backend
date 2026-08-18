@@ -27,6 +27,14 @@ const { OnboardingSubscriptionCheckoutRepository } = require('./infrastructure/r
 const { OnboardingSubscriptionPreviewRepository } = require('./infrastructure/repositories/onboarding-subscription-preview.repository');
 const { OnboardingZipcodeLookupRepository } = require('./infrastructure/repositories/onboarding-zipcode-lookup.repository');
 const { OnboardingZipcodeRepository } = require('./infrastructure/repositories/onboarding-zipcode.repository');
+const { TtlCache } = require('./infrastructure/cache/ttl-cache');
+const { ViaCepClient } = require('./infrastructure/geo/via-cep-client');
+const { ZippopotamClient } = require('./infrastructure/geo/zippopotam-client');
+const { NominatimClient } = require('./infrastructure/geo/nominatim-client');
+const { OsrmClient } = require('./infrastructure/geo/osrm-client');
+const { loadShippingSettings } = require('./infrastructure/shipping/shipping-settings');
+const { StripeBillingClient } = require('./infrastructure/stripe/stripe-billing-client');
+const { StripeCustomerStore } = require('./infrastructure/stripe/stripe-customer-store');
 const { SubscriptionsActionsRepository } = require('./infrastructure/repositories/subscriptions-actions.repository');
 const { SubscriptionsDetailRepository } = require('./infrastructure/repositories/subscriptions-detail.repository');
 const { SubscriptionsEditPreviewRepository } = require('./infrastructure/repositories/subscriptions-edit-preview.repository');
@@ -54,6 +62,7 @@ const { OnboardingSubscriptionCheckoutService } = require('./services/onboarding
 const { OnboardingSubscriptionPreviewService } = require('./services/onboarding-subscription-preview.service');
 const { OnboardingZipcodeLookupService } = require('./services/onboarding-zipcode-lookup.service');
 const { OnboardingZipcodeService } = require('./services/onboarding-zipcode.service');
+const { ShippingService } = require('./services/shipping.service');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
 const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
@@ -124,7 +133,33 @@ async function bootstrap() {
     priceZonePolicyRepository
   });
   const productsService = new ProductsService(productsRepository);
-  const onboardingAddressAutocompleteRepository = new OnboardingAddressAutocompleteRepository();
+  const geoCache = new TtlCache();
+  const viaCepClient = new ViaCepClient({ cache: geoCache });
+  const zippopotamClient = new ZippopotamClient();
+  const nominatimClient = new NominatimClient({
+    cache: geoCache,
+    userAgent: env.NOMINATIM_USER_AGENT
+  });
+  const osrmClient = new OsrmClient({ cache: geoCache });
+  const shippingService = new ShippingService({
+    settings: loadShippingSettings({ env }),
+    viaCepClient,
+    nominatimClient,
+    osrmClient
+  });
+  const stripeBilling = new StripeBillingClient({
+    secretKey: env.STRIPE_SECRET_KEY,
+    apiVersion: env.STRIPE_API_VERSION,
+    maxNetworkRetries: env.STRIPE_MAX_RETRIES,
+    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
+    shippingProductId: env.STRIPE_SHIPPING_PRODUCT_ID
+  });
+  const stripeCustomerStore = new StripeCustomerStore(dataSource, {
+    usermetaTableName: env.WP_USERMETA_TABLE_NAME
+  });
+  const onboardingAddressAutocompleteRepository = new OnboardingAddressAutocompleteRepository({
+    nominatimClient
+  });
   const onboardingAddressAutocompleteService = new OnboardingAddressAutocompleteService(onboardingAddressAutocompleteRepository);
   const stripeFirstPurchasePromosRepository = new StripeFirstPurchasePromosRepository(dataSource);
   const stripeCouponService = new StripeCouponService(stripeFirstPurchasePromosRepository, {
@@ -143,7 +178,10 @@ async function bootstrap() {
   const onboardingDiscountEligibilityService = new OnboardingDiscountEligibilityService(onboardingDiscountEligibilityRepository);
   const onboardingPaymentIntentAckRepository = new OnboardingPaymentIntentAckRepository(dataSource);
   const onboardingPaymentIntentAckService = new OnboardingPaymentIntentAckService(onboardingPaymentIntentAckRepository, { authService });
-  const onboardingPaymentMethodsRepository = new OnboardingPaymentMethodsRepository();
+  const onboardingPaymentMethodsRepository = new OnboardingPaymentMethodsRepository({
+    customerStore: stripeCustomerStore,
+    stripeBilling
+  });
   const onboardingPaymentMethodsService = new OnboardingPaymentMethodsService(onboardingPaymentMethodsRepository);
   const onboardingPetCreateRepository = new OnboardingPetCreateRepository(dataSource);
   const onboardingPetCreateService = new OnboardingPetCreateService(onboardingPetCreateRepository);
@@ -169,19 +207,28 @@ async function bootstrap() {
   const onboardingPlanSnapshotService = new OnboardingPlanSnapshotService(onboardingPlanSnapshotRepository);
   const onboardingRecurrenceRepository = new OnboardingRecurrenceRepository(dataSource);
   const onboardingRecurrenceService = new OnboardingRecurrenceService(onboardingRecurrenceRepository);
-  const onboardingSalesTaxQuoteRepository = new OnboardingSalesTaxQuoteRepository();
-  const onboardingSalesTaxQuoteService = new OnboardingSalesTaxQuoteService(onboardingSalesTaxQuoteRepository);
+  const onboardingSalesTaxQuoteRepository = new OnboardingSalesTaxQuoteRepository(dataSource);
+  const onboardingSalesTaxQuoteService = new OnboardingSalesTaxQuoteService(onboardingSalesTaxQuoteRepository, {
+    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX
+  });
   const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository(dataSource);
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
   const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
   const onboardingSubscriptionCheckoutService = new OnboardingSubscriptionCheckoutService(onboardingSubscriptionCheckoutRepository, {
     authService,
     discountEligibilityRepository: onboardingDiscountEligibilityRepository,
-    stripeCouponService
+    stripeCouponService,
+    stripeBilling,
+    customerStore: stripeCustomerStore
   });
-  const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository(dataSource);
+  const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository(dataSource, {
+    stripeBilling
+  });
   const onboardingSubscriptionPreviewService = new OnboardingSubscriptionPreviewService(onboardingSubscriptionPreviewRepository);
-  const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository();
+  const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository({
+    viaCepClient,
+    zippopotamClient
+  });
   const onboardingZipcodeLookupService = new OnboardingZipcodeLookupService(onboardingZipcodeLookupRepository);
   const onboardingZipcodeRepository = new OnboardingZipcodeRepository(dataSource);
   const onboardingZipcodeService = new OnboardingZipcodeService(onboardingZipcodeRepository);
@@ -235,6 +282,7 @@ async function bootstrap() {
     onboardingSubscriptionPreviewService,
     onboardingZipcodeLookupService,
     onboardingZipcodeService,
+    shippingService,
     subscriptionsActionsService,
     subscriptionsDetailService,
     subscriptionsEditPreviewService,

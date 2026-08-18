@@ -1,10 +1,27 @@
 const { HttpError } = require('../src/core/http-error');
 const { OnboardingSubscriptionCheckoutService } = require('../src/services/onboarding-subscription-checkout.service');
 
+const validContext = {
+  pets: [{ id: 1 }],
+  planSelection: {
+    subscription_term_months: 1,
+    catalog_pricing: {
+      subtotal: 40,
+      line_items: [{ stripe_price_id: 'price_abc', quantity: 1 }]
+    }
+  },
+  address: { country: 'US', zipcode: '94105', state: 'CA', city: 'San Francisco' },
+  shipping: { rate_id: 'fixed_us:default', cost: 12.9 },
+  recurrence: { subscription_term_months: 1 }
+};
+
 function buildService(overrides = {}) {
   const repository = overrides.repository || {
     checkout: jest.fn().mockResolvedValue({ order_id: 101 }),
-    getPlanSelection: jest.fn().mockResolvedValue({ subscription_term_months: 1 })
+    getPlanSelection: jest.fn().mockResolvedValue(validContext.planSelection),
+    getCheckoutContext: jest.fn().mockResolvedValue(validContext),
+    resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+    getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
   };
   const authService = overrides.authService || {
     assertCriticalOperationAllowed: jest.fn().mockResolvedValue({ id: 7, activation_status: 'active' })
@@ -19,17 +36,36 @@ function buildService(overrides = {}) {
       discount_duration: 'once'
     })
   };
+  const stripeBilling = overrides.stripeBilling || {
+    createOnboardingSubscription: jest.fn().mockResolvedValue({
+      customerId: 'cus_1',
+      checkout: {
+        order_id: 101,
+        payment_state: 'requires_confirmation',
+        stripe_client_secret: 'secret_123',
+        stripe_subscription_id: 'sub_123'
+      }
+    })
+  };
+  const customerStore = overrides.customerStore || {
+    getCustomerId: jest.fn().mockResolvedValue(''),
+    saveCustomerId: jest.fn().mockResolvedValue(undefined)
+  };
 
   return {
     service: new OnboardingSubscriptionCheckoutService(repository, {
       authService,
       discountEligibilityRepository,
-      stripeCouponService
+      stripeCouponService,
+      stripeBilling,
+      customerStore
     }),
     repository,
     authService,
     discountEligibilityRepository,
-    stripeCouponService
+    stripeCouponService,
+    stripeBilling,
+    customerStore
   };
 }
 
@@ -129,8 +165,17 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       repository: {
         getPlanSelection: jest.fn().mockResolvedValue({
           subscription_term_months: 3,
-          catalog_pricing: { subtotal: 40, discounted_first_month_total: 40 }
+          catalog_pricing: { subtotal: 40, discounted_first_month_total: 40, line_items: [{ stripe_price_id: 'price_abc', quantity: 1 }] }
         }),
+        getCheckoutContext: jest.fn().mockResolvedValue({
+          ...validContext,
+          planSelection: {
+            subscription_term_months: 3,
+            catalog_pricing: { subtotal: 40, discounted_first_month_total: 40, line_items: [{ stripe_price_id: 'price_abc', quantity: 1 }] }
+          }
+        }),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane' }),
         checkout: jest.fn().mockResolvedValue({ order_id: 101 })
       },
       stripeCouponService: {
@@ -153,5 +198,25 @@ describe('OnboardingSubscriptionCheckoutService', () => {
         })
       })
     }));
+  });
+
+  test('rejects checkout when the user state is incomplete', async () => {
+    const { service, repository } = buildService({
+      repository: {
+        getCheckoutContext: jest.fn().mockResolvedValue({
+          pets: [],
+          planSelection: null,
+          address: null,
+          shipping: null
+        }),
+        checkout: jest.fn()
+      }
+    });
+
+    await expect(service.checkout({ userId: 7, payload: {} })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'session_incomplete' }
+    });
+    expect(repository.checkout).not.toHaveBeenCalled();
   });
 });

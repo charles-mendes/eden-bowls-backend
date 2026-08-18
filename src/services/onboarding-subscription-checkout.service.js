@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { validateCheckoutState } = require('../core/checkout-state');
 const {
   applyFirstPurchaseDiscount,
   expectedPercentForTerm
@@ -34,6 +35,8 @@ class OnboardingSubscriptionCheckoutService {
     this.authService = options.authService || null;
     this.discountEligibilityRepository = options.discountEligibilityRepository || null;
     this.stripeCouponService = options.stripeCouponService || null;
+    this.stripeBilling = options.stripeBilling || null;
+    this.customerStore = options.customerStore || null;
   }
 
   async checkout({ userId, payload = {} }) {
@@ -60,9 +63,14 @@ class OnboardingSubscriptionCheckoutService {
     }
 
     const eligibility = await this.discountEligibilityRepository.getEligibility(userId);
-    const planSelection = this.repository.getPlanSelection
-      ? await this.repository.getPlanSelection(userId)
-      : null;
+    const context = this.repository.getCheckoutContext
+      ? await this.repository.getCheckoutContext(userId)
+      : { planSelection: this.repository.getPlanSelection ? await this.repository.getPlanSelection(userId) : null };
+    validateCheckoutState(context);
+
+    const planSelection = context.planSelection || (
+      this.repository.getPlanSelection ? await this.repository.getPlanSelection(userId) : null
+    );
     const termMonths = Number(planSelection && planSelection.subscription_term_months);
     const eligible = Boolean(eligibility && eligibility.eligible);
     const promotion = await this.stripeCouponService.resolveFirstPurchasePromotionForCheckout({
@@ -83,6 +91,63 @@ class OnboardingSubscriptionCheckoutService {
     const paymentMethodId = getPaymentMethodId(payload);
     const checkoutMode = getCheckoutMode(payload);
     const billing = payload.billing || {};
+    const items = this.repository.resolveSubscriptionItems
+      ? await this.repository.resolveSubscriptionItems(nextPlanSelection)
+      : [];
+
+    if (!this.stripeBilling) {
+      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
+    }
+
+    const user = this.repository.getUserEmail
+      ? await this.repository.getUserEmail(userId)
+      : { email: billing.email || '', name: `${billing.first_name || ''} ${billing.last_name || ''}`.trim() };
+    const existingCustomerId = this.customerStore
+      ? await this.customerStore.getCustomerId(userId)
+      : '';
+    const created = await this.stripeBilling.createOnboardingSubscription({
+      userId,
+      email: billing.email || user.email,
+      name: user.name || `${billing.first_name || ''} ${billing.last_name || ''}`.trim(),
+      existingCustomerId,
+      paymentMethodId,
+      items,
+      address: context.address || {},
+      shipping: context.shipping || {},
+      currency: catalogPricing && catalogPricing.currency ? catalogPricing.currency : 'usd',
+      promotionCodeId: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null
+    });
+
+    if (this.customerStore && created.customerId) {
+      await this.customerStore.saveCustomerId(userId, created.customerId);
+    }
+
+    const checkout = {
+      ...(created.checkout || {}),
+      billing: {
+        first_name: billing.first_name || '',
+        last_name: billing.last_name || '',
+        email: billing.email || user.email || '',
+        phone: billing.phone || '',
+        company: billing.company || ''
+      },
+      checkout_mode: checkoutMode,
+      discount_eligibility: eligibility,
+      discount_applied_percent: appliedPercent,
+      stripe_promotion_code_id: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null,
+      stripe_coupon_id: payload.stripe_coupon_id || null,
+      stripe_discount_percent: appliedPercent,
+      stripe_discount_amount: Number(
+        (
+          Number(catalogPricing && catalogPricing.subtotal || 0)
+          - Number(catalogPricing && catalogPricing.discounted_first_month_total || 0)
+        ).toFixed(2)
+      ),
+      stripe_discount_duration: promotion ? promotion.discount_duration : null,
+      discounts: promotion && promotion.promotion_code_id
+        ? [{ promotion_code: promotion.promotion_code_id }]
+        : []
+    };
 
     const data = await this.repository.checkout(userId, {
       ...payload,
@@ -94,7 +159,9 @@ class OnboardingSubscriptionCheckoutService {
       discount_applied_percent: appliedPercent,
       stripe_promotion_code_id: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null,
       stripe_discount_duration: promotion ? promotion.discount_duration : null,
-      plan_selection: nextPlanSelection
+      plan_selection: nextPlanSelection,
+      shipping: context.shipping || {},
+      checkout
     });
 
     return {

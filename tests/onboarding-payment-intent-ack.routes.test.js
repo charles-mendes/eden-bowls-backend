@@ -17,7 +17,7 @@ describe('onboarding payment intent ack routes', () => {
     const onboardingPaymentIntentAckService = {
       acknowledge: jest.fn().mockResolvedValue({
         success: true,
-        data: { orderId: 101, stripePaymentIntentId: 'pi_123', stripePaymentIntentStatus: 'succeeded', paymentState: 'paid', acked: true }
+        data: { order_id: 101, stripe_payment_intent_id: 'pi_123', stripe_payment_intent_status: 'succeeded', payment_state: 'paid', acked: true }
       })
     };
     const app = createApp({ onboardingPaymentIntentAckService, corsOrigins, jwt });

@@ -1,18 +1,21 @@
 class OnboardingAddressAutocompleteRepository {
+  constructor(options = {}) {
+    this.nominatimClient = options.nominatimClient || null;
+  }
+
   async autocomplete(payload = {}) {
     const resolvedCountry = this.resolveCountry(payload);
+    const query = String(payload.query || '').trim();
 
     if (resolvedCountry !== 'US') {
       return {
         status: 'unsupported_country',
         country: resolvedCountry || 'BR',
-        query: String(payload.query || ''),
+        query,
         suggestions: [],
         message: 'Autocomplete is currently supported only for US addresses.'
       };
     }
-
-    const query = String(payload.query || '').trim();
 
     if (query.length < 4) {
       return {
@@ -24,10 +27,34 @@ class OnboardingAddressAutocompleteRepository {
       };
     }
 
-    const normalizedQuery = this.normalizeQuery(query, payload);
-    const suggestions = this.buildSuggestions(normalizedQuery);
+    if (!this.nominatimClient) {
+      return {
+        status: 'error',
+        country: 'US',
+        query,
+        suggestions: [],
+        message: 'Address autocomplete is temporarily unavailable.'
+      };
+    }
 
-    if (suggestions.length === 0) {
+    const result = await this.nominatimClient.autocompleteUs(query, {
+      city: payload.city,
+      state: payload.state,
+      zipcode: payload.zipcode
+    });
+
+    if (result.status === 'upstream') {
+      return {
+        status: 'error',
+        country: 'US',
+        query,
+        suggestions: [],
+        message: 'Address autocomplete is temporarily unavailable.'
+      };
+    }
+
+    const suggestions = Array.isArray(result.suggestions) ? result.suggestions : [];
+    if (result.status !== 'ok' || suggestions.length === 0) {
       return {
         status: 'not_found',
         country: 'US',
@@ -53,53 +80,6 @@ class OnboardingAddressAutocompleteRepository {
     }
 
     return 'US';
-  }
-
-  normalizeQuery(query, payload = {}) {
-    const parts = [query];
-
-    if (payload.city) {
-      parts.push(payload.city);
-    }
-
-    if (payload.state) {
-      parts.push(payload.state);
-    }
-
-    if (payload.zipcode) {
-      parts.push(payload.zipcode);
-    }
-
-    return parts.filter(Boolean).join(' ');
-  }
-
-  buildSuggestions(query) {
-    const result = [];
-    const seen = new Set();
-    const baseLabel = String(query || '').trim();
-
-    if (!baseLabel) {
-      return result;
-    }
-
-    const sample = {
-      id: 'autocomplete-1',
-      label: `${baseLabel} Street`,
-      street: `${baseLabel} Street`,
-      city: 'Springfield',
-      state: 'IL',
-      zipcode: '62704',
-      country: 'US',
-      neighborhood: '',
-      complement: ''
-    };
-
-    if (!seen.has(sample.label)) {
-      seen.add(sample.label);
-      result.push(sample);
-    }
-
-    return result;
   }
 }
 

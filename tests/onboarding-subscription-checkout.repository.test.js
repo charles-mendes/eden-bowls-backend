@@ -5,7 +5,11 @@ describe('OnboardingSubscriptionCheckoutRepository', () => {
     const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValue({ affectedRows: 1 }) };
     const repository = new OnboardingSubscriptionCheckoutRepository(dataSource);
 
-    const result = await repository.checkout(7, { paymentMethodId: 'pm_123', checkout_mode: 'subscription_first' });
+    const result = await repository.checkout(7, {
+      checkout: { order_id: 101, payment_state: 'requires_confirmation' },
+      paymentMethodId: 'pm_123',
+      checkout_mode: 'subscription_first'
+    });
 
     expect(result.order_id).toBe(101);
     expect(dataSource.query).toHaveBeenCalledWith(
@@ -23,7 +27,10 @@ describe('OnboardingSubscriptionCheckoutRepository', () => {
       discount_applied_percent: 25,
       stripe_promotion_code_id: 'promo_3m',
       stripe_discount_duration: 'once',
-      plan_selection: { subscription_term_months: 3 }
+      plan_selection: {
+        subscription_term_months: 3,
+        catalog_pricing: { subtotal: 25 }
+      }
     });
 
     expect(result).toEqual(expect.objectContaining({

@@ -40,14 +40,15 @@ class OnboardingPaymentIntentAckRepository {
     const expectedPaymentIntentId = String(checkout && (checkout.stripe_payment_intent_id || checkout.payment_intent_id) || '').trim();
 
     if (expectedPaymentIntentId && expectedPaymentIntentId !== paymentIntentId) {
-      throw new HttpError(404, 'Payment intent not found.', { code: 'payment_intent_not_found' });
+      throw new HttpError(409, 'Payment intent does not match the checkout.', { code: 'payment_intent_mismatch' });
     }
 
+    const paidStatuses = ['succeeded', 'processing', 'requires_capture'];
     const updatedCheckout = {
       ...(checkout || {}),
       stripe_payment_intent_id: paymentIntentId,
       stripe_payment_intent_status: paymentIntentStatus,
-      payment_state: paymentIntentStatus === 'succeeded' || paymentIntentStatus === 'processing' ? 'paid' : 'pending',
+      payment_state: paidStatuses.includes(paymentIntentStatus) ? 'paid' : 'pending',
       payment_acknowledged_at: new Date().toISOString()
     };
     await this.dataSource.query(
@@ -56,10 +57,10 @@ class OnboardingPaymentIntentAckRepository {
     );
 
     return {
-      orderId: Number(updatedCheckout.order_id || 0),
-      stripePaymentIntentId: paymentIntentId,
-      stripePaymentIntentStatus: paymentIntentStatus,
-      paymentState: updatedCheckout.payment_state,
+      order_id: Number(updatedCheckout.order_id || 0),
+      stripe_payment_intent_id: paymentIntentId,
+      stripe_payment_intent_status: paymentIntentStatus,
+      payment_state: updatedCheckout.payment_state,
       acked: true
     };
   }

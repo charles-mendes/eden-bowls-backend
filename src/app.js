@@ -25,6 +25,7 @@ const { registerOnboardingSubscriptionCheckoutRoutes } = require('./api/routes/o
 const { registerOnboardingSubscriptionPreviewRoutes } = require('./api/routes/onboarding-subscription-preview.routes');
 const { registerOnboardingZipcodeLookupRoutes } = require('./api/routes/onboarding-zipcode-lookup.routes');
 const { registerOnboardingZipcodeRoutes } = require('./api/routes/onboarding-zipcode.routes');
+const { registerShippingRoutes } = require('./api/routes/shipping.routes');
 const { registerSubscriptionsActionsRoutes } = require('./api/routes/subscriptions-actions.routes');
 const { registerSubscriptionsDetailRoutes } = require('./api/routes/subscriptions-detail.routes');
 const { registerSubscriptionsEditPreviewRoutes } = require('./api/routes/subscriptions-edit-preview.routes');
@@ -131,6 +132,7 @@ function createApp(dependencies = {}) {
   registerOnboardingSubscriptionPreviewRoutes(app, dependencies);
   registerOnboardingZipcodeLookupRoutes(app, dependencies);
   registerOnboardingZipcodeRoutes(app, dependencies);
+  registerShippingRoutes(app, dependencies);
   registerSubscriptionsActionsRoutes(app, dependencies);
   registerSubscriptionsDetailRoutes(app, dependencies);
   registerSubscriptionsEditPreviewRoutes(app, dependencies);
