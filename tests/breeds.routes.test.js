@@ -114,6 +114,7 @@ describe('breeds routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+    expect(response.headers['cross-origin-resource-policy']).toBe('cross-origin');
   });
 
   test('handles CORS preflight request for allowed origins', async () => {

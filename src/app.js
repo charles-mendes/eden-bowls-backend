@@ -76,7 +76,10 @@ function createApp(dependencies = {}) {
 
   app.disable('x-powered-by');
   app.use(corsMiddleware(corsConfig));
-  app.use(helmet());
+  app.use(helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    strictTransportSecurity: process.env.NODE_ENV === 'production'
+  }));
   app.use('/stripe/v1/webhook', express.raw({ type: 'application/json' }));
   app.use(express.json({ limit: '1mb' }));
   app.use(

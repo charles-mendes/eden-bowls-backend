@@ -342,8 +342,13 @@ async function bootstrap() {
     corsOrigins: env.CORS_ORIGINS
   });
 
-  app.listen(env.PORT, () => {
+  const server = app.listen(env.PORT, () => {
     logger.info({ port: env.PORT, mode: env.MODE }, 'Server started.');
+  });
+
+  server.on('error', (error) => {
+    logger.error(error, 'HTTP server failed to listen.');
+    process.exit(1);
   });
 }
 
