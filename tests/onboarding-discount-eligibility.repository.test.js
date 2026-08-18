@@ -21,10 +21,35 @@ describe('OnboardingDiscountEligibilityRepository', () => {
     expect(query).not.toHaveBeenCalled();
   });
 
-  test('returns HAS_PREVIOUS_PURCHASE for pending orders', async () => {
+  test('does not treat pending Woo orders as a previous purchase', async () => {
     const query = jest.fn()
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ id: 88 }]);
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ user_email: 'jane@example.com' }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const repository = createRepository(query);
+
+    await expect(repository.getEligibility(7)).resolves.toEqual({
+      validated: true,
+      eligible: true,
+      reason: null
+    });
+
+    const orderSql = query.mock.calls[1][0];
+    expect(orderSql).toContain('_customer_user');
+    expect(query.mock.calls[1][1]).toEqual(expect.arrayContaining([
+      'processing',
+      'completed',
+      '7'
+    ]));
+    expect(query.mock.calls[1][1]).not.toEqual(expect.arrayContaining(['pending', 'on-hold']));
+  });
+
+  test('returns HAS_PREVIOUS_PURCHASE when checkout_reference is already paid', async () => {
+    const query = jest.fn().mockResolvedValueOnce([{
+      checkout_reference: { payment_state: 'paid', stripe_subscription_id: 'sub_123' }
+    }]);
     const repository = createRepository(query);
 
     await expect(repository.getEligibility(7)).resolves.toEqual({
@@ -32,17 +57,7 @@ describe('OnboardingDiscountEligibilityRepository', () => {
       eligible: false,
       reason: 'HAS_PREVIOUS_PURCHASE'
     });
-
-    const orderSql = query.mock.calls[1][0];
-    expect(orderSql).toContain('_customer_user');
-    expect(query.mock.calls[1][1]).toEqual(expect.arrayContaining([
-      'pending',
-      'wc-pending',
-      'on-hold',
-      'processing',
-      'completed',
-      '7'
-    ]));
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   test('excludes the current checkout_reference.order_id from previous purchase', async () => {

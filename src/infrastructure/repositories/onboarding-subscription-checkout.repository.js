@@ -2,6 +2,8 @@ const { HttpError } = require('../../core/http-error');
 const { collectPriceItems } = require('../../core/checkout-state');
 const { discountAmountFromSubtotal } = require('../../core/first-purchase-discount');
 
+const CHECKOUT_MODE = 'subscription_first';
+
 function parseJsonColumn(value) {
   if (!value) {
     return null;
@@ -111,6 +113,12 @@ class OnboardingSubscriptionCheckoutRepository {
     const merged = new Map();
     for (const item of collected) {
       if (!String(item.price || '').startsWith('price_')) {
+        if (item.variation_id) {
+          throw new HttpError(422, 'A catalog variant is not mapped to a Stripe price.', {
+            code: 'unmapped_variant',
+            variation_id: Number(item.variation_id)
+          });
+        }
         continue;
       }
       const current = merged.get(item.price) || { price: item.price, quantity: 0 };
@@ -217,9 +225,9 @@ class OnboardingSubscriptionCheckoutRepository {
     ).toFixed(2));
 
     return {
-      order_id: Date.now(),
-      order_key: 'pending',
-      status: 'pending',
+      order_id: 0,
+      order_key: '',
+      status: 'incomplete',
       total,
       subtotal: resolvedSubtotal,
       product_tax: productTax,
@@ -241,7 +249,7 @@ class OnboardingSubscriptionCheckoutRepository {
         phone: billing.phone || '',
         company: billing.company || ''
       },
-      checkout_mode: payload.checkout_mode || payload.flow || 'order_first',
+      checkout_mode: CHECKOUT_MODE,
       discount_eligibility: payload.discount_eligibility || null,
       discount_applied_percent: appliedPercent,
       stripe_promotion_code_id: promotionCodeId,

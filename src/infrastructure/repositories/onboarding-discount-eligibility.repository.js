@@ -1,10 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 
 const PREVIOUS_PURCHASE_STATUSES = [
-  'wc-pending',
-  'pending',
-  'wc-on-hold',
-  'on-hold',
   'wc-processing',
   'processing',
   'wc-completed',
@@ -69,7 +65,16 @@ class OnboardingDiscountEligibilityRepository {
 
     this.ensureDataSource();
 
-    const excludeOrderId = await this.getCurrentCheckoutOrderId(userId);
+    const checkoutReference = await this.getCheckoutReference(userId);
+    if (String(checkoutReference && checkoutReference.payment_state || '') === 'paid') {
+      return {
+        validated: true,
+        eligible: false,
+        reason: 'HAS_PREVIOUS_PURCHASE'
+      };
+    }
+
+    const excludeOrderId = this.getCurrentCheckoutOrderId(checkoutReference);
     if (await this.hasPreviousPurchase(userId, excludeOrderId)) {
       return {
         validated: true,
@@ -94,17 +99,14 @@ class OnboardingDiscountEligibilityRepository {
     };
   }
 
-  async getCurrentCheckoutOrderId(userId) {
+  async getCheckoutReference(userId) {
     try {
       const rows = await this.dataSource.query(
         `SELECT \`checkout_reference\` FROM \`${this.tableNames.userState}\` WHERE \`user_id\` = ? LIMIT 1`,
         [userId]
       );
       const row = Array.isArray(rows) ? rows[0] : null;
-      const reference = parseJsonColumn(row && row.checkout_reference);
-      const orderId = Number(reference && reference.order_id);
-
-      return Number.isSafeInteger(orderId) && orderId > 0 ? orderId : null;
+      return parseJsonColumn(row && row.checkout_reference);
     } catch (error) {
       if (isMissingTableError(error)) {
         return null;
@@ -112,6 +114,11 @@ class OnboardingDiscountEligibilityRepository {
 
       throw error;
     }
+  }
+
+  getCurrentCheckoutOrderId(checkoutReference) {
+    const orderId = Number(checkoutReference && checkoutReference.order_id);
+    return Number.isSafeInteger(orderId) && orderId > 0 ? orderId : null;
   }
 
   async hasPreviousPurchase(userId, excludeOrderId) {

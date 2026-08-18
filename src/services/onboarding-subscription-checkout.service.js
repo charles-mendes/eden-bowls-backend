@@ -5,13 +5,28 @@ const {
   expectedPercentForTerm
 } = require('../core/first-purchase-discount');
 const { buildPetsSnapshot, extractSubscriptionPeriod } = require('../core/stripe-subscription-map');
+const {
+  buildCheckoutFingerprint,
+  buildSubscriptionCreateIdempotencyKey,
+  defaultCheckoutLockStore,
+  evaluateCheckoutReuse,
+  fingerprintsMatch,
+  resolveAttemptId
+} = require('../core/checkout-idempotency');
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CHECKOUT_MODE = 'subscription_first';
 
 function getPaymentMethodId(payload = {}) {
-  return payload.payment_method_id || payload.paymentMethodId || '';
+  return String(payload.payment_method_id || payload.paymentMethodId || '').trim();
 }
 
-function getCheckoutMode(payload = {}) {
-  return payload.checkout_mode || payload.flow || 'order_first';
+function getCheckoutMode() {
+  return CHECKOUT_MODE;
+}
+
+function isValidEmail(email) {
+  return EMAIL_PATTERN.test(String(email || '').trim());
 }
 
 function applyDiscountToCatalogPricing(catalogPricing, percent) {
@@ -30,6 +45,23 @@ function applyDiscountToCatalogPricing(catalogPricing, percent) {
   };
 }
 
+function presentCheckout(checkout = {}) {
+  const data = {
+    ...checkout,
+    order_id: 0,
+    order_key: checkout.order_key || '',
+    payment_url: '',
+    subscription_ids: Array.isArray(checkout.subscription_ids) ? checkout.subscription_ids : [],
+    flexible_subscription_id: Number(checkout.flexible_subscription_id || 0),
+    checkout_mode: CHECKOUT_MODE
+  };
+  delete data.session_id;
+  if (data.payment_state === 'paid') {
+    delete data.stripe_client_secret;
+  }
+  return data;
+}
+
 class OnboardingSubscriptionCheckoutService {
   constructor(repository, options = {}) {
     this.repository = repository;
@@ -39,6 +71,7 @@ class OnboardingSubscriptionCheckoutService {
     this.stripeBilling = options.stripeBilling || null;
     this.customerStore = options.customerStore || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.lockStore = options.lockStore || defaultCheckoutLockStore;
   }
 
   async checkout({ userId, payload = {} }) {
@@ -64,12 +97,19 @@ class OnboardingSubscriptionCheckoutService {
       throw new HttpError(503, 'Stripe coupon service is not available.');
     }
 
-    const eligibility = await this.discountEligibilityRepository.getEligibility(userId);
+    const paymentMethodId = getPaymentMethodId(payload);
+    if (!paymentMethodId.startsWith('pm_')) {
+      throw new HttpError(422, 'A valid payment method is required.', {
+        code: 'invalid_payment_method'
+      });
+    }
+
     const context = this.repository.getCheckoutContext
       ? await this.repository.getCheckoutContext(userId)
       : { planSelection: this.repository.getPlanSelection ? await this.repository.getPlanSelection(userId) : null };
     validateCheckoutState(context);
 
+    const eligibility = await this.discountEligibilityRepository.getEligibility(userId);
     const planSelection = context.planSelection || (
       this.repository.getPlanSelection ? await this.repository.getPlanSelection(userId) : null
     );
@@ -90,55 +130,196 @@ class OnboardingSubscriptionCheckoutService {
       ? { ...planSelection, catalog_pricing: catalogPricing }
       : planSelection;
 
-    const paymentMethodId = getPaymentMethodId(payload);
-    const checkoutMode = getCheckoutMode(payload);
     const billing = payload.billing || {};
+    const user = this.repository.getUserEmail
+      ? await this.repository.getUserEmail(userId)
+      : { email: billing.email || '', name: `${billing.first_name || ''} ${billing.last_name || ''}`.trim() };
+    const email = isValidEmail(user.email) ? String(user.email).trim() : String(billing.email || '').trim();
+    if (!isValidEmail(email)) {
+      throw new HttpError(422, 'Customer email is invalid.', {
+        code: 'invalid_customer_email'
+      });
+    }
+
     const items = this.repository.resolveSubscriptionItems
       ? await this.repository.resolveSubscriptionItems(nextPlanSelection)
       : [];
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new HttpError(422, 'At least one valid Stripe price is required.', {
+        code: 'invalid_price_id'
+      });
+    }
+
+    const address = context.address || {};
+    const country = String(address.country || '').toUpperCase();
+    const zipcode = String(address.zipcode || address.postal_code || '').trim();
+    if (country === 'US' && this.stripeBilling && this.stripeBilling.automaticTaxEnabled && !zipcode) {
+      throw new HttpError(422, 'Sales tax quote is unavailable.', {
+        code: 'sales_tax_unavailable'
+      });
+    }
 
     if (!this.stripeBilling) {
       throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
     }
 
-    const user = this.repository.getUserEmail
-      ? await this.repository.getUserEmail(userId)
-      : { email: billing.email || '', name: `${billing.first_name || ''} ${billing.last_name || ''}`.trim() };
-    const existingCustomerId = this.customerStore
-      ? await this.customerStore.getCustomerId(userId)
-      : '';
-    const created = await this.stripeBilling.createOnboardingSubscription({
+    const promotionCodeId = promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null;
+    const fingerprint = buildCheckoutFingerprint({
       userId,
-      email: billing.email || user.email,
-      name: user.name || `${billing.first_name || ''} ${billing.last_name || ''}`.trim(),
-      existingCustomerId,
-      paymentMethodId,
-      items,
-      address: context.address || {},
+      currency: catalogPricing && catalogPricing.currency,
+      subtotal: catalogPricing && catalogPricing.subtotal,
+      discountedFirstMonthTotal: catalogPricing && catalogPricing.discounted_first_month_total,
+      subscriptionTermMonths: termMonths,
+      lineItems: catalogPricing && catalogPricing.line_items,
+      pets: context.pets,
       shipping: context.shipping || {},
-      currency: catalogPricing && catalogPricing.currency ? catalogPricing.currency : 'usd',
-      promotionCodeId: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null,
-      subscriptionTermMonths: termMonths
+      address,
+      promotionCodeId
     });
 
-    if (this.customerStore && created.customerId) {
-      await this.customerStore.saveCustomerId(userId, created.customerId);
-    }
+    const releaseLock = this.lockStore.acquire(userId, fingerprint);
+    try {
+      const freshContext = this.repository.getCheckoutContext
+        ? await this.repository.getCheckoutContext(userId)
+        : context;
+      const storedReference = freshContext.checkoutReference || {};
+      const fingerprintMatches = fingerprintsMatch(storedReference.checkout_context_fingerprint, fingerprint);
+      const attemptId = resolveAttemptId({
+        payloadAttemptId: payload.attempt_id,
+        storedAttemptId: storedReference.attempt_id,
+        fingerprintMatches
+      });
 
-    const checkout = {
-      ...(created.checkout || {}),
+      const reuse = evaluateCheckoutReuse(storedReference, fingerprint);
+      if (reuse.reuse) {
+        const reusedCheckout = await this.buildReusedCheckout({
+          storedReference,
+          paymentMethodId,
+          billing,
+          user,
+          email,
+          eligibility,
+          appliedPercent,
+          promotion,
+          catalogPricing,
+          attemptId,
+          fingerprint
+        });
+        const data = await this.persistCheckout({
+          userId,
+          payload,
+          paymentMethodId,
+          billing,
+          eligibility,
+          appliedPercent,
+          promotion,
+          nextPlanSelection,
+          shipping: context.shipping || {},
+          checkout: reusedCheckout
+        });
+        return { success: true, data: presentCheckout(data) };
+      }
+
+      const existingCustomerId = this.customerStore
+        ? await this.customerStore.getCustomerId(userId)
+        : '';
+      const created = await this.stripeBilling.createOnboardingSubscription({
+        userId,
+        email,
+        name: user.name || `${billing.first_name || ''} ${billing.last_name || ''}`.trim(),
+        existingCustomerId,
+        paymentMethodId,
+        items,
+        address,
+        shipping: context.shipping || {},
+        currency: catalogPricing && catalogPricing.currency ? catalogPricing.currency : 'usd',
+        promotionCodeId,
+        subscriptionTermMonths: termMonths,
+        attemptId,
+        checkoutContextFingerprint: fingerprint,
+        idempotencyKey: buildSubscriptionCreateIdempotencyKey({
+          userId,
+          email,
+          items,
+          attemptId,
+          promotionCodeId
+        })
+      });
+
+      if (this.customerStore && created.customerId) {
+        await this.customerStore.saveCustomerId(userId, created.customerId);
+      }
+
+      const checkout = this.decorateCheckout({
+        checkout: created.checkout || {},
+        billing,
+        email,
+        eligibility,
+        appliedPercent,
+        promotion,
+        catalogPricing,
+        attemptId,
+        fingerprint,
+        reused: false
+      });
+
+      await this.upsertLedger({
+        userId,
+        checkout,
+        created,
+        items,
+        nextPlanSelection,
+        context,
+        termMonths,
+        email: checkout.billing.email
+      });
+
+      const data = await this.persistCheckout({
+        userId,
+        payload,
+        paymentMethodId,
+        billing,
+        eligibility,
+        appliedPercent,
+        promotion,
+        nextPlanSelection,
+        shipping: context.shipping || {},
+        checkout
+      });
+
+      return { success: true, data: presentCheckout(data) };
+    } finally {
+      releaseLock();
+    }
+  }
+
+  decorateCheckout({
+    checkout,
+    billing,
+    email,
+    eligibility,
+    appliedPercent,
+    promotion,
+    catalogPricing,
+    attemptId,
+    fingerprint,
+    reused
+  }) {
+    return {
+      ...checkout,
+      order_id: 0,
       billing: {
         first_name: billing.first_name || '',
         last_name: billing.last_name || '',
-        email: billing.email || user.email || '',
+        email: billing.email || email || '',
         phone: billing.phone || '',
         company: billing.company || ''
       },
-      checkout_mode: checkoutMode,
+      checkout_mode: CHECKOUT_MODE,
       discount_eligibility: eligibility,
       discount_applied_percent: appliedPercent,
       stripe_promotion_code_id: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null,
-      stripe_coupon_id: payload.stripe_coupon_id || null,
+      stripe_coupon_id: null,
       stripe_discount_percent: appliedPercent,
       stripe_discount_amount: Number(
         (
@@ -149,51 +330,130 @@ class OnboardingSubscriptionCheckoutService {
       stripe_discount_duration: promotion ? promotion.discount_duration : null,
       discounts: promotion && promotion.promotion_code_id
         ? [{ promotion_code: promotion.promotion_code_id }]
-        : []
+        : [],
+      attempt_id: attemptId,
+      checkout_context_fingerprint: fingerprint,
+      promotion_code_id: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null,
+      reused: Boolean(reused)
     };
+  }
 
-    if (this.ledgerRepository && checkout.stripe_subscription_id) {
-      const existing = await this.ledgerRepository.listByUserId(userId);
-      const period = extractSubscriptionPeriod(created.subscription || {});
-      const firstItem = Array.isArray(items) ? items[0] : null;
-      await this.ledgerRepository.upsert({
-        userId,
-        customerEmail: checkout.billing && checkout.billing.email ? checkout.billing.email : (user && user.email),
-        stripeSubscriptionId: checkout.stripe_subscription_id,
-        stripeCustomerId: created.customerId,
-        status: String((created.subscription && created.subscription.status) || checkout.status || 'incomplete'),
-        planLabel: `Plan #${existing.length + 1}`,
-        stripePriceId: firstItem && firstItem.price ? firstItem.price : null,
-        currentPeriodStart: period.start,
-        currentPeriodEnd: period.end,
-        cancelAtPeriodEnd: Boolean(created.subscription && created.subscription.cancel_at_period_end),
-        petsSnapshot: buildPetsSnapshot(nextPlanSelection, context.pets),
-        planSelection: nextPlanSelection,
-        shipping: context.shipping || {},
-        address: context.address || {},
-        subscriptionTermMonths: Number.isFinite(termMonths) ? termMonths : null
-      });
+  async buildReusedCheckout({
+    storedReference,
+    paymentMethodId,
+    billing,
+    user,
+    email,
+    eligibility,
+    appliedPercent,
+    promotion,
+    catalogPricing,
+    attemptId,
+    fingerprint
+  }) {
+    let paymentIntentStatus = String(storedReference.stripe_payment_intent_status || '');
+    let clientSecret = storedReference.stripe_client_secret || '';
+    if (this.stripeBilling.retrievePaymentIntent && storedReference.stripe_payment_intent_id) {
+      try {
+        const paymentIntent = await this.stripeBilling.retrievePaymentIntent(
+          storedReference.stripe_payment_intent_id
+        );
+        paymentIntentStatus = String(paymentIntent && paymentIntent.status || paymentIntentStatus);
+        clientSecret = (paymentIntent && paymentIntent.client_secret) || clientSecret;
+      } catch (_error) {
+        // Keep persisted PI fields when retrieve fails; reuse still returns the stored secret.
+      }
     }
 
-    const data = await this.repository.checkout(userId, {
+    const paymentState = this.stripeBilling.resolvePaymentState({
+      paymentMethodId,
+      paymentIntentStatus,
+      clientSecret,
+      subscriptionId: storedReference.stripe_subscription_id
+    });
+
+    return this.decorateCheckout({
+      checkout: {
+        ...storedReference,
+        stripe_payment_intent_status: paymentIntentStatus,
+        stripe_client_secret: clientSecret,
+        payment_state: paymentState,
+        has_payment_method: true
+      },
+      billing,
+      email: email || (user && user.email),
+      eligibility,
+      appliedPercent,
+      promotion,
+      catalogPricing,
+      attemptId,
+      fingerprint,
+      reused: true
+    });
+  }
+
+  async upsertLedger({
+    userId,
+    checkout,
+    created,
+    items,
+    nextPlanSelection,
+    context,
+    termMonths,
+    email
+  }) {
+    if (!this.ledgerRepository || !checkout.stripe_subscription_id) {
+      return;
+    }
+
+    const existing = await this.ledgerRepository.listByUserId(userId);
+    const period = extractSubscriptionPeriod(created.subscription || {});
+    const firstItem = Array.isArray(items) ? items[0] : null;
+    await this.ledgerRepository.upsert({
+      userId,
+      customerEmail: email,
+      stripeSubscriptionId: checkout.stripe_subscription_id,
+      stripeCustomerId: created.customerId,
+      status: String((created.subscription && created.subscription.status) || checkout.status || 'incomplete'),
+      planLabel: `Plan #${existing.length + 1}`,
+      stripePriceId: firstItem && firstItem.price ? firstItem.price : null,
+      currentPeriodStart: period.start,
+      currentPeriodEnd: period.end,
+      cancelAtPeriodEnd: Boolean(created.subscription && created.subscription.cancel_at_period_end),
+      petsSnapshot: buildPetsSnapshot(nextPlanSelection, context.pets),
+      planSelection: nextPlanSelection,
+      shipping: context.shipping || {},
+      address: context.address || {},
+      subscriptionTermMonths: Number.isFinite(termMonths) ? termMonths : null
+    });
+  }
+
+  persistCheckout({
+    userId,
+    payload,
+    paymentMethodId,
+    billing,
+    eligibility,
+    appliedPercent,
+    promotion,
+    nextPlanSelection,
+    shipping,
+    checkout
+  }) {
+    return this.repository.checkout(userId, {
       ...payload,
       payment_method_id: paymentMethodId,
       paymentMethodId,
-      checkout_mode: checkoutMode,
+      checkout_mode: CHECKOUT_MODE,
       billing,
       discount_eligibility: eligibility,
       discount_applied_percent: appliedPercent,
       stripe_promotion_code_id: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null,
       stripe_discount_duration: promotion ? promotion.discount_duration : null,
       plan_selection: nextPlanSelection,
-      shipping: context.shipping || {},
+      shipping,
       checkout
     });
-
-    return {
-      success: true,
-      data
-    };
   }
 }
 

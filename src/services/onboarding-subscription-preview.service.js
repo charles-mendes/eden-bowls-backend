@@ -15,7 +15,7 @@ function normalizeAddress(payload = {}) {
   const address = payload.address || {};
   const country = String(address.country || '').trim().toUpperCase();
   const state = String(address.state || '').trim();
-  const postalCode = String(address.postal_code || address.postalCode || '').trim();
+  const postalCode = String(address.postal_code || address.postalCode || address.zipcode || address.postcode || '').trim();
 
   return {
     country,

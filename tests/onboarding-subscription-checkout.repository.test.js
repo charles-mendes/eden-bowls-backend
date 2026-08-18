@@ -74,4 +74,19 @@ describe('OnboardingSubscriptionCheckoutRepository', () => {
       [7]
     );
   });
+
+  test('rejects a variation without a mapped Stripe price', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    const repository = new OnboardingSubscriptionCheckoutRepository(dataSource);
+
+    await expect(repository.resolveSubscriptionItems({
+      catalog_pricing: {
+        currency: 'usd',
+        line_items: [{ variation_id: 55, quantity: 1, line_total: 40 }]
+      }
+    })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'unmapped_variant', variation_id: 55 }
+    });
+  });
 });

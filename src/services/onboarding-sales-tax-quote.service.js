@@ -4,7 +4,7 @@ function resolveAddress(payload = {}) {
   const address = payload.address || {};
   const country = String(address.country || 'US').toUpperCase();
   const state = String(address.state || '').trim();
-  const postalCode = String(address.postal_code || address.postcode || '').trim();
+  const postalCode = String(address.postal_code || address.postcode || address.zipcode || address.postalCode || '').trim();
   return { country, state, postalCode };
 }
 
@@ -73,7 +73,9 @@ class OnboardingSalesTaxQuoteService {
             line1: String((payload.address && (payload.address.line1 || payload.address.street)) || ''),
             city: String((payload.address && payload.address.city) || '')
           },
-          priceIds: []
+          priceIds: this.previewRepository.getFallbackPriceIds
+            ? await this.previewRepository.getFallbackPriceIds(userId)
+            : []
         });
         const tax = Number(preview && preview.tax);
         const previewSubtotal = Number(preview && preview.subtotal) || subtotal;

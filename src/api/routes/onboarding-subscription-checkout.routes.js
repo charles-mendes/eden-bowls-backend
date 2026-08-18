@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { parseOnboardingSubscriptionCheckoutInput } = require('../validators/onboarding-subscription-checkout.validator');
 
 function registerOnboardingSubscriptionCheckoutRoutes(app, dependencies = {}) {
   app.post('/api/v1/onboarding/subscription/checkout', async (request, response, next) => {
@@ -11,9 +12,12 @@ function registerOnboardingSubscriptionCheckoutRoutes(app, dependencies = {}) {
         throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
       }
 
+      const payload = parseOnboardingSubscriptionCheckoutInput(request.body || {}, {
+        idempotencyKey: request.get('Idempotency-Key')
+      });
       const result = await dependencies.onboardingSubscriptionCheckoutService.checkout({
         userId: request.currentUser.id,
-        payload: request.body || {},
+        payload
       });
 
       response.status(200).json(result);

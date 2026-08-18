@@ -37,7 +37,18 @@ class StripeBillingClient {
   }
 
   stripeMessage(error, fallback) {
-    return String(error && error.message ? error.message : fallback);
+    const type = String(error && error.type ? error.type : '');
+    const code = String(error && error.code ? error.code : '');
+    if (code === 'resource_missing') {
+      return 'The requested Stripe resource was not found.';
+    }
+    if (type === 'StripeCardError' || type === 'card_error' || code === 'card_declined') {
+      return 'The card could not be charged.';
+    }
+    if (type === 'StripeIdempotencyError' || code === 'idempotency_error' || code === 'idempotency_key_in_use') {
+      return 'A conflicting checkout request is already in progress.';
+    }
+    return String(fallback || 'Stripe request failed.');
   }
 
   async listCardPaymentMethods(customerId) {
@@ -131,43 +142,68 @@ class StripeBillingClient {
     }
   }
 
-  async ensureCustomer({ email, name, userId, existingCustomerId, address }) {
+  async ensureCustomer({ email, name, userId, existingCustomerId }) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     let customerId = String(existingCustomerId || '').trim();
 
-    if (!customerId.startsWith('cus_')) {
+    if (customerId.startsWith('cus_')) {
       try {
-        const listed = email
-          ? await stripe.customers.list({ email, limit: 1 })
-          : { data: [] };
-        const existing = listed && Array.isArray(listed.data) ? listed.data[0] : null;
-        if (existing && existing.id) {
-          customerId = existing.id;
-        } else {
-          const created = await stripe.customers.create({
-            email: email || undefined,
-            name: name || undefined,
-            metadata: { wp_user_id: String(userId || '') }
-          });
-          customerId = created.id;
+        const existing = await stripe.customers.retrieve(customerId);
+        if (existing && existing.id && !existing.deleted) {
+          return existing.id;
         }
       } catch (error) {
-        throw new HttpError(502, this.stripeMessage(error, 'Unable to create/retrieve Stripe customer.'), {
+        if (String(error && error.code) !== 'resource_missing') {
+          throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe customer.'), {
+            code: 'stripe_customer_failed'
+          });
+        }
+      }
+      customerId = '';
+    }
+
+    try {
+      const listed = email
+        ? await stripe.customers.list({ email, limit: 1 })
+        : { data: [] };
+      const existing = listed && Array.isArray(listed.data) ? listed.data[0] : null;
+      if (existing && existing.id) {
+        return existing.id;
+      }
+
+      const created = await stripe.customers.create({
+        email: email || undefined,
+        name: name || undefined,
+        metadata: {
+          wp_user_id: String(userId || ''),
+          user_id: String(userId || '')
+        }
+      });
+      if (!created || !String(created.id || '').startsWith('cus_')) {
+        throw new HttpError(502, 'Unable to create/retrieve Stripe customer.', {
           code: 'stripe_customer_failed'
         });
       }
+      return created.id;
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to create/retrieve Stripe customer.'), {
+        code: 'stripe_customer_failed'
+      });
     }
-
-    return customerId;
   }
 
   async attachPaymentMethod(customerId, paymentMethodId) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     const pmId = String(paymentMethodId || '').trim();
-    if (!pmId) {
-      return null;
+    if (!pmId.startsWith('pm_')) {
+      throw new HttpError(422, 'A valid payment method is required.', {
+        code: 'invalid_payment_method'
+      });
     }
 
     let paymentMethod;
@@ -213,47 +249,139 @@ class StripeBillingClient {
     return this.shippingProductId;
   }
 
-  resolvePaymentState({ paymentMethodId, paymentIntentStatus }) {
+  resolvePaymentState({ paymentMethodId, paymentIntentStatus, clientSecret, subscriptionId } = {}) {
     const status = String(paymentIntentStatus || '');
     if (['succeeded', 'processing', 'requires_capture'].includes(status)) {
       return 'paid';
     }
-    if (['requires_action', 'requires_confirmation'].includes(status)) {
-      return 'requires_confirmation';
-    }
-    if (status === 'canceled') {
+    if (status === 'requires_payment_method' || status === 'canceled') {
       return 'failed';
     }
-    if (!paymentMethodId || status === 'requires_payment_method') {
-      return 'pending_payment_method';
+    if (String(clientSecret || '').trim()) {
+      return 'requires_confirmation';
     }
-    return 'pending_sync';
+    if (String(subscriptionId || '').startsWith('sub_') && paymentMethodId) {
+      return 'requires_confirmation';
+    }
+    if (paymentMethodId) {
+      return 'pending_sync';
+    }
+    return 'pending_payment_method';
+  }
+
+  assertSubscriptionItems(items) {
+    const { HttpError } = require('../../core/http-error');
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new HttpError(422, 'At least one valid Stripe price is required.', {
+        code: 'invalid_price_id'
+      });
+    }
+
+    for (const item of items) {
+      const price = String(item && item.price || '').trim();
+      const quantity = Number(item && item.quantity);
+      if (!price.startsWith('price_') || !Number.isFinite(quantity) || quantity < 1) {
+        throw new HttpError(422, 'Subscription items are invalid.', {
+          code: 'invalid_subscription_items'
+        });
+      }
+    }
+  }
+
+  async assertItemsShareCycle(items) {
+    const { HttpError } = require('../../core/http-error');
+    if (!Array.isArray(items) || items.length <= 1) {
+      return;
+    }
+
+    const stripe = this.ensureClient();
+    const prices = [];
+    for (const item of items) {
+      try {
+        prices.push(await stripe.prices.retrieve(item.price));
+      } catch (error) {
+        throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe price.'), {
+          code: 'stripe_price_retrieve_failed'
+        });
+      }
+    }
+
+    const first = prices[0] || {};
+    const currency = String(first.currency || '');
+    const interval = String(first.recurring && first.recurring.interval || '');
+    const intervalCount = Number(first.recurring && first.recurring.interval_count || 0);
+    const mixed = prices.some((price) => (
+      String(price.currency || '') !== currency
+      || String(price.recurring && price.recurring.interval || '') !== interval
+      || Number(price.recurring && price.recurring.interval_count || 0) !== intervalCount
+    ));
+
+    if (mixed) {
+      throw new HttpError(422, 'Subscription items must share the same currency and billing cycle.', {
+        code: 'invalid_subscription_items_mixed_cycle_or_currency'
+      });
+    }
+  }
+
+  async retrievePaymentIntent(paymentIntentId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const id = String(paymentIntentId || '').trim();
+    if (!id.startsWith('pi_')) {
+      throw new HttpError(422, 'Invalid payment intent id.', { code: 'invalid_payment_intent_id' });
+    }
+
+    try {
+      return await stripe.paymentIntents.retrieve(id);
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve payment intent.'), {
+        code: 'stripe_payment_intent_retrieve_failed'
+      });
+    }
   }
 
   async createOnboardingSubscription(input = {}) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     const items = Array.isArray(input.items) ? input.items : [];
-    if (items.length === 0) {
-      throw new HttpError(422, 'Onboarding checkout is incomplete.', {
-        code: 'session_incomplete',
-        missing: ['plan_selection']
+    this.assertSubscriptionItems(items);
+
+    const paymentMethodIdInput = String(input.paymentMethodId || '').trim();
+    if (!paymentMethodIdInput.startsWith('pm_')) {
+      throw new HttpError(422, 'A valid payment method is required.', {
+        code: 'invalid_payment_method'
       });
     }
 
-    const customerId = await this.ensureCustomer(input);
-    const paymentMethodId = await this.attachPaymentMethod(customerId, input.paymentMethodId);
+    const promotionCodeId = String(input.promotionCodeId || '').trim();
+    if (promotionCodeId && !promotionCodeId.startsWith('promo_')) {
+      throw new HttpError(422, 'Promotion code is invalid.', {
+        code: 'invalid_promotion_code_id'
+      });
+    }
+
     const address = input.address || {};
     const shipping = input.shipping || {};
     const country = String(address.country || '').toUpperCase();
+    const zipcode = String(address.zipcode || address.postal_code || '').trim();
+    if (country === 'US' && this.automaticTaxEnabled && !zipcode) {
+      throw new HttpError(422, 'Sales tax quote is unavailable.', {
+        code: 'sales_tax_unavailable'
+      });
+    }
+
+    await this.assertItemsShareCycle(items);
+
+    const customerId = await this.ensureCustomer(input);
+    const paymentMethodId = await this.attachPaymentMethod(customerId, paymentMethodIdInput);
     const customerUpdate = {
-      invoice_settings: paymentMethodId ? { default_payment_method: paymentMethodId } : undefined
+      invoice_settings: { default_payment_method: paymentMethodId }
     };
 
-    if (address.country && address.zipcode) {
+    if (country && zipcode) {
       const stripeAddress = {
         country,
-        postal_code: String(address.zipcode || address.postal_code || ''),
+        postal_code: zipcode,
         state: String(address.state || ''),
         city: String(address.city || ''),
         line1: String(address.street || address.address_line1 || address.line1 || '')
@@ -281,6 +409,15 @@ class StripeBillingClient {
     if (input.subscriptionTermMonths) {
       metadata.subscription_term_months = String(input.subscriptionTermMonths);
     }
+    if (input.attemptId) {
+      metadata.attempt_id = String(input.attemptId);
+    }
+    if (input.checkoutContextFingerprint) {
+      metadata.checkout_context_fingerprint = String(input.checkoutContextFingerprint);
+    }
+    if (promotionCodeId) {
+      metadata.hsr_promotion_code_id = promotionCodeId;
+    }
 
     const subscriptionParams = {
       customer: customerId,
@@ -288,29 +425,37 @@ class StripeBillingClient {
         price: item.price,
         quantity: Math.max(1, Number(item.quantity) || 1)
       })),
+      default_payment_method: paymentMethodId,
       payment_behavior: 'default_incomplete',
       expand: ['latest_invoice.payment_intent', 'latest_invoice.discounts', 'discounts', 'items.data.price'],
       metadata
     };
 
-    if (paymentMethodId) {
-      subscriptionParams.default_payment_method = paymentMethodId;
-    }
-
     if (country === 'US' && this.automaticTaxEnabled) {
       subscriptionParams.automatic_tax = { enabled: true };
     }
 
-    if (input.promotionCodeId) {
-      subscriptionParams.discounts = [{ promotion_code: input.promotionCodeId }];
+    if (promotionCodeId) {
+      subscriptionParams.discounts = [{ promotion_code: promotionCodeId }];
     }
 
     const shippingCost = Number(shipping.cost || shipping.total || 0);
     if (shippingCost > 0) {
+      const currency = String(input.currency || '').trim().toLowerCase();
+      if (!currency) {
+        throw new HttpError(422, 'Shipping currency is required.', {
+          code: 'shipping_currency_missing'
+        });
+      }
+      const amountMinor = Math.round(shippingCost * 100);
+      if (amountMinor <= 0) {
+        throw new HttpError(422, 'Shipping amount is invalid.', {
+          code: 'shipping_amount_invalid'
+        });
+      }
+
       try {
         const productId = await this.ensureShippingProduct();
-        const currency = String(input.currency || 'usd').toLowerCase();
-        const amountMinor = Math.round(shippingCost * 100);
         subscriptionParams.metadata.shipping_amount_minor = String(amountMinor);
         subscriptionParams.metadata.shipping_currency = currency;
         subscriptionParams.metadata.shipping_product_id = String(productId);
@@ -324,15 +469,23 @@ class StripeBillingClient {
           quantity: 1
         }];
       } catch (error) {
+        if (error instanceof HttpError) {
+          throw error;
+        }
         throw new HttpError(502, this.stripeMessage(error, 'Unable to add shipping to Stripe invoice.'), {
           code: 'stripe_subscription_failed'
         });
       }
     }
 
+    const createOptions = {};
+    if (input.idempotencyKey) {
+      createOptions.idempotencyKey = String(input.idempotencyKey);
+    }
+
     let subscription;
     try {
-      subscription = await stripe.subscriptions.create(subscriptionParams);
+      subscription = await stripe.subscriptions.create(subscriptionParams, createOptions);
     } catch (error) {
       throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe subscription.'), {
         code: 'stripe_subscription_failed'
@@ -345,11 +498,19 @@ class StripeBillingClient {
     const paymentIntent = invoice.payment_intent && typeof invoice.payment_intent === 'object'
       ? invoice.payment_intent
       : {};
-    const clientSecret = paymentIntent.client_secret || '';
+    const clientSecret = String(paymentIntent.client_secret || '');
+    if (!subscription.id || !clientSecret) {
+      throw new HttpError(502, 'Unable to create Stripe subscription.', {
+        code: 'stripe_subscription_failed'
+      });
+    }
+
     const paymentIntentStatus = String(paymentIntent.status || '');
     const paymentState = this.resolvePaymentState({
       paymentMethodId,
-      paymentIntentStatus
+      paymentIntentStatus,
+      clientSecret,
+      subscriptionId: subscription.id
     });
 
     const subtotal = Number(((invoice.subtotal || 0) / 100).toFixed(2));
@@ -362,8 +523,8 @@ class StripeBillingClient {
       shippingProductId: this.shippingProductId || '',
       subscription,
       checkout: {
-        order_id: Date.now(),
-        order_key: `sub_${subscription.id || 'pending'}`,
+        order_id: 0,
+        order_key: subscription.id ? `sub_${subscription.id}` : '',
         status: String(subscription.status || 'incomplete'),
         total,
         subtotal,
@@ -372,7 +533,7 @@ class StripeBillingClient {
         shipping_tax: 0,
         shipping_total_with_tax: shippingTotal,
         currency: String(invoice.currency || input.currency || 'usd').toUpperCase(),
-        payment_url: undefined,
+        payment_url: '',
         subscription_ids: [],
         flexible_subscription_id: 0,
         stripe_subscription_id: subscription.id,
@@ -380,8 +541,9 @@ class StripeBillingClient {
         stripe_client_secret: clientSecret || undefined,
         stripe_payment_intent_id: paymentIntent.id || undefined,
         stripe_payment_intent_status: paymentIntentStatus || undefined,
+        stripe_subscription_status: String(subscription.status || 'incomplete'),
         payment_state: paymentState,
-        has_payment_method: Boolean(paymentMethodId),
+        has_payment_method: true,
         reused: false
       }
     };

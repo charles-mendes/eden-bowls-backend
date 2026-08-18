@@ -31,7 +31,29 @@ describe('onboarding subscription checkout routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.session_id).toBeUndefined();
     expect(response.body.data.order_id).toBe(101);
-    expect(onboardingSubscriptionCheckoutService.checkout).toHaveBeenCalledWith({ userId: 7, payload });
+    expect(onboardingSubscriptionCheckoutService.checkout).toHaveBeenCalledWith({
+      userId: 7,
+      payload: {
+        payment_method_id: 'pm_123',
+        paymentMethodId: 'pm_123',
+        billing: { first_name: 'Jane', last_name: 'Doe', email: 'jane@example.com' },
+        attempt_id: undefined
+      }
+    });
+  });
+
+  test('rejects checkout without a payment method', async () => {
+    const onboardingSubscriptionCheckoutService = { checkout: jest.fn() };
+    const app = createApp({ onboardingSubscriptionCheckoutService, corsOrigins, jwt });
+
+    const response = await request(app)
+      .post('/api/v1/onboarding/subscription/checkout')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .send({ billing: { first_name: 'Jane' } });
+
+    expect(response.status).toBe(422);
+    expect(response.body.details.code).toBe('invalid_payment_method');
+    expect(onboardingSubscriptionCheckoutService.checkout).not.toHaveBeenCalled();
   });
 
   test('requires bearer authentication', async () => {

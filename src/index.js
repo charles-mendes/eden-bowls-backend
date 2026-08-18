@@ -212,9 +212,14 @@ async function bootstrap() {
   const onboardingPlanSnapshotService = new OnboardingPlanSnapshotService(onboardingPlanSnapshotRepository);
   const onboardingRecurrenceRepository = new OnboardingRecurrenceRepository(dataSource);
   const onboardingRecurrenceService = new OnboardingRecurrenceService(onboardingRecurrenceRepository);
+  const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository(dataSource, {
+    stripeBilling
+  });
+  const onboardingSubscriptionPreviewService = new OnboardingSubscriptionPreviewService(onboardingSubscriptionPreviewRepository);
   const onboardingSalesTaxQuoteRepository = new OnboardingSalesTaxQuoteRepository(dataSource);
   const onboardingSalesTaxQuoteService = new OnboardingSalesTaxQuoteService(onboardingSalesTaxQuoteRepository, {
-    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX
+    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
+    previewRepository: onboardingSubscriptionPreviewRepository
   });
   const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository(dataSource);
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
@@ -238,10 +243,6 @@ async function bootstrap() {
     customerStore: stripeCustomerStore,
     ledgerRepository: subscriptionLedgerRepository
   });
-  const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository(dataSource, {
-    stripeBilling
-  });
-  const onboardingSubscriptionPreviewService = new OnboardingSubscriptionPreviewService(onboardingSubscriptionPreviewRepository);
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository({
     viaCepClient,
     zippopotamClient
