@@ -5,6 +5,7 @@ const client = require('prom-client');
 const { buildBearerTokenMiddleware } = require('./api/middleware/bearer-token.middleware');
 const { registerAuthRoutes } = require('./api/routes/auth.routes');
 const { registerBreedsRoutes } = require('./api/routes/breeds.routes');
+const { registerGeoRoutes } = require('./api/routes/geo.routes');
 const { registerProductsRoutes } = require('./api/routes/products.routes');
 const { registerOnboardingAddressAutocompleteRoutes } = require('./api/routes/onboarding-address-autocomplete.routes');
 const { registerOnboardingDiscountEligibilityRoutes } = require('./api/routes/onboarding-discount-eligibility.routes');
@@ -109,6 +110,7 @@ function createApp(dependencies = {}) {
   });
 
   registerBreedsRoutes(app, dependencies);
+  registerGeoRoutes(app, dependencies);
   registerProductsRoutes(app, dependencies);
   registerAuthRoutes(app, dependencies);
   registerOnboardingAddressAutocompleteRoutes(app, dependencies);

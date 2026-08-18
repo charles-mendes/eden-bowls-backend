@@ -62,7 +62,9 @@ const rawEnvSchema = z.object({
   WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME: z.string().default('wp_hsr_stripe_subscriptions'),
   STRIPE_FIRST_PURCHASE_PROMO_1M: z.string().optional(),
   STRIPE_FIRST_PURCHASE_PROMO_3M: z.string().optional(),
-  STRIPE_FIRST_PURCHASE_PROMO_6M: z.string().optional()
+  STRIPE_FIRST_PURCHASE_PROMO_6M: z.string().optional(),
+  GEO_MAXMIND_DB_PATH: z.string().default('./data/GeoLite2-Country.mmdb'),
+  GEO_TRUST_PROXY_HEADERS: z.string().optional()
 });
 
 function firstNonEmpty(...values) {
@@ -160,7 +162,9 @@ function parseEnv(source = process.env) {
     WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME: rawEnv.WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME,
     STRIPE_FIRST_PURCHASE_PROMO_1M: firstNonEmpty(rawEnv.STRIPE_FIRST_PURCHASE_PROMO_1M),
     STRIPE_FIRST_PURCHASE_PROMO_3M: firstNonEmpty(rawEnv.STRIPE_FIRST_PURCHASE_PROMO_3M),
-    STRIPE_FIRST_PURCHASE_PROMO_6M: firstNonEmpty(rawEnv.STRIPE_FIRST_PURCHASE_PROMO_6M)
+    STRIPE_FIRST_PURCHASE_PROMO_6M: firstNonEmpty(rawEnv.STRIPE_FIRST_PURCHASE_PROMO_6M),
+    GEO_MAXMIND_DB_PATH: firstNonEmpty(rawEnv.GEO_MAXMIND_DB_PATH) || './data/GeoLite2-Country.mmdb',
+    GEO_TRUST_PROXY_HEADERS: toBoolean(rawEnv.GEO_TRUST_PROXY_HEADERS, false)
   };
 }
 

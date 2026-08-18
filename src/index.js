@@ -63,6 +63,8 @@ const { OnboardingPetsSyncService } = require('./services/onboarding-pets-sync.s
 const { OnboardingQuotesRepository } = require('./infrastructure/repositories/onboarding-quotes.repository');
 const { StripeFirstPurchasePromosRepository } = require('./infrastructure/repositories/stripe-first-purchase-promos.repository');
 const { StripeCouponService } = require('./services/stripe-coupon.service');
+const { MaxMindCountryReader } = require('./infrastructure/geo/maxmind-country-reader');
+const { GeoService } = require('./services/geo.service');
 
 async function bootstrap() {
   const env = parseEnv();
@@ -194,6 +196,15 @@ async function bootstrap() {
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository(dataSource);
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository);
   const onboardingPetsSyncService = new OnboardingPetsSyncService(onboardingPetCreateRepository);
+  const countryReader = new MaxMindCountryReader({ dbPath: env.GEO_MAXMIND_DB_PATH });
+  await countryReader.open();
+  if (!countryReader.isOpen()) {
+    logger.warn({ dbPath: env.GEO_MAXMIND_DB_PATH }, 'GeoLite2 country database is not available; geo country will be UNKNOWN.');
+  }
+  const geoService = new GeoService({
+    countryReader,
+    trustProxy: env.GEO_TRUST_PROXY_HEADERS
+  });
   const app = createApp({
     authService,
     authCookie: {
@@ -230,6 +241,7 @@ async function bootstrap() {
     subscriptionsService,
     onboardingPetDeleteService,
     onboardingPetsSyncService,
+    geoService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
       algorithm: env.JWT_AUTH_ALGORITHM,

@@ -18,6 +18,10 @@ function isOnboardingSessionRoute(request) {
   return /^\/api\/v1\/onboarding\/session(?:\/|$)/.test(request.path);
 }
 
+function isPublicGeoRoute(request) {
+  return request.method === 'GET' && request.path === '/api/v1/geo/context';
+}
+
 function isPublicAuthRoute(request, extraAuthPath) {
   if (request.method !== 'POST') {
     return false;
@@ -35,7 +39,7 @@ function buildBearerTokenMiddleware(options = {}) {
   const jwtOptions = options.jwt || {};
 
   return (request, response, next) => {
-    if (!request.path.startsWith('/api/v1') || isPublicAuthRoute(request, authPath) || isSessionAutocompleteRoute(request) || isOnboardingSessionRoute(request)) {
+    if (!request.path.startsWith('/api/v1') || isPublicAuthRoute(request, authPath) || isPublicGeoRoute(request) || isSessionAutocompleteRoute(request) || isOnboardingSessionRoute(request)) {
       next();
       return;
     }

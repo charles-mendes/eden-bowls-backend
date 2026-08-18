@@ -112,4 +112,28 @@ describe('bearer token middleware', () => {
     expect(response.status).toBe(201);
     expect(authService.register).toHaveBeenCalled();
   });
+
+  test('does not apply bearer validation to geo context', async () => {
+    const geoService = {
+      getContext: jest.fn().mockResolvedValue({
+        success: true,
+        data: {
+          domain: 'com',
+          country: 'UNKNOWN',
+          ip: '',
+          region: null,
+          source: 'backend',
+          presetId: null
+        }
+      })
+    };
+
+    const app = createApp({ geoService, corsOrigins, jwt });
+    const response = await request(app)
+      .get('/api/v1/geo/context')
+      .set('Authorization', 'Token invalid');
+
+    expect(response.status).toBe(200);
+    expect(geoService.getContext).toHaveBeenCalled();
+  });
 });
