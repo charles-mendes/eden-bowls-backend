@@ -12,15 +12,33 @@ function buildClient(overrides = {}) {
       retrieve: jest.fn().mockResolvedValue({ id: 'pm_123', customer: null }),
       attach: jest.fn().mockResolvedValue({ id: 'pm_123' })
     },
+    invoices: {
+      retrieve: jest.fn().mockResolvedValue({
+        id: 'in_123',
+        confirmation_secret: {
+          client_secret: 'pi_retrieved_secret',
+          type: 'payment_intent'
+        }
+      })
+    },
     prices: {
       retrieve: jest.fn().mockImplementation(async (id) => ({
         id,
         currency: 'usd',
         recurring: { interval: 'month', interval_count: 1 }
-      }))
+      })),
+      list: jest.fn().mockResolvedValue({ data: [] }),
+      create: jest.fn().mockResolvedValue({ id: 'price_live' })
     },
     products: {
       create: jest.fn().mockResolvedValue({ id: 'prod_ship' })
+    },
+    promotionCodes: {
+      retrieve: jest.fn().mockResolvedValue({
+        id: 'promo_1m',
+        active: true,
+        promotion: { type: 'coupon', coupon: 'eden_fp_1m' }
+      })
     },
     subscriptions: {
       create: jest.fn().mockResolvedValue({
@@ -87,9 +105,150 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
         automatic_tax: { enabled: true },
         default_payment_method: 'pm_123',
         payment_behavior: 'default_incomplete',
-        discounts: [{ promotion_code: 'promo_1m' }]
+        payment_settings: { save_default_payment_method: 'on_subscription' },
+        billing_mode: { type: 'flexible' },
+        discounts: [{ coupon: 'eden_fp_1m' }]
       }),
       { idempotencyKey: 'eb-sub-create-7-test' }
+    );
+    expect(stripe.subscriptions.create.mock.calls[0][0].expand).toBeUndefined();
+  });
+
+  test('retrieves confirmation_secret when create returns only an invoice id', async () => {
+    const { stripe, client } = buildClient({
+      stripe: {
+        subscriptions: {
+          create: jest.fn().mockResolvedValue({
+            id: 'sub_plain',
+            status: 'incomplete',
+            latest_invoice: 'in_clover'
+          })
+        },
+        invoices: {
+          retrieve: jest.fn().mockResolvedValue({
+            id: 'in_clover',
+            subtotal: 4000,
+            total: 5290,
+            amount_due: 5290,
+            currency: 'usd',
+            confirmation_secret: {
+              client_secret: 'pi_fetched_secret_xyz',
+              type: 'payment_intent'
+            }
+          })
+        }
+      }
+    });
+
+    const result = await client.createOnboardingSubscription(validInput);
+
+    expect(stripe.invoices.retrieve).toHaveBeenCalledWith('in_clover', {
+      expand: ['confirmation_secret']
+    });
+    expect(result.checkout.stripe_client_secret).toBe('pi_fetched_secret_xyz');
+    expect(result.checkout.stripe_payment_intent_id).toBe('pi_fetched');
+  });
+
+  test('reads the Clover confirmation_secret when payment_intent is absent', async () => {
+    const { client } = buildClient({
+      stripe: {
+        subscriptions: {
+          create: jest.fn().mockResolvedValue({
+            id: 'sub_clover',
+            status: 'incomplete',
+            latest_invoice: {
+              subtotal: 4000,
+              total: 5290,
+              amount_due: 5290,
+              currency: 'usd',
+              confirmation_secret: {
+                client_secret: 'pi_clover_secret_abc',
+                type: 'payment_intent'
+              }
+            }
+          })
+        }
+      }
+    });
+
+    const result = await client.createOnboardingSubscription(validInput);
+
+    expect(result.checkout.stripe_client_secret).toBe('pi_clover_secret_abc');
+    expect(result.checkout.stripe_payment_intent_id).toBe('pi_clover');
+    expect(result.checkout.payment_state).toBe('requires_confirmation');
+  });
+
+  test('materializes seeded catalog prices before creating the subscription', async () => {
+    const { stripe, client } = buildClient({
+      stripe: {
+        prices: {
+          retrieve: jest.fn().mockImplementation(async (id) => ({
+            id,
+            currency: 'brl',
+            recurring: { interval: 'month', interval_count: 1 }
+          })),
+          list: jest.fn().mockResolvedValue({ data: [] }),
+          create: jest.fn()
+            .mockResolvedValueOnce({ id: 'price_live_beef' })
+            .mockResolvedValueOnce({ id: 'price_live_fish' })
+        },
+        products: {
+          create: jest.fn()
+            .mockResolvedValueOnce({ id: 'prod_beef' })
+            .mockResolvedValueOnce({ id: 'prod_fish' })
+        }
+      }
+    });
+
+    await client.createOnboardingSubscription({
+      ...validInput,
+      currency: 'brl',
+      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      items: [
+        { price: 'price_seed_br_beef_300g', quantity: 2, unit_price: 25, currency: 'brl' },
+        { price: 'price_seed_br_fish_300g', quantity: 1, unit_price: 35, currency: 'brl' }
+      ]
+    });
+
+    expect(stripe.prices.create).toHaveBeenCalledWith(expect.objectContaining({
+      currency: 'brl',
+      unit_amount: 2500,
+      lookup_key: 'eden_seed_br_beef_300g',
+      recurring: { interval: 'month' }
+    }));
+    expect(stripe.subscriptions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [
+          { price: 'price_live_beef', quantity: 2 },
+          { price: 'price_live_fish', quantity: 1 }
+        ]
+      }),
+      expect.any(Object)
+    );
+  });
+
+  test('reuses an existing Stripe price for a seeded catalog lookup key', async () => {
+    const { stripe, client } = buildClient({
+      stripe: {
+        prices: {
+          retrieve: jest.fn(),
+          list: jest.fn().mockResolvedValue({ data: [{ id: 'price_existing' }] }),
+          create: jest.fn()
+        }
+      }
+    });
+
+    await client.createOnboardingSubscription({
+      ...validInput,
+      items: [{ price: 'price_seed_us_beef_10_6oz', quantity: 1, unit_price: 25, currency: 'usd' }]
+    });
+
+    expect(stripe.prices.create).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [{ price: 'price_existing', quantity: 1 }]
+      }),
+      expect.any(Object)
     );
   });
 
@@ -165,8 +324,117 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
       statusCode: 502,
       message: 'The card could not be charged.',
-      details: { code: 'stripe_subscription_failed' }
+      details: {
+        code: 'stripe_subscription_failed',
+        stripe_code: 'card_declined',
+        stripe_type: 'StripeCardError'
+      }
     });
+  });
+
+  test('forwards Stripe param when the error has no code', async () => {
+    const { client } = buildClient({
+      stripe: {
+        subscriptions: {
+          create: jest.fn().mockRejectedValue({
+            type: 'StripeInvalidRequestError',
+            rawType: 'invalid_request_error',
+            param: 'expand',
+            raw: { type: 'invalid_request_error', param: 'expand' },
+            message: 'This property cannot be expanded.'
+          })
+        }
+      }
+    });
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      message: 'Unable to create Stripe subscription.',
+      details: {
+        code: 'stripe_subscription_failed',
+        stripe_code: null,
+        stripe_type: 'StripeInvalidRequestError',
+        stripe_param: 'expand'
+      }
+    });
+  });
+
+  test('applies the promotion coupon instead of promotion_code', async () => {
+    const { stripe, client } = buildClient();
+
+    await client.createOnboardingSubscription(validInput);
+
+    expect(stripe.promotionCodes.retrieve).toHaveBeenCalledWith('promo_1m');
+    expect(stripe.subscriptions.create.mock.calls[0][0].discounts).toEqual([{ coupon: 'eden_fp_1m' }]);
+  });
+
+  test('reuses an incomplete Stripe subscription for the same fingerprint', async () => {
+    const { stripe, client } = buildClient({
+      stripe: {
+        subscriptions: {
+          list: jest.fn().mockResolvedValue({
+            data: [{
+              id: 'sub_existing',
+              status: 'incomplete',
+              latest_invoice: 'in_existing',
+              metadata: { checkout_context_fingerprint: 'abc', user_id: '7' }
+            }]
+          }),
+          create: jest.fn(),
+          update: jest.fn().mockResolvedValue({ id: 'sub_existing' })
+        },
+        invoices: {
+          retrieve: jest.fn().mockResolvedValue({
+            id: 'in_existing',
+            subtotal: 4000,
+            total: 5290,
+            amount_due: 5290,
+            currency: 'usd',
+            confirmation_secret: {
+              client_secret: 'pi_existing_secret_abc',
+              type: 'payment_intent'
+            }
+          })
+        }
+      }
+    });
+
+    const result = await client.createOnboardingSubscription(validInput);
+
+    expect(stripe.subscriptions.create).not.toHaveBeenCalled();
+    expect(result.checkout.stripe_subscription_id).toBe('sub_existing');
+    expect(result.checkout.stripe_client_secret).toBe('pi_existing_secret_abc');
+    expect(result.checkout.reused).toBe(true);
+  });
+
+  test('rejects a promotion code that Stripe cannot retrieve', async () => {
+    const { client } = buildClient({
+      stripe: {
+        promotionCodes: {
+          retrieve: jest.fn().mockRejectedValue({
+            type: 'StripeInvalidRequestError',
+            code: 'resource_missing',
+            param: 'id',
+            message: 'No such promotion code'
+          })
+        }
+      }
+    });
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'invalid_promotion_code_id', stripe_code: 'resource_missing' }
+    });
+  });
+});
+
+describe('StripeBillingClient.ensureClient', () => {
+  test('reports a missing secret key', () => {
+    const client = new StripeBillingClient({});
+    expect(() => client.ensureClient()).toThrow(expect.objectContaining({
+      statusCode: 503,
+      details: { code: 'stripe_secret_missing' }
+    }));
   });
 });
 
@@ -177,5 +445,25 @@ describe('StripeBillingClient.resolvePaymentState', () => {
       paymentMethodId: 'pm_123',
       paymentIntentStatus: 'requires_payment_method'
     })).toBe('failed');
+  });
+});
+
+describe('extractInvoicePayment', () => {
+  const { couponIdFromPromotion, extractInvoicePayment } = require('../src/infrastructure/stripe/stripe-billing-client');
+
+  test('prefers confirmation_secret on Clover invoices', () => {
+    expect(extractInvoicePayment({
+      confirmation_secret: { client_secret: 'pi_abc_secret_xyz', type: 'payment_intent' }
+    })).toEqual({
+      clientSecret: 'pi_abc_secret_xyz',
+      paymentIntentId: 'pi_abc',
+      paymentIntentStatus: ''
+    });
+  });
+
+  test('reads Clover promotion.coupon', () => {
+    expect(couponIdFromPromotion({
+      promotion: { type: 'coupon', coupon: 'nVJYDOag' }
+    })).toBe('nVJYDOag');
   });
 });

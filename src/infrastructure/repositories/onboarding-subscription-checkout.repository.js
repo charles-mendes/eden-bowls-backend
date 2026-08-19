@@ -121,8 +121,19 @@ class OnboardingSubscriptionCheckoutRepository {
         }
         continue;
       }
-      const current = merged.get(item.price) || { price: item.price, quantity: 0 };
+      const current = merged.get(item.price) || {
+        price: item.price,
+        quantity: 0,
+        unit_price: Number.isFinite(Number(item.unit_price)) ? Number(item.unit_price) : null,
+        currency: String(item.currency || currency || '').toLowerCase()
+      };
       current.quantity += Math.max(1, Number(item.quantity) || 1);
+      if (!Number.isFinite(Number(current.unit_price)) && Number.isFinite(Number(item.unit_price))) {
+        current.unit_price = Number(item.unit_price);
+      }
+      if (!current.currency && item.currency) {
+        current.currency = String(item.currency).toLowerCase();
+      }
       merged.set(item.price, current);
     }
 

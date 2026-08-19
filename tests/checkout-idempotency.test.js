@@ -83,7 +83,7 @@ describe('checkout-idempotency', () => {
       promotionCodeId: 'promo_1m'
     });
 
-    expect(key).toMatch(/^eb-sub-create-7-[a-f0-9]{16}-[a-f0-9]{16}-[a-f0-9]{16}-[a-f0-9]{12}$/);
+    expect(key).toMatch(/^eb-sub-create-c2-7-[a-f0-9]{16}-[a-f0-9]{16}-[a-f0-9]{16}-[a-f0-9]{12}$/);
   });
 
   test('serializes concurrent creates for the same fingerprint', () => {

@@ -1,3 +1,88 @@
+function isSeedStripePriceId(priceId) {
+  return String(priceId || '').startsWith('price_seed_');
+}
+
+function seedLookupKey(priceId) {
+  return `eden_${String(priceId || '').replace(/^price_/, '')}`;
+}
+
+function toMinorUnit(amount) {
+  return Math.round(Number(amount) * 100);
+}
+
+function paymentIntentIdFromClientSecret(clientSecret) {
+  const secret = String(clientSecret || '');
+  if (!secret.startsWith('pi_')) {
+    return '';
+  }
+  const index = secret.indexOf('_secret');
+  return index > 0 ? secret.slice(0, index) : '';
+}
+
+function firstPaymentIntentFromInvoicePayments(invoice = {}) {
+  const entries = invoice.payments && Array.isArray(invoice.payments.data)
+    ? invoice.payments.data
+    : [];
+
+  for (const entry of entries) {
+    const payment = entry && entry.payment ? entry.payment : entry;
+    const nested = payment && payment.payment_intent;
+    if (nested && typeof nested === 'object') {
+      return nested;
+    }
+    if (typeof nested === 'string' && nested.startsWith('pi_')) {
+      return { id: nested };
+    }
+  }
+
+  return {};
+}
+
+function stripeErrorInfo(error) {
+  const raw = error && error.raw && typeof error.raw === 'object' ? error.raw : {};
+  return {
+    stripe_code: String((error && error.code) || raw.code || '') || null,
+    stripe_type: String((error && (error.type || error.rawType)) || raw.type || '') || null,
+    stripe_param: String((error && error.param) || raw.param || '') || null
+  };
+}
+
+function couponIdFromPromotion(promo = {}) {
+  const nested = promo.promotion && promo.promotion.coupon;
+  if (nested && typeof nested === 'object' && nested.id) {
+    return String(nested.id);
+  }
+  if (typeof nested === 'string' && nested.trim()) {
+    return nested.trim();
+  }
+  if (promo.coupon && typeof promo.coupon === 'object' && promo.coupon.id) {
+    return String(promo.coupon.id);
+  }
+  if (typeof promo.coupon === 'string' && promo.coupon.trim()) {
+    return promo.coupon.trim();
+  }
+  return '';
+}
+
+function extractInvoicePayment(invoice = {}) {
+  const confirmation = invoice.confirmation_secret && typeof invoice.confirmation_secret === 'object'
+    ? invoice.confirmation_secret
+    : {};
+  const paymentIntent = invoice.payment_intent && typeof invoice.payment_intent === 'object'
+    ? invoice.payment_intent
+    : firstPaymentIntentFromInvoicePayments(invoice);
+  const clientSecret = String(confirmation.client_secret || paymentIntent.client_secret || '');
+  const paymentIntentId = String(
+    paymentIntent.id || paymentIntentIdFromClientSecret(clientSecret) || ''
+  );
+
+  return {
+    clientSecret,
+    paymentIntentId,
+    paymentIntentStatus: String(paymentIntent.status || '')
+  };
+}
+
 function createStripeSdk(secretKey, options = {}) {
   if (!secretKey) {
     return null;
@@ -6,8 +91,11 @@ function createStripeSdk(secretKey, options = {}) {
   let Stripe;
   try {
     Stripe = require('stripe');
-  } catch (_error) {
-    return null;
+  } catch (error) {
+    const sdkError = new Error('Stripe SDK is not available in this environment.');
+    sdkError.code = 'stripe_sdk_missing';
+    sdkError.cause = error;
+    throw sdkError;
   }
 
   const clientOptions = {};
@@ -23,17 +111,120 @@ function createStripeSdk(secretKey, options = {}) {
 
 class StripeBillingClient {
   constructor(options = {}) {
-    this.client = options.client || createStripeSdk(options.secretKey, options);
     this.automaticTaxEnabled = Boolean(options.automaticTaxEnabled);
     this.shippingProductId = options.shippingProductId || '';
+    this.missingReason = null;
+
+    if (options.client) {
+      this.client = options.client;
+      return;
+    }
+
+    try {
+      this.client = createStripeSdk(options.secretKey, options);
+      this.missingReason = this.client ? null : 'secret';
+    } catch (error) {
+      if (error && error.code === 'stripe_sdk_missing') {
+        this.client = null;
+        this.missingReason = 'sdk';
+        return;
+      }
+      throw error;
+    }
   }
 
   ensureClient() {
     const { HttpError } = require('../../core/http-error');
-    if (!this.client) {
-      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
+    if (this.client) {
+      return this.client;
     }
-    return this.client;
+    if (this.missingReason === 'sdk') {
+      throw new HttpError(503, 'Stripe SDK is not available in this environment.', {
+        code: 'stripe_sdk_missing'
+      });
+    }
+    throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
+  }
+
+  async ensureRecurringPrice({ lookupKey, currency, unitAmount, nickname }) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const key = String(lookupKey || '').trim();
+    const currencyCode = String(currency || '').trim().toLowerCase();
+    const amount = Number(unitAmount);
+
+    if (!key || !currencyCode || !Number.isFinite(amount) || amount <= 0) {
+      throw new HttpError(422, 'A catalog variant is not mapped to a Stripe price.', {
+        code: 'unmapped_variant'
+      });
+    }
+
+    try {
+      const listed = await stripe.prices.list({ lookup_keys: [key], active: true, limit: 1 });
+      const existing = listed && Array.isArray(listed.data) ? listed.data[0] : null;
+      if (existing && existing.id) {
+        return existing.id;
+      }
+
+      const product = await stripe.products.create({
+        name: nickname || key,
+        metadata: { source: 'eden_bowls_seed', lookup_key: key }
+      });
+      const price = await stripe.prices.create({
+        currency: currencyCode,
+        unit_amount: amount,
+        recurring: { interval: 'month' },
+        product: product.id,
+        lookup_key: key,
+        nickname: nickname || key,
+        tax_behavior: 'exclusive'
+      });
+      if (!price || !String(price.id || '').startsWith('price_')) {
+        throw new HttpError(502, 'Unable to create Stripe price.', {
+          code: 'stripe_price_ensure_failed'
+        });
+      }
+      return price.id;
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      try {
+        const listed = await stripe.prices.list({ lookup_keys: [key], limit: 1 });
+        const existing = listed && Array.isArray(listed.data) ? listed.data[0] : null;
+        if (existing && existing.id) {
+          return existing.id;
+        }
+      } catch (_retryError) {
+        // Fall through to the original Stripe error.
+      }
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe price.'), {
+        code: 'stripe_price_ensure_failed'
+      });
+    }
+  }
+
+  async materializeSeedPrices(items = [], input = {}) {
+    const fallbackCurrency = String(input.currency || 'usd').toLowerCase();
+    const resolved = [];
+
+    for (const item of Array.isArray(items) ? items : []) {
+      const price = String(item && item.price || '').trim();
+      if (!isSeedStripePriceId(price)) {
+        resolved.push({ ...item, price });
+        continue;
+      }
+
+      const livePriceId = await this.ensureRecurringPrice({
+        lookupKey: seedLookupKey(price),
+        currency: String(item.currency || fallbackCurrency).toLowerCase(),
+        unitAmount: toMinorUnit(item.unit_price),
+        nickname: price
+      });
+      resolved.push({ ...item, price: livePriceId });
+    }
+
+    return resolved;
   }
 
   stripeMessage(error, fallback) {
@@ -235,6 +426,98 @@ class StripeBillingClient {
     return pmId;
   }
 
+  async resolveCheckoutCoupon(promotionCodeId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const promoId = String(promotionCodeId || '').trim();
+    if (!promoId) {
+      return '';
+    }
+
+    if (!stripe.promotionCodes || !stripe.promotionCodes.retrieve) {
+      return '';
+    }
+
+    let promo;
+    try {
+      promo = await stripe.promotionCodes.retrieve(promoId);
+    } catch (error) {
+      throw new HttpError(422, 'Promotion code is invalid.', {
+        code: 'invalid_promotion_code_id',
+        ...stripeErrorInfo(error)
+      });
+    }
+
+    if (!promo || promo.active === false) {
+      throw new HttpError(422, 'Promotion code is invalid.', {
+        code: 'invalid_promotion_code_id'
+      });
+    }
+
+    const couponId = couponIdFromPromotion(promo);
+    if (!couponId) {
+      throw new HttpError(422, 'Promotion code is invalid.', {
+        code: 'invalid_promotion_code_id'
+      });
+    }
+
+    return couponId;
+  }
+
+  async findReusableIncompleteSubscription({ customerId, fingerprint, userId }) {
+    const stripe = this.ensureClient();
+    if (!stripe.subscriptions || !stripe.subscriptions.list) {
+      return null;
+    }
+
+    let listed;
+    try {
+      listed = await stripe.subscriptions.list({
+        customer: customerId,
+        status: 'incomplete',
+        limit: 20
+      });
+    } catch (_error) {
+      return null;
+    }
+
+    const rows = listed && Array.isArray(listed.data) ? listed.data : [];
+    const fingerprintValue = String(fingerprint || '');
+    const userValue = String(userId || '');
+    if (fingerprintValue) {
+      const matched = rows.find((subscription) => (
+        String(subscription.metadata && subscription.metadata.checkout_context_fingerprint || '') === fingerprintValue
+      ));
+      if (matched) {
+        return matched;
+      }
+    }
+
+    const byUser = rows.filter((subscription) => {
+      const metadata = subscription.metadata || {};
+      return String(metadata.user_id || metadata.wp_user_id || '') === userValue;
+    });
+    return byUser.length === 1 ? byUser[0] : null;
+  }
+
+  async loadInvoicePayment(subscription) {
+    const stripe = this.ensureClient();
+    const invoiceId = typeof subscription.latest_invoice === 'string'
+      ? subscription.latest_invoice
+      : (subscription.latest_invoice && subscription.latest_invoice.id);
+    let invoice = subscription.latest_invoice && typeof subscription.latest_invoice === 'object'
+      ? subscription.latest_invoice
+      : {};
+    let payment = extractInvoicePayment(invoice);
+    if (!payment.clientSecret && invoiceId && stripe.invoices && stripe.invoices.retrieve) {
+      invoice = await stripe.invoices.retrieve(invoiceId, {
+        expand: ['confirmation_secret']
+      });
+      payment = extractInvoicePayment(invoice);
+    }
+    return { invoice, payment };
+  }
+
   async ensureShippingProduct() {
     const stripe = this.ensureClient();
     if (this.shippingProductId && String(this.shippingProductId).startsWith('prod_')) {
@@ -343,7 +626,7 @@ class StripeBillingClient {
   async createOnboardingSubscription(input = {}) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
-    const items = Array.isArray(input.items) ? input.items : [];
+    const items = await this.materializeSeedPrices(Array.isArray(input.items) ? input.items : [], input);
     this.assertSubscriptionItems(items);
 
     const paymentMethodIdInput = String(input.paymentMethodId || '').trim();
@@ -401,6 +684,32 @@ class StripeBillingClient {
       });
     }
 
+    const couponId = await this.resolveCheckoutCoupon(promotionCodeId);
+    const reusable = await this.findReusableIncompleteSubscription({
+      customerId,
+      fingerprint: input.checkoutContextFingerprint,
+      userId: input.userId
+    });
+    if (reusable && reusable.id) {
+      if (stripe.subscriptions.update) {
+        try {
+          await stripe.subscriptions.update(reusable.id, {
+            default_payment_method: paymentMethodId
+          });
+        } catch (_error) {
+          // Keep the existing incomplete subscription even if the PM update fails.
+        }
+      }
+      return this.buildOnboardingCheckoutResult({
+        customerId,
+        subscription: reusable,
+        paymentMethodId,
+        shippingCost: Number(shipping.cost || shipping.total || 0),
+        currency: input.currency,
+        reused: true
+      });
+    }
+
     const metadata = {
       wp_user_id: String(input.userId || ''),
       user_id: String(input.userId || ''),
@@ -418,6 +727,9 @@ class StripeBillingClient {
     if (promotionCodeId) {
       metadata.hsr_promotion_code_id = promotionCodeId;
     }
+    if (couponId) {
+      metadata.hsr_coupon_id = couponId;
+    }
 
     const subscriptionParams = {
       customer: customerId,
@@ -427,7 +739,8 @@ class StripeBillingClient {
       })),
       default_payment_method: paymentMethodId,
       payment_behavior: 'default_incomplete',
-      expand: ['latest_invoice.payment_intent', 'latest_invoice.discounts', 'discounts', 'items.data.price'],
+      payment_settings: { save_default_payment_method: 'on_subscription' },
+      billing_mode: { type: 'flexible' },
       metadata
     };
 
@@ -435,8 +748,8 @@ class StripeBillingClient {
       subscriptionParams.automatic_tax = { enabled: true };
     }
 
-    if (promotionCodeId) {
-      subscriptionParams.discounts = [{ promotion_code: promotionCodeId }];
+    if (couponId) {
+      subscriptionParams.discounts = [{ coupon: couponId }];
     }
 
     const shippingCost = Number(shipping.cost || shipping.total || 0);
@@ -488,24 +801,49 @@ class StripeBillingClient {
       subscription = await stripe.subscriptions.create(subscriptionParams, createOptions);
     } catch (error) {
       throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe subscription.'), {
-        code: 'stripe_subscription_failed'
+        code: 'stripe_subscription_failed',
+        ...stripeErrorInfo(error)
       });
     }
 
-    const invoice = subscription.latest_invoice && typeof subscription.latest_invoice === 'object'
-      ? subscription.latest_invoice
-      : {};
-    const paymentIntent = invoice.payment_intent && typeof invoice.payment_intent === 'object'
-      ? invoice.payment_intent
-      : {};
-    const clientSecret = String(paymentIntent.client_secret || '');
+    return this.buildOnboardingCheckoutResult({
+      customerId,
+      subscription,
+      paymentMethodId,
+      shippingCost,
+      currency: input.currency,
+      reused: false
+    });
+  }
+
+  async buildOnboardingCheckoutResult({
+    customerId,
+    subscription,
+    paymentMethodId,
+    shippingCost,
+    currency,
+    reused
+  }) {
+    const { HttpError } = require('../../core/http-error');
+    let invoice;
+    let payment;
+    try {
+      ({ invoice, payment } = await this.loadInvoicePayment(subscription));
+    } catch (error) {
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe subscription.'), {
+        code: 'stripe_client_secret_missing',
+        ...stripeErrorInfo(error)
+      });
+    }
+
+    const clientSecret = payment.clientSecret;
     if (!subscription.id || !clientSecret) {
       throw new HttpError(502, 'Unable to create Stripe subscription.', {
-        code: 'stripe_subscription_failed'
+        code: 'stripe_client_secret_missing'
       });
     }
 
-    const paymentIntentStatus = String(paymentIntent.status || '');
+    const paymentIntentStatus = payment.paymentIntentStatus;
     const paymentState = this.resolvePaymentState({
       paymentMethodId,
       paymentIntentStatus,
@@ -532,19 +870,19 @@ class StripeBillingClient {
         shipping_total: shippingTotal,
         shipping_tax: 0,
         shipping_total_with_tax: shippingTotal,
-        currency: String(invoice.currency || input.currency || 'usd').toUpperCase(),
+        currency: String(invoice.currency || currency || 'usd').toUpperCase(),
         payment_url: '',
         subscription_ids: [],
         flexible_subscription_id: 0,
         stripe_subscription_id: subscription.id,
         stripe_customer_id: customerId,
         stripe_client_secret: clientSecret || undefined,
-        stripe_payment_intent_id: paymentIntent.id || undefined,
+        stripe_payment_intent_id: payment.paymentIntentId || undefined,
         stripe_payment_intent_status: paymentIntentStatus || undefined,
         stripe_subscription_status: String(subscription.status || 'incomplete'),
         payment_state: paymentState,
         has_payment_method: true,
-        reused: false
+        reused: Boolean(reused)
       }
     };
   }
@@ -582,7 +920,7 @@ class StripeBillingClient {
 
     try {
       return await stripe.subscriptions.retrieve(id, {
-        expand: options.expand || ['items.data.price', 'default_payment_method', 'latest_invoice.payment_intent']
+        expand: options.expand || ['items.data.price', 'default_payment_method', 'latest_invoice.confirmation_secret']
       });
     } catch (error) {
       throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe subscription.'), {
@@ -734,7 +1072,7 @@ class StripeBillingClient {
     const params = {
       items,
       proration_behavior: prorationBehavior,
-      expand: ['latest_invoice.payment_intent', 'items.data.price', 'default_payment_method']
+      expand: ['latest_invoice.confirmation_secret', 'items.data.price', 'default_payment_method']
     };
     if (metadata && typeof metadata === 'object') {
       params.metadata = metadata;
@@ -768,5 +1106,7 @@ class StripeBillingClient {
 
 module.exports = {
   StripeBillingClient,
-  createStripeSdk
+  createStripeSdk,
+  extractInvoicePayment,
+  couponIdFromPromotion
 };

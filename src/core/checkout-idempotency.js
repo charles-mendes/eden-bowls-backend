@@ -101,7 +101,7 @@ function buildSubscriptionCreateIdempotencyKey({
   const attemptHash = sha256Hex(attemptId).slice(0, 16);
   const promoScope = sha256Hex(promotionCodeId || 'none').slice(0, 12);
 
-  return `eb-sub-create-${userId}-${emailHash}-${itemsDigest}-${attemptHash}-${promoScope}`;
+  return `eb-sub-create-c2-${userId}-${emailHash}-${itemsDigest}-${attemptHash}-${promoScope}`;
 }
 
 function fingerprintsMatch(left, right) {

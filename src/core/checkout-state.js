@@ -90,18 +90,15 @@ function collectPriceItems(planSelection = {}) {
   for (const line of lineItems) {
     const priceId = String(line.stripe_price_id || line.price_id || '').trim();
     const quantity = Math.max(1, Math.trunc(Number(line.quantity) || 1));
-    if (priceId.startsWith('price_')) {
-      items.push({
-        price: priceId,
-        quantity,
-        variation_id: Number(line.variation_id || 0)
-      });
-    } else if (line.variation_id) {
-      items.push({
-        price: '',
-        quantity,
-        variation_id: Number(line.variation_id)
-      });
+    const pricedItem = {
+      price: priceId.startsWith('price_') ? priceId : '',
+      quantity,
+      variation_id: Number(line.variation_id || 0),
+      unit_price: Number(line.unit_price),
+      currency: String(line.currency || catalog.currency || '').toLowerCase()
+    };
+    if (pricedItem.price || pricedItem.variation_id) {
+      items.push(pricedItem);
     }
   }
 
