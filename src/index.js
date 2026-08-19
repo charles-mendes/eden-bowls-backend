@@ -1,5 +1,6 @@
 require('reflect-metadata');
 
+const path = require('path');
 const { parseEnv } = require('./config/env');
 const { createLogger } = require('./core/logger');
 const { createApp } = require('./app');
@@ -43,6 +44,8 @@ const { SubscriptionsRepository } = require('./infrastructure/repositories/subsc
 const { SubscriptionLedgerRepository } = require('./infrastructure/repositories/subscription-ledger.repository');
 const { StripeWebhookEventsRepository } = require('./infrastructure/repositories/stripe-webhook-events.repository');
 const { OnboardingPetDeleteRepository } = require('./infrastructure/repositories/onboarding-pets-delete.repository');
+const { ProfileRepository } = require('./infrastructure/repositories/profile.repository');
+const { LocalAvatarStorage } = require('./infrastructure/storage/local-avatar-storage');
 const { AuthService } = require('./services/auth.service');
 const { createOtpMailer } = require('./infrastructure/mailers/otp-mailer');
 const { BreedsService } = require('./services/breeds.service');
@@ -74,6 +77,7 @@ const { SubscriptionsService } = require('./services/subscriptions.service');
 const { StripeWebhookService } = require('./services/stripe-webhook.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
 const { OnboardingPetsSyncService } = require('./services/onboarding-pets-sync.service');
+const { ProfileService } = require('./services/profile.service');
 const { OnboardingQuotesRepository } = require('./infrastructure/repositories/onboarding-quotes.repository');
 const { StripeFirstPurchasePromosRepository } = require('./infrastructure/repositories/stripe-first-purchase-promos.repository');
 const { StripeCouponService } = require('./services/stripe-coupon.service');
@@ -289,6 +293,23 @@ async function bootstrap() {
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository(dataSource);
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository);
   const onboardingPetsSyncService = new OnboardingPetsSyncService(onboardingPetCreateRepository);
+  const profileRepository = new ProfileRepository(dataSource, {
+    usersTableName: env.WP_USERS_TABLE_NAME,
+    usermetaTableName: env.WP_USERMETA_TABLE_NAME
+  });
+  const avatarPublicDir = path.resolve(env.PROFILE_AVATAR_DIR);
+  const avatarPublicBaseUrl = env.PROFILE_AVATAR_PUBLIC_BASE_URL || `${String(env.JWT_AUTH_ISSUER || '').replace(/\/+$/, '')}/avatars`;
+  const avatarStorage = new LocalAvatarStorage({
+    directory: avatarPublicDir,
+    publicBaseUrl: avatarPublicBaseUrl
+  });
+  const profileService = new ProfileService(profileRepository, {
+    authService,
+    ledgerRepository: subscriptionLedgerRepository,
+    refreshTokenRepository: authRefreshTokenRepository,
+    stripeBilling,
+    avatarStorage
+  });
   const countryReader = new MaxMindCountryReader({ dbPath: env.GEO_MAXMIND_DB_PATH });
   await countryReader.open();
   if (!countryReader.isOpen()) {
@@ -337,6 +358,8 @@ async function bootstrap() {
     stripeWebhookService,
     onboardingPetDeleteService,
     onboardingPetsSyncService,
+    profileService,
+    avatarPublicDir,
     geoService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,

@@ -90,7 +90,9 @@ const rawEnvSchema = z.object({
   SHIPPING_BR_CENTER_NAME: z.string().optional(),
   SHIPPING_BR_CENTER_VERSION: z.string().optional(),
   GEO_MAXMIND_DB_PATH: z.string().default('./data/GeoLite2-Country.mmdb'),
-  GEO_TRUST_PROXY_HEADERS: z.string().optional()
+  GEO_TRUST_PROXY_HEADERS: z.string().optional(),
+  PROFILE_AVATAR_DIR: z.string().optional(),
+  PROFILE_AVATAR_PUBLIC_BASE_URL: z.string().optional()
 });
 
 function firstNonEmpty(...values) {
@@ -216,7 +218,9 @@ function parseEnv(source = process.env) {
     SHIPPING_BR_CENTER_NAME: firstNonEmpty(rawEnv.SHIPPING_BR_CENTER_NAME),
     SHIPPING_BR_CENTER_VERSION: firstNonEmpty(rawEnv.SHIPPING_BR_CENTER_VERSION),
     GEO_MAXMIND_DB_PATH: firstNonEmpty(rawEnv.GEO_MAXMIND_DB_PATH) || './data/GeoLite2-Country.mmdb',
-    GEO_TRUST_PROXY_HEADERS: toBoolean(rawEnv.GEO_TRUST_PROXY_HEADERS, false)
+    GEO_TRUST_PROXY_HEADERS: toBoolean(rawEnv.GEO_TRUST_PROXY_HEADERS, false),
+    PROFILE_AVATAR_DIR: firstNonEmpty(rawEnv.PROFILE_AVATAR_DIR) || './public/avatars',
+    PROFILE_AVATAR_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.PROFILE_AVATAR_PUBLIC_BASE_URL)
   };
 }
 

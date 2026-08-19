@@ -997,6 +997,31 @@ class StripeBillingClient {
     return this.setCancelAtPeriodEnd(subscriptionId, true);
   }
 
+  async cancelSubscriptionImmediately(subscriptionId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const id = String(subscriptionId || '').trim();
+    if (!id.startsWith('sub_')) {
+      throw new HttpError(422, 'Invalid subscription id.', { code: 'invalid_subscription_id' });
+    }
+
+    try {
+      if (typeof stripe.subscriptions.cancel === 'function') {
+        return await stripe.subscriptions.cancel(id);
+      }
+
+      return await stripe.subscriptions.del(id);
+    } catch (error) {
+      if (String(error && error.code || '') === 'resource_missing') {
+        return { id, status: 'canceled' };
+      }
+
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to cancel Stripe subscription.'), {
+        code: 'stripe_subscription_cancel_failed'
+      });
+    }
+  }
+
   async updateDefaultPaymentMethod(customerId, paymentMethodId, subscriptionId) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();

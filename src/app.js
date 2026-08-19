@@ -34,7 +34,9 @@ const { registerSubscriptionsRoutes } = require('./api/routes/subscriptions.rout
 const { registerStripeWebhookRoutes } = require('./api/routes/stripe-webhook.routes');
 const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
 const { registerOnboardingPetsSyncRoutes } = require('./api/routes/onboarding-pets-sync.routes');
+const { registerProfileRoutes } = require('./api/routes/profile.routes');
 const { HttpError } = require('./core/http-error');
+const path = require('path');
 
 client.collectDefaultMetrics();
 
@@ -81,7 +83,9 @@ function createApp(dependencies = {}) {
     strictTransportSecurity: process.env.NODE_ENV === 'production'
   }));
   app.use('/stripe/v1/webhook', express.raw({ type: 'application/json' }));
+  app.use('/api/v1/profile/avatar', express.json({ limit: '5mb' }));
   app.use(express.json({ limit: '1mb' }));
+  app.use('/avatars', express.static(dependencies.avatarPublicDir || path.join(process.cwd(), 'public', 'avatars')));
   app.use(
     rateLimit({
       windowMs: 60 * 1000,
@@ -147,6 +151,7 @@ function createApp(dependencies = {}) {
   registerStripeWebhookRoutes(app, dependencies);
   registerOnboardingPetDeleteRoutes(app, dependencies);
   registerOnboardingPetsSyncRoutes(app, dependencies);
+  registerProfileRoutes(app, dependencies);
 
   app.use((request, response, next) => {
     next(new HttpError(404, 'Route not found.'));
