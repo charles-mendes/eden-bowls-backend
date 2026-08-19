@@ -118,7 +118,33 @@ function fingerprintsMatch(left, right) {
   }
 }
 
-function evaluateCheckoutReuse(checkoutReference = {}, fingerprint = '') {
+function normalizePetIds(pets = []) {
+  return [...new Set(
+    (Array.isArray(pets) ? pets : [])
+      .map((pet) => {
+        if (pet == null) {
+          return '';
+        }
+        if (typeof pet === 'string' || typeof pet === 'number') {
+          return String(pet).trim();
+        }
+        return String(pet.pet_id || pet.id || '').trim();
+      })
+      .filter(Boolean)
+  )].sort();
+}
+
+function hasUncoveredCheckoutPets(currentPets = [], subscribedPets = []) {
+  const current = normalizePetIds(currentPets);
+  const subscribed = new Set(normalizePetIds(subscribedPets));
+  if (current.length === 0 || subscribed.size === 0) {
+    return false;
+  }
+
+  return current.some((id) => !subscribed.has(id));
+}
+
+function evaluateCheckoutReuse(checkoutReference = {}, fingerprint = '', options = {}) {
   const subscriptionId = String(checkoutReference.stripe_subscription_id || '').trim();
   if (!subscriptionId.startsWith('sub_')) {
     return { reuse: false };
@@ -133,6 +159,10 @@ function evaluateCheckoutReuse(checkoutReference = {}, fingerprint = '') {
     || ACTIVE_SUBSCRIPTION_STATUSES.has(subscriptionStatus);
 
   if (settled && !fingerprintOk) {
+    if (hasUncoveredCheckoutPets(options.currentPetIds, options.subscribedPetIds)) {
+      return { reuse: false, reason: 'new_pets' };
+    }
+
     throw new HttpError(409, 'Checkout context does not match the existing subscription.', {
       code: 'checkout_context_mismatch'
     });
@@ -188,6 +218,8 @@ module.exports = {
   defaultCheckoutLockStore,
   evaluateCheckoutReuse,
   fingerprintsMatch,
+  hasUncoveredCheckoutPets,
+  normalizePetIds,
   resolveAttemptId,
   sha256Hex
 };

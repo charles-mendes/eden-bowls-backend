@@ -314,6 +314,93 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(stripeBilling.createOnboardingSubscription).toHaveBeenCalledTimes(1);
   });
 
+  test('creates a new subscription when a paid checkout is for a different pet', async () => {
+    const stored = {
+      stripe_subscription_id: 'sub_old',
+      status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      checkout_context_fingerprint: 'old-fingerprint',
+      pet_ids: ['pet-1']
+    };
+    const ledgerRepository = {
+      listByUserId: jest.fn().mockResolvedValue([{
+        status: 'active',
+        petsSnapshot: { pet_ids: ['pet-1'] },
+        planSelection: { pets: [{ pet_id: 'pet-1' }] }
+      }]),
+      upsert: jest.fn().mockResolvedValue({})
+    };
+    const { service, stripeBilling } = buildService({
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(validContext.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue({
+          ...validContext,
+          pets: [{ id: 2, pet_id: 'pet-2' }],
+          planSelection: {
+            ...validContext.planSelection,
+            pets: [{
+              pet_id: 'pet-2',
+              pet_name: 'Tobby',
+              enabled: true,
+              selected_flavors: ['chicken'],
+              flavor_weights: [8]
+            }]
+          },
+          checkoutReference: stored
+        }),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+    service.ledgerRepository = ledgerRepository;
+
+    const result = await service.checkout({ userId: 7, payload });
+
+    expect(result.success).toBe(true);
+    expect(result.data.reused).toBe(false);
+    expect(stripeBilling.createOnboardingSubscription).toHaveBeenCalledTimes(1);
+    expect(ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      stripeSubscriptionId: 'sub_123'
+    }));
+  });
+
+  test('rejects a paid checkout when the same pets change shipping', async () => {
+    const stored = {
+      stripe_subscription_id: 'sub_old',
+      status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      checkout_context_fingerprint: 'old-fingerprint',
+      pet_ids: ['1']
+    };
+    const { service, stripeBilling } = buildService({
+      repository: {
+        checkout: jest.fn(),
+        getPlanSelection: jest.fn().mockResolvedValue(validContext.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue({
+          ...validContext,
+          shipping: { rate_id: 'fixed_us:default', cost: 20 },
+          checkoutReference: stored
+        }),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+    service.ledgerRepository = {
+      listByUserId: jest.fn().mockResolvedValue([{
+        status: 'active',
+        petsSnapshot: { pet_ids: ['1'] },
+        planSelection: { pets: [{ id: 1 }] }
+      }])
+    };
+
+    await expect(service.checkout({ userId: 7, payload })).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: 'checkout_context_mismatch' }
+    });
+    expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+  });
+
   test('rejects checkout when the user state is incomplete', async () => {
     const { service, repository } = buildService({
       repository: {

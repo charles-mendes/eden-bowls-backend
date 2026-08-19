@@ -21,6 +21,35 @@ const {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CHECKOUT_MODE = 'subscription_first';
+const SUBSCRIBED_PET_STATUSES = new Set(['active', 'trialing', 'incomplete', 'past_due', 'paused', 'unpaid']);
+
+function pushPetIdentity(ids, pet) {
+  if (pet == null) {
+    return;
+  }
+  if (typeof pet === 'string' || typeof pet === 'number') {
+    ids.push(pet);
+    return;
+  }
+  if (typeof pet !== 'object') {
+    return;
+  }
+  ids.push(pet.pet_id, pet.id);
+}
+
+function collectPetIdsFromSnapshot(snapshot = {}, planSelection = {}) {
+  const ids = [];
+  if (Array.isArray(snapshot.pet_ids)) {
+    ids.push(...snapshot.pet_ids);
+  }
+  if (Array.isArray(snapshot.pets)) {
+    snapshot.pets.forEach((pet) => pushPetIdentity(ids, pet));
+  }
+  if (Array.isArray(planSelection.pets)) {
+    planSelection.pets.forEach((pet) => pushPetIdentity(ids, pet));
+  }
+  return ids;
+}
 
 function getPaymentMethodId(payload = {}) {
   return String(payload.payment_method_id || payload.paymentMethodId || '').trim();
@@ -196,8 +225,13 @@ class OnboardingSubscriptionCheckoutService {
         storedAttemptId: storedReference.attempt_id,
         fingerprintMatches
       });
+      const currentPetIds = buildPetsSnapshot(nextPlanSelection, freshContext.pets || context.pets).pet_ids;
+      const subscribedPetIds = await this.collectSubscribedPetIds(userId, storedReference);
 
-      const reuse = evaluateCheckoutReuse(storedReference, fingerprint);
+      const reuse = evaluateCheckoutReuse(storedReference, fingerprint, {
+        currentPetIds,
+        subscribedPetIds
+      });
       if (reuse.reuse) {
         const reusedCheckout = await this.buildReusedCheckout({
           storedReference,
@@ -210,7 +244,8 @@ class OnboardingSubscriptionCheckoutService {
           promotion,
           catalogPricing,
           attemptId,
-          fingerprint
+          fingerprint,
+          petIds: currentPetIds
         });
         const data = await this.persistCheckout({
           userId,
@@ -267,6 +302,7 @@ class OnboardingSubscriptionCheckoutService {
         catalogPricing,
         attemptId,
         fingerprint,
+        petIds: currentPetIds,
         reused: false
       });
 
@@ -344,6 +380,7 @@ class OnboardingSubscriptionCheckoutService {
     catalogPricing,
     attemptId,
     fingerprint,
+    petIds,
     reused
   }) {
     return {
@@ -375,6 +412,7 @@ class OnboardingSubscriptionCheckoutService {
       attempt_id: attemptId,
       checkout_context_fingerprint: fingerprint,
       promotion_code_id: promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null,
+      pet_ids: Array.isArray(petIds) ? petIds : [],
       reused: Boolean(reused)
     };
   }
@@ -390,7 +428,8 @@ class OnboardingSubscriptionCheckoutService {
     promotion,
     catalogPricing,
     attemptId,
-    fingerprint
+    fingerprint,
+    petIds
   }) {
     let paymentIntentStatus = String(storedReference.stripe_payment_intent_status || '');
     let clientSecret = storedReference.stripe_client_secret || '';
@@ -429,8 +468,30 @@ class OnboardingSubscriptionCheckoutService {
       catalogPricing,
       attemptId,
       fingerprint,
+      petIds,
       reused: true
     });
+  }
+
+  async collectSubscribedPetIds(userId, storedReference = {}) {
+    const ids = collectPetIdsFromSnapshot(
+      { pet_ids: storedReference.pet_ids, pets: storedReference.pets },
+      storedReference.plan_selection || {}
+    );
+
+    if (!this.ledgerRepository || !userId) {
+      return ids;
+    }
+
+    const rows = await this.ledgerRepository.listByUserId(userId);
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (!SUBSCRIBED_PET_STATUSES.has(String(row.status || ''))) {
+        continue;
+      }
+      ids.push(...collectPetIdsFromSnapshot(row.petsSnapshot || {}, row.planSelection || {}));
+    }
+
+    return ids;
   }
 
   async upsertLedger({

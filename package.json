@@ -12,7 +12,8 @@
     "test:unit": "jest --runInBand",
     "test:integration": "RUN_DB_INTEGRATION_TESTS=true jest --runInBand --testPathPattern=tests/integration",
     "test:related": "jest --findRelatedTests",
-    "test:changed": "jest --changedSince=HEAD"
+    "test:changed": "jest --changedSince=HEAD",
+    "stripe:listen": "stripe listen --forward-to localhost:3000/stripe/v1/webhook"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

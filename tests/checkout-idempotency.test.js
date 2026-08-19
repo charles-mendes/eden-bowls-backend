@@ -74,6 +74,33 @@ describe('checkout-idempotency', () => {
     }));
   });
 
+  test('creates a new subscription when a paid checkout covers a different pet', () => {
+    expect(evaluateCheckoutReuse({
+      stripe_subscription_id: 'sub_123',
+      status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      checkout_context_fingerprint: 'abc'
+    }, 'other', {
+      currentPetIds: ['pet-2'],
+      subscribedPetIds: ['pet-1']
+    })).toEqual({ reuse: false, reason: 'new_pets' });
+  });
+
+  test('still rejects a paid checkout when the same pets change context', () => {
+    expect(() => evaluateCheckoutReuse({
+      stripe_subscription_id: 'sub_123',
+      status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      checkout_context_fingerprint: 'abc'
+    }, 'other', {
+      currentPetIds: ['pet-1'],
+      subscribedPetIds: ['pet-1']
+    })).toThrow(expect.objectContaining({
+      statusCode: 409,
+      details: { code: 'checkout_context_mismatch' }
+    }));
+  });
+
   test('builds a Stripe idempotency key from user, items and attempt', () => {
     const key = buildSubscriptionCreateIdempotencyKey({
       userId: 7,
