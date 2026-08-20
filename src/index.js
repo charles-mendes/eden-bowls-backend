@@ -362,7 +362,8 @@ async function bootstrap() {
   const adminUsersService = new AdminUsersService({
     usersRepository: adminUsersRepository,
     profileService,
-    profileRepository
+    profileRepository,
+    adminEmails: env.ADMIN_EMAILS
   });
   const countryReader = new MaxMindCountryReader({ dbPath: env.GEO_MAXMIND_DB_PATH });
   await countryReader.open();

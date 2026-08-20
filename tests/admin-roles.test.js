@@ -8,6 +8,11 @@ describe('admin roles', () => {
   test('gives operator catalog.sync', () => {
     expect(ROLE_PERMISSIONS.operator).toContain('catalog.sync');
     expect(ROLE_PERMISSIONS.operator).toContain('billing.coupons.write');
+    expect(ROLE_PERMISSIONS.operator).not.toContain('users.roles.write');
+  });
+
+  test('reserves role assignment for admin', () => {
+    expect(ROLE_PERMISSIONS.admin).toContain('users.roles.write');
   });
 
   test('bootstraps admin from allowlist email', () => {

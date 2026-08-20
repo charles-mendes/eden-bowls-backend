@@ -1,6 +1,7 @@
 const { HttpError } = require('../../core/http-error');
 const { buildRequireAdminPermission } = require('../middleware/require-admin-permission.middleware');
 const { parseNutritionSimulateInput } = require('../validators/admin-nutrition-simulate.validator');
+const { parseRolesAssignmentInput } = require('../validators/admin-users-roles.validator');
 const { parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
 const { parseCreateCouponInput, parsePromoMappingInput } = require('../validators/admin-coupons.validator');
 const { parsePageQuery } = require('../validators/admin-pagination');
@@ -340,12 +341,43 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.get('/api/v1/admin/users/roles', requirePermission('users.roles.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.listStaff(request.query || {}, parsePageQuery(request.query, { defaultPerPage: 50 }));
+    });
+  });
+
   app.get('/api/v1/admin/users/:userId', requirePermission('users.read'), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminUsersService) {
         throw new HttpError(503, 'Users service is not available.');
       }
       return dependencies.adminUsersService.getById(request.params.userId);
+    });
+  });
+
+  app.get('/api/v1/admin/users/:userId/roles', requirePermission('users.roles.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.getRoles(request.params.userId);
+    });
+  });
+
+  app.put('/api/v1/admin/users/:userId/roles', requirePermission('users.roles.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.updateRoles(
+        request.params.userId,
+        parseRolesAssignmentInput(request.body || {}),
+        request.adminIdentity
+      );
     });
   });
 

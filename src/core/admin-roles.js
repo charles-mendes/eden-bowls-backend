@@ -30,7 +30,7 @@ const ROLE_PERMISSIONS = {
   ]
 };
 
-ROLE_PERMISSIONS.admin = [...ROLE_PERMISSIONS.operator];
+ROLE_PERMISSIONS.admin = [...ROLE_PERMISSIONS.operator, 'users.roles.write'];
 
 const VALID_ROLES = new Set(['admin', 'operator', 'nutritionist', 'readonly', 'customer']);
 
@@ -94,6 +94,15 @@ function hasOperationalRole(roles = []) {
   return roles.some((role) => OPERATIONAL_ROLES.includes(role));
 }
 
+function normalizeAssignableRoles(roles = []) {
+  return unique(parseRoles(roles).filter((role) => OPERATIONAL_ROLES.includes(role)));
+}
+
+function isAllowlistedEmail(email, adminEmails = []) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  return Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
+}
+
 function resolveAdminRoles({ storedRoles, email, adminEmails = [] }) {
   const roles = parseRoles(storedRoles);
   const normalizedEmail = String(email || '').trim().toLowerCase();
@@ -116,6 +125,8 @@ module.exports = {
   ROLE_PERMISSIONS,
   VALID_ROLES,
   hasOperationalRole,
+  isAllowlistedEmail,
+  normalizeAssignableRoles,
   parseAdminEmails,
   parseRoles,
   permissionsForRoles,

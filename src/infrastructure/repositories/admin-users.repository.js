@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { ADMIN_ROLES_META_KEY } = require('../../core/admin-roles');
 
 class AdminUsersRepository {
   constructor(dataSource, options = {}) {
@@ -13,6 +14,21 @@ class AdminUsersRepository {
     if (!this.dataSource || !this.dataSource.isInitialized) {
       throw new HttpError(503, 'Database connection is not initialized.');
     }
+  }
+
+  mapUserRow(row) {
+    return {
+      id: String(row.id),
+      email: String(row.email || ''),
+      status: String(row.status || '').trim().toLowerCase() || 'active',
+      createdAt: row.createdAt || null,
+      displayName: row.displayName ? String(row.displayName) : null,
+      storedRoles: row.storedRoles == null ? '' : String(row.storedRoles),
+      profile: {
+        fullName: row.displayName ? String(row.displayName) : null,
+        phone: row.phone ? String(row.phone) : null
+      }
+    };
   }
 
   async listUsers({ q, offset, perPage }) {
@@ -36,7 +52,8 @@ class AdminUsersRepository {
       [
         'SELECT u.ID AS id, u.user_email AS email, u.display_name AS displayName, u.user_registered AS createdAt,',
         "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS status,",
-        "MAX(CASE WHEN um.meta_key = 'billing_phone' THEN um.meta_value END) AS phone",
+        "MAX(CASE WHEN um.meta_key = 'billing_phone' THEN um.meta_value END) AS phone,",
+        `MAX(CASE WHEN um.meta_key = '${ADMIN_ROLES_META_KEY}' THEN um.meta_value END) AS storedRoles`,
         `FROM \`${this.tableNames.users}\` u`,
         `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
         whereSql,
@@ -49,17 +66,111 @@ class AdminUsersRepository {
 
     return {
       total,
-      items: (Array.isArray(rows) ? rows : []).map((row) => ({
-        id: String(row.id),
-        email: String(row.email || ''),
-        status: String(row.status || '').trim().toLowerCase() || 'active',
-        createdAt: row.createdAt,
-        profile: {
-          fullName: row.displayName ? String(row.displayName) : null,
-          phone: row.phone ? String(row.phone) : null
-        }
-      }))
+      items: (Array.isArray(rows) ? rows : []).map((row) => this.mapUserRow(row))
     };
+  }
+
+  async listStaff({ q, offset, perPage, adminEmails = [] }) {
+    this.ensureDataSource();
+    const where = [];
+    const params = [];
+    const staffClause = [
+      `EXISTS (SELECT 1 FROM \`${this.tableNames.usermeta}\` m WHERE m.user_id = u.ID AND m.meta_key = ? AND m.meta_value IS NOT NULL AND TRIM(m.meta_value) != '' AND TRIM(m.meta_value) != '[]' AND TRIM(m.meta_value) != '["customer"]')`
+    ];
+    params.push(ADMIN_ROLES_META_KEY);
+
+    if (adminEmails.length) {
+      staffClause.push(`LOWER(u.user_email) IN (${adminEmails.map(() => '?').join(', ')})`);
+      params.push(...adminEmails);
+    }
+
+    where.push(`(${staffClause.join(' OR ')})`);
+
+    if (q) {
+      where.push('(LOWER(u.user_email) LIKE ? OR LOWER(u.display_name) LIKE ?)');
+      const needle = `%${String(q).trim().toLowerCase()}%`;
+      params.push(needle, needle);
+    }
+
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+    const countRows = await this.dataSource.query(
+      `SELECT COUNT(*) AS total FROM \`${this.tableNames.users}\` u ${whereSql}`,
+      params
+    );
+    const total = Number(Array.isArray(countRows) && countRows[0] ? countRows[0].total : 0);
+    const rows = await this.dataSource.query(
+      [
+        'SELECT u.ID AS id, u.user_email AS email, u.display_name AS displayName, u.user_registered AS createdAt,',
+        "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS status,",
+        "MAX(CASE WHEN um.meta_key = 'billing_phone' THEN um.meta_value END) AS phone,",
+        `MAX(CASE WHEN um.meta_key = '${ADMIN_ROLES_META_KEY}' THEN um.meta_value END) AS storedRoles`,
+        `FROM \`${this.tableNames.users}\` u`,
+        `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
+        whereSql,
+        'GROUP BY u.ID, u.user_email, u.display_name, u.user_registered',
+        'ORDER BY u.user_email ASC',
+        'LIMIT ? OFFSET ?'
+      ].join(' '),
+      [...params, perPage, offset]
+    );
+
+    return {
+      total,
+      items: (Array.isArray(rows) ? rows : []).map((row) => this.mapUserRow(row))
+    };
+  }
+
+  async findUserById(userId) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      [
+        'SELECT u.ID AS id, u.user_email AS email, u.display_name AS displayName, u.user_registered AS createdAt,',
+        "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS status,",
+        "MAX(CASE WHEN um.meta_key = 'billing_phone' THEN um.meta_value END) AS phone,",
+        `MAX(CASE WHEN um.meta_key = '${ADMIN_ROLES_META_KEY}' THEN um.meta_value END) AS storedRoles`,
+        `FROM \`${this.tableNames.users}\` u`,
+        `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
+        'WHERE u.ID = ?',
+        'GROUP BY u.ID, u.user_email, u.display_name, u.user_registered',
+        'LIMIT 1'
+      ].join(' '),
+      [userId]
+    );
+    const row = Array.isArray(rows) ? rows[0] : null;
+    return row ? this.mapUserRow(row) : null;
+  }
+
+  async saveStoredRoles(userId, roles) {
+    this.ensureDataSource();
+    const existing = await this.dataSource.query(
+      `SELECT \`umeta_id\` AS id FROM \`${this.tableNames.usermeta}\` WHERE \`user_id\` = ? AND \`meta_key\` = ? LIMIT 1`,
+      [userId, ADMIN_ROLES_META_KEY]
+    );
+    const row = Array.isArray(existing) ? existing[0] : null;
+
+    if (!Array.isArray(roles) || roles.length === 0) {
+      if (row && row.id) {
+        await this.dataSource.query(
+          `DELETE FROM \`${this.tableNames.usermeta}\` WHERE \`umeta_id\` = ?`,
+          [row.id]
+        );
+      }
+      return;
+    }
+
+    const metaValue = JSON.stringify(roles);
+    if (row && row.id) {
+      await this.dataSource.query(
+        `UPDATE \`${this.tableNames.usermeta}\` SET \`meta_value\` = ? WHERE \`umeta_id\` = ?`,
+        [metaValue, row.id]
+      );
+      return;
+    }
+
+    await this.dataSource.query(
+      `INSERT INTO \`${this.tableNames.usermeta}\` (\`user_id\`, \`meta_key\`, \`meta_value\`) VALUES (?, ?, ?)`,
+      [userId, ADMIN_ROLES_META_KEY, metaValue]
+    );
   }
 }
 
