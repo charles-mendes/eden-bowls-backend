@@ -210,12 +210,13 @@ class AdminCatalogService {
       perPage: 500
     });
     const mappedCurrency = String(currency || (market === 'US' ? 'USD' : 'BRL')).toLowerCase();
-    const variants = products.items.flatMap((product) => product.variants);
+    const variants = (products.items || []).flatMap((product) => product.variants || []);
     const gaps = [];
     let mapped = 0;
 
     for (const variant of variants) {
-      const priceId = variant.stripePriceIdsByCurrency[mappedCurrency] || variant.stripePriceId;
+      const priceMap = variant.stripePriceIdsByCurrency || {};
+      const priceId = priceMap[mappedCurrency] || variant.stripePriceId;
       if (String(priceId || '').startsWith('price_')) {
         mapped += 1;
       } else {

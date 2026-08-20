@@ -70,13 +70,13 @@ class AdminCatalogRepository {
       const total = Number(Array.isArray(countRows) && countRows[0] ? countRows[0].total : 0);
       const rows = await this.dataSource.query(
         [
-          'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.post_date AS createdAt,',
+          'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.created_at AS createdAt,',
           'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays',
           `FROM \`${this.tableNames.posts}\` p`,
           `LEFT JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
           `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
           `WHERE ${where.join(' AND ')}`,
-          'ORDER BY p.post_date DESC',
+          'ORDER BY p.created_at DESC',
           'LIMIT ? OFFSET ?'
         ].join(' '),
         [...params, perPage, offset]
@@ -106,7 +106,7 @@ class AdminCatalogRepository {
 
     const rows = await this.dataSource.query(
       [
-        'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.post_date AS createdAt,',
+        'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.created_at AS createdAt,',
         'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays',
         `FROM \`${this.tableNames.posts}\` p`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,

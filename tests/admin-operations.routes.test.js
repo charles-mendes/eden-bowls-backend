@@ -60,9 +60,12 @@ describe('admin onboarding billing catalog users', () => {
     const subs = await request(app).get('/api/v1/admin/billing/subscriptions?status=active').set('Authorization', `Bearer ${tokenFor()}`);
     const users = await request(app).get('/api/v1/admin/users?page=1&perPage=20&q=c@').set('Authorization', `Bearer ${tokenFor()}`);
     const health = await request(app).get('/api/v1/billing/catalog/sync/health?market=BR&currency=BRL').set('Authorization', `Bearer ${tokenFor()}`);
+    const adminHealth = await request(app).get('/api/v1/admin/catalog/sync/health?market=BR&currency=BRL').set('Authorization', `Bearer ${tokenFor()}`);
 
     expect(subs.status).toBe(200);
     expect(users.body.items[0].email).toBe('c@d.com');
     expect(health.body.totalExpected).toBe(0);
+    expect(adminHealth.status).toBe(200);
+    expect(adminHealth.body).toEqual({ market: 'BR', currency: 'BRL', totalExpected: 0, totalMapped: 0, gaps: [] });
   });
 });
