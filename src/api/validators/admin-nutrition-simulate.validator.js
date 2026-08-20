@@ -8,7 +8,10 @@ const simulateSchema = z.object({
     type: z.enum(['dog', 'cat']).default('dog'),
     life_stage: z.enum(['puppy', 'adult', 'senior']).default('adult'),
     age: z.coerce.number().int().min(0).optional().default(4),
+    age_years: z.coerce.number().int().min(0).optional(),
+    age_months: z.coerce.number().int().min(0).optional().default(0),
     weight: z.coerce.number().optional().default(20),
+    weight_unit: z.enum(['kg', 'lb']).optional().default('kg'),
     breed: z.string().optional().default(''),
     neutered: z.coerce.boolean().optional().default(true)
   }).default({}),
@@ -25,9 +28,17 @@ function parseNutritionSimulateInput(input) {
   }
 
   const country = parsed.data.country === 'BR' ? 'BR' : 'US';
+  const pet = parsed.data.pet;
+  const ageYears = pet.age_years ?? pet.age;
   return {
     country,
-    pet: parsed.data.pet,
+    pet: {
+      ...pet,
+      age: ageYears,
+      age_years: ageYears,
+      age_months: pet.age_months,
+      weight_unit: pet.weight_unit === 'lb' ? 'lb' : 'kg'
+    },
     questionnaire: parsed.data.questionnaire
   };
 }

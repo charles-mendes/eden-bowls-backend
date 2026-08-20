@@ -40,7 +40,10 @@ class AdminNutritionService {
         type: pet.type,
         life_stage: LIFE_STAGE_TO_STATE[pet.life_stage] || pet.life_stage,
         age: pet.age,
+        age_years: pet.age_years ?? pet.age,
+        age_months: pet.age_months,
         weight,
+        weight_unit: pet.weight_unit === 'lb' ? 'lb' : 'kg',
         breed: pet.breed,
         neutered: pet.neutered
       },
@@ -68,7 +71,7 @@ class AdminNutritionService {
         nem_kcal_kg: result.nem_kcal_kg,
         display: {
           daily: formatDailyAmount(result.quantidade_g_dia, market),
-          weight: formatWeight(weight, market)
+          weight: formatWeight(result.pet.weight, market)
         }
       }
     };
