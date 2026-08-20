@@ -135,6 +135,55 @@ class AdminCatalogService {
     return this.getProduct(productId);
   }
 
+  async deleteProduct(productId) {
+    const product = await this.getProduct(productId);
+    await this.archiveStripeCatalog(product);
+    await this.repository.deleteProduct(product.id);
+    return { deleted: true, id: product.id };
+  }
+
+  async deleteVariation(productId, variationId) {
+    const product = await this.getProduct(productId);
+    const variant = (product.variants || []).find((item) => String(item.id) === String(variationId));
+    if (!variant) {
+      throw new HttpError(404, 'Variation not found.');
+    }
+
+    await this.archiveStripeCatalog({ variants: [variant] });
+    const deleted = await this.repository.deleteVariation(product.id, variant.id);
+    if (!deleted) {
+      throw new HttpError(404, 'Variation not found.');
+    }
+
+    return this.getProduct(productId);
+  }
+
+  async archiveStripeCatalog(product = {}) {
+    if (!this.stripeBilling || typeof this.stripeBilling.archiveCatalogProduct !== 'function') {
+      return;
+    }
+
+    const ids = [];
+    const parentId = liveStripeId(product.stripeProductId, 'prod_');
+    if (parentId) {
+      ids.push(parentId);
+    }
+    for (const variant of product.variants || []) {
+      const variantId = liveStripeId(variant.stripeProductId, 'prod_');
+      if (variantId) {
+        ids.push(variantId);
+      }
+    }
+
+    for (const stripeProductId of [...new Set(ids)]) {
+      try {
+        await this.stripeBilling.archiveCatalogProduct(stripeProductId);
+      } catch (_error) {
+        // Local catalog delete should succeed even if Stripe archive fails.
+      }
+    }
+  }
+
   async patchProduct(productId, payload = {}) {
     const product = await this.getProduct(productId);
 

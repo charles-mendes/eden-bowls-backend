@@ -209,6 +209,27 @@ class StripeBillingClient {
     }
   }
 
+  async archiveCatalogProduct(stripeProductId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const id = String(stripeProductId || '').trim();
+    if (!id.startsWith('prod_') || id.includes('_seed_')) {
+      return null;
+    }
+
+    try {
+      const product = await stripe.products.update(id, { active: false });
+      return product && product.id ? product.id : id;
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to archive Stripe product.'), {
+        code: 'stripe_product_archive_failed'
+      });
+    }
+  }
+
   async createCatalogProduct({ name, metadata } = {}) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();

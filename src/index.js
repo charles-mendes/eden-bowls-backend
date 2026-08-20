@@ -350,7 +350,8 @@ async function bootstrap() {
   });
   const adminCatalogRepository = new AdminCatalogRepository(dataSource, {
     postsTableName: env.WP_POSTS_TABLE_NAME,
-    postmetaTableName: env.WP_POSTMETA_TABLE_NAME
+    postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
+    termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
   });
   const adminCatalogService = new AdminCatalogService({
     repository: adminCatalogRepository,

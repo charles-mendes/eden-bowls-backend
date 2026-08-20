@@ -106,7 +106,8 @@ class AdminCatalogRepository {
     this.dataSource = dataSource;
     this.tableNames = {
       posts: options.postsTableName || 'wp_posts',
-      postmeta: options.postmetaTableName || 'wp_postmeta'
+      postmeta: options.postmetaTableName || 'wp_postmeta',
+      termRelationships: options.termRelationshipsTableName || 'wp_term_relationships'
     };
   }
 
@@ -415,6 +416,73 @@ class AdminCatalogRepository {
     if (regularPrice != null && priceChanged !== false) {
       await this.writeVariationPrice(id, regularPrice, zoneId);
     }
+  }
+
+  async deleteProduct(productId) {
+    this.ensureDataSource();
+    const product = await this.getProduct(productId);
+    if (!product) {
+      return false;
+    }
+
+    const ids = [Number(product.id), ...(product.variants || []).map((item) => Number(item.id))];
+    await this.deletePosts(ids);
+    return true;
+  }
+
+  async deleteVariation(productId, variationId) {
+    this.ensureDataSource();
+    const parentId = Number(productId);
+    const id = Number(variationId);
+    if (!Number.isSafeInteger(parentId) || parentId < 1 || !Number.isSafeInteger(id) || id < 1) {
+      return false;
+    }
+
+    const rows = await this.dataSource.query(
+      [
+        `SELECT \`ID\` AS id FROM \`${this.tableNames.posts}\``,
+        "WHERE `ID` = ? AND `post_parent` = ? AND `post_type` = 'product_variation'",
+        'LIMIT 1'
+      ].join(' '),
+      [id, parentId]
+    );
+    if (!Array.isArray(rows) || !rows[0]) {
+      return false;
+    }
+
+    await this.deletePosts([id]);
+    return true;
+  }
+
+  async deletePosts(ids) {
+    const unique = [...new Set((ids || [])
+      .map((value) => Number(value))
+      .filter((id) => Number.isSafeInteger(id) && id > 0))];
+    if (!unique.length) {
+      return;
+    }
+
+    const placeholders = unique.map(() => '?').join(', ');
+    await this.dataSource.query(
+      `DELETE FROM \`${this.tableNames.postmeta}\` WHERE \`post_id\` IN (${placeholders})`,
+      unique
+    );
+
+    try {
+      await this.dataSource.query(
+        `DELETE FROM \`${this.tableNames.termRelationships}\` WHERE \`object_id\` IN (${placeholders})`,
+        unique
+      );
+    } catch (error) {
+      if (!isMissingTableError(error)) {
+        throw error;
+      }
+    }
+
+    await this.dataSource.query(
+      `DELETE FROM \`${this.tableNames.posts}\` WHERE \`ID\` IN (${placeholders})`,
+      unique
+    );
   }
 
   fingerprint(price, currency) {

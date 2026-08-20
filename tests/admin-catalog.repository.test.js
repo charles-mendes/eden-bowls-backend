@@ -122,6 +122,53 @@ describe('AdminCatalogRepository', () => {
     expect(product.variants).toEqual([]);
   });
 
+  test('deletes a product with its variations and related rows', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([{
+          id: 2011,
+          name: 'Teste',
+          slug: 'teste',
+          status: 'publish',
+          createdAt: '2026-08-20 10:00:00',
+          planCountry: 'BR',
+          planDays: '30'
+        }])
+        .mockResolvedValueOnce([
+          { variationId: 3001, name: 'Frango 300g', status: 'publish', meta_key: '_regular_price', meta_value: '25.00' }
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+    };
+    const repository = new AdminCatalogRepository(dataSource);
+
+    await expect(repository.deleteProduct('2011')).resolves.toBe(true);
+    expect(dataSource.query.mock.calls[2][0]).toContain('DELETE FROM `wp_postmeta`');
+    expect(dataSource.query.mock.calls[2][1]).toEqual([2011, 3001]);
+    expect(dataSource.query.mock.calls[3][0]).toContain('DELETE FROM `wp_term_relationships`');
+    expect(dataSource.query.mock.calls[4][0]).toContain('DELETE FROM `wp_posts`');
+    expect(dataSource.query.mock.calls[4][1]).toEqual([2011, 3001]);
+  });
+
+  test('deletes a variation that belongs to the product', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([{ id: 3001 }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+    };
+    const repository = new AdminCatalogRepository(dataSource);
+
+    await expect(repository.deleteVariation('2011', '3001')).resolves.toBe(true);
+    expect(dataSource.query.mock.calls[0][0]).toContain("post_type` = 'product_variation'");
+    expect(dataSource.query.mock.calls[0][1]).toEqual([3001, 2011]);
+    expect(dataSource.query.mock.calls[1][1]).toEqual([3001]);
+  });
+
   test('returns an empty catalog when the table does not exist', async () => {
     const dataSource = {
       isInitialized: true,

@@ -31,7 +31,8 @@ function buildClient(overrides = {}) {
       create: jest.fn().mockResolvedValue({ id: 'price_live' })
     },
     products: {
-      create: jest.fn().mockResolvedValue({ id: 'prod_ship' })
+      create: jest.fn().mockResolvedValue({ id: 'prod_ship' }),
+      update: jest.fn().mockImplementation(async (id, payload) => ({ id, ...payload }))
     },
     promotionCodes: {
       retrieve: jest.fn().mockResolvedValue({
@@ -445,6 +446,22 @@ describe('StripeBillingClient.resolvePaymentState', () => {
       paymentMethodId: 'pm_123',
       paymentIntentStatus: 'requires_payment_method'
     })).toBe('failed');
+  });
+});
+
+describe('StripeBillingClient.archiveCatalogProduct', () => {
+  test('archives a live Stripe product', async () => {
+    const { stripe, client } = buildClient();
+
+    await expect(client.archiveCatalogProduct('prod_live_2011')).resolves.toBe('prod_live_2011');
+    expect(stripe.products.update).toHaveBeenCalledWith('prod_live_2011', { active: false });
+  });
+
+  test('skips seed Stripe product ids', async () => {
+    const { stripe, client } = buildClient();
+
+    await expect(client.archiveCatalogProduct('prod_seed_br_beef_300g')).resolves.toBeNull();
+    expect(stripe.products.update).not.toHaveBeenCalled();
   });
 });
 
