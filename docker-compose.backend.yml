@@ -1,9 +1,11 @@
+# Local API container against the MySQL in docker-compose.yml (127.0.0.1:3310).
+# QA/VPS: use docker-compose.qa.yml instead (MySQL + API, passwords from .env).
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: eden-bowls-backend-qa
+    container_name: eden-bowls-backend-local
     restart: unless-stopped
     env_file:
       - .env
