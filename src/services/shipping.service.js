@@ -10,7 +10,7 @@ const { loadShippingSettings } = require('../infrastructure/shipping/shipping-se
 
 class ShippingService {
   constructor(options = {}) {
-    this.settings = options.settings || loadShippingSettings({ env: options.env || {} });
+    this.settings = options.settings || loadShippingSettings();
     this.viaCepClient = options.viaCepClient || null;
     this.nominatimClient = options.nominatimClient || null;
     this.osrmClient = options.osrmClient || null;

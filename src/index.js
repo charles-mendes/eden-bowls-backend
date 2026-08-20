@@ -33,7 +33,7 @@ const { ViaCepClient } = require('./infrastructure/geo/via-cep-client');
 const { ZippopotamClient } = require('./infrastructure/geo/zippopotam-client');
 const { NominatimClient } = require('./infrastructure/geo/nominatim-client');
 const { OsrmClient } = require('./infrastructure/geo/osrm-client');
-const { loadShippingSettings } = require('./infrastructure/shipping/shipping-settings');
+const { ShippingSettingsRepository } = require('./infrastructure/repositories/shipping-settings.repository');
 const { StripeBillingClient } = require('./infrastructure/stripe/stripe-billing-client');
 const { StripeCustomerStore } = require('./infrastructure/stripe/stripe-customer-store');
 const { SubscriptionsActionsRepository } = require('./infrastructure/repositories/subscriptions-actions.repository');
@@ -160,8 +160,9 @@ async function bootstrap() {
     userAgent: env.NOMINATIM_USER_AGENT
   });
   const osrmClient = new OsrmClient({ cache: geoCache });
+  const shippingSettingsRepository = new ShippingSettingsRepository(dataSource);
   const shippingService = new ShippingService({
-    settings: loadShippingSettings({ env }),
+    settings: await shippingSettingsRepository.get(),
     viaCepClient,
     nominatimClient,
     osrmClient
@@ -330,7 +331,7 @@ async function bootstrap() {
   const adminNutritionService = new AdminNutritionService();
   const adminShippingService = new AdminShippingService({
     shippingService,
-    env
+    repository: shippingSettingsRepository
   });
   const adminOnboardingRepository = new AdminOnboardingRepository(dataSource, {
     usersTableName: env.WP_USERS_TABLE_NAME,

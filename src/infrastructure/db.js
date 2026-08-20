@@ -13,6 +13,10 @@ const {
 } = require('./entities/stripe-first-purchase-promo.entity');
 const { buildStripeSubscriptionEntitySchema } = require('./entities/stripe-subscription.entity');
 const { buildStripeWebhookEventEntitySchema } = require('./entities/stripe-webhook-event.entity');
+const {
+  buildShippingBrSettingsEntitySchema,
+  buildShippingUsSettingsEntitySchema
+} = require('./entities/shipping-settings.entity');
 const { CreateBreedsTable1700000000000 } = require('./migrations/1700000000000-create-breeds-table');
 const { CreatePriceZonePolicyTable1700000000001 } = require('./migrations/1700000000001-create-price-zone-policy-table');
 const { CreateProductsCatalogTables1700000000002 } = require('./migrations/1700000000002-create-products-catalog-tables');
@@ -23,6 +27,7 @@ const { CreateOnboardingQuotesTable1700000000006 } = require('./migrations/17000
 const { SeedCurrentAppFlavorsCatalog1700000000007 } = require('./migrations/1700000000007-seed-current-app-flavors-catalog');
 const { CreateStripeFirstPurchasePromosTable1700000000008 } = require('./migrations/1700000000008-create-stripe-first-purchase-promos-table');
 const { CreateStripeSubscriptionLedgerTables1700000000009 } = require('./migrations/1700000000009-create-stripe-subscription-ledger-tables');
+const { CreateShippingSettingsTables1700000000010 } = require('./migrations/1700000000010-create-shipping-settings-tables');
 
 function buildDataSourceOptions(env) {
   return {
@@ -44,7 +49,9 @@ function buildDataSourceOptions(env) {
       buildStripeFirstPurchasePromoEntitySchema(),
       buildStripeFirstPurchasePromoMetricEntitySchema(),
       buildStripeSubscriptionEntitySchema(),
-      buildStripeWebhookEventEntitySchema()
+      buildStripeWebhookEventEntitySchema(),
+      buildShippingBrSettingsEntitySchema(),
+      buildShippingUsSettingsEntitySchema()
     ],
     migrations: [
       CreateBreedsTable1700000000000,
@@ -56,7 +63,8 @@ function buildDataSourceOptions(env) {
       CreateOnboardingQuotesTable1700000000006,
       SeedCurrentAppFlavorsCatalog1700000000007,
       CreateStripeFirstPurchasePromosTable1700000000008,
-      CreateStripeSubscriptionLedgerTables1700000000009
+      CreateStripeSubscriptionLedgerTables1700000000009,
+      CreateShippingSettingsTables1700000000010
     ],
     synchronize: false,
     logging: false,

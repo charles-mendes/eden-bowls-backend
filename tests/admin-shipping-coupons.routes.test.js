@@ -34,7 +34,7 @@ describe('admin shipping and coupon routes', () => {
     const adminShippingService = {
       getSettings: jest.fn().mockReturnValue({
         success: true,
-        data: { settings: { br: { enabled: true }, us: { cost: 12.9 } }, envOverrides: [] }
+        data: { settings: { br: { enabled: true }, us: { cost: 12.9 } } }
       })
     };
     const app = adminApp({ adminShippingService });
@@ -48,7 +48,7 @@ describe('admin shipping and coupon routes', () => {
 
   test('saves shipping settings', async () => {
     const adminShippingService = {
-      saveSettings: jest.fn().mockReturnValue({ success: true, data: { settings: { br: { enabled: false } }, envOverrides: [] } })
+      saveSettings: jest.fn().mockReturnValue({ success: true, data: { settings: { br: { enabled: false } } } })
     };
     const app = adminApp({ adminShippingService });
     const response = await request(app)

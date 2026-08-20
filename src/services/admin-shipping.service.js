@@ -1,48 +1,51 @@
-const {
-  detectShippingEnvOverrides,
-  loadShippingSettings,
-  saveShippingSettings
-} = require('../infrastructure/shipping/shipping-settings');
+const { HttpError } = require('../core/http-error');
 
 class AdminShippingService {
   constructor(options = {}) {
     this.shippingService = options.shippingService || null;
-    this.filePath = options.filePath;
-    this.env = options.env || process.env;
+    this.repository = options.repository || null;
   }
 
-  getSettings() {
-    const settings = loadShippingSettings({ filePath: this.filePath, env: this.env });
-    return {
-      success: true,
-      data: {
-        settings,
-        envOverrides: detectShippingEnvOverrides(this.env)
-      }
-    };
+  ensureRepository() {
+    if (!this.repository) {
+      throw new HttpError(503, 'Shipping settings repository is not available.');
+    }
   }
 
-  saveSettings(payload = {}) {
-    const settings = saveShippingSettings(payload, { filePath: this.filePath, env: this.env });
+  applyToShippingService(settings) {
     if (this.shippingService) {
       this.shippingService.settings = settings;
     }
+  }
+
+  async getSettings() {
+    this.ensureRepository();
+    const settings = await this.repository.get();
+    this.applyToShippingService(settings);
 
     return {
       success: true,
-      data: {
-        settings,
-        envOverrides: detectShippingEnvOverrides(this.env)
-      }
+      data: { settings }
+    };
+  }
+
+  async saveSettings(payload = {}) {
+    this.ensureRepository();
+    const settings = await this.repository.save(payload);
+    this.applyToShippingService(settings);
+
+    return {
+      success: true,
+      data: { settings }
     };
   }
 
   async test(payload = {}) {
     if (!this.shippingService) {
-      const { HttpError } = require('../core/http-error');
       throw new HttpError(503, 'Shipping service is not available.');
     }
 
+    await this.getSettings();
     return this.shippingService.calculate(payload);
   }
 }

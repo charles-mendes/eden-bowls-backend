@@ -1,14 +1,15 @@
-const fs = require('fs');
-const path = require('path');
-
 const DEFAULT_SETTINGS = {
   br: {
     enabled: true,
     label: 'Entrega Eden Bowl',
     center: {
       name: 'CD',
-      lat: 0,
-      lng: 0,
+      street: '',
+      city: '',
+      state: '',
+      zipcode: '',
+      lat: -25.44839,
+      lng: -49.21741,
       version: '1'
     },
     rule: {
@@ -49,17 +50,11 @@ function toBoolean(value, fallback) {
     return value;
   }
 
-  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
-}
-
-function readJsonFile(filePath) {
-  try {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (_error) {
-    return {};
+  if (typeof value === 'number') {
+    return value !== 0;
   }
+
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
 }
 
 function mergeSettings(base, overlay) {
@@ -67,110 +62,48 @@ function mergeSettings(base, overlay) {
   const fileUs = overlay && overlay.us ? overlay.us : {};
   const fileCenter = fileBr.center || {};
   const fileRule = fileBr.rule || {};
+  const baseCenter = (base && base.br && base.br.center) || DEFAULT_SETTINGS.br.center;
+  const baseRule = (base && base.br && base.br.rule) || DEFAULT_SETTINGS.br.rule;
+  const baseBr = (base && base.br) || DEFAULT_SETTINGS.br;
+  const baseUs = (base && base.us) || DEFAULT_SETTINGS.us;
 
   return {
     br: {
-      enabled: fileBr.enabled == null ? base.br.enabled : Boolean(fileBr.enabled),
-      label: fileBr.label || base.br.label,
+      enabled: fileBr.enabled == null ? Boolean(baseBr.enabled) : Boolean(fileBr.enabled),
+      label: fileBr.label || baseBr.label,
       center: {
-        name: fileCenter.name || base.br.center.name,
-        lat: toNumber(fileCenter.lat, base.br.center.lat),
-        lng: toNumber(fileCenter.lng, base.br.center.lng),
-        version: String(fileCenter.version || base.br.center.version)
+        name: fileCenter.name || baseCenter.name,
+        street: fileCenter.street == null ? (baseCenter.street || '') : String(fileCenter.street),
+        city: fileCenter.city == null ? (baseCenter.city || '') : String(fileCenter.city),
+        state: fileCenter.state == null ? (baseCenter.state || '') : String(fileCenter.state),
+        zipcode: fileCenter.zipcode == null ? (baseCenter.zipcode || '') : String(fileCenter.zipcode),
+        lat: toNumber(fileCenter.lat, toNumber(baseCenter.lat, 0)),
+        lng: toNumber(fileCenter.lng, toNumber(baseCenter.lng, 0)),
+        version: String(fileCenter.version || baseCenter.version || '1')
       },
       rule: {
-        per_km: toNumber(fileRule.per_km, base.br.rule.per_km),
-        road_factor: toNumber(fileRule.road_factor, base.br.rule.road_factor),
-        min_fee: toNumber(fileRule.min_fee, base.br.rule.min_fee),
-        max_fee: fileRule.max_fee == null ? base.br.rule.max_fee : toNumber(fileRule.max_fee, null),
-        max_distance_km: toNumber(fileRule.max_distance_km, base.br.rule.max_distance_km),
-        km_per_day: toNumber(fileRule.km_per_day, base.br.rule.km_per_day),
-        min_days: toNumber(fileRule.min_days, base.br.rule.min_days),
-        max_days: toNumber(fileRule.max_days, base.br.rule.max_days)
+        per_km: toNumber(fileRule.per_km, baseRule.per_km),
+        road_factor: toNumber(fileRule.road_factor, baseRule.road_factor),
+        min_fee: toNumber(fileRule.min_fee, baseRule.min_fee),
+        max_fee: fileRule.max_fee == null ? (baseRule.max_fee == null ? null : toNumber(baseRule.max_fee, null)) : toNumber(fileRule.max_fee, null),
+        max_distance_km: toNumber(fileRule.max_distance_km, baseRule.max_distance_km),
+        km_per_day: toNumber(fileRule.km_per_day, baseRule.km_per_day),
+        min_days: toNumber(fileRule.min_days, baseRule.min_days),
+        max_days: toNumber(fileRule.max_days, baseRule.max_days)
       }
     },
     us: {
-      enabled: fileUs.enabled == null ? base.us.enabled : Boolean(fileUs.enabled),
-      cost: toNumber(fileUs.cost, base.us.cost),
-      label: fileUs.label || base.us.label,
-      carrier: fileUs.carrier || base.us.carrier,
-      delivery: fileUs.delivery || base.us.delivery
+      enabled: fileUs.enabled == null ? Boolean(baseUs.enabled) : Boolean(fileUs.enabled),
+      cost: toNumber(fileUs.cost, baseUs.cost),
+      label: fileUs.label || baseUs.label,
+      carrier: fileUs.carrier || baseUs.carrier,
+      delivery: fileUs.delivery || baseUs.delivery
     }
   };
 }
 
-function overlayEnv(settings, env = {}) {
-  return {
-    br: {
-      ...settings.br,
-      enabled: env.SHIPPING_BR_ENABLED == null ? settings.br.enabled : toBoolean(env.SHIPPING_BR_ENABLED, settings.br.enabled),
-      label: env.SHIPPING_BR_LABEL || settings.br.label,
-      center: {
-        ...settings.br.center,
-        name: env.SHIPPING_BR_CENTER_NAME || settings.br.center.name,
-        lat: toNumber(env.SHIPPING_BR_CENTER_LAT, settings.br.center.lat),
-        lng: toNumber(env.SHIPPING_BR_CENTER_LNG, settings.br.center.lng),
-        version: env.SHIPPING_BR_CENTER_VERSION || settings.br.center.version
-      },
-      rule: {
-        ...settings.br.rule,
-        per_km: toNumber(env.SHIPPING_BR_PER_KM, settings.br.rule.per_km),
-        road_factor: toNumber(env.SHIPPING_BR_ROAD_FACTOR, settings.br.rule.road_factor),
-        min_fee: toNumber(env.SHIPPING_BR_MIN_FEE, settings.br.rule.min_fee),
-        max_fee: env.SHIPPING_BR_MAX_FEE === undefined ? settings.br.rule.max_fee : toNumber(env.SHIPPING_BR_MAX_FEE, null),
-        max_distance_km: toNumber(env.SHIPPING_BR_MAX_DISTANCE_KM, settings.br.rule.max_distance_km),
-        km_per_day: toNumber(env.SHIPPING_BR_KM_PER_DAY, settings.br.rule.km_per_day),
-        min_days: toNumber(env.SHIPPING_BR_MIN_DAYS, settings.br.rule.min_days),
-        max_days: toNumber(env.SHIPPING_BR_MAX_DAYS, settings.br.rule.max_days)
-      }
-    },
-    us: {
-      ...settings.us,
-      enabled: env.SHIPPING_US_ENABLED == null ? settings.us.enabled : toBoolean(env.SHIPPING_US_ENABLED, settings.us.enabled),
-      cost: toNumber(env.SHIPPING_US_COST, settings.us.cost),
-      label: env.SHIPPING_US_LABEL || settings.us.label,
-      carrier: env.SHIPPING_US_CARRIER || settings.us.carrier,
-      delivery: env.SHIPPING_US_DELIVERY || settings.us.delivery
-    }
-  };
-}
-
-function loadShippingSettings(options = {}) {
-  const filePath = options.filePath || path.resolve(process.cwd(), 'data/shipping-settings.json');
-  const fromFile = options.settings || readJsonFile(filePath);
-  return overlayEnv(mergeSettings(DEFAULT_SETTINGS, fromFile), options.env || {});
-}
-
-function detectShippingEnvOverrides(env = {}) {
-  const keys = [
-    'SHIPPING_BR_ENABLED',
-    'SHIPPING_BR_LABEL',
-    'SHIPPING_BR_CENTER_NAME',
-    'SHIPPING_BR_CENTER_LAT',
-    'SHIPPING_BR_CENTER_LNG',
-    'SHIPPING_BR_CENTER_VERSION',
-    'SHIPPING_BR_PER_KM',
-    'SHIPPING_BR_ROAD_FACTOR',
-    'SHIPPING_BR_MIN_FEE',
-    'SHIPPING_BR_MAX_FEE',
-    'SHIPPING_BR_MAX_DISTANCE_KM',
-    'SHIPPING_BR_KM_PER_DAY',
-    'SHIPPING_BR_MIN_DAYS',
-    'SHIPPING_BR_MAX_DAYS',
-    'SHIPPING_US_ENABLED',
-    'SHIPPING_US_COST',
-    'SHIPPING_US_LABEL',
-    'SHIPPING_US_CARRIER',
-    'SHIPPING_US_DELIVERY'
-  ];
-
-  return keys.filter((key) => env[key] != null && String(env[key]).trim() !== '');
-}
-
-function saveShippingSettings(payload = {}, options = {}) {
-  const filePath = options.filePath || path.resolve(process.cwd(), 'data/shipping-settings.json');
-  const currentFile = options.settings || readJsonFile(filePath);
-  const current = mergeSettings(DEFAULT_SETTINGS, currentFile);
+function nextSettings(currentInput = {}, payload = {}) {
+  const current = mergeSettings(DEFAULT_SETTINGS, currentInput);
   const nextBr = payload.br || {};
   const nextUs = payload.us || {};
   const nextCenter = nextBr.center || {};
@@ -181,7 +114,7 @@ function saveShippingSettings(payload = {}, options = {}) {
     ? String(Number(current.br.center.version || 1) + 1)
     : current.br.center.version;
 
-  const merged = mergeSettings(current, {
+  return mergeSettings(current, {
     br: {
       enabled: nextBr.enabled == null ? current.br.enabled : Boolean(nextBr.enabled),
       label: nextBr.label == null ? current.br.label : nextBr.label,
@@ -200,15 +133,105 @@ function saveShippingSettings(payload = {}, options = {}) {
       ...nextUs
     }
   });
+}
 
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
-  return overlayEnv(merged, options.env || {});
+function brFromRow(row) {
+  if (!row) {
+    return {};
+  }
+
+  return {
+    enabled: toBoolean(row.enabled, true),
+    label: row.label,
+    center: {
+      name: row.center_name,
+      street: row.center_street || '',
+      city: row.center_city || '',
+      state: row.center_state || '',
+      zipcode: row.center_zipcode || '',
+      lat: toNumber(row.center_lat, DEFAULT_SETTINGS.br.center.lat),
+      lng: toNumber(row.center_lng, DEFAULT_SETTINGS.br.center.lng),
+      version: String(row.center_version || '1')
+    },
+    rule: {
+      per_km: toNumber(row.per_km, DEFAULT_SETTINGS.br.rule.per_km),
+      road_factor: toNumber(row.road_factor, DEFAULT_SETTINGS.br.rule.road_factor),
+      min_fee: toNumber(row.min_fee, DEFAULT_SETTINGS.br.rule.min_fee),
+      max_fee: row.max_fee == null || row.max_fee === '' ? null : toNumber(row.max_fee, null),
+      max_distance_km: toNumber(row.max_distance_km, DEFAULT_SETTINGS.br.rule.max_distance_km),
+      km_per_day: toNumber(row.km_per_day, DEFAULT_SETTINGS.br.rule.km_per_day),
+      min_days: toNumber(row.min_days, DEFAULT_SETTINGS.br.rule.min_days),
+      max_days: toNumber(row.max_days, DEFAULT_SETTINGS.br.rule.max_days)
+    }
+  };
+}
+
+function usFromRow(row) {
+  if (!row) {
+    return {};
+  }
+
+  return {
+    enabled: toBoolean(row.enabled, true),
+    cost: toNumber(row.cost, DEFAULT_SETTINGS.us.cost),
+    label: row.label,
+    carrier: row.carrier,
+    delivery: row.delivery
+  };
+}
+
+function settingsFromRows(brRow, usRow) {
+  return mergeSettings(DEFAULT_SETTINGS, {
+    br: brFromRow(brRow),
+    us: usFromRow(usRow)
+  });
+}
+
+function brToParams(br) {
+  return [
+    br.enabled ? 1 : 0,
+    br.label,
+    br.center.name,
+    br.center.street || '',
+    br.center.city || '',
+    br.center.state || '',
+    br.center.zipcode || '',
+    br.center.lat,
+    br.center.lng,
+    String(br.center.version || '1'),
+    br.rule.per_km,
+    br.rule.road_factor,
+    br.rule.min_fee,
+    br.rule.max_fee,
+    br.rule.max_distance_km,
+    br.rule.km_per_day,
+    br.rule.min_days,
+    br.rule.max_days
+  ];
+}
+
+function usToParams(us) {
+  return [
+    us.enabled ? 1 : 0,
+    us.cost,
+    us.label,
+    us.carrier,
+    us.delivery
+  ];
+}
+
+function loadShippingSettings() {
+  return mergeSettings(DEFAULT_SETTINGS, {});
 }
 
 module.exports = {
   DEFAULT_SETTINGS,
-  detectShippingEnvOverrides,
+  brToParams,
   loadShippingSettings,
-  saveShippingSettings
+  mergeSettings,
+  nextSettings,
+  settingsFromRows,
+  toBoolean,
+  toNumber,
+  usToParams
 };
