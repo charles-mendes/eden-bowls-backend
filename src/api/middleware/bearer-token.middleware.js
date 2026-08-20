@@ -4,6 +4,8 @@ const { AUTH_ERROR } = require('../contracts/auth-errors');
 
 const PUBLIC_AUTH_PATHS = new Set([
   '/api/v1/auth/token',
+  '/api/v1/auth/refresh',
+  '/api/v1/auth/logout',
   '/api/v1/auth/account/email-exists',
   '/api/v1/auth/register',
   '/api/v1/auth/otp/verify',

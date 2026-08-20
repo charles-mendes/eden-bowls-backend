@@ -113,6 +113,24 @@ describe('bearer token middleware', () => {
     expect(authService.register).toHaveBeenCalled();
   });
 
+  test('does not apply bearer validation to refresh and logout', async () => {
+    const authService = {
+      refresh: jest.fn().mockResolvedValue({
+        token: 'next-access-token',
+        refreshToken: 'next-refresh-token'
+      })
+    };
+    const app = createApp({ authService, corsOrigins, jwt });
+    const response = await request(app)
+      .post('/api/v1/auth/refresh')
+      .set('Authorization', 'Token invalid')
+      .set('Origin', 'http://localhost:5173')
+      .set('X-Requested-With', 'XMLHttpRequest');
+
+    expect(response.status).toBe(200);
+    expect(authService.refresh).toHaveBeenCalledWith('');
+  });
+
   test('does not apply bearer validation to geo context', async () => {
     const geoService = {
       getContext: jest.fn().mockResolvedValue({

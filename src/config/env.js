@@ -11,7 +11,7 @@ const rawEnvSchema = z.object({
   ENABLE_BACKGROUND_JOBS: z.string().optional(),
   PRIME_ENABLE_UPDATE: z.string().optional(),
   LOG_LEVEL: z.string().optional(),
-  CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174'),
+  CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174,http://localhost:5175'),
   ADMIN_EMAILS: z.string().optional(),
   DB_HOST: z.string().default('localhost'),
   DB_PORT: z.string().default('3306'),
