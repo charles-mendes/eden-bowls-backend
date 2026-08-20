@@ -7,6 +7,7 @@ edenbowls.com, www.edenbowls.com {
 
   redir /qa-app /qa-app/
   redir /qa-api /qa-api/
+  redir /qa-admin /qa-admin/
 
   @qa_api_root_paths {
     path /api /api/* /stripe /stripe/* /health /liveness /readiness /metrics /avatars /avatars/*
@@ -24,6 +25,14 @@ edenbowls.com, www.edenbowls.com {
 
   handle_path /qa-app/* {
     reverse_proxy {$FRONTEND_UPSTREAM} {
+      header_up Host {host}
+      header_up X-Forwarded-Host {host}
+      header_up X-Forwarded-Uri {uri}
+    }
+  }
+
+  handle_path /qa-admin/* {
+    reverse_proxy {$ADMIN_UPSTREAM} {
       header_up Host {host}
       header_up X-Forwarded-Host {host}
       header_up X-Forwarded-Uri {uri}
