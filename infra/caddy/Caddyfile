@@ -1,0 +1,60 @@
+{
+  email {$LETSENCRYPT_EMAIL}
+}
+
+edenbowls.com, www.edenbowls.com {
+  encode zstd gzip
+
+  redir /qa-app /qa-app/
+  redir /qa-api /qa-api/
+
+  @qa_api_root_paths {
+    path /api /api/* /stripe /stripe/* /health /liveness /readiness /metrics /avatars /avatars/*
+  }
+  redir @qa_api_root_paths /qa-api{uri} 308
+
+  handle_path /qa-api/* {
+    reverse_proxy {$API_UPSTREAM} {
+      header_up Host {host}
+      header_up X-Forwarded-Host {host}
+      header_up X-Forwarded-Proto {scheme}
+      header_up X-Forwarded-Uri {uri}
+    }
+  }
+
+  handle_path /qa-app/* {
+    reverse_proxy {$FRONTEND_UPSTREAM} {
+      header_up Host {host}
+      header_up X-Forwarded-Host {host}
+      header_up X-Forwarded-Uri {uri}
+    }
+  }
+
+  root * /srv/edenbowls
+  @root_index_com path /
+  rewrite @root_index_com /index.html
+  file_server
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+    Referrer-Policy "strict-origin-when-cross-origin"
+  }
+}
+
+edenbowls.com.br, www.edenbowls.com.br {
+  encode zstd gzip
+
+  root * /srv/edenbowls
+  @root_index_combr path /
+  rewrite @root_index_combr /index-br.html
+  file_server
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+    Referrer-Policy "strict-origin-when-cross-origin"
+  }
+}

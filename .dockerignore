@@ -1,0 +1,15 @@
+node_modules
+.git
+.github
+.agents
+coverage
+docs
+docs-new
+tests
+*.md
+.env
+.env.*
+!.env.example
+!.env.qa.example
+!.env.proxy.example
+data/*.mmdb

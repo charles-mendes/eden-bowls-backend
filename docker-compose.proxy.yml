@@ -1,0 +1,19 @@
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env.proxy
+    environment:
+      API_UPSTREAM: ${API_UPSTREAM:-127.0.0.1:3000}
+      FRONTEND_UPSTREAM: ${FRONTEND_UPSTREAM:-127.0.0.1:4173}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /var/www/html:/srv/edenbowls:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

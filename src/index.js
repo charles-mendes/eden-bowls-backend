@@ -436,7 +436,8 @@ async function bootstrap() {
       algorithm: env.JWT_AUTH_ALGORITHM,
       issuer: env.JWT_AUTH_ISSUER
     },
-    corsOrigins: env.CORS_ORIGINS
+    corsOrigins: env.CORS_ORIGINS,
+    trustProxy: env.TRUST_PROXY
   });
 
   const server = app.listen(env.PORT, () => {

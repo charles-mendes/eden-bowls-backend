@@ -78,6 +78,9 @@ function createApp(dependencies = {}) {
   const corsConfig = buildCorsConfig(dependencies.corsOrigins);
 
   app.disable('x-powered-by');
+  if (dependencies.trustProxy) {
+    app.set('trust proxy', 1);
+  }
   app.use(corsMiddleware(corsConfig));
   app.use(helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
