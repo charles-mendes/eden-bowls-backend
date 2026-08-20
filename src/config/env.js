@@ -11,7 +11,8 @@ const rawEnvSchema = z.object({
   ENABLE_BACKGROUND_JOBS: z.string().optional(),
   PRIME_ENABLE_UPDATE: z.string().optional(),
   LOG_LEVEL: z.string().optional(),
-  CORS_ORIGINS: z.string().default('http://localhost:5173'),
+  CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174'),
+  ADMIN_EMAILS: z.string().optional(),
   DB_HOST: z.string().default('localhost'),
   DB_PORT: z.string().default('3306'),
   DB_USER: z.string().default('root'),
@@ -150,6 +151,10 @@ function parseEnv(source = process.env) {
     PRIME_ENABLE_UPDATE: toBoolean(rawEnv.PRIME_ENABLE_UPDATE),
     LOG_LEVEL: rawEnv.LOG_LEVEL || (rawEnv.NODE_ENV === 'development' ? 'debug' : 'info'),
     CORS_ORIGINS: corsOrigins,
+    ADMIN_EMAILS: String(rawEnv.ADMIN_EMAILS || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean),
     DB_HOST: rawEnv.DB_HOST,
     DB_PORT: Number(rawEnv.DB_PORT),
     DB_USER: rawEnv.DB_USER,

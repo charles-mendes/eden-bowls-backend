@@ -141,7 +141,74 @@ function loadShippingSettings(options = {}) {
   return overlayEnv(mergeSettings(DEFAULT_SETTINGS, fromFile), options.env || {});
 }
 
+function detectShippingEnvOverrides(env = {}) {
+  const keys = [
+    'SHIPPING_BR_ENABLED',
+    'SHIPPING_BR_LABEL',
+    'SHIPPING_BR_CENTER_NAME',
+    'SHIPPING_BR_CENTER_LAT',
+    'SHIPPING_BR_CENTER_LNG',
+    'SHIPPING_BR_CENTER_VERSION',
+    'SHIPPING_BR_PER_KM',
+    'SHIPPING_BR_ROAD_FACTOR',
+    'SHIPPING_BR_MIN_FEE',
+    'SHIPPING_BR_MAX_FEE',
+    'SHIPPING_BR_MAX_DISTANCE_KM',
+    'SHIPPING_BR_KM_PER_DAY',
+    'SHIPPING_BR_MIN_DAYS',
+    'SHIPPING_BR_MAX_DAYS',
+    'SHIPPING_US_ENABLED',
+    'SHIPPING_US_COST',
+    'SHIPPING_US_LABEL',
+    'SHIPPING_US_CARRIER',
+    'SHIPPING_US_DELIVERY'
+  ];
+
+  return keys.filter((key) => env[key] != null && String(env[key]).trim() !== '');
+}
+
+function saveShippingSettings(payload = {}, options = {}) {
+  const filePath = options.filePath || path.resolve(process.cwd(), 'data/shipping-settings.json');
+  const currentFile = options.settings || readJsonFile(filePath);
+  const current = mergeSettings(DEFAULT_SETTINGS, currentFile);
+  const nextBr = payload.br || {};
+  const nextUs = payload.us || {};
+  const nextCenter = nextBr.center || {};
+  const nextRule = nextBr.rule || {};
+  const latChanged = nextCenter.lat != null && Number(nextCenter.lat) !== Number(current.br.center.lat);
+  const lngChanged = nextCenter.lng != null && Number(nextCenter.lng) !== Number(current.br.center.lng);
+  const nextVersion = latChanged || lngChanged
+    ? String(Number(current.br.center.version || 1) + 1)
+    : current.br.center.version;
+
+  const merged = mergeSettings(current, {
+    br: {
+      enabled: nextBr.enabled == null ? current.br.enabled : Boolean(nextBr.enabled),
+      label: nextBr.label == null ? current.br.label : nextBr.label,
+      center: {
+        ...current.br.center,
+        ...nextCenter,
+        version: nextVersion
+      },
+      rule: {
+        ...current.br.rule,
+        ...nextRule
+      }
+    },
+    us: {
+      ...current.us,
+      ...nextUs
+    }
+  });
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+  return overlayEnv(merged, options.env || {});
+}
+
 module.exports = {
   DEFAULT_SETTINGS,
-  loadShippingSettings
+  detectShippingEnvOverrides,
+  loadShippingSettings,
+  saveShippingSettings
 };

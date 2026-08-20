@@ -35,6 +35,7 @@ const { registerStripeWebhookRoutes } = require('./api/routes/stripe-webhook.rou
 const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
 const { registerOnboardingPetsSyncRoutes } = require('./api/routes/onboarding-pets-sync.routes');
 const { registerProfileRoutes } = require('./api/routes/profile.routes');
+const { registerAdminRoutes } = require('./api/routes/admin.routes');
 const { HttpError } = require('./core/http-error');
 const path = require('path');
 
@@ -152,6 +153,7 @@ function createApp(dependencies = {}) {
   registerOnboardingPetDeleteRoutes(app, dependencies);
   registerOnboardingPetsSyncRoutes(app, dependencies);
   registerProfileRoutes(app, dependencies);
+  registerAdminRoutes(app, dependencies);
 
   app.use((request, response, next) => {
     next(new HttpError(404, 'Route not found.'));

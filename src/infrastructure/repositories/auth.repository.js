@@ -250,6 +250,16 @@ class AuthRepository {
     });
   }
 
+  async getUserMeta(userId, metaKey) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT \`meta_value\` FROM \`${this.tableNames.usermeta}\` WHERE \`user_id\` = ? AND \`meta_key\` = ? LIMIT 1`,
+      [userId, metaKey]
+    );
+    const row = Array.isArray(rows) ? rows[0] : null;
+    return row && row.meta_value != null ? String(row.meta_value) : '';
+  }
+
   async upsertUserMeta(userId, metaKey, metaValue) {
     this.ensureDataSource();
     await this.upsertUserMetaWithManager(this.dataSource, userId, metaKey, metaValue);

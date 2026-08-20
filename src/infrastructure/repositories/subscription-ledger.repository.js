@@ -350,6 +350,145 @@ class SubscriptionLedgerRepository {
 
     return this.findByStripeSubscriptionId(subscriptionId);
   }
+
+  async findById(id) {
+    this.ensureDataSource();
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId) || numericId < 1) {
+      return null;
+    }
+
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT * FROM \`${this.tableName}\` WHERE \`id\` = ? LIMIT 1`,
+        [numericId]
+      );
+      return this.mapRow(Array.isArray(rows) ? rows[0] : null);
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async listAdmin({ status, q, offset, perPage }) {
+    this.ensureDataSource();
+    const where = [];
+    const params = [];
+    const normalizedStatus = String(status || 'active').trim();
+
+    if (normalizedStatus === 'canceling') {
+      where.push("`cancel_at_period_end` = 1 AND `status` IN ('active', 'trialing', 'past_due')");
+    } else if (normalizedStatus && normalizedStatus !== 'all') {
+      where.push('`status` = ?');
+      params.push(normalizedStatus);
+    }
+
+    if (q) {
+      const needle = `%${String(q).trim()}%`;
+      where.push('(`stripe_subscription_id` LIKE ? OR `stripe_customer_id` LIKE ? OR `customer_email` LIKE ? OR CAST(`user_id` AS CHAR) LIKE ?)');
+      params.push(needle, needle, needle, needle);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    try {
+      const countRows = await this.dataSource.query(
+        `SELECT COUNT(*) AS total FROM \`${this.tableName}\` ${whereSql}`,
+        params
+      );
+      const total = Number(Array.isArray(countRows) && countRows[0] ? countRows[0].total : 0);
+      const rows = await this.dataSource.query(
+        [
+          `SELECT * FROM \`${this.tableName}\``,
+          whereSql,
+          'ORDER BY COALESCE(`updated_at`, `created_at`) DESC',
+          'LIMIT ? OFFSET ?'
+        ].join(' '),
+        [...params, perPage, offset]
+      );
+
+      return {
+        total,
+        items: (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row)).filter(Boolean)
+      };
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return { total: 0, items: [] };
+      }
+      throw error;
+    }
+  }
+
+  async metrics() {
+    this.ensureDataSource();
+    const now = new Date();
+    const in7d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const ago30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+    try {
+      const rows = await this.dataSource.query(`SELECT * FROM \`${this.tableName}\``);
+      const items = (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row)).filter(Boolean);
+      const isCanceling = (item) => item.cancelAtPeriodEnd && ['active', 'trialing', 'past_due'].includes(item.status);
+      const periodEnd = (item) => item.currentPeriodEnd ? new Date(item.currentPeriodEnd) : null;
+
+      return {
+        total: items.length,
+        active: items.filter((item) => item.status === 'active' || item.status === 'trialing').length,
+        canceling: items.filter(isCanceling).length,
+        pastDue: items.filter((item) => item.status === 'past_due').length,
+        canceled30d: items.filter((item) => item.status === 'canceled' && item.updatedAt && new Date(item.updatedAt) >= ago30d).length,
+        renewing7d: items.filter((item) => {
+          const end = periodEnd(item);
+          return end && end > now && end <= in7d && ['active', 'trialing', 'past_due'].includes(item.status);
+        }).length,
+        mrr: 0,
+        invoices30d: 0,
+        generatedAt: now.toISOString()
+      };
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return {
+          total: 0,
+          active: 0,
+          canceling: 0,
+          pastDue: 0,
+          canceled30d: 0,
+          renewing7d: 0,
+          mrr: 0,
+          invoices30d: 0,
+          generatedAt: now.toISOString()
+        };
+      }
+      throw error;
+    }
+  }
+
+  async backfillUserLinks(usersRepository) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT \`id\`, \`customer_email\`, \`user_id\` FROM \`${this.tableName}\` WHERE \`user_id\` IS NULL OR \`user_id\` = 0`
+    );
+    let linked = 0;
+
+    for (const row of Array.isArray(rows) ? rows : []) {
+      if (!row.customer_email || typeof usersRepository.findUserIdByEmail !== 'function') {
+        continue;
+      }
+      const userId = await usersRepository.findUserIdByEmail(row.customer_email);
+      if (!userId) {
+        continue;
+      }
+      await this.dataSource.query(
+        `UPDATE \`${this.tableName}\` SET \`user_id\` = ? WHERE \`id\` = ?`,
+        [userId, row.id]
+      );
+      linked += 1;
+    }
+
+    return { linked };
+  }
 }
 
 module.exports = {

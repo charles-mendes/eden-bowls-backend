@@ -81,6 +81,16 @@ const { ProfileService } = require('./services/profile.service');
 const { OnboardingQuotesRepository } = require('./infrastructure/repositories/onboarding-quotes.repository');
 const { StripeFirstPurchasePromosRepository } = require('./infrastructure/repositories/stripe-first-purchase-promos.repository');
 const { StripeCouponService } = require('./services/stripe-coupon.service');
+const { AdminIdentityService } = require('./services/admin-identity.service');
+const { AdminNutritionService } = require('./services/admin-nutrition.service');
+const { AdminShippingService } = require('./services/admin-shipping.service');
+const { AdminOnboardingService } = require('./services/admin-onboarding.service');
+const { AdminBillingService } = require('./services/admin-billing.service');
+const { AdminCatalogService } = require('./services/admin-catalog.service');
+const { AdminUsersService } = require('./services/admin-users.service');
+const { AdminOnboardingRepository } = require('./infrastructure/repositories/admin-onboarding.repository');
+const { AdminUsersRepository } = require('./infrastructure/repositories/admin-users.repository');
+const { AdminCatalogRepository } = require('./infrastructure/repositories/admin-catalog.repository');
 const { MaxMindCountryReader } = require('./infrastructure/geo/maxmind-country-reader');
 const { GeoService } = require('./services/geo.service');
 
@@ -176,7 +186,9 @@ async function bootstrap() {
       1: env.STRIPE_FIRST_PURCHASE_PROMO_1M,
       3: env.STRIPE_FIRST_PURCHASE_PROMO_3M,
       6: env.STRIPE_FIRST_PURCHASE_PROMO_6M
-    }
+    },
+    stripeBilling,
+    secretKey: env.STRIPE_SECRET_KEY
   });
   const onboardingDiscountEligibilityRepository = new OnboardingDiscountEligibilityRepository(dataSource, {
     postsTableName: env.WP_POSTS_TABLE_NAME,
@@ -310,6 +322,48 @@ async function bootstrap() {
     stripeBilling,
     avatarStorage
   });
+  const adminIdentityService = new AdminIdentityService({
+    authRepository,
+    authService,
+    adminEmails: env.ADMIN_EMAILS
+  });
+  const adminNutritionService = new AdminNutritionService();
+  const adminShippingService = new AdminShippingService({
+    shippingService,
+    env
+  });
+  const adminOnboardingRepository = new AdminOnboardingRepository(dataSource, {
+    usersTableName: env.WP_USERS_TABLE_NAME,
+    usermetaTableName: env.WP_USERMETA_TABLE_NAME
+  });
+  const adminOnboardingService = new AdminOnboardingService({
+    repository: adminOnboardingRepository,
+    ledgerRepository: subscriptionLedgerRepository
+  });
+  const adminBillingService = new AdminBillingService({
+    ledgerRepository: subscriptionLedgerRepository,
+    webhookEventsRepository: stripeWebhookEventsRepository,
+    stripeBilling,
+    profileRepository,
+    secretKey: env.STRIPE_SECRET_KEY
+  });
+  const adminCatalogRepository = new AdminCatalogRepository(dataSource, {
+    postsTableName: env.WP_POSTS_TABLE_NAME,
+    postmetaTableName: env.WP_POSTMETA_TABLE_NAME
+  });
+  const adminCatalogService = new AdminCatalogService({
+    repository: adminCatalogRepository,
+    stripeBilling
+  });
+  const adminUsersRepository = new AdminUsersRepository(dataSource, {
+    usersTableName: env.WP_USERS_TABLE_NAME,
+    usermetaTableName: env.WP_USERMETA_TABLE_NAME
+  });
+  const adminUsersService = new AdminUsersService({
+    usersRepository: adminUsersRepository,
+    profileService,
+    profileRepository
+  });
   const countryReader = new MaxMindCountryReader({ dbPath: env.GEO_MAXMIND_DB_PATH });
   await countryReader.open();
   if (!countryReader.isOpen()) {
@@ -359,6 +413,14 @@ async function bootstrap() {
     onboardingPetDeleteService,
     onboardingPetsSyncService,
     profileService,
+    adminIdentityService,
+    adminNutritionService,
+    adminShippingService,
+    adminOnboardingService,
+    adminBillingService,
+    adminCatalogService,
+    adminUsersService,
+    stripeCouponService,
     avatarPublicDir,
     geoService,
     jwt: {
