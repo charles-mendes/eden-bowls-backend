@@ -26,6 +26,81 @@ function parseJsonMeta(value) {
   }
 }
 
+function zoneIdFromCountry(country) {
+  const normalized = String(country || '').trim().toUpperCase();
+  if (normalized === 'US') {
+    return 'us';
+  }
+  if (normalized === 'BR') {
+    return 'br';
+  }
+  return '';
+}
+
+function pickMeta(meta, keys) {
+  for (const key of keys) {
+    const value = String(meta[key] || '').trim();
+    if (value) {
+      return value;
+    }
+  }
+  return '';
+}
+
+function parsePositivePrice(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function variationFlavor(meta) {
+  return pickMeta(meta, ['attribute_pa_flavor', 'attribute_flavor', 'attribute_sabor']);
+}
+
+function variationWeight(meta) {
+  return pickMeta(meta, ['attribute_pa_weight', 'attribute_weight', 'attribute_gram', 'attribute_peso']);
+}
+
+function variationDisplayName(title, meta) {
+  const named = String(title || '').trim();
+  if (named) {
+    return named;
+  }
+  return [variationFlavor(meta), variationWeight(meta)].filter(Boolean).join(' ');
+}
+
+function variationRegularPrice(meta, zoneId) {
+  const candidates = [
+    meta._regular_price,
+    meta._price,
+    zoneId ? meta[`_${zoneId}_regular_price`] : null,
+    meta._br_regular_price,
+    meta._us_regular_price
+  ];
+
+  for (const value of candidates) {
+    const parsed = parsePositivePrice(value);
+    if (parsed != null) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function slugify(value) {
+  const slug = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'variation';
+}
+
 class AdminCatalogRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
@@ -84,7 +159,7 @@ class AdminCatalogRepository {
 
       const items = [];
       for (const row of Array.isArray(rows) ? rows : []) {
-        const variations = await this.listVariations(row.id);
+        const variations = await this.listVariations(row.id, row.planCountry);
         items.push(this.mapProduct(row, variations));
       }
 
@@ -121,11 +196,11 @@ class AdminCatalogRepository {
       return null;
     }
 
-    const variations = await this.listVariations(id);
+    const variations = await this.listVariations(id, row.planCountry);
     return this.mapProduct(row, variations);
   }
 
-  async listVariations(productId) {
+  async listVariations(productId, country) {
     const rows = await this.dataSource.query(
       [
         'SELECT v.ID AS variationId, v.post_title AS name, v.post_status AS status, vm.meta_key, vm.meta_value',
@@ -148,6 +223,8 @@ class AdminCatalogRepository {
       }
     }
 
+    const zoneId = zoneIdFromCountry(country);
+
     return Array.from(grouped.values()).map((variation) => {
       const pricesByCurrency = parseJsonMeta(variation.meta._stripe_price_ids_by_currency);
       const stripeProductId = String(variation.meta._stripe_product_id || '').trim();
@@ -158,13 +235,18 @@ class AdminCatalogRepository {
       if (stripeProductId.startsWith('prod_') && hasPrice) {
         syncStatus = variation.meta._stripe_price_fingerprint ? 'synced' : 'price_mismatch';
       }
+      const flavor = variationFlavor(variation.meta);
+      const weight = variationWeight(variation.meta);
+      const sku = pickMeta(variation.meta, ['_sku']) || variation.id;
 
       return {
         id: variation.id,
-        sku: String(variation.meta._sku || variation.id),
-        name: variation.name,
+        sku,
+        name: variationDisplayName(variation.name, variation.meta),
+        flavor: flavor || null,
+        weight: weight || null,
         active: variation.status === 'publish',
-        regularPrice: Number(variation.meta._regular_price || variation.meta._price || 0) || null,
+        regularPrice: variationRegularPrice(variation.meta, zoneId),
         stripeProductId: stripeProductId || null,
         stripePriceId: stripePriceId || null,
         stripePriceIdsByCurrency: pricesByCurrency,
@@ -224,6 +306,93 @@ class AdminCatalogRepository {
       `UPDATE \`${this.tableNames.posts}\` SET \`post_status\` = ? WHERE \`ID\` = ?`,
       [status, postId]
     );
+  }
+
+  async nextPostId() {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT COALESCE(MAX(\`ID\`), 0) + 1 AS nextId FROM \`${this.tableNames.posts}\``
+    );
+    return Number(Array.isArray(rows) && rows[0] ? rows[0].nextId : 1);
+  }
+
+  async updatePost(postId, fields = {}) {
+    this.ensureDataSource();
+    const sets = [];
+    const params = [];
+
+    if (fields.title != null) {
+      sets.push('`post_title` = ?');
+      params.push(String(fields.title));
+    }
+    if (fields.slug != null) {
+      sets.push('`post_name` = ?');
+      params.push(String(fields.slug));
+    }
+    if (!sets.length) {
+      return;
+    }
+
+    params.push(postId);
+    await this.dataSource.query(
+      `UPDATE \`${this.tableNames.posts}\` SET ${sets.join(', ')} WHERE \`ID\` = ?`,
+      params
+    );
+  }
+
+  async writeVariationPrice(variationId, price, zoneId) {
+    const formatted = Number(price).toFixed(2);
+    await this.upsertPostMeta(variationId, '_regular_price', formatted);
+    await this.upsertPostMeta(variationId, '_price', formatted);
+    if (zoneId) {
+      await this.upsertPostMeta(variationId, `_${zoneId}_regular_price`, formatted);
+    }
+    await this.upsertPostMeta(variationId, '_stripe_price_fingerprint', '');
+  }
+
+  async createVariation({ productId, name, sku, regularPrice, zoneId, menuOrder }) {
+    this.ensureDataSource();
+    const id = await this.nextPostId();
+    const title = String(name || '').trim();
+    const code = String(sku || '').trim();
+    const slug = slugify(code || title || `variation-${id}`);
+
+    await this.dataSource.query(
+      [
+        `INSERT INTO \`${this.tableNames.posts}\``,
+        '(`ID`, `post_parent`, `post_type`, `post_status`, `post_title`, `post_name`, `menu_order`)',
+        "VALUES (?, ?, 'product_variation', 'publish', ?, ?, ?)"
+      ].join(' '),
+      [id, productId, title, slug, menuOrder || 0]
+    );
+
+    if (code) {
+      await this.upsertPostMeta(id, '_sku', code);
+    }
+    if (regularPrice != null) {
+      await this.writeVariationPrice(id, regularPrice, zoneId);
+    }
+
+    return String(id);
+  }
+
+  async updateVariation({ id, name, sku, regularPrice, zoneId, priceChanged }) {
+    this.ensureDataSource();
+    const title = name == null ? undefined : String(name).trim();
+    const code = sku == null ? undefined : String(sku).trim();
+    const nextSlug = code || title;
+
+    await this.updatePost(id, {
+      ...(title != null ? { title } : {}),
+      ...(nextSlug ? { slug: slugify(nextSlug) } : {})
+    });
+
+    if (code != null) {
+      await this.upsertPostMeta(id, '_sku', code);
+    }
+    if (regularPrice != null && priceChanged !== false) {
+      await this.writeVariationPrice(id, regularPrice, zoneId);
+    }
   }
 
   fingerprint(price, currency) {

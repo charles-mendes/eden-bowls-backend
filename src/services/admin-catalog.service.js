@@ -11,6 +11,34 @@ function requiredCurrency(country) {
   return '';
 }
 
+function zoneIdFromCountry(country) {
+  if (country === 'US') {
+    return 'us';
+  }
+  if (country === 'BR') {
+    return 'br';
+  }
+  return '';
+}
+
+function parseVariationPrice(value) {
+  if (value == null || value === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new HttpError(422, 'Variation price must be a non-negative number.');
+  }
+
+  return parsed;
+}
+
+function isNewVariationId(id, existingIds) {
+  const normalized = String(id || '').trim();
+  return !normalized || normalized.startsWith('new-') || !existingIds.has(normalized);
+}
+
 class AdminCatalogService {
   constructor(options = {}) {
     this.repository = options.repository;
@@ -61,7 +89,27 @@ class AdminCatalogService {
       await this.repository.upsertPostMeta(product.id, '_cmpb_plan_days', String(days));
     }
 
+    if (Array.isArray(payload.variants)) {
+      const country = payload.planCountry
+        ? String(payload.planCountry).trim().toUpperCase()
+        : product.planCountry;
+      await this.saveVariants(product, payload.variants, country);
+    }
+
     if (payload.active === true && !product.active) {
+      const draft = await this.getProduct(productId);
+      if (!draft.planCountry || !draft.planDays) {
+        throw new HttpError(422, 'Plan country and days are required before publishing.', {
+          code: 'product_incomplete'
+        });
+      }
+
+      await this.sync({
+        productId,
+        market: draft.planCountry,
+        currency: requiredCurrency(draft.planCountry).toUpperCase()
+      });
+
       const next = await this.getProduct(productId);
       const currency = requiredCurrency(next.planCountry);
       const gaps = next.variants
@@ -71,12 +119,6 @@ class AdminCatalogService {
           return !String(mapped || '').startsWith('price_');
         })
         .map((variant) => ({ variationId: variant.id, currencies: currency ? [currency.toUpperCase()] : [] }));
-
-      if (!next.planCountry || !next.planDays) {
-        throw new HttpError(422, 'Plan country and days are required before publishing.', {
-          code: 'product_incomplete'
-        });
-      }
 
       if (gaps.length > 0) {
         await this.repository.updatePostStatus(product.id, 'draft');
@@ -96,6 +138,52 @@ class AdminCatalogService {
     }
 
     return this.getProduct(productId);
+  }
+
+  async saveVariants(product, variants, country) {
+    const zoneId = zoneIdFromCountry(country);
+    const existingIds = new Set((product.variants || []).map((item) => String(item.id)));
+    const existingById = new Map((product.variants || []).map((item) => [String(item.id), item]));
+    let menuOrder = (product.variants || []).length;
+
+    for (const item of variants) {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+
+      const id = item.id == null ? '' : String(item.id).trim();
+      const name = item.name == null ? undefined : String(item.name);
+      const sku = item.sku == null ? undefined : String(item.sku);
+      const regularPrice = parseVariationPrice(item.regularPrice);
+
+      if (isNewVariationId(id, existingIds)) {
+        if (!String(name || '').trim() && !String(sku || '').trim()) {
+          throw new HttpError(422, 'New variations require a name or SKU.');
+        }
+
+        menuOrder += 1;
+        await this.repository.createVariation({
+          productId: product.id,
+          name: String(name || '').trim(),
+          sku: String(sku || '').trim(),
+          regularPrice,
+          zoneId,
+          menuOrder
+        });
+        continue;
+      }
+
+      const current = existingById.get(id);
+      const currentPrice = current && current.regularPrice != null ? Number(current.regularPrice) : null;
+      await this.repository.updateVariation({
+        id,
+        name,
+        sku,
+        regularPrice,
+        zoneId,
+        priceChanged: regularPrice != null && currentPrice !== regularPrice
+      });
+    }
   }
 
   async listPricing(query, pagination) {
@@ -163,11 +251,12 @@ class AdminCatalogService {
         }
 
         const nickname = `${product.namePt} - ${variant.name || variant.sku}`;
-        const lookupKey = `eden_${product.id}_${variant.id}_${mappedCurrency}`;
+        const unitAmount = Math.round(Number(variant.regularPrice) * 100);
+        const lookupKey = `eden_${product.id}_${variant.id}_${mappedCurrency}_${unitAmount}`;
         const priceId = await this.stripeBilling.ensureRecurringPrice({
           lookupKey,
           currency: mappedCurrency,
-          unitAmount: Math.round(Number(variant.regularPrice) * 100),
+          unitAmount,
           nickname
         });
         const fingerprint = this.repository.fingerprint(variant.regularPrice, mappedCurrency);

@@ -54,10 +54,47 @@ describe('AdminCatalogRepository', () => {
       variants: [
         expect.objectContaining({
           id: '21',
+          name: 'Frango',
+          regularPrice: 129.9,
           stripePriceId: 'price_brl_21',
           stripePriceIdsByCurrency: { brl: 'price_brl_21' }
         })
       ]
+    });
+  });
+
+  test('maps empty variation titles from flavor attributes and zone prices', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([{ total: 1 }])
+        .mockResolvedValueOnce([{
+          id: 100,
+          name: 'Flavors BR',
+          slug: 'flavors-br',
+          status: 'publish',
+          createdAt: '2026-08-01 10:00:00',
+          planCountry: 'BR',
+          planDays: '30'
+        }])
+        .mockResolvedValueOnce([
+          { variationId: 1001, name: '', status: 'publish', meta_key: '_br_regular_price', meta_value: '25.00' },
+          { variationId: 1001, name: '', status: 'publish', meta_key: 'attribute_pa_flavor', meta_value: 'Beef' },
+          { variationId: 1001, name: '', status: 'publish', meta_key: 'attribute_pa_weight', meta_value: '300g' },
+          { variationId: 1001, name: '', status: 'publish', meta_key: '_stripe_product_id', meta_value: 'prod_seed_br_beef_300g' },
+          { variationId: 1001, name: '', status: 'publish', meta_key: '_stripe_price_id', meta_value: 'price_seed_br_beef_300g' }
+        ])
+    };
+    const repository = new AdminCatalogRepository(dataSource);
+    const result = await repository.listProducts({ market: 'BR', offset: 0, perPage: 20 });
+
+    expect(result.items[0].variants[0]).toMatchObject({
+      id: '1001',
+      sku: '1001',
+      name: 'Beef 300g',
+      regularPrice: 25,
+      stripeProductId: 'prod_seed_br_beef_300g',
+      syncStatus: 'price_mismatch'
     });
   });
 
