@@ -146,7 +146,7 @@ class StripeBillingClient {
     throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
   }
 
-  async ensureRecurringPrice({ lookupKey, currency, unitAmount, nickname }) {
+  async ensureRecurringPrice({ lookupKey, currency, unitAmount, nickname, stripeProductId }) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     const key = String(lookupKey || '').trim();
@@ -163,18 +163,22 @@ class StripeBillingClient {
       const listed = await stripe.prices.list({ lookup_keys: [key], active: true, limit: 1 });
       const existing = listed && Array.isArray(listed.data) ? listed.data[0] : null;
       if (existing && existing.id) {
-        return existing.id;
+        const existingProduct = typeof existing.product === 'string' ? existing.product : existing.product && existing.product.id;
+        return { priceId: existing.id, productId: existingProduct || '' };
       }
 
-      const product = await stripe.products.create({
+      const reusableProductId = String(stripeProductId || '').startsWith('prod_') && !String(stripeProductId).includes('_seed_')
+        ? String(stripeProductId)
+        : '';
+      const productId = reusableProductId || (await stripe.products.create({
         name: nickname || key,
-        metadata: { source: 'eden_bowls_seed', lookup_key: key }
-      });
+        metadata: { source: 'eden_bowls_admin', lookup_key: key }
+      })).id;
       const price = await stripe.prices.create({
         currency: currencyCode,
         unit_amount: amount,
         recurring: { interval: 'month' },
-        product: product.id,
+        product: productId,
         lookup_key: key,
         nickname: nickname || key,
         tax_behavior: 'exclusive'
@@ -184,7 +188,7 @@ class StripeBillingClient {
           code: 'stripe_price_ensure_failed'
         });
       }
-      return price.id;
+      return { priceId: price.id, productId };
     } catch (error) {
       if (error instanceof HttpError) {
         throw error;
@@ -193,13 +197,43 @@ class StripeBillingClient {
         const listed = await stripe.prices.list({ lookup_keys: [key], limit: 1 });
         const existing = listed && Array.isArray(listed.data) ? listed.data[0] : null;
         if (existing && existing.id) {
-          return existing.id;
+          const existingProduct = typeof existing.product === 'string' ? existing.product : existing.product && existing.product.id;
+          return { priceId: existing.id, productId: existingProduct || '' };
         }
       } catch (_retryError) {
         // Fall through to the original Stripe error.
       }
       throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe price.'), {
         code: 'stripe_price_ensure_failed'
+      });
+    }
+  }
+
+  async createCatalogProduct({ name, metadata } = {}) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const title = String(name || '').trim();
+    if (!title) {
+      throw new HttpError(422, 'Product name is required.');
+    }
+
+    try {
+      const product = await stripe.products.create({
+        name: title,
+        metadata: { source: 'eden_bowls_admin', ...(metadata || {}) }
+      });
+      if (!product || !String(product.id || '').startsWith('prod_')) {
+        throw new HttpError(502, 'Unable to create Stripe product.', {
+          code: 'stripe_product_ensure_failed'
+        });
+      }
+      return product.id;
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe product.'), {
+        code: 'stripe_product_ensure_failed'
       });
     }
   }
@@ -215,12 +249,13 @@ class StripeBillingClient {
         continue;
       }
 
-      const livePriceId = await this.ensureRecurringPrice({
+      const ensured = await this.ensureRecurringPrice({
         lookupKey: seedLookupKey(price),
         currency: String(item.currency || fallbackCurrency).toLowerCase(),
         unitAmount: toMinorUnit(item.unit_price),
         nickname: price
       });
+      const livePriceId = typeof ensured === 'string' ? ensured : ensured && ensured.priceId;
       resolved.push({ ...item, price: livePriceId });
     }
 

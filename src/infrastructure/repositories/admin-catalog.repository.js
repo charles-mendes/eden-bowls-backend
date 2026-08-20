@@ -146,10 +146,11 @@ class AdminCatalogRepository {
       const rows = await this.dataSource.query(
         [
           'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.created_at AS createdAt,',
-          'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays',
+          'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays, pm_stripe.meta_value AS stripeProductId',
           `FROM \`${this.tableNames.posts}\` p`,
           `LEFT JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
           `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
+          `LEFT JOIN \`${this.tableNames.postmeta}\` pm_stripe ON pm_stripe.post_id = p.ID AND pm_stripe.meta_key = '_stripe_product_id'`,
           `WHERE ${where.join(' AND ')}`,
           'ORDER BY p.created_at DESC',
           'LIMIT ? OFFSET ?'
@@ -182,10 +183,11 @@ class AdminCatalogRepository {
     const rows = await this.dataSource.query(
       [
         'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.created_at AS createdAt,',
-        'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays',
+        'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays, pm_stripe.meta_value AS stripeProductId',
         `FROM \`${this.tableNames.posts}\` p`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
+        `LEFT JOIN \`${this.tableNames.postmeta}\` pm_stripe ON pm_stripe.post_id = p.ID AND pm_stripe.meta_key = '_stripe_product_id'`,
         "WHERE p.post_type = 'product' AND p.ID = ?",
         'LIMIT 1'
       ].join(' '),
@@ -271,6 +273,7 @@ class AdminCatalogRepository {
       status: row.status,
       planCountry: country || null,
       planDays: days > 0 ? days : null,
+      stripeProductId: String(row.stripeProductId || '').trim() || null,
       createdAt: row.createdAt,
       category: { namePt: 'Planos', nameEn: 'Plans' },
       marketConfigs: country && currency ? [{ marketCountry: country, currency, active: row.status === 'publish' }] : [],
@@ -314,6 +317,25 @@ class AdminCatalogRepository {
       `SELECT COALESCE(MAX(\`ID\`), 0) + 1 AS nextId FROM \`${this.tableNames.posts}\``
     );
     return Number(Array.isArray(rows) && rows[0] ? rows[0].nextId : 1);
+  }
+
+  async createProduct({ name, slug, planCountry, planDays }) {
+    this.ensureDataSource();
+    const id = await this.nextPostId();
+    const title = String(name || '').trim();
+    const postName = slugify(slug || title || `product-${id}`);
+
+    await this.dataSource.query(
+      [
+        `INSERT INTO \`${this.tableNames.posts}\``,
+        '(`ID`, `post_parent`, `post_type`, `post_status`, `post_title`, `post_name`, `menu_order`)',
+        "VALUES (?, 0, 'product', 'draft', ?, ?, 0)"
+      ].join(' '),
+      [id, title, postName]
+    );
+    await this.upsertPostMeta(id, '_cmpb_plan_country', planCountry);
+    await this.upsertPostMeta(id, '_cmpb_plan_days', String(planDays));
+    return String(id);
   }
 
   async updatePost(postId, fields = {}) {

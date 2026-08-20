@@ -93,6 +93,62 @@ describe('AdminCatalogService', () => {
     });
   });
 
+  test('createProduct stores a Stripe product and optional first variation', async () => {
+    const repository = {
+      createProduct: jest.fn().mockResolvedValue('301'),
+      upsertPostMeta: jest.fn(),
+      getProduct: jest.fn()
+        .mockResolvedValueOnce({
+          id: '301',
+          namePt: 'Plano novo',
+          planCountry: 'BR',
+          stripeProductId: 'prod_live_301',
+          variants: []
+        })
+        .mockResolvedValue({
+          id: '301',
+          namePt: 'Plano novo',
+          planCountry: 'BR',
+          stripeProductId: 'prod_live_301',
+          variants: [{ id: '401', name: 'Frango 300g', regularPrice: 30 }]
+        }),
+      createVariation: jest.fn().mockResolvedValue('401'),
+      fingerprint: jest.fn().mockReturnValue('fp'),
+      updateVariation: jest.fn()
+    };
+    const stripeBilling = {
+      createCatalogProduct: jest.fn().mockResolvedValue('prod_live_301'),
+      ensureRecurringPrice: jest.fn().mockResolvedValue({ priceId: 'price_live_401', productId: 'prod_live_301' })
+    };
+    const service = new AdminCatalogService({ repository, stripeBilling });
+
+    const created = await service.createProduct({
+      name: 'Plano novo',
+      planCountry: 'BR',
+      planDays: 30,
+      variants: [{ name: 'Frango 300g', sku: 'FR-300', regularPrice: 30 }]
+    });
+
+    expect(repository.createProduct).toHaveBeenCalledWith({
+      name: 'Plano novo',
+      slug: undefined,
+      planCountry: 'BR',
+      planDays: 30
+    });
+    expect(stripeBilling.createCatalogProduct).toHaveBeenCalledWith({
+      name: 'Plano novo',
+      metadata: { catalog_product_id: '301', market: 'BR' }
+    });
+    expect(repository.createVariation).toHaveBeenCalledWith(expect.objectContaining({
+      productId: '301',
+      name: 'Frango 300g',
+      sku: 'FR-300',
+      regularPrice: 30
+    }));
+    expect(created.id).toBe('301');
+    expect(created.stripeProductId).toBe('prod_live_301');
+  });
+
   test('sync lookup key includes unit amount so a price change creates a new Stripe price', async () => {
     const repository = {
       getProduct: jest.fn().mockResolvedValue({

@@ -134,6 +134,15 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.post('/api/v1/admin/catalog/products', requirePermission('catalog.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminCatalogService) {
+        throw new HttpError(503, 'Catalog service is not available.');
+      }
+      return dependencies.adminCatalogService.createProduct(request.body || {});
+    });
+  });
+
   app.get('/api/v1/admin/catalog/products/:productId', requirePermission('catalog.read'), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminCatalogService) {

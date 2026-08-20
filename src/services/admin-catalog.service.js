@@ -39,6 +39,21 @@ function isNewVariationId(id, existingIds) {
   return !normalized || normalized.startsWith('new-') || !existingIds.has(normalized);
 }
 
+function liveStripeId(value, prefix) {
+  const id = String(value || '').trim();
+  return id.startsWith(prefix) && !id.includes('_seed_') ? id : '';
+}
+
+function unwrapStripePrice(ensured) {
+  if (ensured && typeof ensured === 'object') {
+    return {
+      priceId: String(ensured.priceId || ensured.id || ''),
+      productId: String(ensured.productId || '')
+    };
+  }
+  return { priceId: String(ensured || ''), productId: '' };
+}
+
 class AdminCatalogService {
   constructor(options = {}) {
     this.repository = options.repository;
@@ -70,6 +85,56 @@ class AdminCatalogService {
     return product;
   }
 
+  async createProduct(payload = {}) {
+    const name = String(payload.name || payload.namePt || '').trim();
+    if (!name) {
+      throw new HttpError(422, 'Product name is required.');
+    }
+
+    const country = String(payload.planCountry || 'BR').trim().toUpperCase();
+    if (country !== 'BR' && country !== 'US') {
+      throw new HttpError(422, 'Plan country must be BR or US.', { code: 'product_country_not_configured' });
+    }
+
+    const days = Number(payload.planDays);
+    if (!Number.isFinite(days) || days <= 0) {
+      throw new HttpError(422, 'Plan days must be greater than zero.', { code: 'product_days_not_configured' });
+    }
+
+    const productId = await this.repository.createProduct({
+      name,
+      slug: payload.slug,
+      planCountry: country,
+      planDays: days
+    });
+
+    if (this.stripeBilling && typeof this.stripeBilling.createCatalogProduct === 'function') {
+      try {
+        const stripeProductId = await this.stripeBilling.createCatalogProduct({
+          name,
+          metadata: { catalog_product_id: String(productId), market: country }
+        });
+        await this.repository.upsertPostMeta(productId, '_stripe_product_id', stripeProductId);
+      } catch (error) {
+        if (!error || error.statusCode !== 503) {
+          throw error;
+        }
+      }
+    }
+
+    if (Array.isArray(payload.variants) && payload.variants.length > 0) {
+      const product = await this.getProduct(productId);
+      await this.saveVariants(product, payload.variants, country);
+      await this.sync({
+        productId,
+        market: country,
+        currency: requiredCurrency(country).toUpperCase()
+      });
+    }
+
+    return this.getProduct(productId);
+  }
+
   async patchProduct(productId, payload = {}) {
     const product = await this.getProduct(productId);
 
@@ -94,6 +159,17 @@ class AdminCatalogService {
         ? String(payload.planCountry).trim().toUpperCase()
         : product.planCountry;
       await this.saveVariants(product, payload.variants, country);
+      if (!(payload.active === true && !product.active)) {
+        try {
+          await this.sync({
+            productId,
+            market: country,
+            currency: requiredCurrency(country).toUpperCase()
+          });
+        } catch (_error) {
+          // Draft save should persist even if Stripe is temporarily unavailable.
+        }
+      }
     }
 
     if (payload.active === true && !product.active) {
@@ -253,12 +329,19 @@ class AdminCatalogService {
         const nickname = `${product.namePt} - ${variant.name || variant.sku}`;
         const unitAmount = Math.round(Number(variant.regularPrice) * 100);
         const lookupKey = `eden_${product.id}_${variant.id}_${mappedCurrency}_${unitAmount}`;
-        const priceId = await this.stripeBilling.ensureRecurringPrice({
+        const stripeProductId = liveStripeId(variant.stripeProductId, 'prod_')
+          || liveStripeId(product.stripeProductId, 'prod_');
+        const priceArgs = {
           lookupKey,
           currency: mappedCurrency,
           unitAmount,
           nickname
-        });
+        };
+        if (stripeProductId) {
+          priceArgs.stripeProductId = stripeProductId;
+        }
+        const ensured = unwrapStripePrice(await this.stripeBilling.ensureRecurringPrice(priceArgs));
+        const priceId = ensured.priceId;
         const fingerprint = this.repository.fingerprint(variant.regularPrice, mappedCurrency);
         const nextMap = {
           ...variant.stripePriceIdsByCurrency,
@@ -274,6 +357,9 @@ class AdminCatalogService {
         await this.repository.upsertPostMeta(variant.id, '_stripe_price_id', priceId);
         await this.repository.upsertPostMeta(variant.id, '_stripe_price_ids_by_currency', JSON.stringify(nextMap));
         await this.repository.upsertPostMeta(variant.id, '_stripe_price_fingerprint', fingerprint);
+        if (ensured.productId || stripeProductId) {
+          await this.repository.upsertPostMeta(variant.id, '_stripe_product_id', ensured.productId || stripeProductId);
+        }
       }
     }
 
