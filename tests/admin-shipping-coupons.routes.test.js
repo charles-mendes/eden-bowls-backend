@@ -67,8 +67,7 @@ describe('admin shipping and coupon routes', () => {
         missing_terms: [6],
         mapping: { 1: 'promo_a', 3: 'promo_b', 6: null },
         misconfig_count: 2
-      }),
-      envSlotsSet: jest.fn().mockReturnValue([1])
+      })
     };
     const app = adminApp({ stripeCouponService });
     const response = await request(app)
@@ -77,7 +76,29 @@ describe('admin shipping and coupon routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.missing_terms).toEqual([6]);
-    expect(response.body.envSlots).toEqual([1]);
+    expect(response.body.envSlots).toBeUndefined();
+  });
+
+  test('syncs first-purchase promos from Stripe', async () => {
+    const stripeCouponService = {
+      syncFirstPurchasePromos: jest.fn().mockResolvedValue({
+        complete: true,
+        missing_terms: [],
+        mapping: { 1: 'promo_a', 3: 'promo_b', 6: 'promo_c' },
+        misconfig_count: 0,
+        slots: { 1: { source: 'stripe' } },
+        missing_in_stripe: [],
+        inactive: []
+      })
+    };
+    const app = adminApp({ stripeCouponService });
+    const response = await request(app)
+      .post('/api/v1/admin/stripe/first-purchase-promos/sync')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.complete).toBe(true);
+    expect(stripeCouponService.syncFirstPurchasePromos).toHaveBeenCalled();
   });
 
   test('nutritionist cannot read shipping', async () => {

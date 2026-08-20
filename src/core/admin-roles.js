@@ -26,7 +26,8 @@ const ROLE_PERMISSIONS = {
     'billing.subscribers.sync',
     'billing.coupons.write',
     'users.read',
-    'users.delivery.write'
+    'users.delivery.write',
+    'users.status.write'
   ]
 };
 

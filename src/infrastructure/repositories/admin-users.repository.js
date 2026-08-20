@@ -1,6 +1,19 @@
 const { HttpError } = require('../../core/http-error');
 const { ADMIN_ROLES_META_KEY } = require('../../core/admin-roles');
 
+function metaRowId(row) {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+
+  const value = row.id ?? row.ID ?? row.umeta_id ?? row.umetaId;
+  if (value == null || value === '') {
+    return null;
+  }
+
+  return value;
+}
+
 class AdminUsersRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
@@ -50,15 +63,15 @@ class AdminUsersRepository {
     const total = Number(Array.isArray(countRows) && countRows[0] ? countRows[0].total : 0);
     const rows = await this.dataSource.query(
       [
-        'SELECT u.ID AS id, u.user_email AS email, u.display_name AS displayName, u.user_registered AS createdAt,',
+        'SELECT u.ID AS id, u.user_email AS email, u.display_name AS displayName, u.created_at AS createdAt,',
         "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS status,",
         "MAX(CASE WHEN um.meta_key = 'billing_phone' THEN um.meta_value END) AS phone,",
         `MAX(CASE WHEN um.meta_key = '${ADMIN_ROLES_META_KEY}' THEN um.meta_value END) AS storedRoles`,
         `FROM \`${this.tableNames.users}\` u`,
         `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
         whereSql,
-        'GROUP BY u.ID, u.user_email, u.display_name, u.user_registered',
-        'ORDER BY u.user_registered DESC',
+        'GROUP BY u.ID, u.user_email, u.display_name, u.created_at',
+        'ORDER BY u.created_at DESC',
         'LIMIT ? OFFSET ?'
       ].join(' '),
       [...params, perPage, offset]
@@ -100,14 +113,14 @@ class AdminUsersRepository {
     const total = Number(Array.isArray(countRows) && countRows[0] ? countRows[0].total : 0);
     const rows = await this.dataSource.query(
       [
-        'SELECT u.ID AS id, u.user_email AS email, u.display_name AS displayName, u.user_registered AS createdAt,',
+        'SELECT u.ID AS id, u.user_email AS email, u.display_name AS displayName, u.created_at AS createdAt,',
         "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS status,",
         "MAX(CASE WHEN um.meta_key = 'billing_phone' THEN um.meta_value END) AS phone,",
         `MAX(CASE WHEN um.meta_key = '${ADMIN_ROLES_META_KEY}' THEN um.meta_value END) AS storedRoles`,
         `FROM \`${this.tableNames.users}\` u`,
         `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
         whereSql,
-        'GROUP BY u.ID, u.user_email, u.display_name, u.user_registered',
+        'GROUP BY u.ID, u.user_email, u.display_name, u.created_at',
         'ORDER BY u.user_email ASC',
         'LIMIT ? OFFSET ?'
       ].join(' '),
@@ -124,14 +137,14 @@ class AdminUsersRepository {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
       [
-        'SELECT u.ID AS id, u.user_email AS email, u.display_name AS displayName, u.user_registered AS createdAt,',
+        'SELECT u.ID AS id, u.user_email AS email, u.display_name AS displayName, u.created_at AS createdAt,',
         "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS status,",
         "MAX(CASE WHEN um.meta_key = 'billing_phone' THEN um.meta_value END) AS phone,",
         `MAX(CASE WHEN um.meta_key = '${ADMIN_ROLES_META_KEY}' THEN um.meta_value END) AS storedRoles`,
         `FROM \`${this.tableNames.users}\` u`,
         `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
         'WHERE u.ID = ?',
-        'GROUP BY u.ID, u.user_email, u.display_name, u.user_registered',
+        'GROUP BY u.ID, u.user_email, u.display_name, u.created_at',
         'LIMIT 1'
       ].join(' '),
       [userId]
@@ -142,23 +155,45 @@ class AdminUsersRepository {
 
   async saveStoredRoles(userId, roles) {
     this.ensureDataSource();
+
+    if (!Array.isArray(roles) || roles.length === 0) {
+      await this.dataSource.query(
+        `DELETE FROM \`${this.tableNames.usermeta}\` WHERE \`user_id\` = ? AND \`meta_key\` = ?`,
+        [userId, ADMIN_ROLES_META_KEY]
+      );
+      return;
+    }
+
     const existing = await this.dataSource.query(
       `SELECT \`umeta_id\` AS id FROM \`${this.tableNames.usermeta}\` WHERE \`user_id\` = ? AND \`meta_key\` = ? LIMIT 1`,
       [userId, ADMIN_ROLES_META_KEY]
     );
-    const row = Array.isArray(existing) ? existing[0] : null;
+    const rowId = metaRowId(Array.isArray(existing) ? existing[0] : null);
+    const metaValue = JSON.stringify(roles);
 
-    if (!Array.isArray(roles) || roles.length === 0) {
-      if (row && row.id) {
-        await this.dataSource.query(
-          `DELETE FROM \`${this.tableNames.usermeta}\` WHERE \`umeta_id\` = ?`,
-          [row.id]
-        );
-      }
+    if (rowId != null) {
+      await this.dataSource.query(
+        `UPDATE \`${this.tableNames.usermeta}\` SET \`meta_value\` = ? WHERE \`umeta_id\` = ?`,
+        [metaValue, rowId]
+      );
       return;
     }
 
-    const metaValue = JSON.stringify(roles);
+    await this.dataSource.query(
+      `INSERT INTO \`${this.tableNames.usermeta}\` (\`user_id\`, \`meta_key\`, \`meta_value\`) VALUES (?, ?, ?)`,
+      [userId, ADMIN_ROLES_META_KEY, metaValue]
+    );
+  }
+
+  async saveActivationStatus(userId, status) {
+    this.ensureDataSource();
+    const existing = await this.dataSource.query(
+      `SELECT \`umeta_id\` AS id FROM \`${this.tableNames.usermeta}\` WHERE \`user_id\` = ? AND \`meta_key\` = 'hsr_activation_status' LIMIT 1`,
+      [userId]
+    );
+    const row = Array.isArray(existing) ? existing[0] : null;
+    const metaValue = String(status || '').trim().toLowerCase();
+
     if (row && row.id) {
       await this.dataSource.query(
         `UPDATE \`${this.tableNames.usermeta}\` SET \`meta_value\` = ? WHERE \`umeta_id\` = ?`,
@@ -168,8 +203,8 @@ class AdminUsersRepository {
     }
 
     await this.dataSource.query(
-      `INSERT INTO \`${this.tableNames.usermeta}\` (\`user_id\`, \`meta_key\`, \`meta_value\`) VALUES (?, ?, ?)`,
-      [userId, ADMIN_ROLES_META_KEY, metaValue]
+      `INSERT INTO \`${this.tableNames.usermeta}\` (\`user_id\`, \`meta_key\`, \`meta_value\`) VALUES (?, 'hsr_activation_status', ?)`,
+      [userId, metaValue]
     );
   }
 }

@@ -298,12 +298,14 @@ class ProfileService {
     };
   }
 
-  async updateDelivery({ userId, payload = {} }) {
+  async updateDelivery({ userId, payload = {}, skipAccountCheck = false }) {
     if (!userId) {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
-    await this.assertMutationAllowed(userId);
+    if (!skipAccountCheck) {
+      await this.assertMutationAllowed(userId);
+    }
     const user = await this.loadUser(userId);
     const addressRecord = await this.repository.getAddress(user.id);
     const currentAddress = addressRecord.exists ? addressRecord.address : {};

@@ -17,6 +17,9 @@ function buildService(overrides = {}) {
     saveStoredRoles: jest.fn(async (userId, roles) => {
       users[String(userId)].storedRoles = JSON.stringify(roles);
     }),
+    saveActivationStatus: jest.fn(async (userId, status) => {
+      users[String(userId)].status = status;
+    }),
     ...overrides.usersRepository
   };
 
@@ -48,6 +51,15 @@ describe('admin users roles', () => {
     expect(usersRepository.saveStoredRoles).toHaveBeenCalledWith('3', ['operator']);
     expect(result.roles).toEqual(['operator']);
     expect(result.storedRoles).toEqual(['operator']);
+  });
+
+  test('revokes an assigned operational role', async () => {
+    const { service, usersRepository } = buildService();
+    const result = await service.updateRoles('2', [], { userId: '1' });
+
+    expect(usersRepository.saveStoredRoles).toHaveBeenCalledWith('2', []);
+    expect(result.storedRoles).toEqual([]);
+    expect(result.roles).toEqual(['customer']);
   });
 
   test('blocks self lockout', async () => {
@@ -83,5 +95,37 @@ describe('admin users roles', () => {
     expect(result.storedRoles).toEqual(['nutritionist']);
     expect(result.roles).toEqual(['admin', 'nutritionist']);
     expect(result.lockedByAllowlist).toBe(true);
+  });
+
+  test('deactivates a customer and revokes refresh tokens', async () => {
+    const refreshTokenRepository = {
+      revokeAllForUser: jest.fn().mockResolvedValue(1)
+    };
+    const { service, usersRepository } = buildService();
+    service.refreshTokenRepository = refreshTokenRepository;
+
+    const result = await service.updateStatus('3', 'inactive', { userId: '1' });
+
+    expect(usersRepository.saveActivationStatus).toHaveBeenCalledWith('3', 'inactive');
+    expect(refreshTokenRepository.revokeAllForUser).toHaveBeenCalledWith('3', 'account_deactivated', expect.any(String));
+    expect(result.status).toBe('inactive');
+    expect(result.id).toBe('3');
+  });
+
+  test('blocks deactivating a staff account', async () => {
+    const { service } = buildService();
+    await expect(service.updateStatus('2', 'inactive', { userId: '1' })).rejects.toMatchObject({
+      statusCode: 422,
+      message: 'Cannot change status of a staff account.'
+    });
+  });
+
+  test('blocks activating a pending account', async () => {
+    const { service, users } = buildService();
+    users['3'].status = 'pending';
+    await expect(service.updateStatus('3', 'active', { userId: '1' })).rejects.toMatchObject({
+      statusCode: 422,
+      message: 'Pending accounts must complete email verification.'
+    });
   });
 });

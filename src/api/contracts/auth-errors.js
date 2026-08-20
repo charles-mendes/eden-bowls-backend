@@ -14,6 +14,11 @@ const AUTH_ERROR = {
     code: 'account_pending_activation',
     message: 'Account pending activation.'
   },
+  ACCOUNT_INACTIVE: {
+    status: 403,
+    code: 'account_inactive',
+    message: 'This account has been deactivated.'
+  },
   BAD_AUTH_HEADER: {
     status: 403,
     code: 'jwt_auth_bad_auth_header',

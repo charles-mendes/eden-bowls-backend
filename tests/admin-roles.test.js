@@ -8,6 +8,7 @@ describe('admin roles', () => {
   test('gives operator catalog.sync', () => {
     expect(ROLE_PERMISSIONS.operator).toContain('catalog.sync');
     expect(ROLE_PERMISSIONS.operator).toContain('billing.coupons.write');
+    expect(ROLE_PERMISSIONS.operator).toContain('users.status.write');
     expect(ROLE_PERMISSIONS.operator).not.toContain('users.roles.write');
   });
 

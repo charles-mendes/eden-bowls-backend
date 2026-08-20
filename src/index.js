@@ -183,14 +183,18 @@ async function bootstrap() {
   const onboardingAddressAutocompleteService = new OnboardingAddressAutocompleteService(onboardingAddressAutocompleteRepository);
   const stripeFirstPurchasePromosRepository = new StripeFirstPurchasePromosRepository(dataSource);
   const stripeCouponService = new StripeCouponService(stripeFirstPurchasePromosRepository, {
-    envMapping: {
-      1: env.STRIPE_FIRST_PURCHASE_PROMO_1M,
-      3: env.STRIPE_FIRST_PURCHASE_PROMO_3M,
-      6: env.STRIPE_FIRST_PURCHASE_PROMO_6M
-    },
     stripeBilling,
     secretKey: env.STRIPE_SECRET_KEY
   });
+  try {
+    await stripeCouponService.seedEmptySlots({
+      1: process.env.STRIPE_FIRST_PURCHASE_PROMO_1M,
+      3: process.env.STRIPE_FIRST_PURCHASE_PROMO_3M,
+      6: process.env.STRIPE_FIRST_PURCHASE_PROMO_6M
+    });
+  } catch (error) {
+    logger.warn({ err: error }, 'Could not seed first-purchase promo slots from leftover env values.');
+  }
   const onboardingDiscountEligibilityRepository = new OnboardingDiscountEligibilityRepository(dataSource, {
     postsTableName: env.WP_POSTS_TABLE_NAME,
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
@@ -365,6 +369,7 @@ async function bootstrap() {
     usersRepository: adminUsersRepository,
     profileService,
     profileRepository,
+    refreshTokenRepository: authRefreshTokenRepository,
     adminEmails: env.ADMIN_EMAILS
   });
   const countryReader = new MaxMindCountryReader({ dbPath: env.GEO_MAXMIND_DB_PATH });

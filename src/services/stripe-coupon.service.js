@@ -17,20 +17,67 @@ function stripeDashboardBase(secretKey) {
     : 'https://dashboard.stripe.com';
 }
 
+function couponIdFromPromo(promo) {
+  if (!promo) {
+    return null;
+  }
+
+  if (typeof promo.coupon === 'string' && promo.coupon.trim()) {
+    return promo.coupon.trim();
+  }
+
+  if (promo.coupon && typeof promo.coupon === 'object' && promo.coupon.id) {
+    return String(promo.coupon.id);
+  }
+
+  return null;
+}
+
+function percentOffFromPromo(promo) {
+  if (promo && promo.coupon && typeof promo.coupon === 'object') {
+    return Number(promo.coupon.percent_off);
+  }
+
+  return Number.NaN;
+}
+
+function termFromStripePromo(promo) {
+  const metadata = promo && promo.metadata ? promo.metadata : {};
+  const metaTerm = Number(metadata.pawbowl_term_months);
+  if (isValidSubscriptionTerm(metaTerm)) {
+    return metaTerm;
+  }
+
+  const percent = percentOffFromPromo(promo);
+  for (const term of VALID_SUBSCRIPTION_TERMS) {
+    if (expectedPercentForTerm(term) === percent) {
+      return term;
+    }
+  }
+
+  return null;
+}
+
+function isFirstPurchasePromo(promo) {
+  if (!promo) {
+    return false;
+  }
+
+  const metadata = promo.metadata || {};
+  if (metadata.pawbowl_purpose === 'first_purchase') {
+    return true;
+  }
+
+  const firstTime = Boolean(promo.restrictions && promo.restrictions.first_time_transaction);
+  const duration = promo.coupon && typeof promo.coupon === 'object' ? promo.coupon.duration : null;
+  return firstTime && duration === 'once';
+}
+
 class StripeCouponService {
   constructor(repository, options = {}) {
     this.repository = repository;
     this.stripeBilling = options.stripeBilling || null;
     this.secretKey = options.secretKey || '';
-    this.envMapping = {
-      1: normalizePromoId(options.envMapping && options.envMapping[1]),
-      3: normalizePromoId(options.envMapping && options.envMapping[3]),
-      6: normalizePromoId(options.envMapping && options.envMapping[6])
-    };
-  }
-
-  envSlotsSet() {
-    return VALID_SUBSCRIPTION_TERMS.filter((term) => Boolean(this.envMapping[term]));
   }
 
   ensureRepository() {
@@ -59,9 +106,9 @@ class StripeCouponService {
   async getMapping() {
     const stored = await this.getStoredMapping();
     return {
-      1: stored.mapping[1] || this.envMapping[1] || null,
-      3: stored.mapping[3] || this.envMapping[3] || null,
-      6: stored.mapping[6] || this.envMapping[6] || null
+      1: stored.mapping[1] || null,
+      3: stored.mapping[3] || null,
+      6: stored.mapping[6] || null
     };
   }
 
@@ -91,9 +138,7 @@ class StripeCouponService {
     return this.repository.incrementMisconfigCount();
   }
 
-  async saveMapping(mapping = {}, coupons = {}) {
-    this.ensureRepository();
-
+  sanitizeMapping(mapping = {}, coupons = {}) {
     const sanitized = {};
     const sanitizedCoupons = {};
 
@@ -110,8 +155,226 @@ class StripeCouponService {
       }
     }
 
-    await this.repository.saveMapping(sanitized, sanitizedCoupons);
+    return { mapping: sanitized, coupons: sanitizedCoupons };
+  }
+
+  async persistMapping(mapping = {}, coupons = {}) {
+    this.ensureRepository();
+    const sanitized = this.sanitizeMapping(mapping, coupons);
+    await this.repository.saveMapping(sanitized.mapping, sanitized.coupons);
     return this.mappingHealth();
+  }
+
+  async retrievePromotionCode(promoId) {
+    const stripe = this.ensureStripe();
+    try {
+      return await stripe.promotionCodes.retrieve(promoId, { expand: ['coupon'] });
+    } catch (error) {
+      throw new HttpError(422, 'Promotion code is invalid.', {
+        code: 'invalid_promotion_code_id',
+        promotion_code_id: promoId
+      });
+    }
+  }
+
+  async enrichMappingFromStripe(mapping, coupons) {
+    if (!this.stripeBilling) {
+      return { mapping, coupons };
+    }
+
+    for (const term of VALID_SUBSCRIPTION_TERMS) {
+      const promoId = mapping[term];
+      if (!promoId) {
+        continue;
+      }
+
+      const promo = await this.retrievePromotionCode(promoId);
+      if (!promo || promo.active === false) {
+        throw new HttpError(422, 'Promotion code is invalid.', {
+          code: 'invalid_promotion_code_id',
+          promotion_code_id: promoId,
+          term_months: term
+        });
+      }
+
+      const couponId = couponIdFromPromo(promo);
+      if (couponId) {
+        coupons[term] = couponId;
+      }
+    }
+
+    return { mapping, coupons };
+  }
+
+  async saveMapping(mapping = {}, coupons = {}) {
+    const sanitized = this.sanitizeMapping(mapping, coupons);
+    await this.enrichMappingFromStripe(sanitized.mapping, sanitized.coupons);
+    return this.persistMapping(sanitized.mapping, sanitized.coupons);
+  }
+
+  async seedEmptySlots(fallbackMapping = {}) {
+    const stored = await this.getStoredMapping();
+    const mapping = {};
+
+    for (const term of VALID_SUBSCRIPTION_TERMS) {
+      if (stored.mapping[term]) {
+        continue;
+      }
+
+      const promoId = normalizePromoId(fallbackMapping[term] || fallbackMapping[String(term)]);
+      if (promoId) {
+        mapping[term] = promoId;
+      }
+    }
+
+    if (!Object.keys(mapping).length) {
+      return this.mappingHealth();
+    }
+
+    return this.persistMapping(mapping, stored.coupons);
+  }
+
+  async listStripePromotionCodes(limit = 100) {
+    const stripe = this.ensureStripe();
+    const listed = await stripe.promotionCodes.list({
+      limit: Math.min(100, Math.max(1, Number(limit) || 100)),
+      expand: ['data.coupon']
+    });
+    return listed && Array.isArray(listed.data) ? listed.data : [];
+  }
+
+  couponNeedsHydration(promo) {
+    const coupon = promo && promo.coupon;
+    return !(coupon && typeof coupon === 'object' && !coupon.deleted && (coupon.percent_off != null || coupon.duration));
+  }
+
+  async hydratePromotionCoupons(promos = []) {
+    const stripe = this.ensureStripe();
+    const missingIds = [];
+    const seen = new Set();
+
+    for (const promo of promos) {
+      if (!this.couponNeedsHydration(promo)) {
+        continue;
+      }
+
+      const couponId = couponIdFromPromo(promo);
+      if (!couponId || seen.has(couponId)) {
+        continue;
+      }
+
+      seen.add(couponId);
+      missingIds.push(couponId);
+    }
+
+    const couponsById = new Map();
+    await Promise.all(missingIds.map(async (couponId) => {
+      try {
+        couponsById.set(couponId, await stripe.coupons.retrieve(couponId));
+      } catch {
+        couponsById.set(couponId, null);
+      }
+    }));
+
+    return promos.map((promo) => {
+      if (!this.couponNeedsHydration(promo)) {
+        return promo;
+      }
+
+      const coupon = couponsById.get(couponIdFromPromo(promo));
+      return coupon ? { ...promo, coupon } : promo;
+    });
+  }
+
+  async syncFirstPurchasePromos() {
+    const stored = await this.getStoredMapping();
+    const listed = await this.listStripePromotionCodes(100);
+    const byId = new Map(listed.map((item) => [item.id, item]));
+
+    for (const term of VALID_SUBSCRIPTION_TERMS) {
+      const promoId = stored.mapping[term];
+      if (!promoId || byId.has(promoId)) {
+        continue;
+      }
+
+      try {
+        byId.set(promoId, await this.retrievePromotionCode(promoId));
+      } catch {
+        // Slot stays as stored; reported in missing_in_stripe.
+      }
+    }
+
+    const mapping = { ...stored.mapping };
+    const coupons = { ...stored.coupons };
+    const slots = {};
+    const missingInStripe = [];
+    const inactive = [];
+
+    for (const term of VALID_SUBSCRIPTION_TERMS) {
+      const promoId = mapping[term];
+      if (!promoId) {
+        continue;
+      }
+
+      const promo = byId.get(promoId);
+      if (!promo) {
+        missingInStripe.push(term);
+        slots[term] = {
+          promotion_code_id: promoId,
+          coupon_id: coupons[term] || null,
+          active: false,
+          source: 'stored'
+        };
+        continue;
+      }
+
+      if (promo.active === false) {
+        inactive.push(term);
+      }
+
+      const couponId = couponIdFromPromo(promo);
+      if (couponId) {
+        coupons[term] = couponId;
+      }
+
+      slots[term] = {
+        promotion_code_id: promoId,
+        coupon_id: couponId || coupons[term] || null,
+        active: Boolean(promo.active),
+        source: 'stored'
+      };
+    }
+
+    const candidates = listed
+      .filter((promo) => isFirstPurchasePromo(promo) && promo.active !== false)
+      .sort((left, right) => Number(right.created || 0) - Number(left.created || 0));
+
+    for (const promo of candidates) {
+      const term = termFromStripePromo(promo);
+      if (!term || mapping[term]) {
+        continue;
+      }
+
+      mapping[term] = promo.id;
+      const couponId = couponIdFromPromo(promo);
+      if (couponId) {
+        coupons[term] = couponId;
+      }
+      slots[term] = {
+        promotion_code_id: promo.id,
+        coupon_id: couponId,
+        active: true,
+        source: 'stripe'
+      };
+    }
+
+    const health = await this.persistMapping(mapping, coupons);
+    return {
+      ...health,
+      slots,
+      missing_in_stripe: missingInStripe,
+      inactive
+    };
   }
 
   async resolveFirstPurchasePromotionForCheckout({ eligible, termMonths }) {
@@ -192,7 +455,7 @@ class StripeCouponService {
     let health = await this.mappingHealth();
 
     if (payload.assign_first_purchase_slot !== false) {
-      health = await this.saveMapping({
+      health = await this.persistMapping({
         ...health.mapping,
         [termMonths]: promotionCode.id
       }, {
@@ -215,23 +478,21 @@ class StripeCouponService {
   }
 
   async listRecentPromotionCodes(limit = 25) {
-    const stripe = this.ensureStripe();
     const mapping = await this.getMapping();
     const mappedIds = new Map(
       VALID_SUBSCRIPTION_TERMS
         .filter((term) => mapping[term])
         .map((term) => [mapping[term], term])
     );
-    const listed = await stripe.promotionCodes.list({
-      limit: Math.min(25, Math.max(1, Number(limit) || 25)),
-      expand: ['data.coupon']
-    });
+    const listed = await this.hydratePromotionCoupons(
+      await this.listStripePromotionCodes(Math.min(25, Math.max(1, Number(limit) || 25)))
+    );
     const dashboardBase = stripeDashboardBase(this.secretKey);
 
     return {
       success: true,
       data: {
-        items: (listed && Array.isArray(listed.data) ? listed.data : []).map((item) => ({
+        items: listed.map((item) => ({
           id: item.id,
           code: item.code,
           coupon_id: typeof item.coupon === 'string' ? item.coupon : item.coupon && item.coupon.id,

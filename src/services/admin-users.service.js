@@ -14,6 +14,7 @@ class AdminUsersService {
     this.usersRepository = options.usersRepository;
     this.profileService = options.profileService;
     this.profileRepository = options.profileRepository;
+    this.refreshTokenRepository = options.refreshTokenRepository || null;
     this.adminEmails = parseAdminEmails(options.adminEmails);
   }
 
@@ -95,9 +96,7 @@ class AdminUsersService {
     return {
       id: String(user.id),
       email: profile && profile.email ? profile.email : user.email,
-      status: profile && profile.accountStatus && profile.accountStatus.hasActiveSubscription
-        ? 'subscriber'
-        : (user.status || 'active'),
+      status: user.status || 'active',
       createdAt: (profile && profile.createdAt) || user.createdAt || null,
       profile: {
         fullName: (profile && profile.fullName) || user.displayName || null,
@@ -173,6 +172,63 @@ class AdminUsersService {
     await this.usersRepository.saveStoredRoles(user.id, storedRoles);
     const saved = await this.usersRepository.findUserById(user.id);
     return this.getRoles(saved.id);
+  }
+
+  async updateDelivery(userId, payload = {}) {
+    if (!this.profileService || typeof this.profileService.updateDelivery !== 'function') {
+      throw new HttpError(503, 'Profile service is not available.');
+    }
+
+    const user = await this.usersRepository.findUserById(userId);
+    if (!user) {
+      throw new HttpError(404, 'User not found.');
+    }
+
+    const delivery = await this.profileService.updateDelivery({
+      userId,
+      payload,
+      skipAccountCheck: true
+    });
+
+    return {
+      success: true,
+      data: delivery
+    };
+  }
+
+  async updateStatus(userId, nextStatus, actor = {}) {
+    const user = await this.usersRepository.findUserById(userId);
+    if (!user) {
+      throw new HttpError(404, 'User not found.');
+    }
+
+    const roles = resolveAdminRoles({
+      storedRoles: user.storedRoles,
+      email: user.email,
+      adminEmails: this.adminEmails
+    });
+
+    if (hasOperationalRole(roles)) {
+      throw new HttpError(422, 'Cannot change status of a staff account.');
+    }
+
+    if (String(actor.userId) === String(user.id)) {
+      throw new HttpError(422, 'You cannot change your own account status.');
+    }
+
+    const current = String(user.status || 'active').trim().toLowerCase() || 'active';
+    if (nextStatus === 'active' && current === 'pending') {
+      throw new HttpError(422, 'Pending accounts must complete email verification.');
+    }
+
+    await this.usersRepository.saveActivationStatus(user.id, nextStatus);
+
+    if (nextStatus === 'inactive' && this.refreshTokenRepository && typeof this.refreshTokenRepository.revokeAllForUser === 'function') {
+      const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      await this.refreshTokenRepository.revokeAllForUser(user.id, 'account_deactivated', now);
+    }
+
+    return this.getById(user.id);
   }
 
   async updateDeliveryInstructions(userId, deliveryInstructions) {

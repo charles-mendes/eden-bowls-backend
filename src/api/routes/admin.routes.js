@@ -5,6 +5,7 @@ const { parseRolesAssignmentInput } = require('../validators/admin-users-roles.v
 const { parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
 const { parseCreateCouponInput, parsePromoMappingInput } = require('../validators/admin-coupons.validator');
 const { parsePageQuery } = require('../validators/admin-pagination');
+const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
 
 function registerAdminRoutes(app, dependencies = {}) {
   const requirePermission = buildRequireAdminPermission(dependencies);
@@ -317,11 +318,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.stripeCouponService) {
         throw new HttpError(503, 'Coupon service is not available.');
       }
-      const health = await dependencies.stripeCouponService.mappingHealth();
-      return {
-        ...health,
-        envSlots: dependencies.stripeCouponService.envSlotsSet()
-      };
+      return dependencies.stripeCouponService.mappingHealth();
     });
   });
 
@@ -331,6 +328,15 @@ function registerAdminRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Coupon service is not available.');
       }
       return dependencies.stripeCouponService.saveMapping(parsePromoMappingInput(request.body || {}));
+    });
+  });
+
+  app.post('/api/v1/admin/stripe/first-purchase-promos/sync', requirePermission('billing.coupons.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.stripeCouponService) {
+        throw new HttpError(503, 'Coupon service is not available.');
+      }
+      return dependencies.stripeCouponService.syncFirstPurchasePromos();
     });
   });
 
@@ -408,6 +414,15 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.patch('/api/v1/admin/users/:userId/delivery', requirePermission('users.delivery.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.updateDelivery(request.params.userId, request.body || {});
+    });
+  });
+
   app.patch('/api/v1/admin/users/:userId/delivery-instructions', requirePermission('users.delivery.write'), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminUsersService) {
@@ -416,6 +431,19 @@ function registerAdminRoutes(app, dependencies = {}) {
       return dependencies.adminUsersService.updateDeliveryInstructions(
         request.params.userId,
         request.body && request.body.deliveryInstructions
+      );
+    });
+  });
+
+  app.patch('/api/v1/admin/users/:userId/status', requirePermission('users.status.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.updateStatus(
+        request.params.userId,
+        parseAccountStatusInput(request.body || {}),
+        request.adminIdentity
       );
     });
   });

@@ -97,4 +97,79 @@ describe('admin users roles routes', () => {
     expect(response.status).toBe(403);
     expect(adminUsersService.updateRoles).not.toHaveBeenCalled();
   });
+
+  test('deactivates a customer account', async () => {
+    const adminUsersService = {
+      updateStatus: jest.fn().mockResolvedValue({
+        id: '8',
+        email: 'c@d.com',
+        status: 'inactive',
+        roles: ['customer']
+      })
+    };
+    const identity = {
+      userId: '7',
+      email: 'ops@edenbowls.com',
+      roles: ['operator'],
+      permissions: ROLE_PERMISSIONS.operator
+    };
+    const app = appWithIdentity(identity, { adminUsersService });
+
+    const response = await request(app)
+      .patch('/api/v1/admin/users/8/status')
+      .set('Authorization', `Bearer ${tokenFor()}`)
+      .send({ status: 'inactive' });
+
+    expect(response.status).toBe(200);
+    expect(adminUsersService.updateStatus).toHaveBeenCalledWith('8', 'inactive', identity);
+    expect(response.body.status).toBe('inactive');
+  });
+
+  test('updates a customer delivery address', async () => {
+    const adminUsersService = {
+      updateDelivery: jest.fn().mockResolvedValue({
+        success: true,
+        data: { address: 'Rua B', city: 'Curitiba', state: 'PR', zipCode: '80010000', complement: '', deliveryInstructions: '' }
+      })
+    };
+    const app = appWithIdentity({
+      userId: '7',
+      email: 'ops@edenbowls.com',
+      roles: ['operator'],
+      permissions: ROLE_PERMISSIONS.operator
+    }, { adminUsersService });
+
+    const response = await request(app)
+      .patch('/api/v1/admin/users/8/delivery')
+      .set('Authorization', `Bearer ${tokenFor()}`)
+      .send({ address: 'Rua B', city: 'Curitiba', state: 'PR', zipCode: '80010-000' });
+
+    expect(response.status).toBe(200);
+    expect(adminUsersService.updateDelivery).toHaveBeenCalledWith('8', {
+      address: 'Rua B',
+      city: 'Curitiba',
+      state: 'PR',
+      zipCode: '80010-000'
+    });
+  });
+
+  test('forbids readonly from changing account status', async () => {
+    const adminUsersService = {
+      updateStatus: jest.fn()
+    };
+    const app = appWithIdentity({
+      userId: '7',
+      email: 'read@edenbowls.com',
+      roles: ['readonly'],
+      permissions: ROLE_PERMISSIONS.readonly
+    }, { adminUsersService });
+
+    const response = await request(app)
+      .patch('/api/v1/admin/users/8/status')
+      .set('Authorization', `Bearer ${tokenFor()}`)
+      .send({ status: 'inactive' });
+
+    expect(response.status).toBe(403);
+    expect(adminUsersService.updateStatus).not.toHaveBeenCalled();
+  });
 });

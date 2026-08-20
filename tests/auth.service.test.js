@@ -248,6 +248,33 @@ describe('AuthService', () => {
     });
   });
 
+  test('rejects deactivated accounts on login', async () => {
+    const repository = createRepository({
+      id: 4,
+      user_login: 'blocked',
+      user_pass: 'e10adc3949ba59abbe56e057f20f883e',
+      user_email: 'blocked@example.com',
+      user_nicename: 'blocked',
+      display_name: 'Blocked User',
+      activation_status: 'inactive'
+    });
+
+    const service = new AuthService(repository, {
+      jwt: {
+        secret: 'test-secret',
+        algorithm: 'HS256',
+        issuer: 'http://localhost:3000',
+        expiresInSeconds: 3600
+      }
+    });
+
+    await expect(service.authenticate({ username: 'blocked', password: '123456' })).rejects.toMatchObject({
+      statusCode: 403,
+      message: 'This account has been deactivated.',
+      details: { code: 'account_inactive' }
+    });
+  });
+
   test('rejects missing jwt secret', async () => {
     const repository = createRepository({
       id: 1,

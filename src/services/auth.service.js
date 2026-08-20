@@ -254,10 +254,8 @@ class AuthService {
       });
     }
 
-    if (user.activation_status === 'pending') {
-      throw new HttpError(AUTH_ERROR.ACCOUNT_PENDING.status, AUTH_ERROR.ACCOUNT_PENDING.message, {
-        code: AUTH_ERROR.ACCOUNT_PENDING.code
-      });
+    if (this.activationBlocksAccess(user.activation_status)) {
+      throw this.activationAccessError(user.activation_status);
     }
 
     const issuedAt = this.nowProvider();
@@ -279,7 +277,7 @@ class AuthService {
     }
 
     const user = await this.repository.findUserById(userId);
-    if (!user || user.activation_status === 'pending') {
+    if (!user || this.activationBlocksAccess(user.activation_status)) {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
@@ -341,7 +339,7 @@ class AuthService {
     }
 
     const user = await this.repository.findUserById(rotated.source.userId);
-    if (!user || user.activation_status === 'pending') {
+    if (!user || this.activationBlocksAccess(user.activation_status)) {
       await this.refreshTokenRepository.revokeFamily(rotated.source.familyId, 'user_inactive', now);
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
@@ -416,6 +414,23 @@ class AuthService {
 
   toSqlDate(seconds) {
     return new Date(seconds * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  }
+
+  activationBlocksAccess(status) {
+    return CRITICAL_OPERATION_BLOCKED_STATUSES.has(String(status || '').trim().toLowerCase());
+  }
+
+  activationAccessError(status) {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'pending') {
+      return new HttpError(AUTH_ERROR.ACCOUNT_PENDING.status, AUTH_ERROR.ACCOUNT_PENDING.message, {
+        code: AUTH_ERROR.ACCOUNT_PENDING.code
+      });
+    }
+
+    return new HttpError(AUTH_ERROR.ACCOUNT_INACTIVE.status, AUTH_ERROR.ACCOUNT_INACTIVE.message, {
+      code: AUTH_ERROR.ACCOUNT_INACTIVE.code
+    });
   }
 }
 
