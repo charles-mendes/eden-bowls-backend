@@ -10,7 +10,7 @@ services:
       FRONTEND_UPSTREAM: ${FRONTEND_UPSTREAM:-127.0.0.1:4173}
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - /var/www/html:/srv/edenbowls:ro
+      - ./infra/caddy/site:/srv/edenbowls:ro
       - caddy_data:/data
       - caddy_config:/config
 
