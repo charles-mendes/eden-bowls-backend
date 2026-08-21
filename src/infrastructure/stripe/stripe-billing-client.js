@@ -47,6 +47,24 @@ function stripeErrorInfo(error) {
   };
 }
 
+function stripeRawMessage(error) {
+  const raw = error && error.raw && typeof error.raw === 'object' ? error.raw : {};
+  return String((error && error.message) || raw.message || '').trim();
+}
+
+function customerCurrency(customer) {
+  return String(customer && customer.currency || '').trim().toLowerCase();
+}
+
+function customerMatchesCurrency(customer, currency) {
+  const wanted = String(currency || '').trim().toLowerCase();
+  const actual = customerCurrency(customer);
+  if (!wanted || !actual) {
+    return true;
+  }
+  return actual === wanted;
+}
+
 function couponIdFromPromotion(promo = {}) {
   const nested = promo.promotion && promo.promotion.coupon;
   if (nested && typeof nested === 'object' && nested.id) {
@@ -286,6 +304,7 @@ class StripeBillingClient {
   stripeMessage(error, fallback) {
     const type = String(error && error.type ? error.type : '');
     const code = String(error && error.code ? error.code : '');
+    const rawMessage = stripeRawMessage(error);
     if (code === 'resource_missing') {
       return 'The requested Stripe resource was not found.';
     }
@@ -294,6 +313,9 @@ class StripeBillingClient {
     }
     if (type === 'StripeIdempotencyError' || code === 'idempotency_error' || code === 'idempotency_key_in_use') {
       return 'A conflicting checkout request is already in progress.';
+    }
+    if (/cannot combine currencies/i.test(rawMessage)) {
+      return 'This account already has a subscription in a different currency. Finish checkout in that currency, or add a new card to start a plan in this one.';
     }
     return String(fallback || 'Stripe request failed.');
   }
@@ -389,15 +411,16 @@ class StripeBillingClient {
     }
   }
 
-  async ensureCustomer({ email, name, userId, existingCustomerId }) {
+  async ensureCustomer({ email, name, userId, existingCustomerId, currency }) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
+    const wantedCurrency = String(currency || '').trim().toLowerCase();
     let customerId = String(existingCustomerId || '').trim();
 
     if (customerId.startsWith('cus_')) {
       try {
         const existing = await stripe.customers.retrieve(customerId);
-        if (existing && existing.id && !existing.deleted) {
+        if (existing && existing.id && !existing.deleted && customerMatchesCurrency(existing, wantedCurrency)) {
           return existing.id;
         }
       } catch (error) {
@@ -412,11 +435,14 @@ class StripeBillingClient {
 
     try {
       const listed = email
-        ? await stripe.customers.list({ email, limit: 1 })
+        ? await stripe.customers.list({ email, limit: 20 })
         : { data: [] };
-      const existing = listed && Array.isArray(listed.data) ? listed.data[0] : null;
-      if (existing && existing.id) {
-        return existing.id;
+      const rows = listed && Array.isArray(listed.data) ? listed.data : [];
+      const matching = rows.find((customer) => (
+        customer && customer.id && !customer.deleted && customerMatchesCurrency(customer, wantedCurrency)
+      ));
+      if (matching && matching.id) {
+        return matching.id;
       }
 
       const created = await stripe.customers.create({
@@ -424,7 +450,8 @@ class StripeBillingClient {
         name: name || undefined,
         metadata: {
           wp_user_id: String(userId || ''),
-          user_id: String(userId || '')
+          user_id: String(userId || ''),
+          billing_currency: wantedCurrency || ''
         }
       });
       if (!created || !String(created.id || '').startsWith('cus_')) {
@@ -464,6 +491,19 @@ class StripeBillingClient {
 
     const attachedCustomer = paymentMethod && paymentMethod.customer ? String(paymentMethod.customer) : '';
     if (attachedCustomer && attachedCustomer !== customerId) {
+      if (stripe.paymentMethods.create) {
+        try {
+          const cloned = await stripe.paymentMethods.create({
+            customer: customerId,
+            payment_method: pmId
+          });
+          if (cloned && String(cloned.id || '').startsWith('pm_')) {
+            return cloned.id;
+          }
+        } catch (_error) {
+          // Fall through: the card stays on the original customer.
+        }
+      }
       throw new HttpError(409, 'This payment method is attached to a different Stripe customer.', {
         code: 'payment_method_attached_to_other_customer'
       });
@@ -711,7 +751,11 @@ class StripeBillingClient {
 
     await this.assertItemsShareCycle(items);
 
-    const customerId = await this.ensureCustomer(input);
+    const itemCurrency = String((items[0] && items[0].currency) || input.currency || '').toLowerCase();
+    const customerId = await this.ensureCustomer({
+      ...input,
+      currency: itemCurrency
+    });
     const paymentMethodId = await this.attachPaymentMethod(customerId, paymentMethodIdInput);
     const customerUpdate = {
       invoice_settings: { default_payment_method: paymentMethodId }

@@ -333,6 +333,70 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     });
   });
 
+  test('creates a new Stripe customer when the stored one is in another currency', async () => {
+    const { stripe, client } = buildClient({
+      stripe: {
+        customers: {
+          retrieve: jest.fn().mockResolvedValue({ id: 'cus_stored', currency: 'brl', deleted: false }),
+          list: jest.fn().mockResolvedValue({
+            data: [{ id: 'cus_stored', currency: 'brl', deleted: false }]
+          }),
+          create: jest.fn().mockResolvedValue({ id: 'cus_usd' }),
+          update: jest.fn().mockResolvedValue({ id: 'cus_usd' })
+        }
+      }
+    });
+
+    const result = await client.createOnboardingSubscription(validInput);
+
+    expect(stripe.customers.create).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'jane@example.com',
+      metadata: expect.objectContaining({ billing_currency: 'usd' })
+    }));
+    expect(stripe.subscriptions.create.mock.calls[0][0].customer).toBe('cus_usd');
+    expect(result.customerId).toBe('cus_usd');
+  });
+
+  test('clones a saved card onto the currency-matching Stripe customer', async () => {
+    const { stripe, client } = buildClient({
+      stripe: {
+        paymentMethods: {
+          retrieve: jest.fn().mockResolvedValue({ id: 'pm_123', customer: 'cus_brl' }),
+          attach: jest.fn(),
+          create: jest.fn().mockResolvedValue({ id: 'pm_cloned', customer: 'cus_stored' })
+        }
+      }
+    });
+
+    await client.createOnboardingSubscription(validInput);
+
+    expect(stripe.paymentMethods.create).toHaveBeenCalledWith({
+      customer: 'cus_stored',
+      payment_method: 'pm_123'
+    });
+    expect(stripe.paymentMethods.attach).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.create.mock.calls[0][0].default_payment_method).toBe('pm_cloned');
+  });
+
+  test('maps a Stripe currency-conflict error to a safe checkout message', async () => {
+    const { client } = buildClient({
+      stripe: {
+        subscriptions: {
+          create: jest.fn().mockRejectedValue({
+            type: 'StripeInvalidRequestError',
+            message: 'You cannot combine currencies on a single customer. This customer has an active subscription, subscription schedule, discount, quote, or invoice item with currency brl.'
+          })
+        }
+      }
+    });
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      message: 'This account already has a subscription in a different currency. Finish checkout in that currency, or add a new card to start a plan in this one.',
+      details: { code: 'stripe_subscription_failed' }
+    });
+  });
+
   test('forwards Stripe param when the error has no code', async () => {
     const { client } = buildClient({
       stripe: {
