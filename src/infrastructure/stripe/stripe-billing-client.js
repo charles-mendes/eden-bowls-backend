@@ -383,8 +383,7 @@ class StripeBillingClient {
     }
 
     try {
-      const invoice = await stripe.invoices.createPreview({
-        automatic_tax: { enabled: true },
+      const previewParams = {
         customer_details: { address: customerAddress },
         subscription_details: {
           items: items.map((item) => ({
@@ -392,7 +391,12 @@ class StripeBillingClient {
             quantity: Math.max(1, Number(item.quantity) || 1)
           }))
         }
-      });
+      };
+      if (this.automaticTaxEnabled) {
+        previewParams.automatic_tax = { enabled: true };
+      }
+
+      const invoice = await stripe.invoices.createPreview(previewParams);
 
       const subtotalMinor = Number(invoice.subtotal || 0);
       const totalMinor = Number(invoice.total || 0);

@@ -265,6 +265,15 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     expect(params.automatic_tax).toBeUndefined();
   });
 
+  test('does not enable automatic tax when STRIPE_US_AUTOMATIC_TAX is off', async () => {
+    const { stripe, client } = buildClient({ automaticTaxEnabled: false });
+
+    await client.createOnboardingSubscription(validInput);
+
+    const params = stripe.subscriptions.create.mock.calls[0][0];
+    expect(params.automatic_tax).toBeUndefined();
+  });
+
   test('rejects US automatic tax without a ZIP', async () => {
     const { client } = buildClient();
 
@@ -500,6 +509,60 @@ describe('StripeBillingClient.ensureClient', () => {
       statusCode: 503,
       details: { code: 'stripe_secret_missing' }
     }));
+  });
+});
+
+describe('StripeBillingClient.previewSubscriptionInvoice', () => {
+  const previewAddress = { country: 'US', state: 'CA', postal_code: '94105' };
+  const previewItems = [{ price: 'price_abc', quantity: 1 }];
+
+  test('enables automatic tax when the flag is on', async () => {
+    const { stripe, client } = buildClient({
+      stripe: {
+        invoices: {
+          createPreview: jest.fn().mockResolvedValue({
+            subtotal: 4000,
+            total: 4340,
+            tax: 340,
+            currency: 'usd'
+          })
+        }
+      }
+    });
+
+    const result = await client.previewSubscriptionInvoice({
+      address: previewAddress,
+      items: previewItems
+    });
+
+    expect(result).toEqual({ subtotal: 40, tax: 3.4, total: 43.4, currency: 'usd' });
+    expect(stripe.invoices.createPreview).toHaveBeenCalledWith(expect.objectContaining({
+      automatic_tax: { enabled: true }
+    }));
+  });
+
+  test('does not send automatic tax when the flag is off', async () => {
+    const { stripe, client } = buildClient({
+      automaticTaxEnabled: false,
+      stripe: {
+        invoices: {
+          createPreview: jest.fn().mockResolvedValue({
+            subtotal: 4000,
+            total: 4000,
+            tax: 0,
+            currency: 'usd'
+          })
+        }
+      }
+    });
+
+    await client.previewSubscriptionInvoice({
+      address: previewAddress,
+      items: previewItems
+    });
+
+    const params = stripe.invoices.createPreview.mock.calls[0][0];
+    expect(params.automatic_tax).toBeUndefined();
   });
 });
 
