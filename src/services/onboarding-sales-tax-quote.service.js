@@ -12,7 +12,6 @@ class OnboardingSalesTaxQuoteService {
   constructor(repository, options = {}) {
     this.repository = repository;
     this.automaticTaxEnabled = Boolean(options.automaticTaxEnabled);
-    this.previewRepository = options.previewRepository || null;
   }
 
   async quote({ userId, payload }) {
@@ -28,14 +27,11 @@ class OnboardingSalesTaxQuoteService {
     const subtotal = await this.resolveSubtotal(userId);
 
     if (address.country !== 'US') {
-      const data = await this.repository.quote({
+      return this.zeroQuote({
         subtotal,
-        productTax: 0,
-        productTaxPercent: 0,
         taxJurisdiction: `${address.country || 'XX'}-ZERO`,
         country: address.country || 'XX'
       });
-      return { success: true, data };
     }
 
     if (!address.state || !address.postalCode) {
@@ -45,64 +41,25 @@ class OnboardingSalesTaxQuoteService {
       });
     }
 
-    if (this.automaticTaxEnabled) {
-      const data = await this.repository.quote({
-        subtotal,
-        productTax: 0,
-        productTaxPercent: 0,
-        taxJurisdiction: `US-${address.state}`,
-        country: 'US'
-      });
-      return { success: true, data };
-    }
-
-    if (!subtotal || subtotal <= 0) {
-      throw new HttpError(422, 'Sales tax quote is unavailable.', {
-        code: 'sales_tax_unavailable',
-        reason: 'missing_subtotal'
-      });
-    }
-
-    if (this.previewRepository && this.previewRepository.preview) {
-      try {
-        const preview = await this.previewRepository.preview({
-          address: {
-            country: 'US',
-            state: address.state,
-            postal_code: address.postalCode,
-            line1: String((payload.address && (payload.address.line1 || payload.address.street)) || ''),
-            city: String((payload.address && payload.address.city) || '')
-          },
-          priceIds: this.previewRepository.getFallbackPriceIds
-            ? await this.previewRepository.getFallbackPriceIds(userId)
-            : []
-        });
-        const tax = Number(preview && preview.tax);
-        const previewSubtotal = Number(preview && preview.subtotal) || subtotal;
-        const percent = previewSubtotal > 0 ? Number(((tax / previewSubtotal) * 100).toFixed(4)) : 0;
-        const data = await this.repository.quote({
-          subtotal: previewSubtotal,
-          productTax: Number((tax || 0).toFixed(2)),
-          productTaxPercent: percent,
-          taxJurisdiction: `US-${address.state}`,
-          country: 'US'
-        });
-        return { success: true, data };
-      } catch (error) {
-        if (error instanceof HttpError && error.details && error.details.code === 'invalid_price_id') {
-          throw new HttpError(422, 'Sales tax quote is unavailable.', {
-            code: 'sales_tax_unavailable',
-            reason: 'missing_price_ids'
-          });
-        }
-        throw error;
-      }
-    }
-
-    throw new HttpError(422, 'Sales tax quote is unavailable.', {
-      code: 'sales_tax_unavailable',
-      reason: 'sales_tax_unavailable'
+    // Stripe Tax is applied at subscription create when STRIPE_US_AUTOMATIC_TAX is on.
+    // When the flag is off, tax is not collected. Either way this route returns 0 so
+    // checkout can proceed without Stripe invoice preview or price ids.
+    return this.zeroQuote({
+      subtotal,
+      taxJurisdiction: `US-${address.state}`,
+      country: 'US'
     });
+  }
+
+  async zeroQuote({ subtotal, taxJurisdiction, country }) {
+    const data = await this.repository.quote({
+      subtotal,
+      productTax: 0,
+      productTaxPercent: 0,
+      taxJurisdiction,
+      country
+    });
+    return { success: true, data };
   }
 
   async resolveSubtotal(userId) {

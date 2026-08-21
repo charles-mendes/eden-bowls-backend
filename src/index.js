@@ -241,8 +241,7 @@ async function bootstrap() {
   const onboardingSubscriptionPreviewService = new OnboardingSubscriptionPreviewService(onboardingSubscriptionPreviewRepository);
   const onboardingSalesTaxQuoteRepository = new OnboardingSalesTaxQuoteRepository(dataSource);
   const onboardingSalesTaxQuoteService = new OnboardingSalesTaxQuoteService(onboardingSalesTaxQuoteRepository, {
-    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
-    previewRepository: onboardingSubscriptionPreviewRepository
+    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX
   });
   const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository(dataSource);
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
