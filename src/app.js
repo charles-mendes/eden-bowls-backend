@@ -36,6 +36,7 @@ const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-p
 const { registerOnboardingPetsSyncRoutes } = require('./api/routes/onboarding-pets-sync.routes');
 const { registerProfileRoutes } = require('./api/routes/profile.routes');
 const { registerAdminRoutes } = require('./api/routes/admin.routes');
+const { registerPublicFeedbacksRoutes } = require('./api/routes/public-feedbacks.routes');
 const { HttpError } = require('./core/http-error');
 const path = require('path');
 
@@ -88,8 +89,10 @@ function createApp(dependencies = {}) {
   }));
   app.use('/stripe/v1/webhook', express.raw({ type: 'application/json' }));
   app.use('/api/v1/profile/avatar', express.json({ limit: '5mb' }));
+  app.use('/api/v1/admin/feedbacks', express.json({ limit: '5mb' }));
   app.use(express.json({ limit: '1mb' }));
   app.use('/avatars', express.static(dependencies.avatarPublicDir || path.join(process.cwd(), 'public', 'avatars')));
+  app.use('/feedback-photos', express.static(dependencies.feedbackPhotoPublicDir || path.join(process.cwd(), 'public', 'feedback-photos')));
   app.use(
     rateLimit({
       windowMs: 60 * 1000,
@@ -156,6 +159,7 @@ function createApp(dependencies = {}) {
   registerOnboardingPetDeleteRoutes(app, dependencies);
   registerOnboardingPetsSyncRoutes(app, dependencies);
   registerProfileRoutes(app, dependencies);
+  registerPublicFeedbacksRoutes(app, dependencies);
   registerAdminRoutes(app, dependencies);
 
   app.use((request, response, next) => {

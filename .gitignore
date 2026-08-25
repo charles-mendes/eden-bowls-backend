@@ -3,3 +3,5 @@ node_modules
 data/*.mmdb
 public/avatars/*
 !public/avatars/.gitkeep
+public/feedback-photos/*
+!public/feedback-photos/.gitkeep

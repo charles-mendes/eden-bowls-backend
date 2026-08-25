@@ -9,7 +9,13 @@ describe('admin roles', () => {
     expect(ROLE_PERMISSIONS.operator).toContain('catalog.sync');
     expect(ROLE_PERMISSIONS.operator).toContain('billing.coupons.write');
     expect(ROLE_PERMISSIONS.operator).toContain('users.status.write');
+    expect(ROLE_PERMISSIONS.operator).toContain('feedbacks.write');
     expect(ROLE_PERMISSIONS.operator).not.toContain('users.roles.write');
+  });
+
+  test('lets readonly list feedbacks but not write them', () => {
+    expect(ROLE_PERMISSIONS.readonly).toContain('feedbacks.read');
+    expect(ROLE_PERMISSIONS.readonly).not.toContain('feedbacks.write');
   });
 
   test('reserves role assignment for admin', () => {

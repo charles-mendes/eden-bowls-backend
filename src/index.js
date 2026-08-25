@@ -46,6 +46,7 @@ const { StripeWebhookEventsRepository } = require('./infrastructure/repositories
 const { OnboardingPetDeleteRepository } = require('./infrastructure/repositories/onboarding-pets-delete.repository');
 const { ProfileRepository } = require('./infrastructure/repositories/profile.repository');
 const { LocalAvatarStorage } = require('./infrastructure/storage/local-avatar-storage');
+const { LocalFeedbackPhotoStorage } = require('./infrastructure/storage/local-feedback-photo-storage');
 const { AuthService } = require('./services/auth.service');
 const { createOtpMailer } = require('./infrastructure/mailers/otp-mailer');
 const { BreedsService } = require('./services/breeds.service');
@@ -88,6 +89,8 @@ const { AdminOnboardingService } = require('./services/admin-onboarding.service'
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
 const { AdminUsersService } = require('./services/admin-users.service');
+const { FeedbacksRepository } = require('./infrastructure/repositories/feedbacks.repository');
+const { FeedbacksService } = require('./services/feedbacks.service');
 const { AdminOnboardingRepository } = require('./infrastructure/repositories/admin-onboarding.repository');
 const { AdminUsersRepository } = require('./infrastructure/repositories/admin-users.repository');
 const { AdminCatalogRepository } = require('./infrastructure/repositories/admin-catalog.repository');
@@ -326,6 +329,17 @@ async function bootstrap() {
     stripeBilling,
     avatarStorage
   });
+  const feedbackPhotoPublicDir = path.resolve(env.FEEDBACK_PHOTO_DIR);
+  const feedbackPhotoPublicBaseUrl = env.FEEDBACK_PHOTO_PUBLIC_BASE_URL
+    || `${String(env.JWT_AUTH_ISSUER || '').replace(/\/+$/, '')}/feedback-photos`;
+  const feedbackPhotoStorage = new LocalFeedbackPhotoStorage({
+    directory: feedbackPhotoPublicDir,
+    publicBaseUrl: feedbackPhotoPublicBaseUrl
+  });
+  const feedbacksRepository = new FeedbacksRepository(dataSource);
+  const feedbacksService = new FeedbacksService(feedbacksRepository, {
+    photoStorage: feedbackPhotoStorage
+  });
   const adminIdentityService = new AdminIdentityService({
     authRepository,
     authService,
@@ -428,7 +442,9 @@ async function bootstrap() {
     adminCatalogService,
     adminUsersService,
     stripeCouponService,
+    feedbacksService,
     avatarPublicDir,
+    feedbackPhotoPublicDir,
     geoService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,

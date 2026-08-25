@@ -6,6 +6,13 @@ const { parseShippingSettingsInput, parseShippingTestInput } = require('../valid
 const { parseCreateCouponInput, parsePromoMappingInput } = require('../validators/admin-coupons.validator');
 const { parsePageQuery } = require('../validators/admin-pagination');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
+const {
+  parseCreateFeedbackInput,
+  parseFeedbackActiveInput,
+  parseFeedbackId,
+  parseFeedbackListQuery,
+  parseUpdateFeedbackInput
+} = require('../validators/feedbacks.validator');
 
 function registerAdminRoutes(app, dependencies = {}) {
   const requirePermission = buildRequireAdminPermission(dependencies);
@@ -445,6 +452,66 @@ function registerAdminRoutes(app, dependencies = {}) {
         parseAccountStatusInput(request.body || {}),
         request.adminIdentity
       );
+    });
+  });
+
+  app.get('/api/v1/admin/feedbacks', requirePermission('feedbacks.read'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.feedbacksService) {
+        throw new HttpError(503, 'Feedbacks service is not available.');
+      }
+      return dependencies.feedbacksService.list(parseFeedbackListQuery(request.query || {}));
+    });
+  });
+
+  app.post('/api/v1/admin/feedbacks', requirePermission('feedbacks.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.feedbacksService) {
+        throw new HttpError(503, 'Feedbacks service is not available.');
+      }
+      return dependencies.feedbacksService.create(parseCreateFeedbackInput(request.body || {}));
+    });
+  });
+
+  app.get('/api/v1/admin/feedbacks/:id', requirePermission('feedbacks.read'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.feedbacksService) {
+        throw new HttpError(503, 'Feedbacks service is not available.');
+      }
+      return dependencies.feedbacksService.getById(parseFeedbackId(request.params.id));
+    });
+  });
+
+  app.patch('/api/v1/admin/feedbacks/:id/active', requirePermission('feedbacks.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.feedbacksService) {
+        throw new HttpError(503, 'Feedbacks service is not available.');
+      }
+      return dependencies.feedbacksService.setActive(
+        parseFeedbackId(request.params.id),
+        parseFeedbackActiveInput(request.body || {})
+      );
+    });
+  });
+
+  app.patch('/api/v1/admin/feedbacks/:id', requirePermission('feedbacks.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.feedbacksService) {
+        throw new HttpError(503, 'Feedbacks service is not available.');
+      }
+      return dependencies.feedbacksService.update(
+        parseFeedbackId(request.params.id),
+        parseUpdateFeedbackInput(request.body || {})
+      );
+    });
+  });
+
+  app.delete('/api/v1/admin/feedbacks/:id', requirePermission('feedbacks.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.feedbacksService) {
+        throw new HttpError(503, 'Feedbacks service is not available.');
+      }
+      return dependencies.feedbacksService.remove(parseFeedbackId(request.params.id));
     });
   });
 }

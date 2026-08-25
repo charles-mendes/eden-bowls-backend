@@ -10,7 +10,7 @@ edenbowls.com, www.edenbowls.com {
   redir /qa-admin /qa-admin/
 
   @qa_api_root_paths {
-    path /api /api/* /stripe /stripe/* /health /liveness /readiness /metrics /avatars /avatars/*
+    path /api /api/* /stripe /stripe/* /health /liveness /readiness /metrics /avatars /avatars/* /feedback-photos /feedback-photos/*
   }
   redir @qa_api_root_paths /qa-api{uri} 308
 

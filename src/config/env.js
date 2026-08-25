@@ -72,7 +72,9 @@ const rawEnvSchema = z.object({
   GEO_TRUST_PROXY_HEADERS: z.string().optional(),
   TRUST_PROXY: z.string().optional(),
   PROFILE_AVATAR_DIR: z.string().optional(),
-  PROFILE_AVATAR_PUBLIC_BASE_URL: z.string().optional()
+  PROFILE_AVATAR_PUBLIC_BASE_URL: z.string().optional(),
+  FEEDBACK_PHOTO_DIR: z.string().optional(),
+  FEEDBACK_PHOTO_PUBLIC_BASE_URL: z.string().optional()
 });
 
 function firstNonEmpty(...values) {
@@ -183,7 +185,9 @@ function parseEnv(source = process.env) {
     GEO_TRUST_PROXY_HEADERS: toBoolean(rawEnv.GEO_TRUST_PROXY_HEADERS, false),
     TRUST_PROXY: toBoolean(rawEnv.TRUST_PROXY, toBoolean(rawEnv.GEO_TRUST_PROXY_HEADERS, rawEnv.NODE_ENV === 'production')),
     PROFILE_AVATAR_DIR: firstNonEmpty(rawEnv.PROFILE_AVATAR_DIR) || './public/avatars',
-    PROFILE_AVATAR_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.PROFILE_AVATAR_PUBLIC_BASE_URL)
+    PROFILE_AVATAR_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.PROFILE_AVATAR_PUBLIC_BASE_URL),
+    FEEDBACK_PHOTO_DIR: firstNonEmpty(rawEnv.FEEDBACK_PHOTO_DIR) || './public/feedback-photos',
+    FEEDBACK_PHOTO_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.FEEDBACK_PHOTO_PUBLIC_BASE_URL)
   };
 }
 

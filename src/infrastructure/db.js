@@ -17,6 +17,7 @@ const {
   buildShippingBrSettingsEntitySchema,
   buildShippingUsSettingsEntitySchema
 } = require('./entities/shipping-settings.entity');
+const { buildFeedbackEntitySchema } = require('./entities/feedback.entity');
 const { CreateBreedsTable1700000000000 } = require('./migrations/1700000000000-create-breeds-table');
 const { CreatePriceZonePolicyTable1700000000001 } = require('./migrations/1700000000001-create-price-zone-policy-table');
 const { CreateProductsCatalogTables1700000000002 } = require('./migrations/1700000000002-create-products-catalog-tables');
@@ -28,6 +29,8 @@ const { SeedCurrentAppFlavorsCatalog1700000000007 } = require('./migrations/1700
 const { CreateStripeFirstPurchasePromosTable1700000000008 } = require('./migrations/1700000000008-create-stripe-first-purchase-promos-table');
 const { CreateStripeSubscriptionLedgerTables1700000000009 } = require('./migrations/1700000000009-create-stripe-subscription-ledger-tables');
 const { CreateShippingSettingsTables1700000000010 } = require('./migrations/1700000000010-create-shipping-settings-tables');
+const { CreateFeedbacksTable1700000000011 } = require('./migrations/1700000000011-create-feedbacks-table');
+const { AddFeedbackPlaceAndSeed1700000000012 } = require('./migrations/1700000000012-add-feedback-place-and-seed');
 
 function buildDataSourceOptions(env) {
   return {
@@ -51,7 +54,8 @@ function buildDataSourceOptions(env) {
       buildStripeSubscriptionEntitySchema(),
       buildStripeWebhookEventEntitySchema(),
       buildShippingBrSettingsEntitySchema(),
-      buildShippingUsSettingsEntitySchema()
+      buildShippingUsSettingsEntitySchema(),
+      buildFeedbackEntitySchema()
     ],
     migrations: [
       CreateBreedsTable1700000000000,
@@ -64,7 +68,9 @@ function buildDataSourceOptions(env) {
       SeedCurrentAppFlavorsCatalog1700000000007,
       CreateStripeFirstPurchasePromosTable1700000000008,
       CreateStripeSubscriptionLedgerTables1700000000009,
-      CreateShippingSettingsTables1700000000010
+      CreateShippingSettingsTables1700000000010,
+      CreateFeedbacksTable1700000000011,
+      AddFeedbackPlaceAndSeed1700000000012
     ],
     synchronize: false,
     logging: false,
