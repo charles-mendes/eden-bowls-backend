@@ -67,6 +67,16 @@ const FLAVOR_CATALOG = {
   }
 };
 
+function flavorKeyFromLabel(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
 function listFlavorOptions(market) {
   const labels = market && market.flavorLabels ? market.flavorLabels : {};
 
@@ -74,6 +84,28 @@ function listFlavorOptions(market) {
     key,
     label: labels[key] || key
   }));
+}
+
+function flavorOptionsFromLabels(labels, market) {
+  const marketLabels = market && market.flavorLabels ? market.flavorLabels : {};
+  const options = [];
+  const seen = new Set();
+
+  for (const raw of Array.isArray(labels) ? labels : []) {
+    const stored = String(raw || '').trim();
+    const key = flavorKeyFromLabel(stored);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    options.push({
+      key,
+      label: marketLabels[key] || stored
+    });
+  }
+
+  return options;
 }
 
 function listFlavorVariations(country) {
@@ -97,6 +129,8 @@ function listFlavorVariations(country) {
 module.exports = {
   FLAVOR_KEYS,
   FLAVOR_CATALOG,
+  flavorKeyFromLabel,
+  flavorOptionsFromLabels,
   listFlavorOptions,
   listFlavorVariations
 };

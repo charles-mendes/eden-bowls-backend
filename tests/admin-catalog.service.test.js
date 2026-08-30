@@ -70,8 +70,8 @@ describe('AdminCatalogService', () => {
       planCountry: 'BR',
       planDays: 30,
       variants: [
-        { id: '1001', name: 'Beef 300g', sku: 'Beef-300g', regularPrice: 28 },
-        { name: 'Lamb 300g', sku: 'LAMB-300', regularPrice: 40 }
+        { id: '1001', name: 'Beef 300g', sku: 'Beef-300g', flavor: 'Beef', regularPrice: 28 },
+        { name: 'Lamb 300g', sku: 'LAMB-300', flavor: 'Lamb', regularPrice: 40 }
       ]
     });
 
@@ -79,6 +79,7 @@ describe('AdminCatalogService', () => {
       id: '1001',
       name: 'Beef 300g',
       sku: 'Beef-300g',
+      flavor: 'Beef',
       regularPrice: 28,
       zoneId: 'br',
       priceChanged: true
@@ -87,6 +88,7 @@ describe('AdminCatalogService', () => {
       productId: '100',
       name: 'Lamb 300g',
       sku: 'LAMB-300',
+      flavor: 'Lamb',
       regularPrice: 40,
       zoneId: 'br',
       menuOrder: 2

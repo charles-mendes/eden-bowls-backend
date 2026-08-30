@@ -233,7 +233,8 @@ async function bootstrap() {
     planPreviewRepository: onboardingPlanPreviewRepository
   });
   const onboardingPlanSnapshotRepository = new OnboardingPlanSnapshotRepository({
-    recommendationRepository: onboardingRecommendationRepository
+    recommendationRepository: onboardingRecommendationRepository,
+    productsRepository
   });
   const onboardingPlanSnapshotService = new OnboardingPlanSnapshotService(onboardingPlanSnapshotRepository);
   const onboardingRecurrenceRepository = new OnboardingRecurrenceRepository(dataSource);

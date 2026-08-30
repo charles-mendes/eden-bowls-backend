@@ -92,6 +92,7 @@ describe('AdminCatalogRepository', () => {
       id: '1001',
       sku: '1001',
       name: 'Beef 300g',
+      flavor: 'Beef',
       regularPrice: 25,
       stripeProductId: 'prod_seed_br_beef_300g',
       syncStatus: 'price_mismatch'
@@ -167,6 +168,33 @@ describe('AdminCatalogRepository', () => {
     expect(dataSource.query.mock.calls[0][0]).toContain("post_type` = 'product_variation'");
     expect(dataSource.query.mock.calls[0][1]).toEqual([3001, 2011]);
     expect(dataSource.query.mock.calls[1][1]).toEqual([3001]);
+  });
+
+  test('creates a variation and stores the flavor attribute', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([{ nextId: 3001 }])
+        .mockResolvedValue([])
+    };
+    const repository = new AdminCatalogRepository(dataSource);
+
+    await expect(repository.createVariation({
+      productId: 100,
+      name: 'Lamb 300g',
+      sku: 'LAMB-300',
+      flavor: 'Lamb',
+      regularPrice: 40,
+      zoneId: 'br',
+      menuOrder: 3
+    })).resolves.toBe('3001');
+
+    const flavorInsert = dataSource.query.mock.calls.find((call) => (
+      String(call[0]).includes('INSERT INTO `wp_postmeta`')
+      && Array.isArray(call[1])
+      && call[1][1] === 'attribute_pa_flavor'
+    ));
+    expect(flavorInsert[1]).toEqual([3001, 'attribute_pa_flavor', 'Lamb']);
   });
 
   test('returns an empty catalog when the table does not exist', async () => {

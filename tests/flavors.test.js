@@ -1,9 +1,16 @@
-const { FLAVOR_KEYS, listFlavorOptions, listFlavorVariations } = require('../src/core/flavors');
+const { FLAVOR_KEYS, flavorOptionsFromLabels, listFlavorOptions, listFlavorVariations } = require('../src/core/flavors');
 const { MARKETS } = require('../src/core/market');
 
 describe('flavor catalog', () => {
   test('exposes the current app flavors in catalog order', () => {
     expect(FLAVOR_KEYS).toEqual(['beef', 'fish', 'pork', 'turkey']);
+  });
+
+  test('builds flavor options from catalog labels and localizes known keys', () => {
+    expect(flavorOptionsFromLabels(['Beef', 'Lamb', 'beef', ''], MARKETS.BR)).toEqual([
+      { key: 'beef', label: 'Bovino' },
+      { key: 'lamb', label: 'Lamb' }
+    ]);
   });
 
   test('lists localized flavor options for Brazil and the United States', () => {

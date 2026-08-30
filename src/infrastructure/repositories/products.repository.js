@@ -275,6 +275,41 @@ class ProductsRepository {
     return new Date(parsedMillis);
   }
 
+  async listFlavorLabelsByCountry(country) {
+    this.ensureDataSourceReady();
+
+    try {
+      const sql = [
+        'SELECT vm.meta_value AS flavor, MIN(v.menu_order) AS menu_order, MIN(v.ID) AS variation_id',
+        `FROM \`${this.tableNames.posts}\` v`,
+        `INNER JOIN \`${this.tableNames.posts}\` p ON p.ID = v.post_parent`,
+        `INNER JOIN \`${this.tableNames.postmeta}\` vm ON vm.post_id = v.ID`,
+        'AND vm.meta_key IN (\'attribute_pa_flavor\', \'attribute_flavor\', \'attribute_sabor\')',
+        `INNER JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID`,
+        'AND pm_country.meta_key = \'_cmpb_plan_country\'',
+        "WHERE v.post_type = 'product_variation'",
+        "AND v.post_status = 'publish'",
+        "AND p.post_type = 'product'",
+        "AND p.post_status = 'publish'",
+        'AND UPPER(COALESCE(pm_country.meta_value, "")) = ?',
+        'AND TRIM(COALESCE(vm.meta_value, "")) <> ""',
+        'GROUP BY vm.meta_value',
+        'ORDER BY MIN(v.menu_order) ASC, MIN(v.ID) ASC'
+      ].join(' ');
+
+      const rows = await this.dataSource.query(sql, [String(country || '').trim().toUpperCase()]);
+      return (Array.isArray(rows) ? rows : [])
+        .map((row) => String(row.flavor || '').trim())
+        .filter(Boolean);
+    } catch (error) {
+      if (this.isCatalogMissingError(error)) {
+        return [];
+      }
+
+      throw error;
+    }
+  }
+
   extractVariationFlavor(variation) {
     const meta = variation.meta || {};
     return this.pickFirstMetaValue(meta, [

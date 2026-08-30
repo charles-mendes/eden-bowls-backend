@@ -21,6 +21,19 @@ function zoneIdFromCountry(country) {
   return '';
 }
 
+function parseVariationFlavor(value) {
+  if (value == null) {
+    return undefined;
+  }
+
+  const flavor = String(value).trim();
+  if (flavor.length > 64) {
+    throw new HttpError(422, 'Variation flavor must be at most 64 characters.');
+  }
+
+  return flavor;
+}
+
 function parseVariationPrice(value) {
   if (value == null || value === '') {
     return null;
@@ -279,6 +292,7 @@ class AdminCatalogService {
       const id = item.id == null ? '' : String(item.id).trim();
       const name = item.name == null ? undefined : String(item.name);
       const sku = item.sku == null ? undefined : String(item.sku);
+      const flavor = parseVariationFlavor(item.flavor);
       const regularPrice = parseVariationPrice(item.regularPrice);
 
       if (isNewVariationId(id, existingIds)) {
@@ -291,6 +305,7 @@ class AdminCatalogService {
           productId: product.id,
           name: String(name || '').trim(),
           sku: String(sku || '').trim(),
+          flavor,
           regularPrice,
           zoneId,
           menuOrder
@@ -304,6 +319,7 @@ class AdminCatalogService {
         id,
         name,
         sku,
+        flavor,
         regularPrice,
         zoneId,
         priceChanged: regularPrice != null && currentPrice !== regularPrice

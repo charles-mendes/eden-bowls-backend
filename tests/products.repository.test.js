@@ -111,6 +111,34 @@ describe('ProductsRepository', () => {
     expect(priceZonePolicyRepository.findActiveZoneId).toHaveBeenCalledWith('US', 'USD');
   });
 
+  test('lists published flavor labels for a country', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn().mockResolvedValue([
+        { flavor: 'Beef', menu_order: 1, variation_id: 1001 },
+        { flavor: 'Lamb', menu_order: 2, variation_id: 1005 }
+      ])
+    };
+    const repository = new ProductsRepository(dataSource);
+
+    await expect(repository.listFlavorLabelsByCountry('BR')).resolves.toEqual(['Beef', 'Lamb']);
+    expect(dataSource.query.mock.calls[0][0]).toContain('attribute_pa_flavor');
+    expect(dataSource.query.mock.calls[0][1]).toEqual(['BR']);
+  });
+
+  test('returns an empty flavor list when catalog tables are missing', async () => {
+    const repository = new ProductsRepository({
+      isInitialized: true,
+      query: jest.fn().mockRejectedValue({
+        code: 'ER_NO_SUCH_TABLE',
+        errno: 1146,
+        message: "Table 'eden_bowls.wp_posts' doesn't exist"
+      })
+    });
+
+    await expect(repository.listFlavorLabelsByCountry('US')).resolves.toEqual([]);
+  });
+
   test('throws 503 when datasource is not initialized', async () => {
     const repository = new ProductsRepository({ isInitialized: false, query: jest.fn() });
 

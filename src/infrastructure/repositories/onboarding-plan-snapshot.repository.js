@@ -1,11 +1,12 @@
 const { PLAN_TERMS } = require('../../core/first-purchase-discount');
-const { listFlavorOptions } = require('../../core/flavors');
+const { flavorOptionsFromLabels, listFlavorOptions } = require('../../core/flavors');
 const { MARKETS, resolveMarket } = require('../../core/market');
 const { consumptionLabels } = require('../../core/simplified-consumption');
 
 class OnboardingPlanSnapshotRepository {
   constructor(options = {}) {
     this.recommendationRepository = options.recommendationRepository || null;
+    this.productsRepository = options.productsRepository || null;
   }
 
   async getSnapshot(userId, marketInput, petsOverride) {
@@ -33,9 +34,23 @@ class OnboardingPlanSnapshotRepository {
         pets
       },
       pets,
-      flavor_options: listFlavorOptions(market),
+      flavor_options: await this.resolveFlavorOptions(market),
       plan_terms: PLAN_TERMS
     };
+  }
+
+  async resolveFlavorOptions(market) {
+    if (!this.productsRepository || typeof this.productsRepository.listFlavorLabelsByCountry !== 'function') {
+      return listFlavorOptions(market);
+    }
+
+    try {
+      const labels = await this.productsRepository.listFlavorLabelsByCountry(market.country);
+      const options = flavorOptionsFromLabels(labels, market);
+      return options.length > 0 ? options : listFlavorOptions(market);
+    } catch (_error) {
+      return listFlavorOptions(market);
+    }
   }
 }
 

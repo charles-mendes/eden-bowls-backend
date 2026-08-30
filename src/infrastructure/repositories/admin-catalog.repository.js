@@ -373,7 +373,7 @@ class AdminCatalogRepository {
     await this.upsertPostMeta(variationId, '_stripe_price_fingerprint', '');
   }
 
-  async createVariation({ productId, name, sku, regularPrice, zoneId, menuOrder }) {
+  async createVariation({ productId, name, sku, flavor, regularPrice, zoneId, menuOrder }) {
     this.ensureDataSource();
     const id = await this.nextPostId();
     const title = String(name || '').trim();
@@ -392,6 +392,9 @@ class AdminCatalogRepository {
     if (code) {
       await this.upsertPostMeta(id, '_sku', code);
     }
+    if (flavor != null) {
+      await this.upsertPostMeta(id, 'attribute_pa_flavor', String(flavor).trim());
+    }
     if (regularPrice != null) {
       await this.writeVariationPrice(id, regularPrice, zoneId);
     }
@@ -399,7 +402,7 @@ class AdminCatalogRepository {
     return String(id);
   }
 
-  async updateVariation({ id, name, sku, regularPrice, zoneId, priceChanged }) {
+  async updateVariation({ id, name, sku, flavor, regularPrice, zoneId, priceChanged }) {
     this.ensureDataSource();
     const title = name == null ? undefined : String(name).trim();
     const code = sku == null ? undefined : String(sku).trim();
@@ -412,6 +415,9 @@ class AdminCatalogRepository {
 
     if (code != null) {
       await this.upsertPostMeta(id, '_sku', code);
+    }
+    if (flavor != null) {
+      await this.upsertPostMeta(id, 'attribute_pa_flavor', String(flavor).trim());
     }
     if (regularPrice != null && priceChanged !== false) {
       await this.writeVariationPrice(id, regularPrice, zoneId);

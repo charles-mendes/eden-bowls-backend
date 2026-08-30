@@ -39,4 +39,19 @@ describe('OnboardingPlanSnapshotRepository', () => {
     ]);
     expect(data.flavor_options.map((option) => option.key)).toEqual(['beef', 'fish', 'pork', 'turkey']);
   });
+
+  test('uses published catalog flavors when the products repository returns labels', async () => {
+    const repository = new OnboardingPlanSnapshotRepository({
+      productsRepository: {
+        listFlavorLabelsByCountry: jest.fn().mockResolvedValue(['Beef', 'Lamb'])
+      }
+    });
+
+    const data = await repository.getSnapshot(null, MARKETS.BR);
+
+    expect(data.flavor_options).toEqual([
+      { key: 'beef', label: 'Bovino' },
+      { key: 'lamb', label: 'Lamb' }
+    ]);
+  });
 });
