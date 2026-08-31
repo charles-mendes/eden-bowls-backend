@@ -1,7 +1,25 @@
 const { HttpError } = require('./http-error');
 
+function hasPlanSelectionPets(plan = null) {
+  if (!plan || !Array.isArray(plan.pets)) {
+    return false;
+  }
+
+  return plan.pets.some((pet) => {
+    if (!pet || typeof pet !== 'object' || pet.enabled === false) {
+      return false;
+    }
+
+    return Boolean(String(pet.pet_id || pet.id || pet.pet_name || pet.name || '').trim());
+  });
+}
+
 function hasPets(context = {}) {
-  return Array.isArray(context.pets) && context.pets.length > 0;
+  if (Array.isArray(context.pets) && context.pets.length > 0) {
+    return true;
+  }
+
+  return hasPlanSelectionPets(context.planSelection);
 }
 
 function isPricedPlanSelection(plan = null) {
@@ -120,6 +138,7 @@ function collectPriceItems(planSelection = {}) {
 module.exports = {
   canResolvePlanSelection,
   collectPriceItems,
+  hasPlanSelectionPets,
   isPricedPlanSelection,
   validateCheckoutState
 };

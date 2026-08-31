@@ -268,7 +268,8 @@ async function bootstrap() {
     stripeBilling,
     customerStore: stripeCustomerStore,
     ledgerRepository: subscriptionLedgerRepository,
-    planPreviewRepository: onboardingPlanPreviewRepository
+    planPreviewRepository: onboardingPlanPreviewRepository,
+    petsSyncRepository: onboardingPetCreateRepository
   });
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository({
     viaCepClient,

@@ -107,6 +107,7 @@ class OnboardingSubscriptionCheckoutService {
     this.ledgerRepository = options.ledgerRepository || null;
     this.lockStore = options.lockStore || defaultCheckoutLockStore;
     this.planPreviewRepository = options.planPreviewRepository || null;
+    this.petsSyncRepository = options.petsSyncRepository || null;
   }
 
   async checkout({ userId, payload = {} }) {
@@ -142,7 +143,8 @@ class OnboardingSubscriptionCheckoutService {
     const rawContext = this.repository.getCheckoutContext
       ? await this.repository.getCheckoutContext(userId)
       : { planSelection: this.repository.getPlanSelection ? await this.repository.getPlanSelection(userId) : null };
-    const context = await this.ensurePricedPlanSelection(userId, rawContext);
+    const pricedContext = await this.ensurePricedPlanSelection(userId, rawContext);
+    const context = await this.ensurePersistedPets(userId, pricedContext);
     validateCheckoutState(context);
 
     const eligibility = await this.discountEligibilityRepository.getEligibility(userId);
@@ -334,6 +336,48 @@ class OnboardingSubscriptionCheckoutService {
     } finally {
       releaseLock();
     }
+  }
+
+  mapPlanPetToSyncPayload(pet = {}) {
+    return {
+      pet_id: pet.pet_id || pet.id,
+      local_id: pet.pet_id || pet.id || pet.local_id,
+      name: pet.pet_name || pet.name,
+      breed: pet.breed || '',
+      age_years: Number(pet.age_years || 0),
+      age_months: Number(pet.age_months || 0),
+      weight: Number(pet.weight || 0),
+      weight_unit: pet.weight_unit === 'lb' ? 'lb' : 'kg',
+      size: pet.size || 'medium',
+      activity_level: pet.activity_level || 'medium',
+      pet_condition: pet.pet_condition || 'ideal',
+      neutered: Boolean(pet.neutered)
+    };
+  }
+
+  async ensurePersistedPets(userId, context = {}) {
+    if (Array.isArray(context.pets) && context.pets.length > 0) {
+      return context;
+    }
+
+    const planPets = Array.isArray(context.planSelection && context.planSelection.pets)
+      ? context.planSelection.pets.filter((pet) => pet && typeof pet === 'object' && pet.enabled !== false)
+      : [];
+
+    if (planPets.length === 0 || !this.petsSyncRepository || typeof this.petsSyncRepository.syncPets !== 'function') {
+      return context;
+    }
+
+    await this.petsSyncRepository.syncPets(userId, planPets.map((pet) => this.mapPlanPetToSyncPayload(pet)));
+
+    if (!this.repository.getCheckoutContext) {
+      return {
+        ...context,
+        pets: planPets.map((pet) => ({ id: pet.pet_id || pet.id }))
+      };
+    }
+
+    return this.repository.getCheckoutContext(userId);
   }
 
   async ensurePricedPlanSelection(userId, context = {}) {

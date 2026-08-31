@@ -60,6 +60,9 @@ function buildService(overrides = {}) {
     saveCustomerId: jest.fn().mockResolvedValue(undefined)
   };
   const lockStore = overrides.lockStore || createCheckoutLockStore();
+  const petsSyncRepository = overrides.petsSyncRepository || {
+    syncPets: jest.fn().mockResolvedValue({ pets: [] })
+  };
 
   return {
     service: new OnboardingSubscriptionCheckoutService(repository, {
@@ -69,8 +72,10 @@ function buildService(overrides = {}) {
       stripeBilling,
       customerStore,
       lockStore,
-      planPreviewRepository: overrides.planPreviewRepository || null
+      planPreviewRepository: overrides.planPreviewRepository || null,
+      petsSyncRepository
     }),
+    petsSyncRepository,
     repository,
     authService,
     discountEligibilityRepository,
@@ -399,6 +404,59 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       details: { code: 'checkout_context_mismatch' }
     });
     expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+  });
+
+  test('persists plan-selection pets when onboarding_pets is empty', async () => {
+    const planPets = [{
+      pet_id: '526fb705-9da4-4d27-965e-da39a20d3b12',
+      pet_name: 'luna',
+      enabled: true,
+      selected_flavors: ['bovino', 'frango'],
+      flavor_weights: [5, 5],
+      weight: '28.66',
+      weight_unit: 'lb'
+    }];
+    const emptyContext = {
+      pets: [],
+      planSelection: {
+        ...validContext.planSelection,
+        pets: planPets
+      },
+      address: validContext.address,
+      shipping: validContext.shipping,
+      recurrence: validContext.recurrence,
+      checkoutReference: null
+    };
+    const hydratedContext = {
+      ...emptyContext,
+      pets: [{ id: '526fb705-9da4-4d27-965e-da39a20d3b12' }]
+    };
+    const petsSyncRepository = {
+      syncPets: jest.fn().mockResolvedValue({ pets: [{ id: '526fb705-9da4-4d27-965e-da39a20d3b12' }] })
+    };
+    const { service, petsSyncRepository: syncRepo } = buildService({
+      petsSyncRepository,
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout),
+        getCheckoutContext: jest.fn()
+          .mockResolvedValueOnce(emptyContext)
+          .mockResolvedValue(hydratedContext),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+
+    const result = await service.checkout({ userId: 5, payload });
+
+    expect(result.success).toBe(true);
+    expect(syncRepo.syncPets).toHaveBeenCalledWith(5, [
+      expect.objectContaining({
+        pet_id: '526fb705-9da4-4d27-965e-da39a20d3b12',
+        name: 'luna',
+        weight: 28.66,
+        weight_unit: 'lb'
+      })
+    ]);
   });
 
   test('rejects checkout when the user state is incomplete', async () => {

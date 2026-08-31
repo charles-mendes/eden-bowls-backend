@@ -3,6 +3,7 @@ const { MARKETS } = require('../../core/market');
 
 const petSchema = z.object({
   local_id: z.string().trim().min(1).max(36),
+  pet_id: z.string().trim().min(1).max(36).optional(),
   name: z.string().trim().min(1).max(120),
   breed: z.string().trim().max(120).optional(),
   age_years: z.union([z.string(), z.number()]).optional(),
