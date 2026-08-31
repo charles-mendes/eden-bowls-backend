@@ -40,6 +40,41 @@ describe('plan catalog pricing', () => {
     });
   });
 
+  test('prices localized flavor slugs against the english catalog keys', () => {
+    const pricing = buildCatalogPricingSnapshot(
+      [
+        { pet_id: 'pet-1', pet_name: 'Luna', flavor: 'bovino', quantity: 5, target_pack_size_grams: 500 },
+        { pet_id: 'pet-1', pet_name: 'Luna', flavor: 'frango', quantity: 5, target_pack_size_grams: 500 }
+      ],
+      [
+        { flavor: 'Bovino', weight: '500g', price: 45, currency: 'BRL', variation_id: 1005, product_id: 100 },
+        { flavor: 'Frango', weight: '500g', price: 42.5, currency: 'BRL', variation_id: 1008, product_id: 100 }
+      ],
+      MARKETS.BR
+    );
+
+    expect(pricing.subtotal).toBe(437.5);
+    expect(pricing.line_items).toEqual([
+      expect.objectContaining({ flavor: 'bovino', variation_id: 1005, unit_price: 45, line_total: 225 }),
+      expect.objectContaining({ flavor: 'frango', variation_id: 1008, unit_price: 42.5, line_total: 212.5 })
+    ]);
+  });
+
+  test('matches bovino requests to beef variations in the fallback catalog', () => {
+    const pricing = buildCatalogPricingSnapshot(
+      [{ pet_id: 'pet-1', pet_name: 'Luna', flavor: 'bovino', quantity: 8, target_pack_size_grams: 500 }],
+      listFallbackCatalogItems('BR'),
+      MARKETS.BR
+    );
+
+    expect(pricing.line_items[0]).toMatchObject({
+      flavor: 'bovino',
+      pack_size_grams: 500,
+      unit_price: 45,
+      line_total: 360
+    });
+  });
+
   test('rejects a flavor that is not in the catalog', () => {
     expect(() => buildCatalogPricingSnapshot(
       [{ pet_id: 'pet-1', pet_name: 'Luna', flavor: 'chicken', quantity: 2, target_pack_size_grams: 300 }],

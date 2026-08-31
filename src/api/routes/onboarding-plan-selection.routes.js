@@ -20,7 +20,9 @@ function registerOnboardingPlanSelectionRoutes(app, dependencies = {}) {
       if (error instanceof HttpError && error.details && error.details.code) {
         response.status(error.statusCode).json({
           success: false,
-          message: error.message
+          message: error.message,
+          code: error.details.code,
+          errors: error.details.errors || undefined
         });
         return;
       }

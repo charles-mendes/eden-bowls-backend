@@ -29,7 +29,7 @@ class OnboardingPlanPreviewRepository {
     const simplifiedPets = recommendation && recommendation.simplified && Array.isArray(recommendation.simplified.pets)
       ? recommendation.simplified.pets
       : [];
-    const canMatchRecommendation = Boolean(userId) || simplifiedPets.length > 0;
+    const canMatchRecommendation = simplifiedPets.length > 0;
 
     const catalogLineRequests = [];
     const flavorsByPet = [];

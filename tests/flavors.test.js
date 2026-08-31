@@ -13,6 +13,13 @@ describe('flavor catalog', () => {
     ]);
   });
 
+  test('canonicalizes localized catalog labels to the same flavor key', () => {
+    expect(flavorOptionsFromLabels(['Bovino', 'Frango'], MARKETS.BR)).toEqual([
+      { key: 'beef', label: 'Bovino' },
+      { key: 'frango', label: 'Frango' }
+    ]);
+  });
+
   test('lists localized flavor options for Brazil and the United States', () => {
     expect(listFlavorOptions(MARKETS.BR)).toEqual([
       { key: 'beef', label: 'Bovino' },

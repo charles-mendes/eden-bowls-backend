@@ -1,5 +1,5 @@
 const { HttpError } = require('./http-error');
-const { FLAVOR_CATALOG, FLAVOR_KEYS } = require('./flavors');
+const { FLAVOR_CATALOG, FLAVOR_KEYS, flavorAliasKeys, flavorKeyFromLabel } = require('./flavors');
 const { gramsToOz } = require('./simplified-consumption');
 
 const ANONYMOUS_PACK_SIZE_GRAMS = 300;
@@ -14,13 +14,7 @@ function roundMoney(value) {
 }
 
 function sanitizeFlavorSlug(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9-]/g, '')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
+  return flavorKeyFromLabel(value);
 }
 
 function uniqueSanitizeFlavors(flavors) {
@@ -131,11 +125,7 @@ function indexFlavorVariations(items) {
       continue;
     }
 
-    if (!byFlavor.has(flavor)) {
-      byFlavor.set(flavor, []);
-    }
-
-    byFlavor.get(flavor).push({
+    const variation = {
       flavor,
       grams,
       price,
@@ -143,10 +133,29 @@ function indexFlavorVariations(items) {
       currency: item.currency,
       variation_id: Number(item.variation_id || 0),
       product_id: Number(item.product_id || 0)
-    });
+    };
+
+    for (const alias of flavorAliasKeys(item.flavor)) {
+      if (!byFlavor.has(alias)) {
+        byFlavor.set(alias, []);
+      }
+
+      byFlavor.get(alias).push(variation);
+    }
   }
 
   return byFlavor;
+}
+
+function resolveFlavorVariations(byFlavor, requestedFlavor) {
+  for (const alias of flavorAliasKeys(requestedFlavor)) {
+    const variations = byFlavor.get(alias);
+    if (variations && variations.length > 0) {
+      return variations;
+    }
+  }
+
+  return null;
 }
 
 function pickClosestVariation(variations, targetGrams) {
@@ -186,7 +195,7 @@ function buildCatalogPricingSnapshot(lineRequests, catalogItems, market) {
     }
 
     const flavor = sanitizeFlavorSlug(request.flavor);
-    const variations = byFlavor.get(flavor);
+    const variations = resolveFlavorVariations(byFlavor, flavor);
 
     if (!variations || variations.length === 0) {
       throwPlanError(422, 'plan_selection_snapshot_mismatch', 'Plan selection does not match the current recommendation.', {

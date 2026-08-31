@@ -162,10 +162,35 @@ describe('OnboardingPlanPreviewRepository', () => {
     });
   });
 
-  test('rejects a JWT preview when the pet is not in the recommendation', async () => {
+  test('prices a JWT selection from the catalog when the account has no recommended pets', async () => {
     const repository = new OnboardingPlanPreviewRepository({
       recommendationRepository: {
         getRecommendation: jest.fn().mockResolvedValue({ simplified: { pets: [] }, version: 'v1' })
+      }
+    });
+
+    const resolved = await repository.previewPlan(7, anonymousPayload({
+      selected_flavors: ['bovino'],
+      flavor_weights: [8]
+    }), MARKETS.BR);
+
+    expect(resolved.catalog_pricing.line_items[0]).toMatchObject({
+      flavor: 'bovino',
+      pack_size_grams: 300,
+      unit_price: 25,
+      line_total: 200
+    });
+  });
+
+  test('rejects a JWT preview when the selected pet is not among the recommended pets', async () => {
+    const repository = new OnboardingPlanPreviewRepository({
+      recommendationRepository: {
+        getRecommendation: jest.fn().mockResolvedValue({
+          version: 'v1',
+          simplified: {
+            pets: [{ pet_id: 'other-pet', pet_name: 'Milo', packs: { pack_size_grams: 500 } }]
+          }
+        })
       }
     });
 
@@ -173,6 +198,49 @@ describe('OnboardingPlanPreviewRepository', () => {
       statusCode: 422,
       details: { code: 'plan_selection_snapshot_mismatch' }
     });
+  });
+
+  test('prices localized catalog flavors on a slim authenticated plan selection', async () => {
+    const productsRepository = {
+      listByCategory: jest.fn().mockResolvedValue({
+        products: [{
+          product_id: 100,
+          variations: [
+            { variation_id: 1005, flavor: 'Bovino', weight: '500g', price: 45, currency: 'BRL' },
+            { variation_id: 1008, flavor: 'Frango', weight: '500g', price: 42.5, currency: 'BRL' }
+          ]
+        }]
+      })
+    };
+    const repository = new OnboardingPlanPreviewRepository({
+      recommendationRepository: {
+        getRecommendation: jest.fn().mockResolvedValue({
+          version: 'v1',
+          simplified: {
+            pets: [{
+              pet_id: '526fb705-9da4-4d27-965e-da39a20d3b12',
+              pet_name: 'luna',
+              packs: { pack_size_grams: 500 }
+            }]
+          }
+        })
+      },
+      productsRepository
+    });
+
+    const resolved = await repository.previewPlan(5, {
+      subscription_term_months: 1,
+      pets: [{
+        pet_id: '526fb705-9da4-4d27-965e-da39a20d3b12',
+        pet_name: 'luna',
+        enabled: true,
+        selected_flavors: ['bovino', 'frango'],
+        flavor_weights: [5, 5]
+      }]
+    }, MARKETS.BR);
+
+    expect(resolved.catalog_pricing.subtotal).toBe(437.5);
+    expect(resolved.catalog_pricing.line_items.map((item) => item.flavor)).toEqual(['bovino', 'frango']);
   });
 
   test('rejects duplicate flavor slugs that desync the weight list', async () => {
