@@ -217,7 +217,6 @@ async function bootstrap() {
   const onboardingPetUpdateRepository = new OnboardingPetUpdateRepository(dataSource);
   const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository);
   const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
-  const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository);
   const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository);
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
@@ -251,6 +250,11 @@ async function bootstrap() {
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
   const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
+  const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository, {
+    planSelectionRepository: onboardingPlanSelectionRepository,
+    ledgerRepository: subscriptionLedgerRepository,
+    petsSyncRepository: onboardingPetCreateRepository
+  });
   const stripeWebhookEventsRepository = new StripeWebhookEventsRepository(dataSource);
   const stripeWebhookService = new StripeWebhookService({
     stripeBilling,

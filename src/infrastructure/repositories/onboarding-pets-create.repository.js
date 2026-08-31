@@ -57,12 +57,13 @@ class OnboardingPetCreateRepository {
     const results = [];
     for (const payload of pets) {
       const petId = payload.pet_id || require('crypto').randomUUID();
+      const localId = payload.local_id || payload.pet_id || petId;
       await this.dataSource.query(
         `INSERT INTO \`${this.tableName}\` (\`id\`, \`user_id\`, \`local_id\`, \`name\`, \`breed\`, \`age_years\`, \`age_months\`, \`weight_input\`, \`weight_unit\`, \`size\`, \`activity_level\`, \`pet_condition\`, \`neutered\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE \`name\` = VALUES(\`name\`), \`breed\` = VALUES(\`breed\`), \`age_years\` = VALUES(\`age_years\`), \`age_months\` = VALUES(\`age_months\`), \`weight_input\` = VALUES(\`weight_input\`), \`weight_unit\` = VALUES(\`weight_unit\`), \`size\` = VALUES(\`size\`), \`activity_level\` = VALUES(\`activity_level\`), \`pet_condition\` = VALUES(\`pet_condition\`), \`neutered\` = VALUES(\`neutered\`), \`deleted_at\` = NULL`,
         [
           petId,
           userId,
-          payload.local_id,
+          localId,
           payload.name,
           payload.breed || '',
           Number(payload.age_years || 0),
@@ -75,7 +76,7 @@ class OnboardingPetCreateRepository {
           payload.neutered ? 1 : 0
         ]
       );
-      results.push({ local_id: payload.local_id, id: petId });
+      results.push({ local_id: localId, id: petId });
     }
 
     return { pets: results };

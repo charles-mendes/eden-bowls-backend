@@ -14,4 +14,22 @@ describe('OnboardingPlanSelectionRepository', () => {
       [7, expect.stringContaining('"subscription_term_months":3')]
     );
   });
+
+  test('reads plan selection for the authenticated user', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn().mockResolvedValue([{
+        plan_selection: { pets: [{ pet_id: 'pet-1', pet_name: 'luna' }] }
+      }])
+    };
+    const repository = new OnboardingPlanSelectionRepository(dataSource);
+
+    await expect(repository.getPlanSelection(5)).resolves.toEqual({
+      pets: [{ pet_id: 'pet-1', pet_name: 'luna' }]
+    });
+    expect(dataSource.query).toHaveBeenCalledWith(
+      expect.stringContaining('SELECT `plan_selection` FROM `onboarding_user_state`'),
+      [5]
+    );
+  });
 });
