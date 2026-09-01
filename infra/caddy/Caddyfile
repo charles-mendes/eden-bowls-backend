@@ -1,5 +1,11 @@
 {
   email {$LETSENCRYPT_EMAIL}
+  auto_https disable_redirects
+}
+
+http://edenbowls.com, http://www.edenbowls.com, http://edenbowls.com.br, http://www.edenbowls.com.br {
+  @not_acme not path /.well-known/acme-challenge/*
+  redir @not_acme https://{host}{uri} 301
 }
 
 edenbowls.com, www.edenbowls.com {
