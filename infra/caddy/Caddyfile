@@ -1,6 +1,7 @@
 {
   email {$LETSENCRYPT_EMAIL}
   auto_https disable_redirects
+  key_type rsa2048
   servers {
     protocols h1 h2
   }
