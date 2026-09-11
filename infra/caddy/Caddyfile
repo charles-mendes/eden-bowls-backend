@@ -22,6 +22,10 @@
   header {
     Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
     Content-Security-Policy "upgrade-insecure-requests"
+    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    Cross-Origin-Opener-Policy "same-origin"
+    Cross-Origin-Resource-Policy "same-origin"
+    X-Permitted-Cross-Domain-Policies "none"
     Alt-Svc "clear"
     X-Content-Type-Options "nosniff"
     X-Frame-Options "SAMEORIGIN"
@@ -29,15 +33,7 @@
   }
 }
 
-http://edenbowls.com, http://www.edenbowls.com, http://edenbowls.com.br, http://www.edenbowls.com.br, http://qa.edenbowls.com, http://qa-admin.edenbowls.com, http://qa-api.edenbowls.com {
-  @not_acme not path /.well-known/acme-challenge/*
-  redir @not_acme https://{host}{uri} 301
-}
-
-edenbowls.com, www.edenbowls.com {
-  encode zstd gzip
-  import security_headers
-
+(legacy_qa_redirects) {
   @old_qa_app path /qa-app /qa-app/*
   handle @old_qa_app {
     uri strip_prefix /qa-app
@@ -55,6 +51,34 @@ edenbowls.com, www.edenbowls.com {
     uri strip_prefix /qa-api
     redir https://qa-api.edenbowls.com{uri} 308
   }
+}
+
+(landing_static_cache) {
+  @public_media path /favicon.ico /favicon-16x16.png /favicon-32x32.png /apple-touch-icon.png /fonts/*
+  header @public_media Cache-Control "public, max-age=604800"
+}
+
+http://edenbowls.com, http://www.edenbowls.com, http://edenbowls.com.br, http://www.edenbowls.com.br, http://qa.edenbowls.com, http://qa-admin.edenbowls.com, http://qa-api.edenbowls.com {
+  @not_acme not path /.well-known/acme-challenge/*
+  redir @not_acme https://{host}{uri} 301
+}
+
+www.edenbowls.com {
+  encode zstd gzip
+  import security_headers
+  import legacy_qa_redirects
+
+  handle {
+    redir https://edenbowls.com{uri} 301
+  }
+}
+
+edenbowls.com {
+  encode zstd gzip
+  import security_headers
+  import legacy_qa_redirects
+  import landing_static_cache
+  header Link "</sitemap.xml>; rel=\"sitemap\""
 
   handle {
     root * /srv/edenbowls
@@ -112,9 +136,34 @@ qa-api.edenbowls.com {
   }
 }
 
-edenbowls.com.br, www.edenbowls.com.br {
+www.edenbowls.com.br {
   encode zstd gzip
   import security_headers
+
+  handle {
+    redir https://edenbowls.com.br{uri} 301
+  }
+}
+
+edenbowls.com.br {
+  encode zstd gzip
+  import security_headers
+  import landing_static_cache
+  header Link "</sitemap.xml>; rel=\"sitemap\""
+
+  handle /robots.txt {
+    header Content-Type "text/plain; charset=utf-8"
+    root * /srv/edenbowls
+    rewrite * /robots-br.txt
+    file_server
+  }
+
+  handle /sitemap.xml {
+    header Content-Type "application/xml; charset=utf-8"
+    root * /srv/edenbowls
+    rewrite * /sitemap-br.xml
+    file_server
+  }
 
   handle {
     root * /srv/edenbowls
