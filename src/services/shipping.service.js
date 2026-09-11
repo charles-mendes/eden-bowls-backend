@@ -7,6 +7,7 @@ const {
   haversineMeters
 } = require('../core/shipping-fee');
 const { loadShippingSettings } = require('../infrastructure/shipping/shipping-settings');
+const { serviceLabel } = require('../infrastructure/shipping/ups-client');
 
 class ShippingService {
   constructor(options = {}) {
@@ -14,6 +15,7 @@ class ShippingService {
     this.viaCepClient = options.viaCepClient || null;
     this.nominatimClient = options.nominatimClient || null;
     this.osrmClient = options.osrmClient || null;
+    this.upsClient = options.upsClient || null;
   }
 
   getPublicSettings(country) {
@@ -30,7 +32,10 @@ class ShippingService {
           label: us.label,
           carrier: us.carrier,
           delivery: us.delivery,
-          currency: 'USD'
+          currency: 'USD',
+          quote_mode: us.quote_mode || 'fixed',
+          fallback_enabled: Boolean(us.fallback_enabled),
+          allowed_service_codes: Array.isArray(us.allowed_service_codes) ? us.allowed_service_codes : ['03']
         }
       };
     }
@@ -48,8 +53,116 @@ class ShippingService {
     };
   }
 
+  buildUsFallbackQuote(zipcode, reason = 'fallback') {
+    const us = this.settings.us;
+    return {
+      success: true,
+      data: {
+        shipping: Number(Number(us.cost).toFixed(2)),
+        delivery_days: null,
+        currency: 'USD',
+        label: us.label,
+        carrier: us.carrier,
+        delivery: us.delivery,
+        service_code: null,
+        rate_id: 'fixed_us:default',
+        method_id: 'fixed_us',
+        quoted_at: new Date().toISOString(),
+        source: reason,
+        destination: {
+          zipcode: String(zipcode || '')
+        }
+      }
+    };
+  }
+
+  async calculateUs(payload = {}) {
+    const us = this.settings.us;
+    if (!us.enabled) {
+      throw new HttpError(422, 'US shipping is disabled.', { code: 'shipping_disabled' });
+    }
+
+    const zipcode = String(payload.zipCode || payload.zipcode || '').replace(/\D/g, '').slice(0, 10);
+    if (zipcode.length < 5) {
+      throw new HttpError(400, 'Invalid US postal code.', { code: 'invalid_zipcode' });
+    }
+
+    if ((us.quote_mode || 'fixed') !== 'ups') {
+      return this.buildUsFallbackQuote(zipcode, 'fixed');
+    }
+
+    if (!this.upsClient || !this.upsClient.isConfigured()) {
+      if (us.fallback_enabled) {
+        return this.buildUsFallbackQuote(zipcode, 'fallback');
+      }
+      throw new HttpError(503, 'UPS is not configured.', { code: 'ups_not_configured' });
+    }
+
+    const shipFrom = us.ship_from || {};
+    if (!String(shipFrom.zipcode || '').replace(/\D/g, '')) {
+      if (us.fallback_enabled) {
+        return this.buildUsFallbackQuote(zipcode, 'fallback');
+      }
+      throw new HttpError(422, 'US ship-from postal code is not configured.', { code: 'ship_from_missing' });
+    }
+
+    try {
+      const rated = await this.upsClient.rate({
+        shipFrom,
+        shipTo: {
+          name: 'Customer',
+          street: 'Address',
+          city: 'City',
+          state: 'NY',
+          zipcode,
+          country: 'US'
+        },
+        package: us.package,
+        allowedServiceCodes: us.allowed_service_codes
+      });
+
+      const code = rated.serviceCode;
+      return {
+        success: true,
+        data: {
+          shipping: Number(Number(rated.monetaryValue).toFixed(2)),
+          delivery_days: rated.deliveryDays,
+          currency: rated.currency || 'USD',
+          label: rated.label || serviceLabel(code),
+          carrier: 'UPS',
+          delivery: rated.deliveryDays ? `${rated.deliveryDays} business days` : us.delivery,
+          service_code: code,
+          rate_id: `ups:${code}`,
+          method_id: code === '03' ? 'ups_ground' : `ups_${code}`,
+          quoted_at: new Date().toISOString(),
+          source: 'ups',
+          destination: {
+            zipcode
+          }
+        }
+      };
+    } catch (error) {
+      const retryable = Boolean(
+        error?.upsTimeout
+        || error?.upsNetwork
+        || error?.details?.code === 'ups_timeout'
+        || error?.details?.code === 'ups_network_error'
+        || error?.details?.code === 'ups_upstream_error'
+        || error?.details?.code === 'ups_oauth_failed'
+        || error?.details?.code === 'ups_not_configured'
+      );
+      if (us.fallback_enabled && (retryable || error?.details?.code === 'ups_no_rates')) {
+        return this.buildUsFallbackQuote(zipcode, 'fallback');
+      }
+      throw error;
+    }
+  }
+
   async calculate(payload = {}) {
     const country = String(payload.country || 'BR').trim().toUpperCase();
+    if (country === 'US') {
+      return this.calculateUs(payload);
+    }
     if (country !== 'BR') {
       throw new HttpError(400, 'Distance shipping is only available for Brazil.', { code: 'country_not_supported' });
     }

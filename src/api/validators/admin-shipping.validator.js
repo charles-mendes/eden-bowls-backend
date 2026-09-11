@@ -32,7 +32,24 @@ const shippingSettingsSchema = z.object({
     cost: optionalNumber,
     carrier: z.string().optional(),
     delivery: z.string().optional(),
-    label: z.string().optional()
+    label: z.string().optional(),
+    quote_mode: z.enum(['fixed', 'ups']).optional(),
+    fallback_enabled: z.coerce.boolean().optional(),
+    ship_from: z.object({
+      name: z.string().optional(),
+      street: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      zipcode: z.string().optional(),
+      country: z.string().optional()
+    }).optional(),
+    package: z.object({
+      weight_lb: optionalNumber,
+      length_in: optionalNumber,
+      width_in: optionalNumber,
+      height_in: optionalNumber
+    }).optional(),
+    allowed_service_codes: z.union([z.array(z.string()), z.string()]).optional()
   }).optional()
 });
 

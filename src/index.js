@@ -70,6 +70,10 @@ const { OnboardingSubscriptionPreviewService } = require('./services/onboarding-
 const { OnboardingZipcodeLookupService } = require('./services/onboarding-zipcode-lookup.service');
 const { OnboardingZipcodeService } = require('./services/onboarding-zipcode.service');
 const { ShippingService } = require('./services/shipping.service');
+const { UpsClient } = require('./infrastructure/shipping/ups-client');
+const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shipment.repository');
+const { UpsShipmentService } = require('./services/ups-shipment.service');
+const { LocalUpsLabelStorage } = require('./infrastructure/storage/local-ups-label-storage');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
 const { SubscriptionsEditCommitService } = require('./services/subscriptions-edit-commit.service');
@@ -164,12 +168,23 @@ async function bootstrap() {
   });
   const osrmClient = new OsrmClient({ cache: geoCache });
   const shippingSettingsRepository = new ShippingSettingsRepository(dataSource);
+  const upsClient = new UpsClient({
+    clientId: env.UPS_CLIENT_ID,
+    clientSecret: env.UPS_CLIENT_SECRET,
+    accountNumber: env.UPS_ACCOUNT_NUMBER,
+    env: env.UPS_ENV,
+    timeoutMs: env.UPS_HTTP_TIMEOUT_MS,
+    transactionSrc: env.UPS_TRANSACTION_SRC
+  });
   const shippingService = new ShippingService({
     settings: await shippingSettingsRepository.get(),
     viaCepClient,
     nominatimClient,
-    osrmClient
+    osrmClient,
+    upsClient
   });
+  const upsLabelStorage = new LocalUpsLabelStorage({ directory: env.UPS_LABEL_DIR });
+  const upsShipmentRepository = new UpsShipmentRepository(dataSource);
   const stripeBilling = new StripeBillingClient({
     secretKey: env.STRIPE_SECRET_KEY,
     apiVersion: env.STRIPE_API_VERSION,
@@ -289,7 +304,8 @@ async function bootstrap() {
   const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository, { authService });
   const subscriptionsDetailRepository = new SubscriptionsDetailRepository({
     ledgerRepository: subscriptionLedgerRepository,
-    stripeBilling
+    stripeBilling,
+    upsShipmentRepository
   });
   const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository);
   const subscriptionsEditPreviewRepository = new SubscriptionsEditPreviewRepository({
@@ -371,6 +387,13 @@ async function bootstrap() {
     profileRepository,
     secretKey: env.STRIPE_SECRET_KEY
   });
+  const upsShipmentService = new UpsShipmentService({
+    repository: upsShipmentRepository,
+    upsClient,
+    labelStorage: upsLabelStorage,
+    shippingService,
+    adminBillingService
+  });
   const adminCatalogRepository = new AdminCatalogRepository(dataSource, {
     postsTableName: env.WP_POSTS_TABLE_NAME,
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
@@ -445,6 +468,7 @@ async function bootstrap() {
     adminShippingService,
     adminOnboardingService,
     adminBillingService,
+    upsShipmentService,
     adminCatalogService,
     adminUsersService,
     stripeCouponService,

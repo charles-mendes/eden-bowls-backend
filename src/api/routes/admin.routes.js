@@ -30,6 +30,14 @@ function registerAdminRoutes(app, dependencies = {}) {
         response.status(200).send(result.csv);
         return;
       }
+      if (result && result.binary && result.buffer) {
+        response.setHeader('Content-Type', result.contentType || 'application/octet-stream');
+        if (result.filename) {
+          response.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+        }
+        response.status(200).send(result.buffer);
+        return;
+      }
       response.status(200).json(result);
     } catch (error) {
       next(error);
@@ -73,6 +81,60 @@ function registerAdminRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Shipping service is not available.');
       }
       return dependencies.adminShippingService.test(parseShippingTestInput(request.body || {}));
+    });
+  });
+
+  app.get('/api/v1/admin/billing/subscriptions/:id/shipments', requirePermission('shipping.read'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.upsShipmentService) {
+        throw new HttpError(503, 'UPS shipment service is not available.');
+      }
+      return dependencies.upsShipmentService.listForSubscription(request.params.id);
+    });
+  });
+
+  app.post('/api/v1/admin/billing/subscriptions/:id/shipments', requirePermission('shipping.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.upsShipmentService) {
+        throw new HttpError(503, 'UPS shipment service is not available.');
+      }
+      return dependencies.upsShipmentService.createForSubscription({
+        subscriptionId: request.params.id,
+        invoiceId: request.body && request.body.invoice_id
+      });
+    });
+  });
+
+  app.get('/api/v1/admin/shipments/:id/label', requirePermission('shipping.read'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.upsShipmentService) {
+        throw new HttpError(503, 'UPS shipment service is not available.');
+      }
+      const label = await dependencies.upsShipmentService.getLabel(request.params.id);
+      return {
+        binary: true,
+        buffer: label.buffer,
+        contentType: label.contentType,
+        filename: label.filename
+      };
+    });
+  });
+
+  app.post('/api/v1/admin/shipments/:id/void', requirePermission('shipping.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.upsShipmentService) {
+        throw new HttpError(503, 'UPS shipment service is not available.');
+      }
+      return dependencies.upsShipmentService.voidShipment(request.params.id);
+    });
+  });
+
+  app.post('/api/v1/admin/shipments/:id/refresh-tracking', requirePermission('shipping.read'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.upsShipmentService) {
+        throw new HttpError(503, 'UPS shipment service is not available.');
+      }
+      return dependencies.upsShipmentService.refreshTracking(request.params.id);
     });
   });
 

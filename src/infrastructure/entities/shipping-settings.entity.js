@@ -154,6 +154,86 @@ function buildShippingUsSettingsEntitySchema(tableName = 'shipping_us_settings')
         type: String,
         length: 191
       },
+      quoteMode: {
+        name: 'quote_mode',
+        type: String,
+        length: 16,
+        default: 'fixed'
+      },
+      fallbackEnabled: {
+        name: 'fallback_enabled',
+        type: Boolean,
+        default: true
+      },
+      shipFromName: {
+        name: 'ship_from_name',
+        type: String,
+        length: 191,
+        default: ''
+      },
+      shipFromStreet: {
+        name: 'ship_from_street',
+        type: String,
+        length: 191,
+        default: ''
+      },
+      shipFromCity: {
+        name: 'ship_from_city',
+        type: String,
+        length: 128,
+        default: ''
+      },
+      shipFromState: {
+        name: 'ship_from_state',
+        type: String,
+        length: 8,
+        default: ''
+      },
+      shipFromZipcode: {
+        name: 'ship_from_zipcode',
+        type: String,
+        length: 16,
+        default: ''
+      },
+      shipFromCountry: {
+        name: 'ship_from_country',
+        type: String,
+        length: 2,
+        default: 'US'
+      },
+      packageWeightLb: {
+        name: 'package_weight_lb',
+        type: 'decimal',
+        precision: 10,
+        scale: 2,
+        default: 10
+      },
+      packageLengthIn: {
+        name: 'package_length_in',
+        type: 'decimal',
+        precision: 10,
+        scale: 2,
+        default: 12
+      },
+      packageWidthIn: {
+        name: 'package_width_in',
+        type: 'decimal',
+        precision: 10,
+        scale: 2,
+        default: 12
+      },
+      packageHeightIn: {
+        name: 'package_height_in',
+        type: 'decimal',
+        precision: 10,
+        scale: 2,
+        default: 12
+      },
+      allowedServiceCodes: {
+        name: 'allowed_service_codes',
+        type: 'text',
+        nullable: true
+      },
       createdAt: {
         name: 'created_at',
         type: 'datetime',

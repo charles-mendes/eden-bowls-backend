@@ -28,7 +28,24 @@ const DEFAULT_SETTINGS = {
     cost: 12.9,
     label: 'FedEx 3–5 business days',
     carrier: 'FedEx',
-    delivery: '3–5 business days'
+    delivery: '3–5 business days',
+    quote_mode: 'fixed',
+    fallback_enabled: true,
+    ship_from: {
+      name: '',
+      street: '',
+      city: '',
+      state: '',
+      zipcode: '',
+      country: 'US'
+    },
+    package: {
+      weight_lb: 10,
+      length_in: 12,
+      width_in: 12,
+      height_in: 12
+    },
+    allowed_service_codes: ['03']
   }
 };
 
@@ -55,6 +72,55 @@ function toBoolean(value, fallback) {
   }
 
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+function parseServiceCodes(value, fallback = ['03']) {
+  if (Array.isArray(value)) {
+    const codes = value.map((item) => String(item || '').trim()).filter(Boolean);
+    return codes.length ? codes : fallback.slice();
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return fallback.slice();
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parseServiceCodes(parsed, fallback);
+      }
+    } catch (_error) {
+      // comma-separated
+    }
+    const codes = trimmed.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
+    return codes.length ? codes : fallback.slice();
+  }
+  return fallback.slice();
+}
+
+function normalizeQuoteMode(value, fallback = 'fixed') {
+  const mode = String(value || fallback).trim().toLowerCase();
+  return mode === 'ups' ? 'ups' : 'fixed';
+}
+
+function mergeShipFrom(base = {}, overlay = {}) {
+  return {
+    name: overlay.name == null ? (base.name || '') : String(overlay.name),
+    street: overlay.street == null ? (base.street || '') : String(overlay.street),
+    city: overlay.city == null ? (base.city || '') : String(overlay.city),
+    state: overlay.state == null ? (base.state || '') : String(overlay.state),
+    zipcode: overlay.zipcode == null ? (base.zipcode || '') : String(overlay.zipcode),
+    country: String(overlay.country || base.country || 'US').toUpperCase() || 'US'
+  };
+}
+
+function mergePackage(base = {}, overlay = {}) {
+  return {
+    weight_lb: toNumber(overlay.weight_lb, toNumber(base.weight_lb, 10)),
+    length_in: toNumber(overlay.length_in, toNumber(base.length_in, 12)),
+    width_in: toNumber(overlay.width_in, toNumber(base.width_in, 12)),
+    height_in: toNumber(overlay.height_in, toNumber(base.height_in, 12))
+  };
 }
 
 function mergeSettings(base, overlay) {
@@ -97,7 +163,17 @@ function mergeSettings(base, overlay) {
       cost: toNumber(fileUs.cost, baseUs.cost),
       label: fileUs.label || baseUs.label,
       carrier: fileUs.carrier || baseUs.carrier,
-      delivery: fileUs.delivery || baseUs.delivery
+      delivery: fileUs.delivery || baseUs.delivery,
+      quote_mode: normalizeQuoteMode(fileUs.quote_mode, baseUs.quote_mode || 'fixed'),
+      fallback_enabled: fileUs.fallback_enabled == null
+        ? toBoolean(baseUs.fallback_enabled, true)
+        : toBoolean(fileUs.fallback_enabled, true),
+      ship_from: mergeShipFrom(baseUs.ship_from || DEFAULT_SETTINGS.us.ship_from, fileUs.ship_from || {}),
+      package: mergePackage(baseUs.package || DEFAULT_SETTINGS.us.package, fileUs.package || {}),
+      allowed_service_codes: parseServiceCodes(
+        fileUs.allowed_service_codes,
+        parseServiceCodes(baseUs.allowed_service_codes, ['03'])
+      )
     }
   };
 }
@@ -130,7 +206,16 @@ function nextSettings(currentInput = {}, payload = {}) {
     },
     us: {
       ...current.us,
-      ...nextUs
+      ...nextUs,
+      ship_from: nextUs.ship_from
+        ? mergeShipFrom(current.us.ship_from, nextUs.ship_from)
+        : current.us.ship_from,
+      package: nextUs.package
+        ? mergePackage(current.us.package, nextUs.package)
+        : current.us.package,
+      allowed_service_codes: nextUs.allowed_service_codes == null
+        ? current.us.allowed_service_codes
+        : parseServiceCodes(nextUs.allowed_service_codes, current.us.allowed_service_codes)
     }
   });
 }
@@ -176,7 +261,24 @@ function usFromRow(row) {
     cost: toNumber(row.cost, DEFAULT_SETTINGS.us.cost),
     label: row.label,
     carrier: row.carrier,
-    delivery: row.delivery
+    delivery: row.delivery,
+    quote_mode: normalizeQuoteMode(row.quote_mode, DEFAULT_SETTINGS.us.quote_mode),
+    fallback_enabled: toBoolean(row.fallback_enabled, DEFAULT_SETTINGS.us.fallback_enabled),
+    ship_from: {
+      name: row.ship_from_name || '',
+      street: row.ship_from_street || '',
+      city: row.ship_from_city || '',
+      state: row.ship_from_state || '',
+      zipcode: row.ship_from_zipcode || '',
+      country: String(row.ship_from_country || 'US').toUpperCase()
+    },
+    package: {
+      weight_lb: toNumber(row.package_weight_lb, DEFAULT_SETTINGS.us.package.weight_lb),
+      length_in: toNumber(row.package_length_in, DEFAULT_SETTINGS.us.package.length_in),
+      width_in: toNumber(row.package_width_in, DEFAULT_SETTINGS.us.package.width_in),
+      height_in: toNumber(row.package_height_in, DEFAULT_SETTINGS.us.package.height_in)
+    },
+    allowed_service_codes: parseServiceCodes(row.allowed_service_codes, DEFAULT_SETTINGS.us.allowed_service_codes)
   };
 }
 
@@ -216,7 +318,20 @@ function usToParams(us) {
     us.cost,
     us.label,
     us.carrier,
-    us.delivery
+    us.delivery,
+    normalizeQuoteMode(us.quote_mode, 'fixed'),
+    us.fallback_enabled ? 1 : 0,
+    us.ship_from?.name || '',
+    us.ship_from?.street || '',
+    us.ship_from?.city || '',
+    us.ship_from?.state || '',
+    us.ship_from?.zipcode || '',
+    String(us.ship_from?.country || 'US').toUpperCase(),
+    us.package?.weight_lb ?? 10,
+    us.package?.length_in ?? 12,
+    us.package?.width_in ?? 12,
+    us.package?.height_in ?? 12,
+    JSON.stringify(parseServiceCodes(us.allowed_service_codes, ['03']))
   ];
 }
 
@@ -230,6 +345,7 @@ module.exports = {
   loadShippingSettings,
   mergeSettings,
   nextSettings,
+  parseServiceCodes,
   settingsFromRows,
   toBoolean,
   toNumber,

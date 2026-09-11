@@ -30,7 +30,35 @@ describe('shipping v1 routes', () => {
     expect(shippingService.calculate).toHaveBeenCalledWith({ zipCode: '80010-000', country: 'BR' });
   });
 
-  test('rejects US calculate with 400 country_not_supported', async () => {
+  test('calculates US shipping without authentication', async () => {
+    const shippingService = {
+      calculate: jest.fn().mockResolvedValue({
+        success: true,
+        data: {
+          shipping: 19.25,
+          delivery_days: 4,
+          currency: 'USD',
+          label: 'UPS Ground',
+          carrier: 'UPS',
+          service_code: '03',
+          rate_id: 'ups:03',
+          method_id: 'ups_ground',
+          source: 'ups'
+        }
+      })
+    };
+    const app = createApp({ shippingService, corsOrigins });
+
+    const response = await request(app)
+      .post('/shipping/v1/calculate')
+      .send({ zipCode: '94105', country: 'US' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.shipping).toBe(19.25);
+    expect(shippingService.calculate).toHaveBeenCalledWith({ zipCode: '94105', country: 'US' });
+  });
+
+  test('rejects unsupported country calculate with 400 country_not_supported', async () => {
     const shippingService = {
       calculate: jest.fn().mockRejectedValue(
         new HttpError(400, 'Distance shipping is only available for Brazil.', { code: 'country_not_supported' })
@@ -40,7 +68,7 @@ describe('shipping v1 routes', () => {
 
     const response = await request(app)
       .post('/shipping/v1/calculate')
-      .send({ zipCode: '94105', country: 'US' });
+      .send({ zipCode: '75001', country: 'FR' });
 
     expect(response.status).toBe(400);
     expect(response.body.details.code).toBe('country_not_supported');
@@ -97,9 +125,16 @@ describe('ShippingService', () => {
     }
   };
 
-  test('returns 400 for non-BR calculate', async () => {
+  test('returns fixed US quote when quote_mode defaults to fixed', async () => {
     const service = new ShippingService({ settings });
-    await expect(service.calculate({ zipCode: '94105', country: 'US' })).rejects.toMatchObject({
+    const result = await service.calculate({ zipCode: '94105', country: 'US' });
+    expect(result.data.source).toBe('fixed');
+    expect(result.data.shipping).toBe(12.9);
+  });
+
+  test('returns 400 for unsupported country calculate', async () => {
+    const service = new ShippingService({ settings });
+    await expect(service.calculate({ zipCode: '75001', country: 'FR' })).rejects.toMatchObject({
       statusCode: 400,
       details: { code: 'country_not_supported' }
     });

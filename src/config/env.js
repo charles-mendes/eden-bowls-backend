@@ -187,7 +187,14 @@ function parseEnv(source = process.env) {
     PROFILE_AVATAR_DIR: firstNonEmpty(rawEnv.PROFILE_AVATAR_DIR) || './public/avatars',
     PROFILE_AVATAR_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.PROFILE_AVATAR_PUBLIC_BASE_URL),
     FEEDBACK_PHOTO_DIR: firstNonEmpty(rawEnv.FEEDBACK_PHOTO_DIR) || './public/feedback-photos',
-    FEEDBACK_PHOTO_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.FEEDBACK_PHOTO_PUBLIC_BASE_URL)
+    FEEDBACK_PHOTO_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.FEEDBACK_PHOTO_PUBLIC_BASE_URL),
+    UPS_CLIENT_ID: firstNonEmpty(rawEnv.UPS_CLIENT_ID),
+    UPS_CLIENT_SECRET: firstNonEmpty(rawEnv.UPS_CLIENT_SECRET),
+    UPS_ACCOUNT_NUMBER: firstNonEmpty(rawEnv.UPS_ACCOUNT_NUMBER),
+    UPS_ENV: firstNonEmpty(rawEnv.UPS_ENV, 'cie'),
+    UPS_HTTP_TIMEOUT_MS: Number(firstNonEmpty(rawEnv.UPS_HTTP_TIMEOUT_MS, '5000')),
+    UPS_TRANSACTION_SRC: firstNonEmpty(rawEnv.UPS_TRANSACTION_SRC, 'eden-bowls'),
+    UPS_LABEL_DIR: firstNonEmpty(rawEnv.UPS_LABEL_DIR) || './data/ups-labels'
   };
 }
 

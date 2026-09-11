@@ -1,4 +1,6 @@
 {
+  "_deprecated": true,
+  "_note": "DEPRECATED — not read at runtime. Live settings are in MySQL shipping_br_settings / shipping_us_settings (admin Frete). See docs-new/FEATURE_UPS/.",
   "br": {
     "enabled": true,
     "label": "Entrega Eden Bowl",
@@ -24,6 +26,8 @@
     "cost": 12.9,
     "label": "FedEx 3–5 business days",
     "carrier": "FedEx",
-    "delivery": "3–5 business days"
+    "delivery": "3–5 business days",
+    "quote_mode": "fixed",
+    "fallback_enabled": true
   }
 }

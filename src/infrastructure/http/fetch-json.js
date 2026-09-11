@@ -7,11 +7,16 @@ async function fetchJson(url, options = {}) {
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetchImpl(url, {
+    const requestInit = {
       method,
       headers,
       signal: controller.signal
-    });
+    };
+    if (options.body !== undefined && options.body !== null) {
+      requestInit.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+    }
+
+    const response = await fetchImpl(url, requestInit);
     const text = await response.text();
     let body = null;
 

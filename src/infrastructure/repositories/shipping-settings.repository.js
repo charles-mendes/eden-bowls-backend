@@ -28,7 +28,26 @@ const BR_COLUMNS = [
   'max_days'
 ];
 
-const US_COLUMNS = ['enabled', 'cost', 'label', 'carrier', 'delivery'];
+const US_COLUMNS = [
+  'enabled',
+  'cost',
+  'label',
+  'carrier',
+  'delivery',
+  'quote_mode',
+  'fallback_enabled',
+  'ship_from_name',
+  'ship_from_street',
+  'ship_from_city',
+  'ship_from_state',
+  'ship_from_zipcode',
+  'ship_from_country',
+  'package_weight_lb',
+  'package_length_in',
+  'package_width_in',
+  'package_height_in',
+  'allowed_service_codes'
+];
 
 class ShippingSettingsRepository {
   constructor(dataSource, options = {}) {

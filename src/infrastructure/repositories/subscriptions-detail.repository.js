@@ -5,6 +5,7 @@ class SubscriptionsDetailRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
     this.stripeBilling = options.stripeBilling || null;
+    this.upsShipmentRepository = options.upsShipmentRepository || null;
   }
 
   async getDetail(userId, subscriptionId) {
@@ -57,15 +58,29 @@ class SubscriptionsDetailRepository {
     if (this.stripeBilling && this.stripeBilling.listInvoicesForSubscription) {
       try {
         const invoices = await this.stripeBilling.listInvoicesForSubscription(subscriptionId);
-        extras.billingHistory = invoices.map((invoice) => ({
-          order_id: 0,
-          invoice_id: invoice.id,
-          date: toIsoDate(invoice.created),
-          amount: Number(((invoice.amount_paid || invoice.total || 0) / 100).toFixed(2)),
-          currency: String(invoice.currency || 'usd').toUpperCase(),
-          status: String(invoice.status || ''),
-          items: []
-        }));
+        let shipmentByInvoice = new Map();
+        if (this.upsShipmentRepository && typeof this.upsShipmentRepository.listByInvoiceIds === 'function') {
+          const shipments = await this.upsShipmentRepository.listByInvoiceIds(
+            invoices.map((invoice) => invoice.id)
+          );
+          shipmentByInvoice = new Map(
+            shipments.map((shipment) => [String(shipment.stripe_invoice_id), shipment])
+          );
+        }
+        extras.billingHistory = invoices.map((invoice) => {
+          const shipment = shipmentByInvoice.get(String(invoice.id));
+          return {
+            order_id: 0,
+            invoice_id: invoice.id,
+            date: toIsoDate(invoice.created),
+            amount: Number(((invoice.amount_paid || invoice.total || 0) / 100).toFixed(2)),
+            currency: String(invoice.currency || 'usd').toUpperCase(),
+            status: String(invoice.status || ''),
+            items: [],
+            tracking_number: shipment?.tracking_number || null,
+            shipped_at: shipment?.shipped_at || null
+          };
+        });
       } catch (_error) {
         extras.billingHistory = [];
       }
