@@ -7,46 +7,53 @@
   }
 }
 
-http://edenbowls.com, http://www.edenbowls.com, http://edenbowls.com.br, http://www.edenbowls.com.br {
+(qa_noindex) {
+  header X-Robots-Tag "noindex, nofollow"
+}
+
+(qa_robots) {
+  handle /robots.txt {
+    header Content-Type "text/plain; charset=utf-8"
+    respond "User-agent: *\nDisallow: /\n" 200
+  }
+}
+
+(security_headers) {
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Content-Security-Policy "upgrade-insecure-requests"
+    Alt-Svc "clear"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+    Referrer-Policy "strict-origin-when-cross-origin"
+  }
+}
+
+http://edenbowls.com, http://www.edenbowls.com, http://edenbowls.com.br, http://www.edenbowls.com.br, http://qa.edenbowls.com, http://qa-admin.edenbowls.com, http://qa-api.edenbowls.com {
   @not_acme not path /.well-known/acme-challenge/*
   redir @not_acme https://{host}{uri} 301
 }
 
 edenbowls.com, www.edenbowls.com {
   encode zstd gzip
+  import security_headers
 
-  redir /qa-app /qa-app/
-  redir /qa-api /qa-api/
-  redir /qa-admin /qa-admin/
-
-  @qa_api_root_paths {
-    path /api /api/* /stripe /stripe/* /health /liveness /readiness /metrics /avatars /avatars/* /feedback-photos /feedback-photos/*
-  }
-  redir @qa_api_root_paths /qa-api{uri} 308
-
-  handle_path /qa-api/* {
-    reverse_proxy {$API_UPSTREAM} {
-      header_up Host {host}
-      header_up X-Forwarded-Host {host}
-      header_up X-Forwarded-Proto {scheme}
-      header_up X-Forwarded-Uri {uri}
-    }
+  @old_qa_app path /qa-app /qa-app/*
+  handle @old_qa_app {
+    uri strip_prefix /qa-app
+    redir https://qa.edenbowls.com{uri} 308
   }
 
-  handle_path /qa-app/* {
-    reverse_proxy {$FRONTEND_UPSTREAM} {
-      header_up Host {host}
-      header_up X-Forwarded-Host {host}
-      header_up X-Forwarded-Uri {uri}
-    }
+  @old_qa_admin path /qa-admin /qa-admin/*
+  handle @old_qa_admin {
+    uri strip_prefix /qa-admin
+    redir https://qa-admin.edenbowls.com{uri} 308
   }
 
-  handle_path /qa-admin/* {
-    reverse_proxy {$ADMIN_UPSTREAM} {
-      header_up Host {host}
-      header_up X-Forwarded-Host {host}
-      header_up X-Forwarded-Uri {uri}
-    }
+  @old_qa_api path /qa-api /qa-api/*
+  handle @old_qa_api {
+    uri strip_prefix /qa-api
+    redir https://qa-api.edenbowls.com{uri} 308
   }
 
   handle {
@@ -55,33 +62,64 @@ edenbowls.com, www.edenbowls.com {
     rewrite @root_index_com /index.html
     file_server
   }
+}
 
-  header {
-    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-    Content-Security-Policy "upgrade-insecure-requests"
-    Alt-Svc "clear"
-    X-Content-Type-Options "nosniff"
-    X-Frame-Options "SAMEORIGIN"
-    Referrer-Policy "strict-origin-when-cross-origin"
+qa.edenbowls.com {
+  encode zstd gzip
+  import qa_noindex
+  import security_headers
+  import qa_robots
+
+  handle {
+    reverse_proxy {$FRONTEND_UPSTREAM} {
+      header_up Host {host}
+      header_up X-Forwarded-Host {host}
+      header_up X-Forwarded-Proto {scheme}
+      header_up X-Forwarded-Uri {uri}
+    }
+  }
+}
+
+qa-admin.edenbowls.com {
+  encode zstd gzip
+  import qa_noindex
+  import security_headers
+  import qa_robots
+
+  handle {
+    reverse_proxy {$ADMIN_UPSTREAM} {
+      header_up Host {host}
+      header_up X-Forwarded-Host {host}
+      header_up X-Forwarded-Proto {scheme}
+      header_up X-Forwarded-Uri {uri}
+    }
+  }
+}
+
+qa-api.edenbowls.com {
+  encode zstd gzip
+  import qa_noindex
+  import security_headers
+  import qa_robots
+
+  handle {
+    reverse_proxy {$API_UPSTREAM} {
+      header_up Host {host}
+      header_up X-Forwarded-Host {host}
+      header_up X-Forwarded-Proto {scheme}
+      header_up X-Forwarded-Uri {uri}
+    }
   }
 }
 
 edenbowls.com.br, www.edenbowls.com.br {
   encode zstd gzip
+  import security_headers
 
   handle {
     root * /srv/edenbowls
     @root_index_combr path /
     rewrite @root_index_combr /index-br.html
     file_server
-  }
-
-  header {
-    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-    Content-Security-Policy "upgrade-insecure-requests"
-    Alt-Svc "clear"
-    X-Content-Type-Options "nosniff"
-    X-Frame-Options "SAMEORIGIN"
-    Referrer-Policy "strict-origin-when-cross-origin"
   }
 }
