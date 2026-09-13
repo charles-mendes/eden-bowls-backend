@@ -1107,6 +1107,28 @@ class StripeBillingClient {
     return this.setCancelAtPeriodEnd(subscriptionId, true);
   }
 
+  async anonymizeCustomer(customerId) {
+    const stripe = this.ensureClient();
+    const id = String(customerId || '').trim();
+    if (!id.startsWith('cus_')) {
+      return null;
+    }
+
+    try {
+      return await stripe.customers.update(id, {
+        email: `deleted+${id}@invalid.edenbowls.local`,
+        name: 'Deleted',
+        phone: '',
+        metadata: { eden_anonymized: '1' }
+      });
+    } catch (error) {
+      if (String(error && error.code || '') === 'resource_missing') {
+        return { id, deleted: true };
+      }
+      return null;
+    }
+  }
+
   async cancelSubscriptionImmediately(subscriptionId) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();

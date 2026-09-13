@@ -32,7 +32,52 @@ function createOtpMailer(options = {}) {
     ? options.createTransport
     : () => createSmtpTransport(smtp);
 
+  async function sendMail({ to, subject, text }) {
+    const recipient = String(to || '').trim();
+    if (!recipient) {
+      throw new Error('Mail recipient is missing.');
+    }
+
+    const mailSubject = String(subject || '').trim() || 'Eden Bowls';
+    const mailText = String(text || '');
+
+    if (!String(smtp.host || '').trim()) {
+      if (nodeEnv === 'production') {
+        throw new Error('Mailer is not configured.');
+      }
+
+      logger.info({ to: recipient, subject: mailSubject }, 'Email skipped (SMTP host empty).');
+      return { skipped: true, subject: mailSubject };
+    }
+
+    const fromAddress = String(smtp.from || '').trim();
+    const fromName = String(smtp.fromName || '').trim();
+    const from = fromName && fromAddress
+      ? { name: fromName, address: fromAddress }
+      : fromAddress || undefined;
+
+    try {
+      const transporter = createTransport();
+      await transporter.sendMail({
+        from,
+        to: recipient,
+        subject: mailSubject,
+        text: mailText
+      });
+      logger.info({ to: recipient, subject: mailSubject }, 'Email sent.');
+      return { skipped: false, subject: mailSubject };
+    } catch (error) {
+      logger.error({
+        to: recipient,
+        subject: mailSubject,
+        code: error && error.code
+      }, 'Email failed.');
+      throw error;
+    }
+  }
+
   return {
+    sendMail,
     async sendOtpEmail({ to, otp, expiresInSeconds }) {
       const recipient = String(to || '').trim();
       if (!recipient) {
@@ -40,40 +85,11 @@ function createOtpMailer(options = {}) {
       }
 
       const content = buildOtpEmailContent({ otp, expiresInSeconds });
-
-      if (!String(smtp.host || '').trim()) {
-        if (nodeEnv === 'production') {
-          throw new Error('OTP mailer is not configured.');
-        }
-
-        logger.info({ to: recipient, subject: content.subject, expiresInSeconds }, 'OTP email skipped (SMTP host empty).');
-        return { skipped: true, subject: content.subject };
-      }
-
-      const fromAddress = String(smtp.from || '').trim();
-      const fromName = String(smtp.fromName || '').trim();
-      const from = fromName && fromAddress
-        ? { name: fromName, address: fromAddress }
-        : fromAddress || undefined;
-
-      try {
-        const transporter = createTransport();
-        await transporter.sendMail({
-          from,
-          to: recipient,
-          subject: content.subject,
-          text: content.text
-        });
-        logger.info({ to: recipient, subject: content.subject }, 'OTP email sent.');
-        return { skipped: false, subject: content.subject };
-      } catch (error) {
-        logger.error({
-          to: recipient,
-          subject: content.subject,
-          code: error && error.code
-        }, 'OTP email failed.');
-        throw error;
-      }
+      return sendMail({
+        to: recipient,
+        subject: content.subject,
+        text: content.text
+      });
     }
   };
 }

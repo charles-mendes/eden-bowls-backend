@@ -101,6 +101,9 @@ const { AdminUsersRepository } = require('./infrastructure/repositories/admin-us
 const { AdminCatalogRepository } = require('./infrastructure/repositories/admin-catalog.repository');
 const { MaxMindCountryReader } = require('./infrastructure/geo/maxmind-country-reader');
 const { GeoService } = require('./services/geo.service');
+const { PrivacyRepository } = require('./infrastructure/repositories/privacy.repository');
+const { PrivacyService } = require('./services/privacy.service');
+const { createPrivacyMailer } = require('./infrastructure/mailers/privacy-mailer');
 
 async function bootstrap() {
   const env = parseEnv();
@@ -119,6 +122,20 @@ async function bootstrap() {
   });
   const authRefreshTokenRepository = new AuthRefreshTokenRepository(dataSource);
   const breedsService = new BreedsService(breedsRepository);
+  const otpMailer = createOtpMailer({
+    logger,
+    nodeEnv: env.NODE_ENV,
+    smtp: {
+      host: env.AUTH_SMTP_HOST,
+      port: env.AUTH_SMTP_PORT,
+      user: env.AUTH_SMTP_USER,
+      pass: env.AUTH_SMTP_PASS,
+      encryption: env.AUTH_SMTP_ENCRYPTION,
+      auth: env.AUTH_SMTP_AUTH,
+      from: env.AUTH_MAIL_FROM,
+      fromName: env.AUTH_MAIL_FROM_NAME
+    }
+  });
   const authService = new AuthService(authRepository, {
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
@@ -133,20 +150,7 @@ async function bootstrap() {
     otpPepper: env.AUTH_OTP_PEPPER,
     otpResendMaxAttempts: env.AUTH_OTP_RESEND_MAX_ATTEMPTS,
     otpResendWindowSeconds: env.AUTH_OTP_RESEND_WINDOW_SECONDS,
-    otpMailer: createOtpMailer({
-      logger,
-      nodeEnv: env.NODE_ENV,
-      smtp: {
-        host: env.AUTH_SMTP_HOST,
-        port: env.AUTH_SMTP_PORT,
-        user: env.AUTH_SMTP_USER,
-        pass: env.AUTH_SMTP_PASS,
-        encryption: env.AUTH_SMTP_ENCRYPTION,
-        auth: env.AUTH_SMTP_AUTH,
-        from: env.AUTH_MAIL_FROM,
-        fromName: env.AUTH_MAIL_FROM_NAME
-      }
-    })
+    otpMailer
   });
   const priceZonePolicyRepository = new PriceZonePolicyRepository(dataSource, {
     tableName: env.PRICE_ZONE_POLICY_TABLE_NAME
@@ -372,8 +376,32 @@ async function bootstrap() {
     refreshTokenRepository: authRefreshTokenRepository,
     stripeAccounts,
     stripeBilling,
-    avatarStorage
+    avatarStorage,
+    customerStore: stripeCustomerStore,
+    quotesRepository: onboardingQuotesRepository
   });
+  const privacyRepository = new PrivacyRepository(dataSource, {
+    usersTableName: env.WP_USERS_TABLE_NAME,
+    usermetaTableName: env.WP_USERMETA_TABLE_NAME
+  });
+  const privacyService = new PrivacyService({
+    repository: privacyRepository,
+    profileService,
+    profileRepository,
+    quotesRepository: onboardingQuotesRepository,
+    customerStore: stripeCustomerStore,
+    stripeAccounts,
+    mailer: createPrivacyMailer({
+      logger,
+      nodeEnv: env.NODE_ENV,
+      otpMailer
+    }),
+    publicBaseUrl: String(env.JWT_AUTH_ISSUER || '').replace(/\/+$/, ''),
+    ipPepper: env.AUTH_OTP_PEPPER || env.JWT_AUTH_SECRET_KEY,
+    logger
+  });
+  authService.privacyService = privacyService;
+  profileService.privacyRepository = privacyRepository;
   const feedbackPhotoPublicDir = path.resolve(env.FEEDBACK_PHOTO_DIR);
   const feedbackPhotoPublicBaseUrl = env.FEEDBACK_PHOTO_PUBLIC_BASE_URL
     || `${String(env.JWT_AUTH_ISSUER || '').replace(/\/+$/, '')}/feedback-photos`;
@@ -489,6 +517,7 @@ async function bootstrap() {
     onboardingPetDeleteService,
     onboardingPetsSyncService,
     profileService,
+    privacyService,
     adminIdentityService,
     adminNutritionService,
     adminShippingService,

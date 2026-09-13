@@ -13,6 +13,7 @@ const {
   parseFeedbackListQuery,
   parseUpdateFeedbackInput
 } = require('../validators/feedbacks.validator');
+const { registerAdminPrivacyRoutes } = require('./privacy.routes');
 
 function registerAdminRoutes(app, dependencies = {}) {
   const requirePermission = buildRequireAdminPermission(dependencies);
@@ -582,6 +583,8 @@ function registerAdminRoutes(app, dependencies = {}) {
       return dependencies.feedbacksService.remove(parseFeedbackId(request.params.id));
     });
   });
+
+  registerAdminPrivacyRoutes(app, dependencies, { requirePermission, handle });
 }
 
 module.exports = {

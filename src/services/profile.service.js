@@ -184,6 +184,10 @@ class ProfileService {
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.avatarStorage = options.avatarStorage || null;
+    this.privacyRepository = options.privacyRepository || null;
+    this.privacyService = options.privacyService || null;
+    this.customerStore = options.customerStore || null;
+    this.quotesRepository = options.quotesRepository || null;
     this.hashPassword = typeof options.hashPassword === 'function' ? options.hashPassword : hashWordpressPassword;
     this.verifyPassword = typeof options.verifyPassword === 'function' ? options.verifyPassword : verifyWordpressPassword;
     this.nowProvider = typeof options.nowProvider === 'function' ? options.nowProvider : () => new Date();
@@ -230,6 +234,10 @@ class ProfileService {
     const hasActive = this.ledgerRepository
       ? await this.ledgerRepository.hasActiveSubscription(user.id, user.email)
       : null;
+    const marketingRaw = await this.repository.getUserMeta(user.id, 'hsr_marketing_opt_in');
+    const cookiePreferences = this.privacyRepository && typeof this.privacyRepository.getLatestCookiePreferences === 'function'
+      ? await this.privacyRepository.getLatestCookiePreferences(user.id)
+      : { analytics: null, ads: null };
 
     return {
       id: user.id,
@@ -241,7 +249,9 @@ class ProfileService {
       avatarUrl: presentAvatarUrl(user.avatarUrl),
       passwordLastUpdatedAt: presentPasswordTimestamp(user.passwordLastUpdatedAt),
       delivery: addressRecord.exists ? mapDelivery(address, deliveryCountry) : emptyDelivery(),
-      accountStatus: buildAccountStatus(hasActive)
+      accountStatus: buildAccountStatus(hasActive),
+      marketingOptIn: marketingRaw === '1',
+      cookiePreferences
     };
   }
 
@@ -545,6 +555,7 @@ class ProfileService {
     }
 
     await this.cancelLeftoverSubscriptions(user.id);
+    await this.anonymizeAccountArtifacts(user.id);
     const now = toSqlDateTime(this.nowProvider());
 
     if (this.refreshTokenRepository && typeof this.refreshTokenRepository.revokeAllForUser === 'function') {
@@ -552,6 +563,9 @@ class ProfileService {
     }
 
     await this.repository.softDeletePetsByUserId(user.id, now);
+    if (typeof this.repository.hardDeletePetsByUserId === 'function') {
+      await this.repository.hardDeletePetsByUserId(user.id);
+    }
     await this.repository.deleteUserState(user.id);
 
     if (presentAvatarUrl(user.avatarUrl) && this.avatarStorage && typeof this.avatarStorage.delete === 'function') {
@@ -592,6 +606,33 @@ class ProfileService {
         });
       }
       await billing.cancelSubscriptionImmediately(leftover.stripeSubscriptionId);
+    }
+  }
+
+  async anonymizeAccountArtifacts(userId) {
+    if (this.customerStore && typeof this.customerStore.getCustomerId === 'function') {
+      for (const account of ['br', 'us']) {
+        try {
+          const customerId = await this.customerStore.getCustomerId(userId, account);
+          if (!customerId) {
+            continue;
+          }
+          const billing = resolveStripeBilling(this, account);
+          if (billing && typeof billing.anonymizeCustomer === 'function') {
+            await billing.anonymizeCustomer(customerId);
+          }
+        } catch (_error) {
+          // best-effort
+        }
+      }
+    }
+
+    if (this.ledgerRepository && typeof this.ledgerRepository.redactCustomerEmailForUser === 'function') {
+      await this.ledgerRepository.redactCustomerEmailForUser(userId);
+    }
+
+    if (this.quotesRepository && typeof this.quotesRepository.deleteByUserId === 'function') {
+      await this.quotesRepository.deleteByUserId(userId);
     }
   }
 }

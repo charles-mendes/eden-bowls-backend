@@ -217,6 +217,18 @@ class ProfileRepository {
     );
   }
 
+  async hardDeletePetsByUserId(userId) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableNames.pets}\` SET \`name\` = 'Deleted', \`image_url\` = NULL WHERE \`user_id\` = ?`,
+      [userId]
+    );
+    await this.dataSource.query(
+      `DELETE FROM \`${this.tableNames.pets}\` WHERE \`user_id\` = ?`,
+      [userId]
+    );
+  }
+
   async deleteUserState(userId) {
     this.ensureDataSource();
     await this.dataSource.query(

@@ -15,7 +15,7 @@ function publicIpRequest(overrides = {}) {
 }
 
 describe('GeoService', () => {
-  test('returns UNKNOWN and empty ip when only a private address is present', async () => {
+  test('returns UNKNOWN without exposing ip when only a private address is present', async () => {
     const service = new GeoService({
       countryReader: { lookupIsoCode: jest.fn() }
     });
@@ -30,7 +30,6 @@ describe('GeoService', () => {
       data: {
         domain: 'com',
         country: 'UNKNOWN',
-        ip: '',
         region: null,
         source: 'backend',
         presetId: null
@@ -52,7 +51,6 @@ describe('GeoService', () => {
     expect(payload.data).toEqual({
       domain: 'com.br',
       country: 'BR',
-      ip: '8.8.8.8',
       region: null,
       source: 'backend',
       presetId: null
@@ -69,7 +67,7 @@ describe('GeoService', () => {
     const payload = await service.getContext(publicIpRequest());
 
     expect(payload.data.country).toBe('UNKNOWN');
-    expect(payload.data.ip).toBe('8.8.8.8');
+    expect(payload.data.ip).toBeUndefined();
     expect(payload.success).toBe(true);
   });
 

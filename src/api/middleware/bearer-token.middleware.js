@@ -24,6 +24,10 @@ function isPublicGeoRoute(request) {
   return request.method === 'GET' && request.path === '/api/v1/geo/context';
 }
 
+function isPublicPrivacyIdentityRoute(request) {
+  return request.method === 'GET' && request.path === '/api/v1/privacy/identity-confirm';
+}
+
 function isPublicAuthRoute(request, extraAuthPath) {
   if (request.method !== 'POST') {
     return false;
@@ -41,7 +45,7 @@ function buildBearerTokenMiddleware(options = {}) {
   const jwtOptions = options.jwt || {};
 
   return (request, response, next) => {
-    if (!request.path.startsWith('/api/v1') || isPublicAuthRoute(request, authPath) || isPublicGeoRoute(request) || isSessionAutocompleteRoute(request) || isOnboardingSessionRoute(request)) {
+    if (!request.path.startsWith('/api/v1') || isPublicAuthRoute(request, authPath) || isPublicGeoRoute(request) || isPublicPrivacyIdentityRoute(request) || isSessionAutocompleteRoute(request) || isOnboardingSessionRoute(request)) {
       next();
       return;
     }

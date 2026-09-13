@@ -12,7 +12,8 @@ const ROLE_PERMISSIONS = {
     'checkout.read',
     'billing.subscribers.read',
     'users.read',
-    'feedbacks.read'
+    'feedbacks.read',
+    'privacy.requests.read'
   ],
   operator: [
     'nutrition.simulate',
@@ -30,7 +31,9 @@ const ROLE_PERMISSIONS = {
     'users.delivery.write',
     'users.status.write',
     'feedbacks.read',
-    'feedbacks.write'
+    'feedbacks.write',
+    'privacy.requests.read',
+    'privacy.requests.write'
   ]
 };
 

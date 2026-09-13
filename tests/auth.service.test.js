@@ -388,9 +388,11 @@ describe('AuthService', () => {
       }),
       activateUser: jest.fn().mockResolvedValue(undefined)
     };
+    const privacyService = { recordOtpConsents: jest.fn().mockResolvedValue(undefined) };
     const service = new AuthService(repository, {
       jwt: { secret: 'test-secret' },
-      nowProvider: () => 1722990000
+      nowProvider: () => 1722990000,
+      privacyService
     });
 
     await expect(service.verifyOtp({
@@ -398,7 +400,9 @@ describe('AuthService', () => {
       otp: '847291',
       marketingOptIn: true,
       termsAccepted: true,
-      privacyAccepted: true
+      privacyAccepted: true,
+      privacyVersion: '2026-09-13',
+      termsVersion: '2026-09-13'
     })).resolves.toEqual({
       token_endpoint: '/api/v1/auth/token'
     });
@@ -408,6 +412,12 @@ describe('AuthService', () => {
       privacyAccepted: true,
       emailVerifiedAt: '2024-08-07T00:20:00.000Z'
     });
+    expect(privacyService.recordOtpConsents).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 12,
+      marketingOptIn: true,
+      privacyVersion: '2026-09-13',
+      termsVersion: '2026-09-13'
+    }));
   });
 
   test('rejects OTP verification without terms and does not issue a JWT', async () => {

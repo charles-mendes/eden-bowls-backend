@@ -12,7 +12,6 @@ describe('geo routes', () => {
         data: {
           domain: 'com',
           country: 'US',
-          ip: '8.8.8.8',
           region: null,
           source: 'backend',
           presetId: null
@@ -32,7 +31,6 @@ describe('geo routes', () => {
       data: {
         domain: 'com',
         country: 'US',
-        ip: '8.8.8.8',
         region: null,
         source: 'backend',
         presetId: null
@@ -59,7 +57,6 @@ describe('geo routes', () => {
         data: {
           domain: 'com',
           country: 'UNKNOWN',
-          ip: '',
           region: null,
           source: 'backend',
           presetId: null
@@ -91,7 +88,7 @@ describe('geo routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.domain).toBe('com.br');
     expect(response.body.data.country).toBe('US');
-    expect(response.body.data.ip).toBe('8.8.8.8');
+    expect(response.body.data.ip).toBeUndefined();
     expect(countryReader.lookupIsoCode).toHaveBeenCalledWith('8.8.8.8');
   });
 });

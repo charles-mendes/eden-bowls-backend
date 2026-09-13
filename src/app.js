@@ -36,6 +36,7 @@ const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-p
 const { registerOnboardingPetsSyncRoutes } = require('./api/routes/onboarding-pets-sync.routes');
 const { registerProfileRoutes } = require('./api/routes/profile.routes');
 const { registerAdminRoutes } = require('./api/routes/admin.routes');
+const { registerPrivacyRoutes } = require('./api/routes/privacy.routes');
 const { registerPublicFeedbacksRoutes } = require('./api/routes/public-feedbacks.routes');
 const { HttpError } = require('./core/http-error');
 const path = require('path');
@@ -159,6 +160,7 @@ function createApp(dependencies = {}) {
   registerOnboardingPetDeleteRoutes(app, dependencies);
   registerOnboardingPetsSyncRoutes(app, dependencies);
   registerProfileRoutes(app, dependencies);
+  registerPrivacyRoutes(app, dependencies);
   registerPublicFeedbacksRoutes(app, dependencies);
   registerAdminRoutes(app, dependencies);
 

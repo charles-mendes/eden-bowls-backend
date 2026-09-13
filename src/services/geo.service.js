@@ -32,7 +32,6 @@ class GeoService {
       data: {
         domain,
         country,
-        ip: ip || '',
         region: null,
         source: 'backend',
         presetId: null

@@ -41,7 +41,7 @@ A rota so faz:
 
 1. detectar o dominio atual da request (`com` ou `com.br`);
 2. detectar o pais pelo IP via MaxMind GeoLite2;
-3. devolver IP, dominio e pais em JSON.
+3. devolver dominio e pais em JSON **sem o IP cru** (o IP continua usado só internamente no MaxMind).
 
 Nao faz:
 

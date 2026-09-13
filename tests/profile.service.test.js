@@ -128,6 +128,8 @@ describe('ProfileService', () => {
       canDeleteAccount: true,
       deleteRestrictionMessage: null
     });
+    expect(profile.marketingOptIn).toBe(false);
+    expect(profile.cookiePreferences).toEqual({ analytics: null, ads: null });
   });
 
   test('uppercases a Brazilian state and returns empty delivery when address is missing', async () => {
@@ -416,19 +418,40 @@ describe('ProfileService', () => {
     });
 
     const leftover = createService({
+      repository: {
+        hardDeletePetsByUserId: jest.fn().mockResolvedValue(undefined)
+      },
       ledgerRepository: {
         hasActiveSubscription: jest.fn().mockResolvedValue(false),
         listByUserId: jest.fn().mockResolvedValue([
           { stripeSubscriptionId: 'sub_incomplete', status: 'incomplete' },
           { stripeSubscriptionId: 'sub_done', status: 'cancelled' }
-        ])
+        ]),
+        redactCustomerEmailForUser: jest.fn().mockResolvedValue(undefined)
+      },
+      stripeBilling: {
+        cancelSubscriptionImmediately: jest.fn().mockResolvedValue({ status: 'canceled' }),
+        anonymizeCustomer: jest.fn().mockResolvedValue(undefined)
+      },
+      options: {
+        customerStore: {
+          getCustomerId: jest.fn().mockImplementation((_userId, account) => `cus_${account}`)
+        },
+        quotesRepository: {
+          deleteByUserId: jest.fn().mockResolvedValue(undefined)
+        }
       }
     });
     await expect(leftover.service.deleteAccount({ userId: 77 })).resolves.toEqual({ deleted: true });
     expect(leftover.stripeBilling.cancelSubscriptionImmediately).toHaveBeenCalledWith('sub_incomplete');
     expect(leftover.stripeBilling.cancelSubscriptionImmediately).not.toHaveBeenCalledWith('sub_done');
+    expect(leftover.stripeBilling.anonymizeCustomer).toHaveBeenCalledWith('cus_br');
+    expect(leftover.stripeBilling.anonymizeCustomer).toHaveBeenCalledWith('cus_us');
+    expect(leftover.ledgerRepository.redactCustomerEmailForUser).toHaveBeenCalledWith(77);
     expect(leftover.refreshTokenRepository.revokeAllForUser).toHaveBeenCalledWith(77, 'account_deleted', expect.any(String));
     expect(leftover.repository.softDeletePetsByUserId).toHaveBeenCalled();
+    expect(leftover.repository.hardDeletePetsByUserId).toHaveBeenCalledWith(77);
+    expect(leftover.service.quotesRepository.deleteByUserId).toHaveBeenCalledWith(77);
     expect(leftover.repository.deleteUserAndMeta).toHaveBeenCalledWith(77);
   });
 

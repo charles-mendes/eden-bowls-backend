@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { detectRequestIp } = require('../../core/geo-detection');
 const { parseAuthTokenInput } = require('../validators/auth-token.validator');
 const {
   parseEmailExistsInput,
@@ -168,7 +169,16 @@ function registerAuthRoutes(app, dependencies = {}) {
       }
 
       const payload = parseOtpVerifyInput(request.body || {});
-      const result = await dependencies.authService.verifyOtp(payload);
+      const requestContext = dependencies.privacyService && typeof dependencies.privacyService.contextFromRequest === 'function'
+        ? dependencies.privacyService.contextFromRequest({
+          ip: detectRequestIp(request, { trustProxy: Boolean(dependencies.trustProxy) }),
+          userAgent: request.headers && request.headers['user-agent']
+        })
+        : {};
+      const result = await dependencies.authService.verifyOtp({
+        ...payload,
+        requestContext
+      });
       sendSignupSuccess(response, 200, result);
     } catch (error) {
       if (error instanceof HttpError && error.details && error.details.code) {

@@ -93,6 +93,26 @@ class SubscriptionLedgerRepository {
     }
   }
 
+  async redactCustomerEmailForUser(userId) {
+    this.ensureDataSource();
+    const normalizedUserId = Number(userId);
+    if (!Number.isSafeInteger(normalizedUserId) || normalizedUserId < 1) {
+      return 0;
+    }
+    try {
+      const result = await this.dataSource.query(
+        `UPDATE \`${this.tableName}\` SET \`customer_email\` = NULL WHERE \`user_id\` = ?`,
+        [normalizedUserId]
+      );
+      return Number(result && result.affectedRows || 0);
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return 0;
+      }
+      throw error;
+    }
+  }
+
   async findByStripeSubscriptionId(subscriptionId) {
     this.ensureDataSource();
     const id = String(subscriptionId || '').trim();

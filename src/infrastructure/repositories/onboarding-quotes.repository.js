@@ -42,6 +42,19 @@ class OnboardingQuotesRepository {
     );
     return Boolean(result && result.affectedRows === 1);
   }
+
+  async deleteByUserId(userId) {
+    this.assertDataSource();
+    const normalizedUserId = Number(userId);
+    if (!Number.isSafeInteger(normalizedUserId) || normalizedUserId < 1) {
+      return 0;
+    }
+    const result = await this.dataSource.query(
+      `DELETE FROM \`${this.tableName}\` WHERE \`user_id\` = ?`,
+      [normalizedUserId]
+    );
+    return Number(result && result.affectedRows || 0);
+  }
 }
 
 module.exports = {

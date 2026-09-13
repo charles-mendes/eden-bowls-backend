@@ -10,7 +10,14 @@ describe('admin roles', () => {
     expect(ROLE_PERMISSIONS.operator).toContain('billing.coupons.write');
     expect(ROLE_PERMISSIONS.operator).toContain('users.status.write');
     expect(ROLE_PERMISSIONS.operator).toContain('feedbacks.write');
+    expect(ROLE_PERMISSIONS.operator).toContain('privacy.requests.write');
     expect(ROLE_PERMISSIONS.operator).not.toContain('users.roles.write');
+  });
+
+  test('lets readonly list privacy requests but not write them', () => {
+    expect(ROLE_PERMISSIONS.readonly).toContain('privacy.requests.read');
+    expect(ROLE_PERMISSIONS.readonly).not.toContain('privacy.requests.write');
+    expect(ROLE_PERMISSIONS.nutritionist).not.toContain('privacy.requests.read');
   });
 
   test('lets readonly list feedbacks but not write them', () => {

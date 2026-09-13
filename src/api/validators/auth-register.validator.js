@@ -17,7 +17,9 @@ const otpVerifySchema = z.object({
   otp: z.string().trim().regex(/^\d{6}$/),
   marketingOptIn: z.boolean().optional().default(false),
   termsAccepted: z.boolean(),
-  privacyAccepted: z.boolean()
+  privacyAccepted: z.boolean(),
+  privacyVersion: z.string().trim().max(32).optional(),
+  termsVersion: z.string().trim().max(32).optional()
 });
 
 const otpResendSchema = z.object({

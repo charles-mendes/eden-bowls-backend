@@ -33,6 +33,9 @@ const { CreateFeedbacksTable1700000000011 } = require('./migrations/170000000001
 const { AddFeedbackPlaceAndSeed1700000000012 } = require('./migrations/1700000000012-add-feedback-place-and-seed');
 const { ExtendUsShippingAndCreateUpsShipments1700000000013 } = require('./migrations/1700000000013-extend-us-shipping-and-create-ups-shipments');
 const { SplitStripeAccounts1700000000014 } = require('./migrations/1700000000014-split-stripe-accounts');
+const { CreatePrivacyTables1700000000015 } = require('./migrations/1700000000015-create-privacy-tables');
+const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
+const { buildPrivacyRequestEntitySchema } = require('./entities/privacy-request.entity');
 
 function buildDataSourceOptions(env) {
   return {
@@ -57,7 +60,9 @@ function buildDataSourceOptions(env) {
       buildStripeWebhookEventEntitySchema(),
       buildShippingBrSettingsEntitySchema(),
       buildShippingUsSettingsEntitySchema(),
-      buildFeedbackEntitySchema()
+      buildFeedbackEntitySchema(),
+      buildPrivacyConsentEntitySchema(),
+      buildPrivacyRequestEntitySchema()
     ],
     migrations: [
       CreateBreedsTable1700000000000,
@@ -74,7 +79,8 @@ function buildDataSourceOptions(env) {
       CreateFeedbacksTable1700000000011,
       AddFeedbackPlaceAndSeed1700000000012,
       ExtendUsShippingAndCreateUpsShipments1700000000013,
-      SplitStripeAccounts1700000000014
+      SplitStripeAccounts1700000000014,
+      CreatePrivacyTables1700000000015
     ],
     synchronize: false,
     logging: false,

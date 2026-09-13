@@ -20,6 +20,7 @@ class AuthService {
     this.otpResendWindowSeconds = Number(options.otpResendWindowSeconds || 3600);
     this.otpPepper = String(options.otpPepper || options.jwt && options.jwt.secret || 'hsr-default-salt');
     this.otpMailer = options.otpMailer || null;
+    this.privacyService = options.privacyService || null;
     this.hashPassword = typeof options.hashPassword === 'function' ? options.hashPassword : hashWordpressPassword;
     this.randomOtp = typeof options.randomOtp === 'function' ? options.randomOtp : generateOtp;
     this.nowProvider = typeof options.nowProvider === 'function' ? options.nowProvider : () => Math.floor(Date.now() / 1000);
@@ -136,6 +137,18 @@ class AuthService {
       privacyAccepted: true,
       emailVerifiedAt: new Date(this.nowProvider() * 1000).toISOString()
     });
+
+    if (this.privacyService && typeof this.privacyService.recordOtpConsents === 'function') {
+      const context = payload.requestContext || {};
+      await this.privacyService.recordOtpConsents({
+        userId: user.id,
+        marketingOptIn: Boolean(payload.marketingOptIn),
+        privacyVersion: payload.privacyVersion,
+        termsVersion: payload.termsVersion,
+        ipHash: context.ipHash,
+        userAgent: context.userAgent
+      });
+    }
 
     return {
       token_endpoint: '/api/v1/auth/token'
