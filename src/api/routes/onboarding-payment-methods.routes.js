@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { parseRequestMarket } = require('../validators/market.validator');
 
 function registerOnboardingPaymentMethodsRoutes(app, dependencies = {}) {
   app.get('/api/v1/onboarding/payment-methods', async (request, response, next) => {
@@ -11,8 +12,10 @@ function registerOnboardingPaymentMethodsRoutes(app, dependencies = {}) {
         throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
       }
 
+      const market = parseRequestMarket(request);
       const result = await dependencies.onboardingPaymentMethodsService.listSavedPaymentMethods({
-        userId: request.currentUser.id
+        userId: request.currentUser.id,
+        country: market.country
       });
 
       response.status(200).json(result);

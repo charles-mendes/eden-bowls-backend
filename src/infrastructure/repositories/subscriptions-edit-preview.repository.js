@@ -9,17 +9,20 @@ const {
   resolveProposedPlan
 } = require('../../core/subscription-edit-plan');
 const { roundMoney } = require('../../core/plan-catalog-pricing');
+const { ledgerStripeAccount } = require('../../core/stripe-account');
+const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 
 class SubscriptionsEditPreviewRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.resolveSubscriptionItems = options.resolveSubscriptionItems || null;
   }
 
   async preview(userId, subscriptionId, payload = {}, ledgerRow = null) {
-    if (!this.ledgerRepository || !this.stripeBilling) {
+    if (!this.ledgerRepository) {
       throw new HttpError(503, 'Subscription edit preview dependencies are not available.');
     }
 
@@ -28,7 +31,8 @@ class SubscriptionsEditPreviewRepository {
       throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
     }
 
-    const subscription = await this.stripeBilling.retrieveSubscription(subscriptionId);
+    const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
+    const subscription = await stripeBilling.retrieveSubscription(subscriptionId);
     const currentItems = extractStripeItemRefs(subscription);
     if (currentItems.length === 0) {
       throw new HttpError(422, 'Subscription has no Stripe items.', { code: 'invalid_plan' });
@@ -48,7 +52,7 @@ class SubscriptionsEditPreviewRepository {
 
     let prorationInvoice = {};
     try {
-      prorationInvoice = await this.stripeBilling.previewProration({
+      prorationInvoice = await stripeBilling.previewProration({
         subscriptionId,
         items: itemUpdates
       });
@@ -62,7 +66,8 @@ class SubscriptionsEditPreviewRepository {
       payload,
       proposed,
       shippingCost,
-      currency
+      currency,
+      stripeBilling
     });
 
     const currentTerm = Number(row.subscriptionTermMonths || 1);
@@ -70,6 +75,7 @@ class SubscriptionsEditPreviewRepository {
 
     return {
       subscription_id: subscriptionId,
+      stripe_account: ledgerStripeAccount(row),
       expected_current_hash: hash,
       term_change: currentTerm !== proposedTerm,
       current: {
@@ -94,10 +100,11 @@ class SubscriptionsEditPreviewRepository {
     };
   }
 
-  async buildNextCycle({ payload, proposed, shippingCost, currency }) {
+  async buildNextCycle({ payload, proposed, shippingCost, currency, stripeBilling }) {
+    const billing = stripeBilling || this.stripeBilling;
     const country = countryFromPayload(payload);
-    if (country === 'US' && this.stripeBilling.previewSubscriptionInvoice) {
-      const preview = await this.stripeBilling.previewSubscriptionInvoice({
+    if (billing && billing.previewSubscriptionInvoice && (country === 'US' || country === 'BR')) {
+      const preview = await billing.previewSubscriptionInvoice({
         address: payload.address || {},
         items: proposed.items
       });

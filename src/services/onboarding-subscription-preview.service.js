@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { resolveStripeAccountFromCountry } = require('../core/stripe-account');
 
 function normalizePriceIds(payload = {}, fallback = []) {
   const explicit = Array.isArray(payload.price_ids) ? payload.price_ids : [];
@@ -41,9 +42,7 @@ class OnboardingSubscriptionPreviewService {
     }
 
     const address = normalizeAddress(payload);
-    if (address.country !== 'US') {
-      throw new HttpError(400, 'Preview is only available for US addresses.', { code: 'preview_us_only' });
-    }
+    const stripeAccount = resolveStripeAccountFromCountry(address.country);
 
     const fallbackPriceIds = (this.repository.getFallbackPriceIds && await this.repository.getFallbackPriceIds(userId)) || [];
     const priceIds = normalizePriceIds(payload, fallbackPriceIds);
@@ -52,11 +51,14 @@ class OnboardingSubscriptionPreviewService {
       throw new HttpError(422, 'At least one valid price id is required.', { code: 'invalid_price_id' });
     }
 
-    const data = await this.repository.preview({ address, priceIds });
+    const data = await this.repository.preview({ address, priceIds, stripeAccount });
 
     return {
       success: true,
-      data
+      data: {
+        ...data,
+        stripe_account: stripeAccount
+      }
     };
   }
 }

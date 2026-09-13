@@ -2,6 +2,8 @@ const { HttpError } = require('../core/http-error');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { normalizeCountry, normalizeZipcode } = require('./onboarding-zipcode.service');
 const { formatStateForDisplay, formatStateForStorage } = require('../core/us-states');
+const { ledgerStripeAccount } = require('../core/stripe-account');
+const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 
 const ALLOWED_COUNTRIES = ['BR', 'US'];
 const AVATAR_MIME_TYPES = {
@@ -179,6 +181,7 @@ class ProfileService {
     this.authService = options.authService || null;
     this.ledgerRepository = options.ledgerRepository || null;
     this.refreshTokenRepository = options.refreshTokenRepository || null;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.avatarStorage = options.avatarStorage || null;
     this.hashPassword = typeof options.hashPassword === 'function' ? options.hashPassword : hashWordpressPassword;
@@ -580,14 +583,15 @@ class ProfileService {
       return;
     }
 
-    if (!this.stripeBilling || typeof this.stripeBilling.cancelSubscriptionImmediately !== 'function') {
-      throw new HttpError(502, 'Unable to cancel leftover Stripe subscriptions.', {
-        code: 'stripe_subscription_cancel_failed'
-      });
-    }
-
     for (const leftover of leftovers) {
-      await this.stripeBilling.cancelSubscriptionImmediately(leftover.stripeSubscriptionId);
+      const billing = resolveStripeBilling(this, ledgerStripeAccount(leftover));
+      if (!billing || typeof billing.cancelSubscriptionImmediately !== 'function') {
+        throw new HttpError(502, 'Unable to cancel leftover Stripe subscriptions.', {
+          code: 'stripe_subscription_cancel_failed',
+          stripe_account: ledgerStripeAccount(leftover)
+        });
+      }
+      await billing.cancelSubscriptionImmediately(leftover.stripeSubscriptionId);
     }
   }
 }

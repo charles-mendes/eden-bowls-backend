@@ -32,6 +32,7 @@ const { CreateShippingSettingsTables1700000000010 } = require('./migrations/1700
 const { CreateFeedbacksTable1700000000011 } = require('./migrations/1700000000011-create-feedbacks-table');
 const { AddFeedbackPlaceAndSeed1700000000012 } = require('./migrations/1700000000012-add-feedback-place-and-seed');
 const { ExtendUsShippingAndCreateUpsShipments1700000000013 } = require('./migrations/1700000000013-extend-us-shipping-and-create-ups-shipments');
+const { SplitStripeAccounts1700000000014 } = require('./migrations/1700000000014-split-stripe-accounts');
 
 function buildDataSourceOptions(env) {
   return {
@@ -72,7 +73,8 @@ function buildDataSourceOptions(env) {
       CreateShippingSettingsTables1700000000010,
       CreateFeedbacksTable1700000000011,
       AddFeedbackPlaceAndSeed1700000000012,
-      ExtendUsShippingAndCreateUpsShipments1700000000013
+      ExtendUsShippingAndCreateUpsShipments1700000000013,
+      SplitStripeAccounts1700000000014
     ],
     synchronize: false,
     logging: false,

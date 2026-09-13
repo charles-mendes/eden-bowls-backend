@@ -71,6 +71,8 @@ function buildService(overrides = {}) {
       stripeCouponService,
       stripeBilling,
       customerStore,
+      stripeAccounts: overrides.stripeAccounts || null,
+      stripeBrEnabled: overrides.stripeBrEnabled,
       lockStore,
       planPreviewRepository: overrides.planPreviewRepository || null,
       petsSyncRepository
@@ -81,7 +83,8 @@ function buildService(overrides = {}) {
     discountEligibilityRepository,
     stripeCouponService,
     stripeBilling,
-    customerStore
+    customerStore,
+    stripeAccounts: overrides.stripeAccounts || null
   };
 }
 
@@ -130,7 +133,8 @@ describe('OnboardingSubscriptionCheckoutService', () => {
 
     expect(stripeCouponService.resolveFirstPurchasePromotionForCheckout).toHaveBeenCalledWith({
       eligible: true,
-      termMonths: 1
+      termMonths: 1,
+      account: 'us'
     });
     expect(stripeBilling.createOnboardingSubscription).toHaveBeenCalledWith(expect.objectContaining({
       promotionCodeId: 'promo_1m',
@@ -181,7 +185,8 @@ describe('OnboardingSubscriptionCheckoutService', () => {
 
     expect(stripeCouponService.resolveFirstPurchasePromotionForCheckout).toHaveBeenCalledWith({
       eligible: false,
-      termMonths: 1
+      termMonths: 1,
+      account: 'us'
     });
     expect(stripeBilling.createOnboardingSubscription).toHaveBeenCalledWith(expect.objectContaining({
       promotionCodeId: null
@@ -537,6 +542,85 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     })).rejects.toMatchObject({
       statusCode: 422,
       details: { code: 'invalid_customer_email' }
+    });
+    expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+  });
+
+  test('uses the BR Stripe client for a Brazil address', async () => {
+    const brContext = {
+      ...validContext,
+      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      planSelection: {
+        ...validContext.planSelection,
+        catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
+      }
+    };
+    const usBilling = {
+      createOnboardingSubscription: jest.fn()
+    };
+    const brBilling = {
+      automaticTaxEnabled: false,
+      createOnboardingSubscription: jest.fn().mockResolvedValue({
+        customerId: 'cus_br',
+        subscription: { id: 'sub_br', status: 'incomplete' },
+        checkout: {
+          order_id: 0,
+          payment_state: 'requires_confirmation',
+          stripe_client_secret: 'secret_br',
+          stripe_subscription_id: 'sub_br',
+          status: 'incomplete'
+        }
+      }),
+      retrievePaymentIntent: jest.fn(),
+      resolvePaymentState: jest.fn().mockReturnValue('requires_confirmation')
+    };
+    const stripeAccounts = {
+      getForCreation: jest.fn((account) => (account === 'br' ? brBilling : usBilling)),
+      get: jest.fn((account) => (account === 'br' ? brBilling : usBilling))
+    };
+    const { service, customerStore, stripeCouponService } = buildService({
+      stripeAccounts,
+      stripeBilling: usBilling,
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, checkoutPayload) => checkoutPayload.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(brContext.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue(brContext),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_brl', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+
+    const result = await service.checkout({ userId: 7, payload });
+
+    expect(stripeAccounts.getForCreation).toHaveBeenCalledWith('br');
+    expect(customerStore.getCustomerId).toHaveBeenCalledWith(7, 'br');
+    expect(stripeCouponService.resolveFirstPurchasePromotionForCheckout).toHaveBeenCalledWith(expect.objectContaining({
+      account: 'br'
+    }));
+    expect(brBilling.createOnboardingSubscription).toHaveBeenCalled();
+    expect(usBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    expect(result.data.stripe_account).toBe('br');
+  });
+
+  test('blocks Brazil checkout when STRIPE_BR_ENABLED is off', async () => {
+    const brContext = {
+      ...validContext,
+      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' }
+    };
+    const { service, stripeBilling } = buildService({
+      stripeBrEnabled: false,
+      repository: {
+        checkout: jest.fn(),
+        getPlanSelection: jest.fn().mockResolvedValue(validContext.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue(brContext),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+
+    await expect(service.checkout({ userId: 7, payload })).rejects.toMatchObject({
+      statusCode: 503,
+      details: { code: 'stripe_br_disabled', stripe_account: 'br' }
     });
     expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
   });

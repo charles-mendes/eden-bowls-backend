@@ -1,5 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
+const { ledgerStripeAccount, parseStripeAccountInput } = require('../core/stripe-account');
+const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 
 function dashboardUrl(secretKey, path) {
   const base = String(secretKey || '').startsWith('sk_test_')
@@ -9,11 +11,13 @@ function dashboardUrl(secretKey, path) {
 }
 
 function presentSubscription(item, secretKey) {
+  const stripeAccount = String(item.stripeAccount || 'us').toLowerCase() || 'us';
   return {
     id: String(item.id),
     providerSubscriptionId: item.stripeSubscriptionId,
     stripeSubscriptionId: item.stripeSubscriptionId,
     stripeCustomerId: item.stripeCustomerId,
+    stripeAccount,
     status: item.status,
     autoRenew: !item.cancelAtPeriodEnd,
     nextBillingAt: item.currentPeriodEnd,
@@ -47,21 +51,41 @@ class AdminBillingService {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository;
     this.webhookEventsRepository = options.webhookEventsRepository;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.profileRepository = options.profileRepository || null;
     this.secretKey = options.secretKey || '';
   }
 
+  secretFor(item) {
+    const account = ledgerStripeAccount(item);
+    try {
+      const billing = resolveStripeBilling(this, account);
+      return billing.secretKey || this.secretKey || '';
+    } catch {
+      return this.secretKey || '';
+    }
+  }
+
+  billingFor(item) {
+    return resolveStripeBilling(this, ledgerStripeAccount(item));
+  }
+
   async listSubscriptions(query, pagination) {
+    let stripeAccount;
+    if (query && query.account) {
+      stripeAccount = parseStripeAccountInput(query.account);
+    }
     const result = await this.ledgerRepository.listAdmin({
       status: query.status,
       q: query.q,
+      stripeAccount,
       offset: pagination.offset,
       perPage: pagination.perPage
     });
 
     return paginatedEnvelope({
-      items: result.items.map((item) => presentSubscription(item, this.secretKey)),
+      items: result.items.map((item) => presentSubscription(item, this.secretFor(item))),
       total: result.total,
       page: pagination.page,
       perPage: pagination.perPage
@@ -74,7 +98,7 @@ class AdminBillingService {
       throw new HttpError(404, 'Subscription not found.');
     }
 
-    return presentSubscription(item, this.secretKey);
+    return presentSubscription(item, this.secretFor(item));
   }
 
   async metrics() {
@@ -103,19 +127,15 @@ class AdminBillingService {
       perPage: 100
     });
 
-    if (!this.stripeBilling || typeof this.stripeBilling.ensureClient !== 'function') {
-      return { success: true, data: { scanned: listed.total, updated: 0 } };
-    }
-
-    const stripe = this.stripeBilling.ensureClient();
     let updated = 0;
-
     for (const item of listed.items) {
       try {
+        const stripe = this.billingFor(item).ensureClient();
         const remote = await stripe.subscriptions.retrieve(item.stripeSubscriptionId);
         await this.ledgerRepository.upsert({
           stripeSubscriptionId: remote.id,
           stripeCustomerId: typeof remote.customer === 'string' ? remote.customer : remote.customer && remote.customer.id,
+          stripeAccount: ledgerStripeAccount(item),
           status: remote.status,
           currentPeriodStart: remote.current_period_start,
           currentPeriodEnd: remote.current_period_end,
@@ -143,7 +163,7 @@ class AdminBillingService {
       throw new HttpError(404, 'Subscription not found.');
     }
 
-    const stripe = this.stripeBilling.ensureClient();
+    const stripe = this.billingFor(item).ensureClient();
     const invoices = await stripe.invoices.list({
       subscription: item.stripeSubscriptionId,
       limit: 24
@@ -159,20 +179,30 @@ class AdminBillingService {
           amountPaid: invoice.amount_paid,
           currency: invoice.currency,
           createdAt: invoice.created ? new Date(invoice.created * 1000).toISOString() : null,
-          pdfUrl: `/api/v1/admin/billing/invoices/${invoice.id}/pdf`
+          pdfUrl: `/api/v1/admin/billing/invoices/${invoice.id}/pdf?account=${ledgerStripeAccount(item)}`
         }))
       }
     };
   }
 
-  async invoicePdfUrl(invoiceId) {
-    const stripe = this.stripeBilling.ensureClient();
-    const invoice = await stripe.invoices.retrieve(invoiceId);
-    if (!invoice || !invoice.invoice_pdf) {
-      throw new HttpError(404, 'Invoice PDF is not available.');
+  async invoicePdfUrl(invoiceId, account) {
+    const accounts = account
+      ? [parseStripeAccountInput(account)]
+      : ['us', 'br'];
+
+    for (const stripeAccount of accounts) {
+      try {
+        const stripe = resolveStripeBilling(this, stripeAccount).ensureClient();
+        const invoice = await stripe.invoices.retrieve(invoiceId);
+        if (invoice && invoice.invoice_pdf) {
+          return invoice.invoice_pdf;
+        }
+      } catch (_error) {
+        // try the other account
+      }
     }
 
-    return invoice.invoice_pdf;
+    throw new HttpError(404, 'Invoice PDF is not available.');
   }
 }
 

@@ -1,10 +1,13 @@
 const { HttpError } = require('../../core/http-error');
 const { extractCardFromPaymentMethod } = require('../../core/stripe-subscription-map');
 const { mapLedgerToActionSummary } = require('../../core/subscription-dashboard');
+const { ledgerStripeAccount } = require('../../core/stripe-account');
+const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 
 class SubscriptionsActionsRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
   }
 
@@ -12,35 +15,34 @@ class SubscriptionsActionsRepository {
     if (!this.ledgerRepository) {
       throw new HttpError(503, 'Subscription ledger is not available.');
     }
-    if (!this.stripeBilling) {
-      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
-    }
 
     const row = await this.ledgerRepository.findByUserIdAndSubscriptionId(userId, subscriptionId);
     if (!row) {
       throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
     }
 
+    const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
+
     const action = payload.action;
     if (action === 'pause') {
-      await this.stripeBilling.pauseSubscription(subscriptionId);
+      await stripeBilling.pauseSubscription(subscriptionId);
     } else if (action === 'reactivate') {
-      await this.stripeBilling.resumeSubscription(subscriptionId);
+      await stripeBilling.resumeSubscription(subscriptionId);
     } else if (action === 'cancel') {
       // Cancel at period end so the current cycle remains usable until Stripe confirms via webhook.
-      await this.stripeBilling.cancelSubscription(subscriptionId);
+      await stripeBilling.cancelSubscription(subscriptionId);
     } else if (action === 'toggle_auto_renew') {
       const enabled = typeof payload.enabled === 'boolean'
         ? payload.enabled
         : row.cancelAtPeriodEnd;
-      await this.stripeBilling.setCancelAtPeriodEnd(subscriptionId, !enabled);
+      await stripeBilling.setCancelAtPeriodEnd(subscriptionId, !enabled);
     } else if (action === 'update_payment_method') {
-      await this.stripeBilling.updateDefaultPaymentMethod(
+      await stripeBilling.updateDefaultPaymentMethod(
         row.stripeCustomerId,
         payload.payment_method_id,
         subscriptionId
       );
-      await this.updateCardSnapshot(row, payload.payment_method_id);
+      await this.updateCardSnapshot(row, payload.payment_method_id, stripeBilling);
     }
 
     const latest = await this.ledgerRepository.findByUserIdAndSubscriptionId(userId, subscriptionId);
@@ -52,13 +54,14 @@ class SubscriptionsActionsRepository {
     };
   }
 
-  async updateCardSnapshot(row, paymentMethodId) {
-    if (!this.stripeBilling.client || !this.stripeBilling.client.paymentMethods) {
+  async updateCardSnapshot(row, paymentMethodId, stripeBilling) {
+    const billing = stripeBilling || this.stripeBilling;
+    if (!billing || !billing.client || !billing.client.paymentMethods) {
       return;
     }
 
     try {
-      const paymentMethod = await this.stripeBilling.client.paymentMethods.retrieve(paymentMethodId);
+      const paymentMethod = await billing.client.paymentMethods.retrieve(paymentMethodId);
       const card = extractCardFromPaymentMethod(paymentMethod);
       if (!card.last4 && !card.brand) {
         return;

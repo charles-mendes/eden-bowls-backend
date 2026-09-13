@@ -5,6 +5,8 @@ const {
   isValidSubscriptionTerm,
   VALID_SUBSCRIPTION_TERMS
 } = require('../core/first-purchase-discount');
+const { parseStripeAccountInput } = require('../core/stripe-account');
+const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 
 function normalizePromoId(value) {
   const promoId = String(value || '').trim();
@@ -76,8 +78,14 @@ function isFirstPurchasePromo(promo) {
 class StripeCouponService {
   constructor(repository, options = {}) {
     this.repository = repository;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.secretKey = options.secretKey || '';
+    this.stripeBrEnabled = options.stripeBrEnabled;
+  }
+
+  accountOf(account) {
+    return parseStripeAccountInput(account);
   }
 
   ensureRepository() {
@@ -86,25 +94,40 @@ class StripeCouponService {
     }
   }
 
-  ensureStripe() {
-    if (!this.stripeBilling || typeof this.stripeBilling.ensureClient !== 'function') {
-      throw new HttpError(503, 'Stripe client is not available.', { code: 'stripe_sdk_missing' });
+  ensureStripe(account, { forCreation = false } = {}) {
+    const stripeAccount = this.accountOf(account);
+    const billing = resolveStripeBilling(this, stripeAccount, { forCreation });
+    if (!billing || typeof billing.ensureClient !== 'function') {
+      throw new HttpError(503, 'Stripe client is not available.', {
+        code: 'stripe_sdk_missing',
+        stripe_account: stripeAccount
+      });
     }
 
-    return this.stripeBilling.ensureClient();
+    return billing.ensureClient();
   }
 
-  async getStoredMapping() {
+  secretFor(account) {
+    const stripeAccount = this.accountOf(account);
+    try {
+      const billing = resolveStripeBilling(this, stripeAccount);
+      return billing.secretKey || this.secretKey || '';
+    } catch {
+      return this.secretKey || '';
+    }
+  }
+
+  async getStoredMapping(account) {
     this.ensureRepository();
-    const stored = await this.repository.getMapping();
+    const stored = await this.repository.getMapping(this.accountOf(account));
     return {
       mapping: stored && stored.mapping ? stored.mapping : { 1: null, 3: null, 6: null },
       coupons: stored && stored.coupons ? stored.coupons : { 1: null, 3: null, 6: null }
     };
   }
 
-  async getMapping() {
-    const stored = await this.getStoredMapping();
+  async getMapping(account) {
+    const stored = await this.getStoredMapping(account);
     return {
       1: stored.mapping[1] || null,
       3: stored.mapping[3] || null,
@@ -112,14 +135,14 @@ class StripeCouponService {
     };
   }
 
-  async getPromotionCodeIdForTerm(termMonths) {
-    const mapping = await this.getMapping();
+  async getPromotionCodeIdForTerm(termMonths, account) {
+    const mapping = await this.getMapping(account);
     const term = Number(termMonths);
     return mapping[term] || null;
   }
 
-  async mappingHealth() {
-    const mapping = await this.getMapping();
+  async mappingHealth(account) {
+    const mapping = await this.getMapping(account);
     const missingTerms = VALID_SUBSCRIPTION_TERMS.filter((term) => !mapping[term]);
     const misconfigCount = this.repository && this.repository.getMisconfigCount
       ? await this.repository.getMisconfigCount()
@@ -129,7 +152,8 @@ class StripeCouponService {
       complete: missingTerms.length === 0,
       missing_terms: missingTerms,
       mapping,
-      misconfig_count: misconfigCount
+      misconfig_count: misconfigCount,
+      stripe_account: this.accountOf(account)
     };
   }
 
@@ -158,27 +182,30 @@ class StripeCouponService {
     return { mapping: sanitized, coupons: sanitizedCoupons };
   }
 
-  async persistMapping(mapping = {}, coupons = {}) {
+  async persistMapping(mapping = {}, coupons = {}, account) {
     this.ensureRepository();
     const sanitized = this.sanitizeMapping(mapping, coupons);
-    await this.repository.saveMapping(sanitized.mapping, sanitized.coupons);
-    return this.mappingHealth();
+    await this.repository.saveMapping(sanitized.mapping, sanitized.coupons, this.accountOf(account));
+    return this.mappingHealth(account);
   }
 
-  async retrievePromotionCode(promoId) {
-    const stripe = this.ensureStripe();
+  async retrievePromotionCode(promoId, account) {
+    const stripe = this.ensureStripe(account);
     try {
       return await stripe.promotionCodes.retrieve(promoId, { expand: ['coupon'] });
     } catch (error) {
       throw new HttpError(422, 'Promotion code is invalid.', {
         code: 'invalid_promotion_code_id',
-        promotion_code_id: promoId
+        promotion_code_id: promoId,
+        stripe_account: this.accountOf(account)
       });
     }
   }
 
-  async enrichMappingFromStripe(mapping, coupons) {
-    if (!this.stripeBilling) {
+  async enrichMappingFromStripe(mapping, coupons, account) {
+    try {
+      resolveStripeBilling(this, this.accountOf(account));
+    } catch {
       return { mapping, coupons };
     }
 
@@ -188,12 +215,13 @@ class StripeCouponService {
         continue;
       }
 
-      const promo = await this.retrievePromotionCode(promoId);
+      const promo = await this.retrievePromotionCode(promoId, account);
       if (!promo || promo.active === false) {
         throw new HttpError(422, 'Promotion code is invalid.', {
           code: 'invalid_promotion_code_id',
           promotion_code_id: promoId,
-          term_months: term
+          term_months: term,
+          stripe_account: this.accountOf(account)
         });
       }
 
@@ -206,14 +234,14 @@ class StripeCouponService {
     return { mapping, coupons };
   }
 
-  async saveMapping(mapping = {}, coupons = {}) {
+  async saveMapping(mapping = {}, coupons = {}, account) {
     const sanitized = this.sanitizeMapping(mapping, coupons);
-    await this.enrichMappingFromStripe(sanitized.mapping, sanitized.coupons);
-    return this.persistMapping(sanitized.mapping, sanitized.coupons);
+    await this.enrichMappingFromStripe(sanitized.mapping, sanitized.coupons, account);
+    return this.persistMapping(sanitized.mapping, sanitized.coupons, account);
   }
 
-  async seedEmptySlots(fallbackMapping = {}) {
-    const stored = await this.getStoredMapping();
+  async seedEmptySlots(fallbackMapping = {}, account) {
+    const stored = await this.getStoredMapping(account);
     const mapping = {};
 
     for (const term of VALID_SUBSCRIPTION_TERMS) {
@@ -228,14 +256,14 @@ class StripeCouponService {
     }
 
     if (!Object.keys(mapping).length) {
-      return this.mappingHealth();
+      return this.mappingHealth(account);
     }
 
-    return this.persistMapping(mapping, stored.coupons);
+    return this.persistMapping(mapping, stored.coupons, account);
   }
 
-  async listStripePromotionCodes(limit = 100) {
-    const stripe = this.ensureStripe();
+  async listStripePromotionCodes(limit = 100, account) {
+    const stripe = this.ensureStripe(account);
     const listed = await stripe.promotionCodes.list({
       limit: Math.min(100, Math.max(1, Number(limit) || 100)),
       expand: ['data.coupon']
@@ -248,8 +276,8 @@ class StripeCouponService {
     return !(coupon && typeof coupon === 'object' && !coupon.deleted && (coupon.percent_off != null || coupon.duration));
   }
 
-  async hydratePromotionCoupons(promos = []) {
-    const stripe = this.ensureStripe();
+  async hydratePromotionCoupons(promos = [], account) {
+    const stripe = this.ensureStripe(account);
     const missingIds = [];
     const seen = new Set();
 
@@ -286,9 +314,9 @@ class StripeCouponService {
     });
   }
 
-  async syncFirstPurchasePromos() {
-    const stored = await this.getStoredMapping();
-    const listed = await this.listStripePromotionCodes(100);
+  async syncFirstPurchasePromos(account) {
+    const stored = await this.getStoredMapping(account);
+    const listed = await this.listStripePromotionCodes(100, account);
     const byId = new Map(listed.map((item) => [item.id, item]));
 
     for (const term of VALID_SUBSCRIPTION_TERMS) {
@@ -298,7 +326,7 @@ class StripeCouponService {
       }
 
       try {
-        byId.set(promoId, await this.retrievePromotionCode(promoId));
+        byId.set(promoId, await this.retrievePromotionCode(promoId, account));
       } catch {
         // Slot stays as stored; reported in missing_in_stripe.
       }
@@ -368,31 +396,34 @@ class StripeCouponService {
       };
     }
 
-    const health = await this.persistMapping(mapping, coupons);
+    const health = await this.persistMapping(mapping, coupons, account);
     return {
       ...health,
       slots,
       missing_in_stripe: missingInStripe,
-      inactive
+      inactive,
+      stripe_account: this.accountOf(account)
     };
   }
 
-  async resolveFirstPurchasePromotionForCheckout({ eligible, termMonths }) {
+  async resolveFirstPurchasePromotionForCheckout({ eligible, termMonths, account }) {
     if (!eligible) {
       return null;
     }
 
     if (!isValidSubscriptionTerm(termMonths)) {
       throw new HttpError(503, 'First purchase promotion is not configured.', {
-        code: 'first_purchase_promo_not_configured'
+        code: 'first_purchase_promo_not_configured',
+        stripe_account: this.accountOf(account)
       });
     }
 
-    const promotionCodeId = await this.getPromotionCodeIdForTerm(termMonths);
+    const promotionCodeId = await this.getPromotionCodeIdForTerm(termMonths, account);
     if (!promotionCodeId) {
       await this.incrementMisconfigMetric();
       throw new HttpError(503, 'First purchase promotion is not configured.', {
-        code: 'first_purchase_promo_not_configured'
+        code: 'first_purchase_promo_not_configured',
+        stripe_account: this.accountOf(account)
       });
     }
 
@@ -404,6 +435,7 @@ class StripeCouponService {
   }
 
   async createFirstPurchaseCoupon(payload = {}) {
+    const account = this.accountOf(payload.account);
     const termMonths = Number(payload.term_months);
     if (!isValidSubscriptionTerm(termMonths)) {
       throw new HttpError(400, 'Invalid subscription term.', { code: 'invalid_term' });
@@ -423,7 +455,7 @@ class StripeCouponService {
 
     const name = String(payload.name || '').trim() || `First purchase ${termMonths}m (${percentOff}%)`;
     const maxRedemptions = Math.max(0, Number(payload.max_redemptions) || 0);
-    const stripe = this.ensureStripe();
+    const stripe = this.ensureStripe(account, { forCreation: true });
 
     const coupon = await stripe.coupons.create({
       percent_off: percentOff,
@@ -452,7 +484,7 @@ class StripeCouponService {
     }
 
     const promotionCode = await stripe.promotionCodes.create(promotionPayload);
-    let health = await this.mappingHealth();
+    let health = await this.mappingHealth(account);
 
     if (payload.assign_first_purchase_slot !== false) {
       health = await this.persistMapping({
@@ -460,7 +492,7 @@ class StripeCouponService {
         [termMonths]: promotionCode.id
       }, {
         [termMonths]: coupon.id
-      });
+      }, account);
     }
 
     return {
@@ -472,22 +504,24 @@ class StripeCouponService {
         promotion_code_id: promotionCode.id,
         code: promotionCode.code,
         percent_off: percentOff,
+        stripe_account: account,
         health
       }
     };
   }
 
-  async listRecentPromotionCodes(limit = 25) {
-    const mapping = await this.getMapping();
+  async listRecentPromotionCodes(limit = 25, account) {
+    const mapping = await this.getMapping(account);
     const mappedIds = new Map(
       VALID_SUBSCRIPTION_TERMS
         .filter((term) => mapping[term])
         .map((term) => [mapping[term], term])
     );
     const listed = await this.hydratePromotionCoupons(
-      await this.listStripePromotionCodes(Math.min(25, Math.max(1, Number(limit) || 25)))
+      await this.listStripePromotionCodes(Math.min(25, Math.max(1, Number(limit) || 25)), account),
+      account
     );
-    const dashboardBase = stripeDashboardBase(this.secretKey);
+    const dashboardBase = stripeDashboardBase(this.secretFor(account));
 
     return {
       success: true,

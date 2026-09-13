@@ -116,10 +116,10 @@ function createStripeSdk(secretKey, options = {}) {
     throw sdkError;
   }
 
-  const clientOptions = {};
-  if (options.apiVersion) {
-    clientOptions.apiVersion = options.apiVersion;
-  }
+  const { DEFAULT_STRIPE_API_VERSION } = require('../../core/stripe-account');
+  const clientOptions = {
+    apiVersion: options.apiVersion || DEFAULT_STRIPE_API_VERSION
+  };
   if (Number.isFinite(Number(options.maxNetworkRetries))) {
     clientOptions.maxNetworkRetries = Number(options.maxNetworkRetries);
   }
@@ -129,6 +129,8 @@ function createStripeSdk(secretKey, options = {}) {
 
 class StripeBillingClient {
   constructor(options = {}) {
+    this.account = options.account || 'us';
+    this.secretKey = options.secretKey || '';
     this.automaticTaxEnabled = Boolean(options.automaticTaxEnabled);
     this.shippingProductId = options.shippingProductId || '';
     this.missingReason = null;
@@ -151,17 +153,21 @@ class StripeBillingClient {
     }
   }
 
-  ensureClient() {
+  httpError(status, message, details = {}) {
     const { HttpError } = require('../../core/http-error');
+    return new HttpError(status, message, { ...details, stripe_account: this.account || 'us' });
+  }
+
+  ensureClient() {
     if (this.client) {
       return this.client;
     }
     if (this.missingReason === 'sdk') {
-      throw new HttpError(503, 'Stripe SDK is not available in this environment.', {
+      throw this.httpError(503, 'Stripe SDK is not available in this environment.', {
         code: 'stripe_sdk_missing'
       });
     }
-    throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
+    throw this.httpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
   }
 
   async ensureRecurringPrice({ lookupKey, currency, unitAmount, nickname, stripeProductId }) {
@@ -172,7 +178,7 @@ class StripeBillingClient {
     const amount = Number(unitAmount);
 
     if (!key || !currencyCode || !Number.isFinite(amount) || amount <= 0) {
-      throw new HttpError(422, 'A catalog variant is not mapped to a Stripe price.', {
+      throw this.httpError(422, 'A catalog variant is not mapped to a Stripe price.', {
         code: 'unmapped_variant'
       });
     }
@@ -202,7 +208,7 @@ class StripeBillingClient {
         tax_behavior: 'exclusive'
       });
       if (!price || !String(price.id || '').startsWith('price_')) {
-        throw new HttpError(502, 'Unable to create Stripe price.', {
+        throw this.httpError(502, 'Unable to create Stripe price.', {
           code: 'stripe_price_ensure_failed'
         });
       }
@@ -221,7 +227,7 @@ class StripeBillingClient {
       } catch (_retryError) {
         // Fall through to the original Stripe error.
       }
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe price.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to create Stripe price.'), {
         code: 'stripe_price_ensure_failed'
       });
     }
@@ -242,7 +248,7 @@ class StripeBillingClient {
       if (error instanceof HttpError) {
         throw error;
       }
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to archive Stripe product.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to archive Stripe product.'), {
         code: 'stripe_product_archive_failed'
       });
     }
@@ -253,7 +259,7 @@ class StripeBillingClient {
     const stripe = this.ensureClient();
     const title = String(name || '').trim();
     if (!title) {
-      throw new HttpError(422, 'Product name is required.');
+      throw this.httpError(422, 'Product name is required.');
     }
 
     try {
@@ -262,7 +268,7 @@ class StripeBillingClient {
         metadata: { source: 'eden_bowls_admin', ...(metadata || {}) }
       });
       if (!product || !String(product.id || '').startsWith('prod_')) {
-        throw new HttpError(502, 'Unable to create Stripe product.', {
+        throw this.httpError(502, 'Unable to create Stripe product.', {
           code: 'stripe_product_ensure_failed'
         });
       }
@@ -271,7 +277,7 @@ class StripeBillingClient {
       if (error instanceof HttpError) {
         throw error;
       }
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe product.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to create Stripe product.'), {
         code: 'stripe_product_ensure_failed'
       });
     }
@@ -332,7 +338,7 @@ class StripeBillingClient {
     try {
       customer = await stripe.customers.retrieve(id);
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe customer.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe customer.'), {
         code: 'stripe_customer_retrieve_failed'
       });
     }
@@ -345,7 +351,7 @@ class StripeBillingClient {
     try {
       listed = await stripe.paymentMethods.list({ customer: id, type: 'card' });
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to list payment methods.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to list payment methods.'), {
         code: 'stripe_payment_methods_list_failed'
       });
     }
@@ -371,7 +377,7 @@ class StripeBillingClient {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     const customerAddress = {
-      country: 'US',
+      country: String(address.country || 'US').trim().toUpperCase() || 'US',
       state: String(address.state || '').trim(),
       postal_code: String(address.postal_code || address.postalCode || '').trim()
     };
@@ -409,7 +415,7 @@ class StripeBillingClient {
         currency: String(invoice.currency || 'usd').toLowerCase()
       };
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to preview Stripe invoice.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to preview Stripe invoice.'), {
         code: 'stripe_preview_failed'
       });
     }
@@ -429,7 +435,7 @@ class StripeBillingClient {
         }
       } catch (error) {
         if (String(error && error.code) !== 'resource_missing') {
-          throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe customer.'), {
+          throw this.httpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe customer.'), {
             code: 'stripe_customer_failed'
           });
         }
@@ -459,7 +465,7 @@ class StripeBillingClient {
         }
       });
       if (!created || !String(created.id || '').startsWith('cus_')) {
-        throw new HttpError(502, 'Unable to create/retrieve Stripe customer.', {
+        throw this.httpError(502, 'Unable to create/retrieve Stripe customer.', {
           code: 'stripe_customer_failed'
         });
       }
@@ -468,7 +474,7 @@ class StripeBillingClient {
       if (error instanceof HttpError) {
         throw error;
       }
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to create/retrieve Stripe customer.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to create/retrieve Stripe customer.'), {
         code: 'stripe_customer_failed'
       });
     }
@@ -479,7 +485,7 @@ class StripeBillingClient {
     const stripe = this.ensureClient();
     const pmId = String(paymentMethodId || '').trim();
     if (!pmId.startsWith('pm_')) {
-      throw new HttpError(422, 'A valid payment method is required.', {
+      throw this.httpError(422, 'A valid payment method is required.', {
         code: 'invalid_payment_method'
       });
     }
@@ -488,7 +494,7 @@ class StripeBillingClient {
     try {
       paymentMethod = await stripe.paymentMethods.retrieve(pmId);
     } catch (error) {
-      throw new HttpError(422, this.stripeMessage(error, 'Invalid payment method.'), {
+      throw this.httpError(422, this.stripeMessage(error, 'Invalid payment method.'), {
         code: 'invalid_payment_method'
       });
     }
@@ -508,7 +514,7 @@ class StripeBillingClient {
           // Fall through: the card stays on the original customer.
         }
       }
-      throw new HttpError(409, 'This payment method is attached to a different Stripe customer.', {
+      throw this.httpError(409, 'This payment method is attached to a different Stripe customer.', {
         code: 'payment_method_attached_to_other_customer'
       });
     }
@@ -517,7 +523,7 @@ class StripeBillingClient {
       try {
         await stripe.paymentMethods.attach(pmId, { customer: customerId });
       } catch (error) {
-        throw new HttpError(502, this.stripeMessage(error, 'Unable to attach payment method.'), {
+        throw this.httpError(502, this.stripeMessage(error, 'Unable to attach payment method.'), {
           code: 'stripe_payment_method_attach_failed'
         });
       }
@@ -542,21 +548,21 @@ class StripeBillingClient {
     try {
       promo = await stripe.promotionCodes.retrieve(promoId);
     } catch (error) {
-      throw new HttpError(422, 'Promotion code is invalid.', {
+      throw this.httpError(422, 'Promotion code is invalid.', {
         code: 'invalid_promotion_code_id',
         ...stripeErrorInfo(error)
       });
     }
 
     if (!promo || promo.active === false) {
-      throw new HttpError(422, 'Promotion code is invalid.', {
+      throw this.httpError(422, 'Promotion code is invalid.', {
         code: 'invalid_promotion_code_id'
       });
     }
 
     const couponId = couponIdFromPromotion(promo);
     if (!couponId) {
-      throw new HttpError(422, 'Promotion code is invalid.', {
+      throw this.httpError(422, 'Promotion code is invalid.', {
         code: 'invalid_promotion_code_id'
       });
     }
@@ -655,7 +661,7 @@ class StripeBillingClient {
   assertSubscriptionItems(items) {
     const { HttpError } = require('../../core/http-error');
     if (!Array.isArray(items) || items.length === 0) {
-      throw new HttpError(422, 'At least one valid Stripe price is required.', {
+      throw this.httpError(422, 'At least one valid Stripe price is required.', {
         code: 'invalid_price_id'
       });
     }
@@ -664,7 +670,7 @@ class StripeBillingClient {
       const price = String(item && item.price || '').trim();
       const quantity = Number(item && item.quantity);
       if (!price.startsWith('price_') || !Number.isFinite(quantity) || quantity < 1) {
-        throw new HttpError(422, 'Subscription items are invalid.', {
+        throw this.httpError(422, 'Subscription items are invalid.', {
           code: 'invalid_subscription_items'
         });
       }
@@ -683,7 +689,7 @@ class StripeBillingClient {
       try {
         prices.push(await stripe.prices.retrieve(item.price));
       } catch (error) {
-        throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe price.'), {
+        throw this.httpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe price.'), {
           code: 'stripe_price_retrieve_failed'
         });
       }
@@ -700,7 +706,7 @@ class StripeBillingClient {
     ));
 
     if (mixed) {
-      throw new HttpError(422, 'Subscription items must share the same currency and billing cycle.', {
+      throw this.httpError(422, 'Subscription items must share the same currency and billing cycle.', {
         code: 'invalid_subscription_items_mixed_cycle_or_currency'
       });
     }
@@ -711,13 +717,13 @@ class StripeBillingClient {
     const stripe = this.ensureClient();
     const id = String(paymentIntentId || '').trim();
     if (!id.startsWith('pi_')) {
-      throw new HttpError(422, 'Invalid payment intent id.', { code: 'invalid_payment_intent_id' });
+      throw this.httpError(422, 'Invalid payment intent id.', { code: 'invalid_payment_intent_id' });
     }
 
     try {
       return await stripe.paymentIntents.retrieve(id);
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve payment intent.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to retrieve payment intent.'), {
         code: 'stripe_payment_intent_retrieve_failed'
       });
     }
@@ -731,14 +737,14 @@ class StripeBillingClient {
 
     const paymentMethodIdInput = String(input.paymentMethodId || '').trim();
     if (!paymentMethodIdInput.startsWith('pm_')) {
-      throw new HttpError(422, 'A valid payment method is required.', {
+      throw this.httpError(422, 'A valid payment method is required.', {
         code: 'invalid_payment_method'
       });
     }
 
     const promotionCodeId = String(input.promotionCodeId || '').trim();
     if (promotionCodeId && !promotionCodeId.startsWith('promo_')) {
-      throw new HttpError(422, 'Promotion code is invalid.', {
+      throw this.httpError(422, 'Promotion code is invalid.', {
         code: 'invalid_promotion_code_id'
       });
     }
@@ -748,7 +754,7 @@ class StripeBillingClient {
     const country = String(address.country || '').toUpperCase();
     const zipcode = String(address.zipcode || address.postal_code || '').trim();
     if (country === 'US' && this.automaticTaxEnabled && !zipcode) {
-      throw new HttpError(422, 'Sales tax quote is unavailable.', {
+      throw this.httpError(422, 'Sales tax quote is unavailable.', {
         code: 'sales_tax_unavailable'
       });
     }
@@ -783,7 +789,7 @@ class StripeBillingClient {
     try {
       await stripe.customers.update(customerId, customerUpdate);
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to update Stripe customer.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to update Stripe customer.'), {
         code: 'stripe_customer_failed'
       });
     }
@@ -860,13 +866,13 @@ class StripeBillingClient {
     if (shippingCost > 0) {
       const currency = String(input.currency || '').trim().toLowerCase();
       if (!currency) {
-        throw new HttpError(422, 'Shipping currency is required.', {
+        throw this.httpError(422, 'Shipping currency is required.', {
           code: 'shipping_currency_missing'
         });
       }
       const amountMinor = Math.round(shippingCost * 100);
       if (amountMinor <= 0) {
-        throw new HttpError(422, 'Shipping amount is invalid.', {
+        throw this.httpError(422, 'Shipping amount is invalid.', {
           code: 'shipping_amount_invalid'
         });
       }
@@ -889,7 +895,7 @@ class StripeBillingClient {
         if (error instanceof HttpError) {
           throw error;
         }
-        throw new HttpError(502, this.stripeMessage(error, 'Unable to add shipping to Stripe invoice.'), {
+        throw this.httpError(502, this.stripeMessage(error, 'Unable to add shipping to Stripe invoice.'), {
           code: 'stripe_subscription_failed'
         });
       }
@@ -904,7 +910,7 @@ class StripeBillingClient {
     try {
       subscription = await stripe.subscriptions.create(subscriptionParams, createOptions);
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe subscription.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to create Stripe subscription.'), {
         code: 'stripe_subscription_failed',
         ...stripeErrorInfo(error)
       });
@@ -934,7 +940,7 @@ class StripeBillingClient {
     try {
       ({ invoice, payment } = await this.loadInvoicePayment(subscription));
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to create Stripe subscription.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to create Stripe subscription.'), {
         code: 'stripe_client_secret_missing',
         ...stripeErrorInfo(error)
       });
@@ -942,7 +948,7 @@ class StripeBillingClient {
 
     const clientSecret = payment.clientSecret;
     if (!subscription.id || !clientSecret) {
-      throw new HttpError(502, 'Unable to create Stripe subscription.', {
+      throw this.httpError(502, 'Unable to create Stripe subscription.', {
         code: 'stripe_client_secret_missing'
       });
     }
@@ -995,12 +1001,12 @@ class StripeBillingClient {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     if (!secret) {
-      throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
+      throw this.httpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
         code: 'stripe_webhook_secret_missing'
       });
     }
     if (!signature) {
-      throw new HttpError(400, 'Missing Stripe-Signature header.', {
+      throw this.httpError(400, 'Missing Stripe-Signature header.', {
         code: 'stripe_webhook_signature_invalid'
       });
     }
@@ -1008,7 +1014,7 @@ class StripeBillingClient {
     try {
       return stripe.webhooks.constructEvent(rawBody, signature, secret);
     } catch (error) {
-      throw new HttpError(400, this.stripeMessage(error, 'Invalid Stripe signature.'), {
+      throw this.httpError(400, this.stripeMessage(error, 'Invalid Stripe signature.'), {
         code: 'stripe_webhook_signature_invalid'
       });
     }
@@ -1019,7 +1025,7 @@ class StripeBillingClient {
     const stripe = this.ensureClient();
     const id = String(subscriptionId || '').trim();
     if (!id.startsWith('sub_')) {
-      throw new HttpError(422, 'Invalid subscription id.', { code: 'invalid_subscription_id' });
+      throw this.httpError(422, 'Invalid subscription id.', { code: 'invalid_subscription_id' });
     }
 
     try {
@@ -1027,7 +1033,7 @@ class StripeBillingClient {
         expand: options.expand || ['items.data.price', 'default_payment_method', 'latest_invoice.confirmation_secret']
       });
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe subscription.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to retrieve Stripe subscription.'), {
         code: 'stripe_subscription_retrieve_failed'
       });
     }
@@ -1049,7 +1055,7 @@ class StripeBillingClient {
       });
       return listed && Array.isArray(listed.data) ? listed.data : [];
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to list Stripe subscriptions.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to list Stripe subscriptions.'), {
         code: 'stripe_subscriptions_list_failed'
       });
     }
@@ -1063,7 +1069,7 @@ class StripeBillingClient {
         pause_collection: { behavior: 'void' }
       });
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to pause Stripe subscription.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to pause Stripe subscription.'), {
         code: 'stripe_subscription_pause_failed'
       });
     }
@@ -1077,7 +1083,7 @@ class StripeBillingClient {
         pause_collection: ''
       });
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to resume Stripe subscription.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to resume Stripe subscription.'), {
         code: 'stripe_subscription_resume_failed'
       });
     }
@@ -1091,7 +1097,7 @@ class StripeBillingClient {
         cancel_at_period_end: Boolean(cancelAtPeriodEnd)
       });
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to update auto-renew on Stripe subscription.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to update auto-renew on Stripe subscription.'), {
         code: 'stripe_subscription_cancel_at_period_end_failed'
       });
     }
@@ -1106,7 +1112,7 @@ class StripeBillingClient {
     const stripe = this.ensureClient();
     const id = String(subscriptionId || '').trim();
     if (!id.startsWith('sub_')) {
-      throw new HttpError(422, 'Invalid subscription id.', { code: 'invalid_subscription_id' });
+      throw this.httpError(422, 'Invalid subscription id.', { code: 'invalid_subscription_id' });
     }
 
     try {
@@ -1120,7 +1126,7 @@ class StripeBillingClient {
         return { id, status: 'canceled' };
       }
 
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to cancel Stripe subscription.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to cancel Stripe subscription.'), {
         code: 'stripe_subscription_cancel_failed'
       });
     }
@@ -1135,7 +1141,7 @@ class StripeBillingClient {
         invoice_settings: { default_payment_method: attached }
       });
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to update default payment method.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to update default payment method.'), {
         code: 'stripe_payment_method_default_failed'
       });
     }
@@ -1146,7 +1152,7 @@ class StripeBillingClient {
           default_payment_method: attached
         });
       } catch (error) {
-        throw new HttpError(502, this.stripeMessage(error, 'Unable to update subscription payment method.'), {
+        throw this.httpError(502, this.stripeMessage(error, 'Unable to update subscription payment method.'), {
           code: 'stripe_subscription_payment_method_failed'
         });
       }
@@ -1171,7 +1177,7 @@ class StripeBillingClient {
         quantity: 1
       });
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to add shipping invoice item.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to add shipping invoice item.'), {
         code: 'stripe_shipping_invoice_item_failed'
       });
     }
@@ -1189,7 +1195,7 @@ class StripeBillingClient {
         }
       });
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to preview subscription proration.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to preview subscription proration.'), {
         code: 'stripe_proration_preview_failed'
       });
     }
@@ -1210,7 +1216,7 @@ class StripeBillingClient {
     try {
       return await stripe.subscriptions.update(subscriptionId, params);
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to update Stripe subscription.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to update Stripe subscription.'), {
         code: 'stripe_subscription_update_failed'
       });
     }
@@ -1226,7 +1232,7 @@ class StripeBillingClient {
       });
       return listed && Array.isArray(listed.data) ? listed.data : [];
     } catch (error) {
-      throw new HttpError(502, this.stripeMessage(error, 'Unable to list Stripe invoices.'), {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to list Stripe invoices.'), {
         code: 'stripe_invoices_list_failed'
       });
     }

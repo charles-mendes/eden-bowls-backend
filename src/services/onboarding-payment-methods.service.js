@@ -5,7 +5,7 @@ class OnboardingPaymentMethodsService {
     this.repository = repository;
   }
 
-  async listSavedPaymentMethods({ userId }) {
+  async listSavedPaymentMethods({ userId, country }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding payment methods repository is not available.');
     }
@@ -14,7 +14,7 @@ class OnboardingPaymentMethodsService {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
-    const data = await this.repository.listSavedPaymentMethods(userId);
+    const data = await this.repository.listSavedPaymentMethods(userId, { country });
 
     return {
       success: true,

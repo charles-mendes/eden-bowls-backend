@@ -4,7 +4,24 @@ function createLogger(options = {}) {
   const level = options.level || 'info';
   const isDevelopment = options.nodeEnv ? options.nodeEnv !== 'production' : process.env.NODE_ENV !== 'production';
   const redact = {
-    paths: ['req.headers.authorization', 'req.headers.cookie', 'password', 'otp', 'text', 'DB_PASSWORD', 'AUTH_SMTP_PASS', 'HSR_SMTP_PASS'],
+    paths: [
+      'req.headers.authorization',
+      'req.headers.cookie',
+      'password',
+      'otp',
+      'text',
+      'DB_PASSWORD',
+      'AUTH_SMTP_PASS',
+      'HSR_SMTP_PASS',
+      'STRIPE_SECRET_KEY',
+      'STRIPE_BR_SECRET_KEY',
+      'STRIPE_US_SECRET_KEY',
+      'STRIPE_WEBHOOK_SECRET',
+      'STRIPE_BR_WEBHOOK_SECRET',
+      'STRIPE_US_WEBHOOK_SECRET',
+      'secretKey',
+      'webhookSecret'
+    ],
     remove: true
   };
 

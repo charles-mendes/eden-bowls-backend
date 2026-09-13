@@ -1,5 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const { collectPriceItems } = require('../../core/checkout-state');
+const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 
 function parseJsonColumn(value) {
   if (!value) {
@@ -19,7 +20,9 @@ class OnboardingSubscriptionPreviewRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
     this.tableName = options.tableName || 'onboarding_user_state';
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
+    this.stripeBrEnabled = options.stripeBrEnabled;
   }
 
   async getFallbackPriceIds(userId) {
@@ -46,8 +49,14 @@ class OnboardingSubscriptionPreviewRepository {
   }
 
   async preview(payload = {}) {
-    if (!this.stripeBilling) {
-      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
+    const stripeBilling = payload.stripeAccount
+      ? resolveStripeBilling(this, payload.stripeAccount, { forCreation: true })
+      : this.stripeBilling;
+    if (!stripeBilling) {
+      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', {
+        code: 'stripe_secret_missing',
+        stripe_account: payload.stripeAccount || 'us'
+      });
     }
 
     const items = (Array.isArray(payload.priceIds) ? payload.priceIds : [])
@@ -58,7 +67,7 @@ class OnboardingSubscriptionPreviewRepository {
       throw new HttpError(422, 'At least one valid price id is required.', { code: 'invalid_price_id' });
     }
 
-    return this.stripeBilling.previewSubscriptionInvoice({
+    return stripeBilling.previewSubscriptionInvoice({
       address: payload.address || {},
       items
     });

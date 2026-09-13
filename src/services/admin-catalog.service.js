@@ -1,5 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
+const { stripeAccountFromMarket } = require('../core/stripe-account');
+const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 
 function requiredCurrency(country) {
   if (country === 'US') {
@@ -70,8 +72,14 @@ function unwrapStripePrice(ensured) {
 class AdminCatalogService {
   constructor(options = {}) {
     this.repository = options.repository;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
+    this.stripeBrEnabled = options.stripeBrEnabled;
     this.lastSync = null;
+  }
+
+  billingFor(country, { forCreation = false } = {}) {
+    return resolveStripeBilling(this, stripeAccountFromMarket({ country }), { forCreation });
   }
 
   async listProducts(query, pagination) {
@@ -121,13 +129,21 @@ class AdminCatalogService {
       planDays: days
     });
 
-    if (this.stripeBilling && typeof this.stripeBilling.createCatalogProduct === 'function') {
+    if (this.stripeAccounts || this.stripeBilling) {
       try {
-        const stripeProductId = await this.stripeBilling.createCatalogProduct({
+        const stripeBilling = this.billingFor(country, { forCreation: true });
+        const stripeProductId = await stripeBilling.createCatalogProduct({
           name,
           metadata: { catalog_product_id: String(productId), market: country }
         });
-        await this.repository.upsertPostMeta(productId, '_stripe_product_id', stripeProductId);
+        if (country === 'US') {
+          await this.repository.upsertPostMeta(productId, '_stripe_product_id', stripeProductId);
+        }
+        await this.repository.upsertPostMeta(
+          productId,
+          '_stripe_product_ids_by_currency',
+          JSON.stringify({ [requiredCurrency(country)]: stripeProductId })
+        );
       } catch (error) {
         if (!error || error.statusCode !== 503) {
           throw error;
@@ -172,7 +188,14 @@ class AdminCatalogService {
   }
 
   async archiveStripeCatalog(product = {}) {
-    if (!this.stripeBilling || typeof this.stripeBilling.archiveCatalogProduct !== 'function') {
+    const country = product.planCountry || 'US';
+    let stripeBilling = null;
+    try {
+      stripeBilling = this.billingFor(country);
+    } catch (_error) {
+      stripeBilling = this.stripeBilling;
+    }
+    if (!stripeBilling || typeof stripeBilling.archiveCatalogProduct !== 'function') {
       return;
     }
 
@@ -190,7 +213,7 @@ class AdminCatalogService {
 
     for (const stripeProductId of [...new Set(ids)]) {
       try {
-        await this.stripeBilling.archiveCatalogProduct(stripeProductId);
+        await stripeBilling.archiveCatalogProduct(stripeProductId);
       } catch (_error) {
         // Local catalog delete should succeed even if Stripe archive fails.
       }
@@ -387,15 +410,29 @@ class AdminCatalogService {
           continue;
         }
 
-        if (!this.stripeBilling) {
+        let stripeBilling = this.stripeBilling;
+        try {
+          stripeBilling = this.billingFor(country, { forCreation: true });
+        } catch (error) {
+          if (error && error.details && error.details.code === 'stripe_br_disabled') {
+            skipped.push({ variationId: variant.id, reason: 'stripe_br_disabled' });
+            continue;
+          }
+          throw error;
+        }
+        if (!stripeBilling) {
           continue;
         }
 
         const nickname = `${product.namePt} - ${variant.name || variant.sku}`;
         const unitAmount = Math.round(Number(variant.regularPrice) * 100);
         const lookupKey = `eden_${product.id}_${variant.id}_${mappedCurrency}_${unitAmount}`;
-        const stripeProductId = liveStripeId(variant.stripeProductId, 'prod_')
-          || liveStripeId(product.stripeProductId, 'prod_');
+        const productMap = variant.stripeProductIdsByCurrency || {};
+        const mappedProductId = liveStripeId(productMap[mappedCurrency], 'prod_');
+        const stripeProductId = mappedProductId
+          || (!Object.keys(productMap).length
+            ? (liveStripeId(variant.stripeProductId, 'prod_') || liveStripeId(product.stripeProductId, 'prod_'))
+            : '');
         const priceArgs = {
           lookupKey,
           currency: mappedCurrency,
@@ -405,12 +442,16 @@ class AdminCatalogService {
         if (stripeProductId) {
           priceArgs.stripeProductId = stripeProductId;
         }
-        const ensured = unwrapStripePrice(await this.stripeBilling.ensureRecurringPrice(priceArgs));
+        const ensured = unwrapStripePrice(await stripeBilling.ensureRecurringPrice(priceArgs));
         const priceId = ensured.priceId;
         const fingerprint = this.repository.fingerprint(variant.regularPrice, mappedCurrency);
         const nextMap = {
           ...variant.stripePriceIdsByCurrency,
           [mappedCurrency]: priceId
+        };
+        const nextProductMap = {
+          ...productMap,
+          [mappedCurrency]: ensured.productId || stripeProductId
         };
 
         if (!variant.stripePriceId) {
@@ -422,7 +463,8 @@ class AdminCatalogService {
         await this.repository.upsertPostMeta(variant.id, '_stripe_price_id', priceId);
         await this.repository.upsertPostMeta(variant.id, '_stripe_price_ids_by_currency', JSON.stringify(nextMap));
         await this.repository.upsertPostMeta(variant.id, '_stripe_price_fingerprint', fingerprint);
-        if (ensured.productId || stripeProductId) {
+        await this.repository.upsertPostMeta(variant.id, '_stripe_product_ids_by_currency', JSON.stringify(nextProductMap));
+        if (mappedCurrency === 'usd' && (ensured.productId || stripeProductId)) {
           await this.repository.upsertPostMeta(variant.id, '_stripe_product_id', ensured.productId || stripeProductId);
         }
       }

@@ -337,4 +337,32 @@ describe('AdminCatalogService', () => {
       message: 'Variation not found.'
     });
   });
+
+  test('skips BR catalog sync when Stripe Brazil creation is disabled', async () => {
+    const repository = {
+      listProducts: jest.fn().mockResolvedValue({
+        items: [{
+          id: '100',
+          planCountry: 'BR',
+          namePt: 'Bowl BR',
+          variants: [{ id: '1001', regularPrice: 30, name: 'Beef' }]
+        }]
+      })
+    };
+    const stripeAccounts = {
+      getForCreation: jest.fn(() => {
+        const error = new Error('Stripe Brazil is not enabled.');
+        error.statusCode = 503;
+        error.details = { code: 'stripe_br_disabled', stripe_account: 'br' };
+        throw error;
+      })
+    };
+    const service = new AdminCatalogService({ repository, stripeAccounts });
+
+    const result = await service.sync({ market: 'BR', currency: 'BRL' });
+
+    expect(result.summary.skipped).toEqual([
+      { variationId: '1001', reason: 'stripe_br_disabled' }
+    ]);
+  });
 });

@@ -35,6 +35,7 @@ const { NominatimClient } = require('./infrastructure/geo/nominatim-client');
 const { OsrmClient } = require('./infrastructure/geo/osrm-client');
 const { ShippingSettingsRepository } = require('./infrastructure/repositories/shipping-settings.repository');
 const { StripeBillingClient } = require('./infrastructure/stripe/stripe-billing-client');
+const { createStripeAccountsFromEnv } = require('./infrastructure/stripe/stripe-accounts');
 const { StripeCustomerStore } = require('./infrastructure/stripe/stripe-customer-store');
 const { SubscriptionsActionsRepository } = require('./infrastructure/repositories/subscriptions-actions.repository');
 const { SubscriptionsDetailRepository } = require('./infrastructure/repositories/subscriptions-detail.repository');
@@ -185,13 +186,21 @@ async function bootstrap() {
   });
   const upsLabelStorage = new LocalUpsLabelStorage({ directory: env.UPS_LABEL_DIR });
   const upsShipmentRepository = new UpsShipmentRepository(dataSource);
-  const stripeBilling = new StripeBillingClient({
-    secretKey: env.STRIPE_SECRET_KEY,
-    apiVersion: env.STRIPE_API_VERSION,
-    maxNetworkRetries: env.STRIPE_MAX_RETRIES,
-    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
-    shippingProductId: env.STRIPE_SHIPPING_PRODUCT_ID
-  });
+  const stripeAccounts = createStripeAccountsFromEnv(env);
+  const stripeBilling = (() => {
+    try {
+      return stripeAccounts.get('us');
+    } catch {
+      return new StripeBillingClient({
+        account: 'us',
+        secretKey: env.STRIPE_US_SECRET_KEY,
+        apiVersion: env.STRIPE_API_VERSION,
+        maxNetworkRetries: env.STRIPE_MAX_RETRIES,
+        automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
+        shippingProductId: env.STRIPE_US_SHIPPING_PRODUCT_ID
+      });
+    }
+  })();
   const stripeCustomerStore = new StripeCustomerStore(dataSource, {
     usermetaTableName: env.WP_USERMETA_TABLE_NAME
   });
@@ -201,8 +210,10 @@ async function bootstrap() {
   const onboardingAddressAutocompleteService = new OnboardingAddressAutocompleteService(onboardingAddressAutocompleteRepository);
   const stripeFirstPurchasePromosRepository = new StripeFirstPurchasePromosRepository(dataSource);
   const stripeCouponService = new StripeCouponService(stripeFirstPurchasePromosRepository, {
+    stripeAccounts,
     stripeBilling,
-    secretKey: env.STRIPE_SECRET_KEY
+    secretKey: env.STRIPE_US_SECRET_KEY,
+    stripeBrEnabled: env.STRIPE_BR_ENABLED
   });
   try {
     await stripeCouponService.seedEmptySlots({
@@ -224,7 +235,9 @@ async function bootstrap() {
   const onboardingPaymentIntentAckService = new OnboardingPaymentIntentAckService(onboardingPaymentIntentAckRepository, { authService });
   const onboardingPaymentMethodsRepository = new OnboardingPaymentMethodsRepository({
     customerStore: stripeCustomerStore,
-    stripeBilling
+    stripeAccounts,
+    stripeBilling,
+    stripeBrEnabled: env.STRIPE_BR_ENABLED
   });
   const onboardingPaymentMethodsService = new OnboardingPaymentMethodsService(onboardingPaymentMethodsRepository);
   const onboardingPetCreateRepository = new OnboardingPetCreateRepository(dataSource);
@@ -254,7 +267,9 @@ async function bootstrap() {
   const onboardingRecurrenceRepository = new OnboardingRecurrenceRepository(dataSource);
   const onboardingRecurrenceService = new OnboardingRecurrenceService(onboardingRecurrenceRepository);
   const onboardingSubscriptionPreviewRepository = new OnboardingSubscriptionPreviewRepository(dataSource, {
-    stripeBilling
+    stripeAccounts,
+    stripeBilling,
+    stripeBrEnabled: env.STRIPE_BR_ENABLED
   });
   const onboardingSubscriptionPreviewService = new OnboardingSubscriptionPreviewService(onboardingSubscriptionPreviewRepository);
   const onboardingSalesTaxQuoteRepository = new OnboardingSalesTaxQuoteRepository(dataSource);
@@ -272,19 +287,22 @@ async function bootstrap() {
   });
   const stripeWebhookEventsRepository = new StripeWebhookEventsRepository(dataSource);
   const stripeWebhookService = new StripeWebhookService({
+    stripeAccounts,
     stripeBilling,
-    webhookSecret: env.STRIPE_WEBHOOK_SECRET,
+    webhookSecret: env.STRIPE_US_WEBHOOK_SECRET,
     eventsRepository: stripeWebhookEventsRepository,
     ledgerRepository: subscriptionLedgerRepository,
     customerStore: stripeCustomerStore,
-    shippingProductId: env.STRIPE_SHIPPING_PRODUCT_ID,
+    shippingProductId: env.STRIPE_US_SHIPPING_PRODUCT_ID,
     logger
   });
   const onboardingSubscriptionCheckoutService = new OnboardingSubscriptionCheckoutService(onboardingSubscriptionCheckoutRepository, {
     authService,
     discountEligibilityRepository: onboardingDiscountEligibilityRepository,
     stripeCouponService,
+    stripeAccounts,
     stripeBilling,
+    stripeBrEnabled: env.STRIPE_BR_ENABLED,
     customerStore: stripeCustomerStore,
     ledgerRepository: subscriptionLedgerRepository,
     planPreviewRepository: onboardingPlanPreviewRepository,
@@ -299,17 +317,20 @@ async function bootstrap() {
   const onboardingZipcodeService = new OnboardingZipcodeService(onboardingZipcodeRepository);
   const subscriptionsActionsRepository = new SubscriptionsActionsRepository({
     ledgerRepository: subscriptionLedgerRepository,
+    stripeAccounts,
     stripeBilling
   });
   const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository, { authService });
   const subscriptionsDetailRepository = new SubscriptionsDetailRepository({
     ledgerRepository: subscriptionLedgerRepository,
+    stripeAccounts,
     stripeBilling,
     upsShipmentRepository
   });
   const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository);
   const subscriptionsEditPreviewRepository = new SubscriptionsEditPreviewRepository({
     ledgerRepository: subscriptionLedgerRepository,
+    stripeAccounts,
     stripeBilling,
     planPreviewRepository: onboardingPlanPreviewRepository,
     resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection)
@@ -319,6 +340,7 @@ async function bootstrap() {
   });
   const subscriptionsEditCommitRepository = new SubscriptionsEditCommitRepository({
     ledgerRepository: subscriptionLedgerRepository,
+    stripeAccounts,
     stripeBilling,
     planPreviewRepository: onboardingPlanPreviewRepository,
     resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection)
@@ -348,6 +370,7 @@ async function bootstrap() {
     authService,
     ledgerRepository: subscriptionLedgerRepository,
     refreshTokenRepository: authRefreshTokenRepository,
+    stripeAccounts,
     stripeBilling,
     avatarStorage
   });
@@ -383,9 +406,10 @@ async function bootstrap() {
   const adminBillingService = new AdminBillingService({
     ledgerRepository: subscriptionLedgerRepository,
     webhookEventsRepository: stripeWebhookEventsRepository,
+    stripeAccounts,
     stripeBilling,
     profileRepository,
-    secretKey: env.STRIPE_SECRET_KEY
+    secretKey: env.STRIPE_US_SECRET_KEY
   });
   const upsShipmentService = new UpsShipmentService({
     repository: upsShipmentRepository,
@@ -401,7 +425,9 @@ async function bootstrap() {
   });
   const adminCatalogService = new AdminCatalogService({
     repository: adminCatalogRepository,
-    stripeBilling
+    stripeAccounts,
+    stripeBilling,
+    stripeBrEnabled: env.STRIPE_BR_ENABLED
   });
   const adminUsersRepository = new AdminUsersRepository(dataSource, {
     usersTableName: env.WP_USERS_TABLE_NAME,

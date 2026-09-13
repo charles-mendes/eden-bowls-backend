@@ -150,4 +150,91 @@ describe('StripeWebhookService', () => {
       currency: 'usd'
     });
   });
+
+  test('rejects a BR-signed payload on the US endpoint without trying the BR secret', async () => {
+    const usBilling = {
+      constructEvent: jest.fn((rawBody, signature, secret) => {
+        expect(secret).toBe('whsec_us');
+        throw new HttpError(400, 'Invalid Stripe signature.', {
+          code: 'stripe_webhook_signature_invalid'
+        });
+      }),
+      retrieveSubscription: jest.fn(),
+      addShippingInvoiceItem: jest.fn()
+    };
+    const brBilling = {
+      constructEvent: jest.fn(),
+      retrieveSubscription: jest.fn(),
+      addShippingInvoiceItem: jest.fn()
+    };
+    const eventsRepository = { insertIfNew: jest.fn() };
+    const { StripeAccounts } = require('../src/infrastructure/stripe/stripe-accounts');
+    const service = new StripeWebhookService({
+      stripeAccounts: new StripeAccounts({
+        us: usBilling,
+        br: brBilling,
+        brEnabled: true,
+        usWebhookSecret: 'whsec_us',
+        brWebhookSecret: 'whsec_br'
+      }),
+      eventsRepository,
+      ledgerRepository: {
+        findByStripeSubscriptionId: jest.fn(),
+        upsert: jest.fn()
+      }
+    });
+
+    await expect(service.handle({
+      account: 'us',
+      rawBody: Buffer.from('{"id":"evt_br"}'),
+      signature: 't=1,v1=br_payload'
+    })).rejects.toMatchObject({
+      statusCode: 400,
+      details: { code: 'stripe_webhook_signature_invalid' }
+    });
+
+    expect(usBilling.constructEvent).toHaveBeenCalledTimes(1);
+    expect(brBilling.constructEvent).not.toHaveBeenCalled();
+    expect(eventsRepository.insertIfNew).not.toHaveBeenCalled();
+  });
+
+  test('rejects a US-signed payload on the BR endpoint without trying the US secret', async () => {
+    const usBilling = {
+      constructEvent: jest.fn()
+    };
+    const brBilling = {
+      constructEvent: jest.fn((rawBody, signature, secret) => {
+        expect(secret).toBe('whsec_br');
+        throw new HttpError(400, 'Invalid Stripe signature.', {
+          code: 'stripe_webhook_signature_invalid'
+        });
+      })
+    };
+    const eventsRepository = { insertIfNew: jest.fn() };
+    const { StripeAccounts } = require('../src/infrastructure/stripe/stripe-accounts');
+    const service = new StripeWebhookService({
+      stripeAccounts: new StripeAccounts({
+        us: usBilling,
+        br: brBilling,
+        brEnabled: true,
+        usWebhookSecret: 'whsec_us',
+        brWebhookSecret: 'whsec_br'
+      }),
+      eventsRepository,
+      ledgerRepository: { upsert: jest.fn() }
+    });
+
+    await expect(service.handle({
+      account: 'br',
+      rawBody: Buffer.from('{"id":"evt_us"}'),
+      signature: 't=1,v1=us_payload'
+    })).rejects.toMatchObject({
+      statusCode: 400,
+      details: { code: 'stripe_webhook_signature_invalid' }
+    });
+
+    expect(brBilling.constructEvent).toHaveBeenCalledTimes(1);
+    expect(usBilling.constructEvent).not.toHaveBeenCalled();
+    expect(eventsRepository.insertIfNew).not.toHaveBeenCalled();
+  });
 });

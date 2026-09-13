@@ -1,22 +1,34 @@
 const { HttpError } = require('../../core/http-error');
+const { resolveStripeAccountFromCountry, STRIPE_ACCOUNTS } = require('../../core/stripe-account');
+const { resolveStripeBilling } = require('../../infrastructure/stripe/stripe-accounts');
 
 class OnboardingPaymentMethodsRepository {
   constructor(options = {}) {
     this.customerStore = options.customerStore || null;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
+    this.stripeBrEnabled = options.stripeBrEnabled;
   }
 
-  async listSavedPaymentMethods(userId) {
-    const customerId = this.customerStore ? await this.customerStore.getCustomerId(userId) : '';
+  async listSavedPaymentMethods(userId, { country } = {}) {
+    let stripeAccount = STRIPE_ACCOUNTS.US;
+    try {
+      stripeAccount = resolveStripeAccountFromCountry(country || 'US');
+    } catch {
+      stripeAccount = STRIPE_ACCOUNTS.US;
+    }
+
+    if (stripeAccount === STRIPE_ACCOUNTS.BR && this.stripeBrEnabled === false) {
+      return [];
+    }
+
+    const customerId = this.customerStore ? await this.customerStore.getCustomerId(userId, stripeAccount) : '';
     if (!customerId) {
       return [];
     }
 
-    if (!this.stripeBilling) {
-      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
-    }
-
-    return this.stripeBilling.listCardPaymentMethods(customerId);
+    const stripeBilling = resolveStripeBilling(this, stripeAccount);
+    return stripeBilling.listCardPaymentMethods(customerId);
   }
 }
 

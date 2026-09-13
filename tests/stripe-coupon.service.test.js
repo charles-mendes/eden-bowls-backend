@@ -21,7 +21,8 @@ describe('StripeCouponService', () => {
       complete: false,
       missing_terms: [3, 6],
       mapping: { 1: 'promo_db_1m', 3: null, 6: null },
-      misconfig_count: 0
+      misconfig_count: 0,
+      stripe_account: 'us'
     });
   });
 
@@ -47,7 +48,7 @@ describe('StripeCouponService', () => {
       6: 'not-a-promo'
     });
 
-    expect(repository.saveMapping).toHaveBeenCalledWith({ 3: 'promo_env_3m' }, {});
+    expect(repository.saveMapping).toHaveBeenCalledWith({ 3: 'promo_env_3m' }, {}, 'us');
   });
 
   test('persists only promo_ ids', async () => {
@@ -63,7 +64,7 @@ describe('StripeCouponService', () => {
 
     await service.saveMapping({ 1: 'promo_saved', 3: 'coupon_bad', 6: '' });
 
-    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_saved' }, {});
+    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_saved' }, {}, 'us');
   });
 
   test('validates mapped promo ids against Stripe before saving', async () => {
@@ -91,7 +92,7 @@ describe('StripeCouponService', () => {
     await service.saveMapping({ 1: 'promo_saved' });
 
     expect(stripe.promotionCodes.retrieve).toHaveBeenCalledWith('promo_saved', { expand: ['coupon'] });
-    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_saved' }, { 1: 'coupon_saved' });
+    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_saved' }, { 1: 'coupon_saved' }, 'us');
   });
 
   test('syncs empty slots from Stripe first-purchase promotion codes', async () => {
@@ -137,7 +138,8 @@ describe('StripeCouponService', () => {
 
     expect(repository.saveMapping).toHaveBeenCalledWith(
       { 1: 'promo_stored_1m', 3: 'promo_stripe_3m' },
-      { 1: 'coupon_1', 3: 'coupon_3' }
+      { 1: 'coupon_1', 3: 'coupon_3' },
+      'us'
     );
     expect(result.slots[1].source).toBe('stored');
     expect(result.slots[3].source).toBe('stripe');
@@ -250,5 +252,23 @@ describe('StripeCouponService', () => {
       termMonths: 12
     })).rejects.toBeInstanceOf(HttpError);
     expect(repository.incrementMisconfigCount).not.toHaveBeenCalled();
+  });
+
+  test('reads and writes first-purchase maps per Stripe account', async () => {
+    const repository = {
+      getMapping: jest.fn().mockResolvedValue({
+        mapping: { 1: 'promo_br_1m', 3: null, 6: null },
+        coupons: { 1: 'coupon_br', 3: null, 6: null }
+      }),
+      saveMapping: jest.fn().mockResolvedValue(undefined),
+      getMisconfigCount: jest.fn().mockResolvedValue(0)
+    };
+    const service = new StripeCouponService(repository);
+
+    await service.getMapping('br');
+    await service.saveMapping({ 1: 'promo_br_1m' }, {}, 'br');
+
+    expect(repository.getMapping).toHaveBeenCalledWith('br');
+    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_br_1m' }, {}, 'br');
   });
 });

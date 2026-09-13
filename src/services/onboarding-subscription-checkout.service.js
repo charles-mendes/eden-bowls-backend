@@ -5,6 +5,8 @@ const {
   validateCheckoutState
 } = require('../core/checkout-state');
 const { resolveMarket } = require('../core/market');
+const { resolveStripeAccountFromCountry } = require('../core/stripe-account');
+const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
   applyFirstPurchaseDiscount,
   expectedPercentForTerm
@@ -102,7 +104,9 @@ class OnboardingSubscriptionCheckoutService {
     this.authService = options.authService || null;
     this.discountEligibilityRepository = options.discountEligibilityRepository || null;
     this.stripeCouponService = options.stripeCouponService || null;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
+    this.stripeBrEnabled = options.stripeBrEnabled;
     this.customerStore = options.customerStore || null;
     this.ledgerRepository = options.ledgerRepository || null;
     this.lockStore = options.lockStore || defaultCheckoutLockStore;
@@ -151,11 +155,15 @@ class OnboardingSubscriptionCheckoutService {
     const planSelection = context.planSelection || (
       this.repository.getPlanSelection ? await this.repository.getPlanSelection(userId) : null
     );
+    const address = context.address || {};
+    const stripeAccount = resolveStripeAccountFromCountry(address.country);
+    const stripeBilling = resolveStripeBilling(this, stripeAccount, { forCreation: true });
     const termMonths = Number(planSelection && planSelection.subscription_term_months);
     const eligible = Boolean(eligibility && eligibility.eligible);
     const promotion = await this.stripeCouponService.resolveFirstPurchasePromotionForCheckout({
       eligible,
-      termMonths
+      termMonths,
+      account: stripeAccount
     });
     const appliedPercent = promotion
       ? Number(promotion.discount_percent)
@@ -188,17 +196,20 @@ class OnboardingSubscriptionCheckoutService {
       });
     }
 
-    const address = context.address || {};
     const country = String(address.country || '').toUpperCase();
     const zipcode = String(address.zipcode || address.postal_code || '').trim();
-    if (country === 'US' && this.stripeBilling && this.stripeBilling.automaticTaxEnabled && !zipcode) {
+    if (country === 'US' && stripeBilling && stripeBilling.automaticTaxEnabled && !zipcode) {
       throw new HttpError(422, 'Sales tax quote is unavailable.', {
-        code: 'sales_tax_unavailable'
+        code: 'sales_tax_unavailable',
+        stripe_account: stripeAccount
       });
     }
 
-    if (!this.stripeBilling) {
-      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
+    if (!stripeBilling) {
+      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', {
+        code: 'stripe_secret_missing',
+        stripe_account: stripeAccount
+      });
     }
 
     const promotionCodeId = promotion && promotion.promotion_code_id ? promotion.promotion_code_id : null;
@@ -247,7 +258,9 @@ class OnboardingSubscriptionCheckoutService {
           catalogPricing,
           attemptId,
           fingerprint,
-          petIds: currentPetIds
+          petIds: currentPetIds,
+          stripeBilling,
+          stripeAccount: storedReference.stripe_account || stripeAccount
         });
         const data = await this.persistCheckout({
           userId,
@@ -265,9 +278,9 @@ class OnboardingSubscriptionCheckoutService {
       }
 
       const existingCustomerId = this.customerStore
-        ? await this.customerStore.getCustomerId(userId)
+        ? await this.customerStore.getCustomerId(userId, stripeAccount)
         : '';
-      const created = await this.stripeBilling.createOnboardingSubscription({
+      const created = await stripeBilling.createOnboardingSubscription({
         userId,
         email,
         name: user.name || `${billing.first_name || ''} ${billing.last_name || ''}`.trim(),
@@ -291,7 +304,7 @@ class OnboardingSubscriptionCheckoutService {
       });
 
       if (this.customerStore && created.customerId) {
-        await this.customerStore.saveCustomerId(userId, created.customerId);
+        await this.customerStore.saveCustomerId(userId, created.customerId, stripeAccount);
       }
 
       const checkout = this.decorateCheckout({
@@ -305,7 +318,8 @@ class OnboardingSubscriptionCheckoutService {
         attemptId,
         fingerprint,
         petIds: currentPetIds,
-        reused: false
+        reused: false,
+        stripeAccount
       });
 
       await this.upsertLedger({
@@ -425,10 +439,12 @@ class OnboardingSubscriptionCheckoutService {
     attemptId,
     fingerprint,
     petIds,
-    reused
+    reused,
+    stripeAccount
   }) {
     return {
       ...checkout,
+      stripe_account: stripeAccount || checkout.stripe_account || null,
       order_id: 0,
       billing: {
         first_name: billing.first_name || '',
@@ -473,13 +489,16 @@ class OnboardingSubscriptionCheckoutService {
     catalogPricing,
     attemptId,
     fingerprint,
-    petIds
+    petIds,
+    stripeBilling,
+    stripeAccount
   }) {
     let paymentIntentStatus = String(storedReference.stripe_payment_intent_status || '');
     let clientSecret = storedReference.stripe_client_secret || '';
-    if (this.stripeBilling.retrievePaymentIntent && storedReference.stripe_payment_intent_id) {
+    const billingClient = stripeBilling || this.stripeBilling;
+    if (billingClient && billingClient.retrievePaymentIntent && storedReference.stripe_payment_intent_id) {
       try {
-        const paymentIntent = await this.stripeBilling.retrievePaymentIntent(
+        const paymentIntent = await billingClient.retrievePaymentIntent(
           storedReference.stripe_payment_intent_id
         );
         paymentIntentStatus = String(paymentIntent && paymentIntent.status || paymentIntentStatus);
@@ -489,12 +508,14 @@ class OnboardingSubscriptionCheckoutService {
       }
     }
 
-    const paymentState = this.stripeBilling.resolvePaymentState({
-      paymentMethodId,
-      paymentIntentStatus,
-      clientSecret,
-      subscriptionId: storedReference.stripe_subscription_id
-    });
+    const paymentState = billingClient && billingClient.resolvePaymentState
+      ? billingClient.resolvePaymentState({
+        paymentMethodId,
+        paymentIntentStatus,
+        clientSecret,
+        subscriptionId: storedReference.stripe_subscription_id
+      })
+      : String(storedReference.payment_state || '');
 
     return this.decorateCheckout({
       checkout: {
@@ -513,7 +534,8 @@ class OnboardingSubscriptionCheckoutService {
       attemptId,
       fingerprint,
       petIds,
-      reused: true
+      reused: true,
+      stripeAccount: stripeAccount || storedReference.stripe_account
     });
   }
 
@@ -560,6 +582,7 @@ class OnboardingSubscriptionCheckoutService {
       customerEmail: email,
       stripeSubscriptionId: checkout.stripe_subscription_id,
       stripeCustomerId: created.customerId,
+      stripeAccount: checkout.stripe_account || 'us',
       status: String((created.subscription && created.subscription.status) || checkout.status || 'incomplete'),
       planLabel: `Plan #${existing.length + 1}`,
       stripePriceId: firstItem && firstItem.price ? firstItem.price : null,

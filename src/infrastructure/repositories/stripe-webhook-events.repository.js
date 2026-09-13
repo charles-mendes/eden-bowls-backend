@@ -27,17 +27,19 @@ class StripeWebhookEventsRepository {
     }
   }
 
-  async insertIfNew({ eventId, type, payloadSummary = null }) {
+  async insertIfNew({ eventId, stripeAccount = 'us', type, payloadSummary = null }) {
     this.ensureDataSource();
     const id = String(eventId || '').trim();
     if (!id) {
       throw new HttpError(400, 'Invalid Stripe event.', { code: 'invalid_stripe_event' });
     }
 
+    const account = String(stripeAccount || 'us').trim().toLowerCase() || 'us';
+
     try {
       await this.dataSource.query(
-        `INSERT INTO \`${this.tableName}\` (\`event_id\`, \`type\`, \`processed_at\`, \`payload_summary\`) VALUES (?, ?, CURRENT_TIMESTAMP, ?)`,
-        [id, String(type || ''), payloadSummary ? JSON.stringify(payloadSummary) : null]
+        `INSERT INTO \`${this.tableName}\` (\`event_id\`, \`stripe_account\`, \`type\`, \`processed_at\`, \`payload_summary\`) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)`,
+        [id, account, String(type || ''), payloadSummary ? JSON.stringify(payloadSummary) : null]
       );
       return { inserted: true };
     } catch (error) {
@@ -71,7 +73,7 @@ class StripeWebhookEventsRepository {
       const total = Number(Array.isArray(countRows) && countRows[0] ? countRows[0].total : 0);
       const rows = await this.dataSource.query(
         [
-          `SELECT \`event_id\` AS eventId, \`type\`, \`processed_at\` AS processedAt, \`payload_summary\` AS payloadSummary`,
+          `SELECT \`event_id\` AS eventId, \`stripe_account\` AS stripeAccount, \`type\`, \`processed_at\` AS processedAt, \`payload_summary\` AS payloadSummary`,
           `FROM \`${this.tableName}\``,
           whereSql,
           'ORDER BY `processed_at` DESC',
@@ -85,6 +87,7 @@ class StripeWebhookEventsRepository {
         items: (Array.isArray(rows) ? rows : []).map((row) => ({
           id: String(row.eventId),
           eventId: String(row.eventId),
+          stripeAccount: String(row.stripeAccount || 'us'),
           eventType: String(row.type || ''),
           state: row.processedAt ? 'processed' : 'pending',
           attempts: row.processedAt ? 1 : 0,

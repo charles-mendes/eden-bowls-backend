@@ -3,7 +3,7 @@ const { buildRequireAdminPermission } = require('../middleware/require-admin-per
 const { parseNutritionSimulateInput } = require('../validators/admin-nutrition-simulate.validator');
 const { parseRolesAssignmentInput } = require('../validators/admin-users-roles.validator');
 const { parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
-const { parseCreateCouponInput, parsePromoMappingInput } = require('../validators/admin-coupons.validator');
+const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = require('../validators/admin-coupons.validator');
 const { parsePageQuery } = require('../validators/admin-pagination');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
 const {
@@ -366,7 +366,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.adminBillingService) {
         throw new HttpError(503, 'Billing service is not available.');
       }
-      return { url: await dependencies.adminBillingService.invoicePdfUrl(request.params.id) };
+      return { url: await dependencies.adminBillingService.invoicePdfUrl(request.params.id, request.query && request.query.account) };
     });
   });
 
@@ -387,7 +387,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.stripeCouponService) {
         throw new HttpError(503, 'Coupon service is not available.');
       }
-      return dependencies.stripeCouponService.mappingHealth();
+      return dependencies.stripeCouponService.mappingHealth(parseCouponAccount(request.query || {}));
     });
   });
 
@@ -396,7 +396,11 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.stripeCouponService) {
         throw new HttpError(503, 'Coupon service is not available.');
       }
-      return dependencies.stripeCouponService.saveMapping(parsePromoMappingInput(request.body || {}));
+      return dependencies.stripeCouponService.saveMapping(
+        parsePromoMappingInput(request.body || {}),
+        {},
+        parseCouponAccount({ ...request.query, ...request.body })
+      );
     });
   });
 
@@ -405,7 +409,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.stripeCouponService) {
         throw new HttpError(503, 'Coupon service is not available.');
       }
-      return dependencies.stripeCouponService.syncFirstPurchasePromos();
+      return dependencies.stripeCouponService.syncFirstPurchasePromos(parseCouponAccount({ ...request.query, ...request.body }));
     });
   });
 
@@ -414,7 +418,9 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.stripeCouponService) {
         throw new HttpError(503, 'Coupon service is not available.');
       }
-      return dependencies.stripeCouponService.createFirstPurchaseCoupon(parseCreateCouponInput(request.body || {}));
+      const payload = parseCreateCouponInput(request.body || {});
+      payload.account = parseCouponAccount({ ...request.query, ...request.body });
+      return dependencies.stripeCouponService.createFirstPurchaseCoupon(payload);
     });
   });
 
@@ -424,7 +430,7 @@ function registerAdminRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Coupon service is not available.');
       }
       try {
-        return await dependencies.stripeCouponService.listRecentPromotionCodes(25);
+        return await dependencies.stripeCouponService.listRecentPromotionCodes(25, parseCouponAccount(request.query || {}));
       } catch (error) {
         return {
           success: false,

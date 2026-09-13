@@ -230,6 +230,7 @@ class AdminCatalogRepository {
 
     return Array.from(grouped.values()).map((variation) => {
       const pricesByCurrency = parseJsonMeta(variation.meta._stripe_price_ids_by_currency);
+      const productsByCurrency = parseJsonMeta(variation.meta._stripe_product_ids_by_currency);
       const stripeProductId = String(variation.meta._stripe_product_id || '').trim();
       const stripePriceId = String(variation.meta._stripe_price_id || '').trim();
       const hasPrice = Object.values(pricesByCurrency).some((value) => String(value || '').startsWith('price_'))
@@ -253,6 +254,7 @@ class AdminCatalogRepository {
         stripeProductId: stripeProductId || null,
         stripePriceId: stripePriceId || null,
         stripePriceIdsByCurrency: pricesByCurrency,
+        stripeProductIdsByCurrency: productsByCurrency,
         fingerprint: variation.meta._stripe_price_fingerprint || null,
         syncStatus,
         requiresSync: syncStatus !== 'synced' || !stripeProductId

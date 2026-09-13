@@ -8,7 +8,13 @@ Rota legado WordPress:
 
 Rota alvo Node:
 
-- `POST /stripe/v1/webhook`
+- `POST /stripe/v1/webhook/us`
+- `POST /stripe/v1/webhook/br`
+- `POST /stripe/v1/webhook` (alias US no cutover)
+
+Auth = header `Stripe-Signature` + o secret da **mesma** conta do path (`STRIPE_US_WEBHOOK_SECRET` ou `STRIPE_BR_WEBHOOK_SECRET`). Assinatura inválida → 400; o receiver **não** tenta o outro secret.
+
+Local: `npm run stripe:listen` (US) e `npm run stripe:listen:br` (BR) em dois CLIs, cada um logado na conta correspondente.
 
 Nao existe no Express hoje. O Place Order real e o ACK ja rodam; a cobranca so fecha neste POST.
 

@@ -1,5 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const { isPromoId, VALID_SUBSCRIPTION_TERMS } = require('../../core/first-purchase-discount');
+const { parseStripeAccountInput } = require('../../core/stripe-account');
 
 class StripeFirstPurchasePromosRepository {
   constructor(dataSource, options = {}) {
@@ -14,11 +15,13 @@ class StripeFirstPurchasePromosRepository {
     }
   }
 
-  async getMapping() {
+  async getMapping(account = 'us') {
     this.ensureDataSource();
+    const stripeAccount = parseStripeAccountInput(account);
 
     const rows = await this.dataSource.query(
-      `SELECT \`term_months\`, \`promotion_code_id\`, \`coupon_id\` FROM \`${this.promosTableName}\``
+      `SELECT \`term_months\`, \`promotion_code_id\`, \`coupon_id\` FROM \`${this.promosTableName}\` WHERE \`stripe_account\` = ?`,
+      [stripeAccount]
     );
     const mapping = { 1: null, 3: null, 6: null };
     const coupons = { 1: null, 3: null, 6: null };
@@ -37,8 +40,9 @@ class StripeFirstPurchasePromosRepository {
     return { mapping, coupons };
   }
 
-  async saveMapping(mapping = {}, coupons = {}) {
+  async saveMapping(mapping = {}, coupons = {}, account = 'us') {
     this.ensureDataSource();
+    const stripeAccount = parseStripeAccountInput(account);
 
     for (const term of VALID_SUBSCRIPTION_TERMS) {
       const promoId = mapping[term] || mapping[String(term)] || '';
@@ -48,8 +52,8 @@ class StripeFirstPurchasePromosRepository {
 
       const couponId = coupons[term] || coupons[String(term)] || null;
       await this.dataSource.query(
-        `INSERT INTO \`${this.promosTableName}\` (\`term_months\`, \`promotion_code_id\`, \`coupon_id\`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE \`promotion_code_id\` = VALUES(\`promotion_code_id\`), \`coupon_id\` = VALUES(\`coupon_id\`)`,
-        [term, promoId, couponId]
+        `INSERT INTO \`${this.promosTableName}\` (\`stripe_account\`, \`term_months\`, \`promotion_code_id\`, \`coupon_id\`) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE \`promotion_code_id\` = VALUES(\`promotion_code_id\`), \`coupon_id\` = VALUES(\`coupon_id\`)`,
+        [stripeAccount, term, promoId, couponId]
       );
     }
   }

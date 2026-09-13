@@ -32,6 +32,12 @@ function buildStripeSubscriptionEntitySchema(tableName = 'stripe_subscriptions')
         type: String,
         length: 64
       },
+      stripeAccount: {
+        name: 'stripe_account',
+        type: String,
+        length: 8,
+        default: 'us'
+      },
       status: {
         type: String,
         length: 32

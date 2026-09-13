@@ -8,17 +8,20 @@ const {
   mapProrationFromInvoice,
   resolveProposedPlan
 } = require('../../core/subscription-edit-plan');
+const { ledgerStripeAccount } = require('../../core/stripe-account');
+const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 
 class SubscriptionsEditCommitRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.resolveSubscriptionItems = options.resolveSubscriptionItems || null;
   }
 
   async commit(userId, subscriptionId, payload = {}, ledgerRow = null) {
-    if (!this.ledgerRepository || !this.stripeBilling) {
+    if (!this.ledgerRepository) {
       throw new HttpError(503, 'Subscription edit commit dependencies are not available.');
     }
 
@@ -27,7 +30,8 @@ class SubscriptionsEditCommitRepository {
       throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
     }
 
-    const subscription = await this.stripeBilling.retrieveSubscription(subscriptionId);
+    const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
+    const subscription = await stripeBilling.retrieveSubscription(subscriptionId);
     const currentItems = extractStripeItemRefs(subscription);
     if (currentItems.length === 0) {
       throw new HttpError(422, 'Subscription has no Stripe items.', { code: 'invalid_plan' });
@@ -56,7 +60,7 @@ class SubscriptionsEditCommitRepository {
 
     let proration = { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency };
     try {
-      const previewInvoice = await this.stripeBilling.previewProration({
+      const previewInvoice = await stripeBilling.previewProration({
         subscriptionId,
         items: itemUpdates
       });
@@ -91,12 +95,12 @@ class SubscriptionsEditCommitRepository {
     if (shippingCost > 0) {
       metadata.shipping_amount_minor = String(Math.round(shippingCost * 100));
       metadata.shipping_currency = String(proposed.currency || 'usd').toLowerCase();
-      if (this.stripeBilling.shippingProductId) {
-        metadata.shipping_product_id = String(this.stripeBilling.shippingProductId);
+      if (stripeBilling.shippingProductId) {
+        metadata.shipping_product_id = String(stripeBilling.shippingProductId);
       }
     }
 
-    const updated = await this.stripeBilling.updateSubscriptionItems({
+    const updated = await stripeBilling.updateSubscriptionItems({
       subscriptionId,
       items: itemUpdates,
       metadata,
@@ -110,7 +114,7 @@ class SubscriptionsEditCommitRepository {
       ? invoice.payment_intent
       : {};
     const paymentIntentStatus = String(paymentIntent.status || '');
-    const paymentState = this.stripeBilling.resolvePaymentState({
+    const paymentState = stripeBilling.resolvePaymentState({
       paymentMethodId: payload.payment_method_id || (updated.default_payment_method && updated.default_payment_method.id),
       paymentIntentStatus: paymentIntentStatus || (proration.direction === 'charge' ? 'requires_confirmation' : 'succeeded')
     });
@@ -129,6 +133,7 @@ class SubscriptionsEditCommitRepository {
         userId,
         stripeSubscriptionId: subscriptionId,
         stripeCustomerId: row.stripeCustomerId,
+        stripeAccount: ledgerStripeAccount(row),
         status: row.status,
         editPaymentPending: true,
         editPending: {
@@ -144,6 +149,7 @@ class SubscriptionsEditCommitRepository {
         userId,
         stripeSubscriptionId: subscriptionId,
         stripeCustomerId: row.stripeCustomerId,
+        stripeAccount: ledgerStripeAccount(row),
         status: row.status,
         planSelection: nextPlanSelection,
         petsSnapshot: nextPets,
@@ -157,6 +163,7 @@ class SubscriptionsEditCommitRepository {
 
     return {
       subscription_id: subscriptionId,
+      stripe_account: ledgerStripeAccount(row),
       pending_webhook_confirmation: true,
       term_change: termChange,
       proration,

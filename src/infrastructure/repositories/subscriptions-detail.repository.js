@@ -1,9 +1,12 @@
 const { toIsoDate } = require('../../core/stripe-subscription-map');
 const { mapLedgerToDashboardDetail } = require('../../core/subscription-dashboard');
+const { ledgerStripeAccount } = require('../../core/stripe-account');
+const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 
 class SubscriptionsDetailRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.upsShipmentRepository = options.upsShipmentRepository || null;
   }
@@ -38,9 +41,16 @@ class SubscriptionsDetailRepository {
       stripeTimeline: []
     };
 
-    if (this.stripeBilling && this.stripeBilling.retrieveSubscription) {
+    let stripeBilling = this.stripeBilling;
+    try {
+      stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
+    } catch (_error) {
+      stripeBilling = this.stripeBilling;
+    }
+
+    if (stripeBilling && stripeBilling.retrieveSubscription) {
       try {
-        const subscription = await this.stripeBilling.retrieveSubscription(subscriptionId);
+        const subscription = await stripeBilling.retrieveSubscription(subscriptionId);
         const pm = subscription.default_payment_method && typeof subscription.default_payment_method === 'object'
           ? subscription.default_payment_method.card || {}
           : {};
@@ -55,9 +65,9 @@ class SubscriptionsDetailRepository {
       }
     }
 
-    if (this.stripeBilling && this.stripeBilling.listInvoicesForSubscription) {
+    if (stripeBilling && stripeBilling.listInvoicesForSubscription) {
       try {
-        const invoices = await this.stripeBilling.listInvoicesForSubscription(subscriptionId);
+        const invoices = await stripeBilling.listInvoicesForSubscription(subscriptionId);
         let shipmentByInvoice = new Map();
         if (this.upsShipmentRepository && typeof this.upsShipmentRepository.listByInvoiceIds === 'function') {
           const shipments = await this.upsShipmentRepository.listByInvoiceIds(

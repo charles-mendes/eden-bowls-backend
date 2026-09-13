@@ -56,6 +56,7 @@ class SubscriptionLedgerRepository {
       customerEmail: row.customer_email ? String(row.customer_email) : null,
       stripeSubscriptionId: String(row.stripe_subscription_id || ''),
       stripeCustomerId: String(row.stripe_customer_id || ''),
+      stripeAccount: String(row.stripe_account || 'us').toLowerCase() || 'us',
       status: String(row.status || ''),
       planLabel: row.plan_label ? String(row.plan_label) : null,
       stripePriceId: row.stripe_price_id ? String(row.stripe_price_id) : null,
@@ -274,6 +275,7 @@ class SubscriptionLedgerRepository {
         customerEmail: input.customerEmail === undefined ? undefined : (input.customerEmail || null),
         stripeSubscriptionId: subscriptionId,
         stripeCustomerId: input.stripeCustomerId,
+        stripeAccount: input.stripeAccount,
         status: input.status,
         planLabel: input.planLabel,
         stripePriceId: input.stripePriceId,
@@ -301,6 +303,7 @@ class SubscriptionLedgerRepository {
       next.customerEmail || null,
       subscriptionId,
       next.stripeCustomerId,
+      next.stripeAccount || 'us',
       next.status,
       next.planLabel || null,
       next.stripePriceId || null,
@@ -321,15 +324,16 @@ class SubscriptionLedgerRepository {
     await this.dataSource.query(
       `INSERT INTO \`${this.tableName}\` (
         \`user_id\`, \`customer_email\`, \`stripe_subscription_id\`, \`stripe_customer_id\`,
-        \`status\`, \`plan_label\`, \`stripe_price_id\`, \`current_period_start\`, \`current_period_end\`,
+        \`stripe_account\`, \`status\`, \`plan_label\`, \`stripe_price_id\`, \`current_period_start\`, \`current_period_end\`,
         \`cancel_at_period_end\`, \`payment_method_last4\`, \`payment_method_brand\`,
         \`pets_snapshot\`, \`plan_selection\`, \`shipping\`, \`address\`, \`subscription_term_months\`,
         \`edit_payment_pending\`, \`edit_pending\`
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         \`user_id\` = VALUES(\`user_id\`),
         \`customer_email\` = VALUES(\`customer_email\`),
         \`stripe_customer_id\` = VALUES(\`stripe_customer_id\`),
+        \`stripe_account\` = VALUES(\`stripe_account\`),
         \`status\` = VALUES(\`status\`),
         \`plan_label\` = VALUES(\`plan_label\`),
         \`stripe_price_id\` = VALUES(\`stripe_price_id\`),
@@ -372,7 +376,7 @@ class SubscriptionLedgerRepository {
     }
   }
 
-  async listAdmin({ status, q, offset, perPage }) {
+  async listAdmin({ status, q, stripeAccount, offset, perPage }) {
     this.ensureDataSource();
     const where = [];
     const params = [];
@@ -383,6 +387,11 @@ class SubscriptionLedgerRepository {
     } else if (normalizedStatus && normalizedStatus !== 'all') {
       where.push('`status` = ?');
       params.push(normalizedStatus);
+    }
+
+    if (stripeAccount) {
+      where.push('`stripe_account` = ?');
+      params.push(String(stripeAccount).trim().toLowerCase());
     }
 
     if (q) {

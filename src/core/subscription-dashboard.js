@@ -116,7 +116,8 @@ function mapLedgerToDashboardListItem(row, index = 0) {
     packs_per_month: packsPerMonth(catalog, plan),
     order_total_per_month: Number.isFinite(Number(catalog.subtotal)) ? Number(catalog.subtotal) : (
       Number.isFinite(Number(catalog.grand_total)) ? Number(catalog.grand_total) : null
-    )
+    ),
+    stripe_account: String(row.stripeAccount || row.stripe_account || 'us').toLowerCase() || 'us'
   };
 }
 
@@ -149,7 +150,8 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
     plan_items_source: 'plan_selection',
     stripe_timeline: Array.isArray(extras.stripeTimeline) ? extras.stripeTimeline : [],
     edit_payment_pending: editPending,
-    subscription_term_months: term
+    subscription_term_months: term,
+    stripe_account: list.stripe_account
   };
 }
 

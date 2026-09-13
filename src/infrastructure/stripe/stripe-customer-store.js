@@ -1,6 +1,10 @@
 const { HttpError } = require('../../core/http-error');
-
-const STRIPE_CUSTOMER_META_KEY = '_hsr_stripe_customer_id';
+const {
+  LEGACY_CUSTOMER_META_KEY,
+  customerMetaKey,
+  normalizeStripeAccount,
+  STRIPE_ACCOUNTS
+} = require('../../core/stripe-account');
 
 class StripeCustomerStore {
   constructor(dataSource, options = {}) {
@@ -14,26 +18,47 @@ class StripeCustomerStore {
     }
   }
 
-  async getCustomerId(userId) {
-    this.ensureDataSource();
-    const rows = await this.dataSource.query(
-      `SELECT \`meta_value\` FROM \`${this.usermetaTableName}\` WHERE \`user_id\` = ? AND \`meta_key\` = ? LIMIT 1`,
-      [userId, STRIPE_CUSTOMER_META_KEY]
-    );
-    const value = Array.isArray(rows) && rows[0] ? String(rows[0].meta_value || '').trim() : '';
-    return value.startsWith('cus_') ? value : '';
+  requireAccount(account) {
+    return normalizeStripeAccount(account);
   }
 
-  async saveCustomerId(userId, customerId) {
+  async getCustomerId(userId, account) {
     this.ensureDataSource();
+    const stripeAccount = this.requireAccount(account);
+    const metaKey = customerMetaKey(stripeAccount);
+    const rows = await this.dataSource.query(
+      `SELECT \`meta_value\` FROM \`${this.usermetaTableName}\` WHERE \`user_id\` = ? AND \`meta_key\` = ? LIMIT 1`,
+      [userId, metaKey]
+    );
+    const value = Array.isArray(rows) && rows[0] ? String(rows[0].meta_value || '').trim() : '';
+    if (value.startsWith('cus_')) {
+      return value;
+    }
+
+    if (stripeAccount === STRIPE_ACCOUNTS.US) {
+      const legacy = await this.dataSource.query(
+        `SELECT \`meta_value\` FROM \`${this.usermetaTableName}\` WHERE \`user_id\` = ? AND \`meta_key\` = ? LIMIT 1`,
+        [userId, LEGACY_CUSTOMER_META_KEY]
+      );
+      const legacyValue = Array.isArray(legacy) && legacy[0] ? String(legacy[0].meta_value || '').trim() : '';
+      return legacyValue.startsWith('cus_') ? legacyValue : '';
+    }
+
+    return '';
+  }
+
+  async saveCustomerId(userId, customerId, account) {
+    this.ensureDataSource();
+    const stripeAccount = this.requireAccount(account);
     const value = String(customerId || '').trim();
     if (!value.startsWith('cus_')) {
       return;
     }
 
+    const metaKey = customerMetaKey(stripeAccount);
     const existing = await this.dataSource.query(
       `SELECT \`umeta_id\` AS id FROM \`${this.usermetaTableName}\` WHERE \`user_id\` = ? AND \`meta_key\` = ? LIMIT 1`,
-      [userId, STRIPE_CUSTOMER_META_KEY]
+      [userId, metaKey]
     );
     const row = Array.isArray(existing) ? existing[0] : null;
 
@@ -47,7 +72,7 @@ class StripeCustomerStore {
 
     await this.dataSource.query(
       `INSERT INTO \`${this.usermetaTableName}\` (\`user_id\`, \`meta_key\`, \`meta_value\`) VALUES (?, ?, ?)`,
-      [userId, STRIPE_CUSTOMER_META_KEY, value]
+      [userId, metaKey, value]
     );
   }
 
@@ -59,8 +84,8 @@ class StripeCustomerStore {
     }
 
     const rows = await this.dataSource.query(
-      `SELECT \`user_id\` FROM \`${this.usermetaTableName}\` WHERE \`meta_key\` = ? AND \`meta_value\` = ? LIMIT 1`,
-      [STRIPE_CUSTOMER_META_KEY, value]
+      `SELECT \`user_id\` FROM \`${this.usermetaTableName}\` WHERE \`meta_value\` = ? AND \`meta_key\` IN (?, ?, ?) LIMIT 1`,
+      [value, customerMetaKey('us'), customerMetaKey('br'), LEGACY_CUSTOMER_META_KEY]
     );
     const row = Array.isArray(rows) ? rows[0] : null;
     const userId = Number(row && row.user_id);
@@ -70,5 +95,5 @@ class StripeCustomerStore {
 
 module.exports = {
   StripeCustomerStore,
-  STRIPE_CUSTOMER_META_KEY
+  STRIPE_CUSTOMER_META_KEY: LEGACY_CUSTOMER_META_KEY
 };

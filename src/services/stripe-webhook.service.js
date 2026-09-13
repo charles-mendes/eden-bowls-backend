@@ -1,4 +1,6 @@
 const { HttpError } = require('../core/http-error');
+const { parseStripeAccountInput } = require('../core/stripe-account');
+const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
   extractSubscriptionIdFromInvoice,
   extractSubscriptionPeriod,
@@ -19,6 +21,7 @@ const HANDLED_TYPES = new Set([
 
 class StripeWebhookService {
   constructor(options = {}) {
+    this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.webhookSecret = options.webhookSecret || '';
     this.eventsRepository = options.eventsRepository || null;
@@ -28,16 +31,17 @@ class StripeWebhookService {
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
 
-  async handle({ rawBody, signature }) {
-    if (!this.webhookSecret) {
-      throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
-        code: 'stripe_webhook_secret_missing'
-      });
-    }
+  async handle({ account, rawBody, signature }) {
+    const stripeAccount = parseStripeAccountInput(account, 'us');
+    const webhookSecret = this.stripeAccounts
+      ? this.stripeAccounts.webhookSecret(stripeAccount)
+      : this.webhookSecret;
+    const stripeBilling = resolveStripeBilling(this, stripeAccount);
 
-    if (!this.stripeBilling) {
-      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', {
-        code: 'stripe_secret_missing'
+    if (!webhookSecret) {
+      throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
+        code: 'stripe_webhook_secret_missing',
+        stripe_account: stripeAccount
       });
     }
 
@@ -45,9 +49,16 @@ class StripeWebhookService {
       throw new HttpError(503, 'Stripe webhook persistence is not available.');
     }
 
-    const event = this.stripeBilling.constructEvent(rawBody, signature, this.webhookSecret);
+    const event = stripeBilling.constructEvent(rawBody, signature, webhookSecret);
+    this.logger.info({
+      stripe_account: stripeAccount,
+      eventId: event.id,
+      type: event.type
+    }, 'Stripe webhook received.');
+
     const inserted = await this.eventsRepository.insertIfNew({
       eventId: event.id,
+      stripeAccount,
       type: event.type,
       payloadSummary: this.summarize(event)
     });
@@ -60,10 +71,21 @@ class StripeWebhookService {
       return { received: true };
     }
 
+    const runtime = {
+      account: stripeAccount,
+      stripeBilling,
+      shippingProductId: stripeBilling.shippingProductId || this.shippingProductId || ''
+    };
+
     try {
-      await this.dispatch(event);
+      await this.dispatch(event, runtime);
     } catch (error) {
-      this.logger.error({ err: error, eventId: event.id, type: event.type }, 'Stripe webhook processing failed after persist.');
+      this.logger.error({
+        err: error,
+        eventId: event.id,
+        type: event.type,
+        stripe_account: stripeAccount
+      }, 'Stripe webhook processing failed after persist.');
     }
 
     return { received: true };
@@ -79,14 +101,14 @@ class StripeWebhookService {
     };
   }
 
-  async dispatch(event) {
+  async dispatch(event, runtime) {
     const object = event.data && event.data.object ? event.data.object : {};
     if (event.type === 'invoice.paid') {
-      await this.handleInvoicePaid(object);
+      await this.handleInvoicePaid(object, runtime);
       return;
     }
     if (event.type === 'invoice.created') {
-      await this.handleInvoiceCreated(object);
+      await this.handleInvoiceCreated(object, runtime);
       return;
     }
     if (event.type === 'payment_intent.succeeded' || event.type === 'payment_intent.processing') {
@@ -98,7 +120,7 @@ class StripeWebhookService {
       return;
     }
     if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
-      await this.handleSubscriptionChanged(object);
+      await this.handleSubscriptionChanged(object, runtime);
     }
   }
 
@@ -129,12 +151,13 @@ class StripeWebhookService {
     return { userId: null, ledger: null };
   }
 
-  async retrieveSubscriptionSafe(subscriptionId) {
-    if (!subscriptionId || !this.stripeBilling.retrieveSubscription) {
+  async retrieveSubscriptionSafe(subscriptionId, stripeBilling) {
+    const billing = stripeBilling || this.stripeBilling;
+    if (!subscriptionId || !billing || !billing.retrieveSubscription) {
       return null;
     }
     try {
-      return await this.stripeBilling.retrieveSubscription(subscriptionId);
+      return await billing.retrieveSubscription(subscriptionId);
     } catch (_error) {
       return null;
     }
@@ -148,9 +171,9 @@ class StripeWebhookService {
     return extractCardFromPaymentMethod(paymentMethod);
   }
 
-  async handleInvoicePaid(invoice) {
+  async handleInvoicePaid(invoice, runtime = {}) {
     const subscriptionId = extractSubscriptionIdFromInvoice(invoice);
-    const subscription = await this.retrieveSubscriptionSafe(subscriptionId);
+    const subscription = await this.retrieveSubscriptionSafe(subscriptionId, runtime.stripeBilling);
     const metadata = (subscription && subscription.metadata) || invoice.subscription_details && invoice.subscription_details.metadata || {};
     const context = await this.resolveUserContext({
       subscriptionId,
@@ -159,7 +182,11 @@ class StripeWebhookService {
     });
 
     if (!context.userId || !subscriptionId) {
-      this.logger.warn({ invoiceId: invoice.id, subscriptionId }, 'invoice.paid skipped: user not resolved.');
+      this.logger.warn({
+        invoiceId: invoice.id,
+        subscriptionId,
+        stripe_account: runtime.account
+      }, 'invoice.paid skipped: user not resolved.');
       return;
     }
 
@@ -179,6 +206,7 @@ class StripeWebhookService {
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(invoice.customer || (subscription && subscription.customer) || existing && existing.stripeCustomerId || ''),
+      stripeAccount: runtime.account || (existing && existing.stripeAccount) || 'us',
       status: 'active',
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
       currentPeriodStart: period.start,
@@ -202,7 +230,7 @@ class StripeWebhookService {
     });
   }
 
-  async handleInvoiceCreated(invoice) {
+  async handleInvoiceCreated(invoice, runtime = {}) {
     if (String(invoice.status || '') !== 'draft') {
       return;
     }
@@ -211,11 +239,11 @@ class StripeWebhookService {
     }
 
     const subscriptionId = extractSubscriptionIdFromInvoice(invoice);
-    const subscription = await this.retrieveSubscriptionSafe(subscriptionId);
+    const subscription = await this.retrieveSubscriptionSafe(subscriptionId, runtime.stripeBilling);
     const metadata = (subscription && subscription.metadata) || {};
     let amountMinor = Number(metadata.shipping_amount_minor || 0);
     let currency = metadata.shipping_currency || invoice.currency || 'usd';
-    let productId = metadata.shipping_product_id || this.shippingProductId;
+    let productId = metadata.shipping_product_id || runtime.shippingProductId || this.shippingProductId;
 
     if (!amountMinor && subscriptionId) {
       const ledger = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
@@ -230,7 +258,12 @@ class StripeWebhookService {
       return;
     }
 
-    await this.stripeBilling.addShippingInvoiceItem({
+    const billing = runtime.stripeBilling || this.stripeBilling;
+    if (!billing || typeof billing.addShippingInvoiceItem !== 'function') {
+      return;
+    }
+
+    await billing.addShippingInvoiceItem({
       invoiceId: invoice.id,
       customerId: invoice.customer,
       productId,
@@ -296,7 +329,7 @@ class StripeWebhookService {
     });
   }
 
-  async handleSubscriptionChanged(subscription) {
+  async handleSubscriptionChanged(subscription, runtime = {}) {
     const subscriptionId = String(subscription.id || '');
     if (!subscriptionId.startsWith('sub_')) {
       return;
@@ -322,6 +355,7 @@ class StripeWebhookService {
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(subscription.customer || (context.ledger && context.ledger.stripeCustomerId) || ''),
+      stripeAccount: runtime.account || (context.ledger && context.ledger.stripeAccount) || 'us',
       status: mapStripeStatus(subscription),
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
       currentPeriodStart: period.start,

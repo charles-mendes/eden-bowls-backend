@@ -11,6 +11,13 @@ function buildStripeWebhookEventEntitySchema(tableName = 'stripe_webhook_events'
         length: 64,
         primary: true
       },
+      stripeAccount: {
+        name: 'stripe_account',
+        type: String,
+        length: 8,
+        primary: true,
+        default: 'us'
+      },
       type: {
         type: String,
         length: 64

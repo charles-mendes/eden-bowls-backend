@@ -5,6 +5,13 @@ function buildStripeFirstPurchasePromoEntitySchema(tableName = 'stripe_first_pur
     name: 'StripeFirstPurchasePromo',
     tableName,
     columns: {
+      stripeAccount: {
+        name: 'stripe_account',
+        type: String,
+        length: 8,
+        primary: true,
+        default: 'us'
+      },
       termMonths: {
         name: 'term_months',
         type: 'tinyint',

@@ -1,6 +1,7 @@
 const { z } = require('zod');
 const { HttpError } = require('../../core/http-error');
 const { VALID_SUBSCRIPTION_TERMS } = require('../../core/first-purchase-discount');
+const { parseStripeAccountInput } = require('../../core/stripe-account');
 
 const mappingSchema = z.object({
   1: z.string().optional().nullable(),
@@ -41,7 +42,12 @@ function parseCreateCouponInput(input) {
   return parsed.data;
 }
 
+function parseCouponAccount(input = {}) {
+  return parseStripeAccountInput(input.account || input.stripe_account);
+}
+
 module.exports = {
   parseCreateCouponInput,
-  parsePromoMappingInput
+  parsePromoMappingInput,
+  parseCouponAccount
 };

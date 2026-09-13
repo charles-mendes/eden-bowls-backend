@@ -69,4 +69,23 @@ describe('stripe webhook routes', () => {
     expect(response.status).not.toBe(401);
     expect(response.status).toBe(200);
   });
+
+  test('routes BR and US webhooks to the matching account', async () => {
+    const stripeWebhookService = {
+      handle: jest.fn().mockResolvedValue({ received: true })
+    };
+    const app = createApp({ stripeWebhookService });
+
+    await request(app)
+      .post('/stripe/v1/webhook/br')
+      .set('Stripe-Signature', 't=1,v1=br')
+      .send({ id: 'evt_br' });
+    await request(app)
+      .post('/stripe/v1/webhook/us')
+      .set('Stripe-Signature', 't=1,v1=us')
+      .send({ id: 'evt_us' });
+
+    expect(stripeWebhookService.handle.mock.calls[0][0]).toMatchObject({ account: 'br' });
+    expect(stripeWebhookService.handle.mock.calls[1][0]).toMatchObject({ account: 'us' });
+  });
 });
