@@ -4,29 +4,31 @@ overview: Separar Stripe Brasil e Stripe EUA em duas merchant accounts independe
 todos:
   - id: registry-env
     content: Env dual + StripeAccounts registry + resolveStripeAccount; pin apiVersion; STRIPE_BR_ENABLED kill switch; fallback das vars atuais para US
-    status: pending
+    status: completed
   - id: persistence
     content: "Migration 0014 no mesmo MySQL: ledger/webhooks/promos + UPDATE wp_usermeta no DataSource Node (sem WP-CLI)"
-    status: pending
+    status: completed
   - id: backend-flows
     content: Checkout/preview/PM/catalog/coupons/actions/edit/detail/admin billing usam get(account); tag stripe_account em logs/erros
-    status: pending
+    status: completed
   - id: webhooks
     content: POST /stripe/v1/webhook/br e /us; persistir conta; shipping product por conta; alias legado US
-    status: pending
+    status: completed
   - id: storefront
     content: Duas publishable keys; Elements por postalCountry; EditSubscription pela conta do detalhe
-    status: pending
+    status: completed
   - id: admin-ui
     content: Filtro/coluna de conta em billing; CouponsPage com seletor BR/US (mapa duplicado de propósito); dashboardUrl correto
-    status: pending
+    status: completed
   - id: tests
     content: Jest isolamento de webhook BR vs US + checkout/coupon/migration; Vitest checkout/edit; testes admin
-    status: pending
+    status: completed
 isProject: false
 ---
 
 # PAY-01 — Separar Stripe BR e Stripe US
+
+**Status do código:** os todos do plano acima estão **completed**. Cutover (secrets, catálogo BR, cupons BR, webhooks, flag): [o-que-alterar-para-funcionar.md](./o-que-alterar-para-funcionar.md). O que ficou fora ou incompleto: [definicoes-nao-desenvolvidas.md](./definicoes-nao-desenvolvidas.md).
 
 Escopo: duas contas Stripe independentes (não Connect). Checkout, catálogo, cupons, webhook e admin passam a escolher a conta pelo país. **PIX/boleto e CPF ficam fora.** Assinaturas já existentes na secret atual são backfill `us`.
 

@@ -16,7 +16,7 @@ Auth = header `Stripe-Signature` + o secret da **mesma** conta do path (`STRIPE_
 
 Local: `npm run stripe:listen` (US) e `npm run stripe:listen:br` (BR) em dois CLIs, cada um logado na conta correspondente.
 
-Nao existe no Express hoje. O Place Order real e o ACK ja rodam; a cobranca so fecha neste POST.
+Rotas **já registradas** no Express. O Place Order e o ACK ja rodam; a cobranca so fecha neste POST.
 
 Origem: Stripe (nao o front). Consumidores posteriores: `GET /subscriptions`, eligibility de 1a compra, actions/edit.
 
@@ -35,13 +35,18 @@ Nao e chamada pelo `Checkout.tsx`. Se o ACK falhar apos `confirmCardPayment`, a 
 
 ## Auth
 
-Publica. **Sem JWT**. Auth = header `Stripe-Signature` + `STRIPE_WEBHOOK_SECRET`.
+Publica. **Sem JWT**. Auth = header `Stripe-Signature` + o secret da **mesma** conta do path:
+
+| Path | Secret |
+|------|--------|
+| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET` (fallback `STRIPE_WEBHOOK_SECRET`) |
+| `/stripe/v1/webhook/br` | `STRIPE_BR_WEBHOOK_SECRET` |
 
 Path **fora** de `/api/v1` para o `bearer-token.middleware` nao exigir Bearer. Igual `/shipping/v1/*`.
 
 Body: **raw** (`application/json` bytes). `express.json()` quebra a verificacao. Montar o parser raw so neste path, antes do JSON global, ou verificar a partir do buffer original.
 
-Invalid signature → `400`. Evento desconhecido → `200` (ignorar). Evento ja processado (`evt_` unique) → `200` sem reexecutar.
+Invalid signature (incluindo secret da **outra** conta) → `400`. Evento desconhecido → `200` (ignorar). Evento ja processado (`evt_` unique **por conta**) → `200` sem reexecutar.
 
 ## Eventos que o WP trata e o Node precisa
 
@@ -73,7 +78,7 @@ WP: injeta frete com `invoiceItems.create` usando metadata de shipping gravada n
 
 O checkout Node so coloca frete na **1a** invoice (`add_invoice_items`). Ciclos seguintes **somem o frete** se este handler nao existir.
 
-Alvo: se a invoice e `subscription_cycle` (nao a primeira) e ha shipping persistido, adicionar o mesmo product/price de `STRIPE_SHIPPING_PRODUCT_ID` **antes** da invoice fechar. So em `draft`.
+Alvo: se a invoice e `subscription_cycle` (nao a primeira) e ha shipping persistido, adicionar o product de frete da **mesma** conta (`STRIPE_US_SHIPPING_PRODUCT_ID` / `STRIPE_BR_SHIPPING_PRODUCT_ID`; US herda `STRIPE_SHIPPING_PRODUCT_ID`) **antes** da invoice fechar. So em `draft`.
 
 ### 3) `payment_intent.succeeded` / `processing`
 
@@ -114,14 +119,14 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Stripe
-    participant RT as POST /stripe/v1/webhook
+    participant RT as POST /stripe/v1/webhook/us ou /br
     participant SV as StripeWebhookService
     participant EVT as stripe_webhook_events
     participant ST as onboarding_user_state
     participant LED as ledger
 
     Stripe->>RT: POST + Stripe-Signature
-    RT->>SV: constructEvent(rawBody, secret)
+    RT->>SV: constructEvent(rawBody, secret da conta)
     SV->>EVT: insert evt_ (unique)
     alt duplicate
         SV-->>Stripe: 200
@@ -153,10 +158,12 @@ Last-write-wins no WP nas mesmas chaves de PI. Ack atrasado com `requires_action
 ## Request
 
 ```http
-POST /stripe/v1/webhook
+POST /stripe/v1/webhook/us
 Stripe-Signature: t=...,v1=...
 Content-Type: application/json
 ```
+
+BR: `POST /stripe/v1/webhook/br`. Alias cutover US: `POST /stripe/v1/webhook`.
 
 Body: evento Stripe cru (`id`, `type`, `data.object`).
 
@@ -170,17 +177,22 @@ Nao precisa do envelope `{ success, data }` do resto da API. Stripe so exige 2xx
 
 ## Persistencia
 
-- `stripe_webhook_events.event_id`
+- `stripe_webhook_events` — `(event_id, stripe_account)`
 - `onboarding_user_state.checkout_reference`
-- ledger (`wp_hsr_stripe_subscriptions` ou tabela Node)
+- ledger (`stripe_subscriptions.stripe_account`)
 
-Nao gravar `client_secret` no ledger.
+Nao gravar `client_secret` no ledger. Customer meta: `_hsr_stripe_customer_id_us` / `_hsr_stripe_customer_id_br`.
 
 ## Env
 
-`STRIPE_WEBHOOK_SECRET` (`whsec_...`). Sem isso → 503 neste path, nao derrubar o resto da API.
+| Variavel | Conta | Fallback |
+|----------|--------|----------|
+| `STRIPE_US_WEBHOOK_SECRET` | US | `STRIPE_WEBHOOK_SECRET` |
+| `STRIPE_BR_WEBHOOK_SECRET` | BR | nenhum |
 
-Dashboard Stripe: apontar o endpoint de teste/prod para `{API}/stripe/v1/webhook`. Eventos minimos: `invoice.paid`, `invoice.created`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`.
+Sem secret da conta do path → 503 neste path, nao derrubar o resto da API.
+
+Dashboard: US → `{API}/stripe/v1/webhook/us`; BR → `{API}/stripe/v1/webhook/br`. Eventos minimos: `invoice.paid`, `invoice.created`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`. Test + live × br + us = 4 endpoints.
 
 ## O que mudou em relacao ao WordPress
 
@@ -195,7 +207,8 @@ Dashboard Stripe: apontar o endpoint de teste/prod para `{API}/stripe/v1/webhook
 
 - sem `Stripe-Signature` → 400
 - secret errado → 400
-- `invoice.paid` primeiro → ledger active + `payment_state` paid
-- mesmo `evt_` de novo → 200, um unico upsert
-- `invoice.created` de ciclo 2 com shipping metadata → chama `invoiceItems.create`
+- secret da outra conta no path (BR em `/us` ou US em `/br`) → 400, sem persist/dispatch
+- `invoice.paid` primeiro → ledger active + `payment_state` paid + `stripe_account` do path
+- mesmo `evt_` de novo **na mesma conta** → 200, um unico upsert
+- `invoice.created` de ciclo 2 com shipping metadata → chama `invoiceItems.create` com o product da conta
 - JWT no header nao e exigido e nao bloqueia

@@ -30,7 +30,7 @@ O front continua responsavel por:
 
 - paineis Address → Shipping → Payment → Order Summary
 - debounce de lookup/autocomplete
-- Stripe Elements (criar `payment_method_id`, `confirmCardPayment`)
+- Stripe Elements por conta (`loadStripeForCountry` / pk BR vs US; criar `payment_method_id`, `confirmCardPayment`)
 - draft local (`saveLocalOnboardingCheckout`)
 - totais exibidos a partir do preview da tela Plan
 
@@ -204,11 +204,12 @@ Fluxo:
 1. Front valida `paymentMethodId` + JWT.
 2. Front regrava shipping.
 3. `POST /api/v1/onboarding/subscription/checkout` com `billing` + `payment_method_id`.
-4. Node: JWT → `assertCriticalOperationAllowed` → eligibility + cupom 1a compra → repository stub grava `checkout_reference`.
-5. Se vier `stripe_client_secret` (modo `subscription_first` no stub):
-   - front `retrievePaymentIntent` / `confirmCardPayment`
-   - se pago, `POST /onboarding/payment-intent/ack`
-6. Se ACK falhar apos pagamento confirmado, a UI mantem sucesso e deixa webhook convergir (regra de UI; **nao ha webhook Node hoje**).
+4. Node resolve a merchant account por `address.country` (`br` | `us`). BR so cria objetos se `STRIPE_BR_ENABLED=true`. Resposta inclui `stripe_account` para o front conferir a pk.
+5. Node: JWT → `assertCriticalOperationAllowed` → eligibility + cupom 1a compra **da mesma conta** → grava `checkout_reference` (com `stripe_account`).
+6. Se vier `stripe_client_secret`:
+   - front `retrievePaymentIntent` / `confirmCardPayment` com a pk da mesma conta
+   - se pago, `POST /api/v1/onboarding/payment-intent/ack` (ACK **nao** devolve `stripe_account`; a conta ja esta no checkout/ledger)
+7. Se ACK falhar apos pagamento confirmado, a UI mantem sucesso e deixa o webhook Node convergir (`POST /stripe/v1/webhook/us` ou `/br`).
 
 Estados que a UI trata: `sync_error`, `pending_sync`, `requires_confirmation` sem client secret, `failed`, `requires_payment_method`.
 
@@ -282,8 +283,11 @@ Detalhe em cada `ROTA_*.md`. Resumo do que o front chama hoje:
 
 ## 13) Seguranca
 
-- Stripe publishable key continua no front (`VITE_STRIPE_PUBLISHABLE_KEY`).
-- Segredo Stripe / cupom: so no Node (`stripeCouponService` no checkout).
+- Stripe: duas merchant accounts. Publishable keys no front:
+  - US: `VITE_STRIPE_PUBLISHABLE_KEY_US` (fallback `VITE_STRIPE_PUBLISHABLE_KEY`)
+  - BR: `VITE_STRIPE_PUBLISHABLE_KEY_BR`
+- Segredos Stripe / cupom / webhook: so no Node (`STRIPE_US_*` / `STRIPE_BR_*`; US herda as vars legadas). Cupom de 1a compra e por conta (`promo_` US nao aplica no checkout BR).
+- Kill switch: `STRIPE_BR_ENABLED` (default `false`). Sem flag/secret BR → `503 stripe_br_disabled` / `stripe_br_not_configured`; o checkout **nao** cai na conta US.
 - Lookup e autocomplete publicos: rate limit global 300/min. Nao ha bucket por usuario como no WP (`onboarding_address_autocomplete` 60/300s).
 - Escritas e cobranca exigem JWT de usuario, nao token de sessao anonima.
 
@@ -295,6 +299,6 @@ Atualize quando mudar:
 - JWT vs rota publica
 - colunas gravadas em `onboarding_user_state`
 - regra de desconto / fonte de verdade de total
-- ligacao real de ViaCEP, Nominatim, Stripe ou cotacao de frete
-- fluxo ACK / PaymentIntent
+- ligacao real de ViaCEP, Nominatim, Stripe (conta BR vs US) ou cotacao de frete
+- fluxo ACK / PaymentIntent / webhook `/stripe/v1/webhook/br` e `/us`
 - criterios de `assertCriticalOperationAllowed`
