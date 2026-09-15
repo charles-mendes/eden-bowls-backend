@@ -47,4 +47,27 @@ describe('onboarding pets update routes', () => {
     expect(response.status).toBe(401);
     expect(onboardingPetUpdateService.updatePet).not.toHaveBeenCalled();
   });
+
+  test('ignores image_url on the generic pet PATCH body', async () => {
+    const onboardingPetUpdateService = {
+      updatePet: jest.fn().mockResolvedValue({
+        success: true,
+        data: { pet: { id: 'pet-1', name: 'Milo' } }
+      })
+    };
+    const app = createApp({ onboardingPetUpdateService, corsOrigins, jwt });
+
+    const response = await request(app)
+      .patch('/api/v1/onboarding/pets/pet-1')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .send({ name: 'Milo', image_url: 'https://evil.example/photo.jpg' });
+
+    expect(response.status).toBe(200);
+    expect(onboardingPetUpdateService.updatePet).toHaveBeenCalledWith({
+      userId: 7,
+      petId: 'pet-1',
+      payload: { name: 'Milo' },
+      market: MARKETS.US
+    });
+  });
 });

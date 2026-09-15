@@ -33,6 +33,7 @@ const { registerSubscriptionsEditPreviewRoutes } = require('./api/routes/subscri
 const { registerSubscriptionsRoutes } = require('./api/routes/subscriptions.routes');
 const { registerStripeWebhookRoutes } = require('./api/routes/stripe-webhook.routes');
 const { registerOnboardingPetDeleteRoutes } = require('./api/routes/onboarding-pets-delete.routes');
+const { registerOnboardingPetImageRoutes } = require('./api/routes/onboarding-pets-image.routes');
 const { registerOnboardingPetsSyncRoutes } = require('./api/routes/onboarding-pets-sync.routes');
 const { registerProfileRoutes } = require('./api/routes/profile.routes');
 const { registerAdminRoutes } = require('./api/routes/admin.routes');
@@ -91,9 +92,16 @@ function createApp(dependencies = {}) {
   app.use('/stripe/v1/webhook', express.raw({ type: 'application/json' }));
   app.use('/api/v1/profile/avatar', express.json({ limit: '5mb' }));
   app.use('/api/v1/admin/feedbacks', express.json({ limit: '5mb' }));
+  app.use((request, response, next) => {
+    if (request.method === 'POST' && /^\/api\/v1\/onboarding\/pets\/[^/]+\/image\/?$/.test(request.path)) {
+      return express.json({ limit: '5mb' })(request, response, next);
+    }
+    next();
+  });
   app.use(express.json({ limit: '1mb' }));
   app.use('/avatars', express.static(dependencies.avatarPublicDir || path.join(process.cwd(), 'public', 'avatars')));
   app.use('/feedback-photos', express.static(dependencies.feedbackPhotoPublicDir || path.join(process.cwd(), 'public', 'feedback-photos')));
+  app.use('/pet-photos', express.static(dependencies.petPhotoPublicDir || path.join(process.cwd(), 'public', 'pet-photos')));
   app.use(
     rateLimit({
       windowMs: 60 * 1000,
@@ -157,6 +165,7 @@ function createApp(dependencies = {}) {
   registerSubscriptionsEditCommitRoutes(app, dependencies);
   registerSubscriptionsRoutes(app, dependencies);
   registerStripeWebhookRoutes(app, dependencies);
+  registerOnboardingPetImageRoutes(app, dependencies);
   registerOnboardingPetDeleteRoutes(app, dependencies);
   registerOnboardingPetsSyncRoutes(app, dependencies);
   registerProfileRoutes(app, dependencies);

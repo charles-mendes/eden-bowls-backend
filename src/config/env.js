@@ -81,7 +81,9 @@ const rawEnvSchema = z.object({
   PROFILE_AVATAR_DIR: z.string().optional(),
   PROFILE_AVATAR_PUBLIC_BASE_URL: z.string().optional(),
   FEEDBACK_PHOTO_DIR: z.string().optional(),
-  FEEDBACK_PHOTO_PUBLIC_BASE_URL: z.string().optional()
+  FEEDBACK_PHOTO_PUBLIC_BASE_URL: z.string().optional(),
+  PET_PHOTO_DIR: z.string().optional(),
+  PET_PHOTO_PUBLIC_BASE_URL: z.string().optional()
 });
 
 function firstNonEmpty(...values) {
@@ -202,6 +204,8 @@ function parseEnv(source = process.env) {
     PROFILE_AVATAR_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.PROFILE_AVATAR_PUBLIC_BASE_URL),
     FEEDBACK_PHOTO_DIR: firstNonEmpty(rawEnv.FEEDBACK_PHOTO_DIR) || './public/feedback-photos',
     FEEDBACK_PHOTO_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.FEEDBACK_PHOTO_PUBLIC_BASE_URL),
+    PET_PHOTO_DIR: firstNonEmpty(rawEnv.PET_PHOTO_DIR) || './public/pet-photos',
+    PET_PHOTO_PUBLIC_BASE_URL: firstNonEmpty(rawEnv.PET_PHOTO_PUBLIC_BASE_URL),
     UPS_CLIENT_ID: firstNonEmpty(rawEnv.UPS_CLIENT_ID),
     UPS_CLIENT_SECRET: firstNonEmpty(rawEnv.UPS_CLIENT_SECRET),
     UPS_ACCOUNT_NUMBER: firstNonEmpty(rawEnv.UPS_ACCOUNT_NUMBER),

@@ -5,3 +5,5 @@ public/avatars/*
 !public/avatars/.gitkeep
 public/feedback-photos/*
 !public/feedback-photos/.gitkeep
+public/pet-photos/*
+!public/pet-photos/.gitkeep

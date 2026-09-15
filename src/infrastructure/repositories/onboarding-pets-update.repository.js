@@ -42,6 +42,23 @@ class OnboardingPetUpdateRepository {
     return this.findPet(userId, petId);
   }
 
+  async setImageUrl(userId, petId, imageUrl) {
+    if (!this.dataSource || !this.dataSource.isInitialized) {
+      throw new HttpError(503, 'Database connection is not initialized.');
+    }
+
+    const value = imageUrl == null || imageUrl === '' ? null : String(imageUrl);
+    const result = await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`image_url\` = ? WHERE \`id\` = ? AND \`user_id\` = ? AND \`deleted_at\` IS NULL`,
+      [value, petId, userId]
+    );
+    if (this.getAffectedRows(result) !== 1) {
+      return null;
+    }
+
+    return this.findPet(userId, petId);
+  }
+
   async findPet(userId, petId) {
     const rows = await this.dataSource.query(
       `SELECT \`id\`, \`name\`, \`breed\`, \`age_years\`, \`age_months\`, \`weight_input\`, \`weight_unit\`, \`size\`, \`activity_level\`, \`pet_condition\`, \`neutered\`, \`image_url\` FROM \`${this.tableName}\` WHERE \`id\` = ? AND \`user_id\` = ? AND \`deleted_at\` IS NULL LIMIT 1`,

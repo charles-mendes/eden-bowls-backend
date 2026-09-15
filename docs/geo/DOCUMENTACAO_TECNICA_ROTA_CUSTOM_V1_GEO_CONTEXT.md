@@ -426,7 +426,6 @@ No frontend:
 | `eden-bowls/src/features/region-experience/constants/banners.ts` | conteúdo dos banners |
 | `eden-bowls/src/features/region-experience/components/RegionModal.tsx` | modal |
 | `eden-bowls/src/features/region-experience/components/RegionBanner.tsx` | banner |
-| `eden-bowls/src/components/dev/GeoSimulationOverlay.tsx` | overlay local; não chama a rota |
 
 ### 11.5 Frontend — outros consumidores de `geoState` (não são a tela de plano, mas dependem do mesmo provider)
 

@@ -10,7 +10,7 @@ COPY src ./src
 COPY public ./public
 COPY data ./data
 
-RUN mkdir -p /app/public/avatars /app/public/feedback-photos /app/data \
+RUN mkdir -p /app/public/avatars /app/public/feedback-photos /app/public/pet-photos /app/data \
   && chown -R node:node /app
 
 ENV NODE_ENV=production

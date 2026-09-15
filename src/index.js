@@ -48,6 +48,7 @@ const { OnboardingPetDeleteRepository } = require('./infrastructure/repositories
 const { ProfileRepository } = require('./infrastructure/repositories/profile.repository');
 const { LocalAvatarStorage } = require('./infrastructure/storage/local-avatar-storage');
 const { LocalFeedbackPhotoStorage } = require('./infrastructure/storage/local-feedback-photo-storage');
+const { LocalPetPhotoStorage } = require('./infrastructure/storage/local-pet-photo-storage');
 const { AuthService } = require('./services/auth.service');
 const { createOtpMailer } = require('./infrastructure/mailers/otp-mailer');
 const { BreedsService } = require('./services/breeds.service');
@@ -82,6 +83,7 @@ const { SubscriptionsEditPreviewService } = require('./services/subscriptions-ed
 const { SubscriptionsService } = require('./services/subscriptions.service');
 const { StripeWebhookService } = require('./services/stripe-webhook.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
+const { OnboardingPetImageService } = require('./services/onboarding-pets-image.service');
 const { OnboardingPetsSyncService } = require('./services/onboarding-pets-sync.service');
 const { ProfileService } = require('./services/profile.service');
 const { OnboardingQuotesRepository } = require('./infrastructure/repositories/onboarding-quotes.repository');
@@ -358,7 +360,6 @@ async function bootstrap() {
   });
   const subscriptionsService = new SubscriptionsService(subscriptionsRepository);
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository(dataSource);
-  const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository);
   const onboardingPetsSyncService = new OnboardingPetsSyncService(onboardingPetCreateRepository);
   const profileRepository = new ProfileRepository(dataSource, {
     usersTableName: env.WP_USERS_TABLE_NAME,
@@ -408,6 +409,18 @@ async function bootstrap() {
   const feedbackPhotoStorage = new LocalFeedbackPhotoStorage({
     directory: feedbackPhotoPublicDir,
     publicBaseUrl: feedbackPhotoPublicBaseUrl
+  });
+  const petPhotoPublicDir = path.resolve(env.PET_PHOTO_DIR);
+  const petPhotoPublicBaseUrl = env.PET_PHOTO_PUBLIC_BASE_URL
+    || `${String(env.JWT_AUTH_ISSUER || '').replace(/\/+$/, '')}/pet-photos`;
+  const petPhotoStorage = new LocalPetPhotoStorage({
+    directory: petPhotoPublicDir,
+    publicBaseUrl: petPhotoPublicBaseUrl
+  });
+  const onboardingPetImageService = new OnboardingPetImageService(onboardingPetUpdateRepository, petPhotoStorage);
+  const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository, {
+    findPet: (userId, petId) => onboardingPetUpdateRepository.findPet(userId, petId),
+    petPhotoStorage
   });
   const feedbacksRepository = new FeedbacksRepository(dataSource);
   const feedbacksService = new FeedbacksService(feedbacksRepository, {
@@ -495,6 +508,7 @@ async function bootstrap() {
     onboardingPaymentMethodsService,
     onboardingPetCreateService,
     onboardingPetUpdateService,
+    onboardingPetImageService,
     onboardingPetsService,
     onboardingPlanPreviewService,
     onboardingPlanSelectionService,
@@ -530,6 +544,7 @@ async function bootstrap() {
     feedbacksService,
     avatarPublicDir,
     feedbackPhotoPublicDir,
+    petPhotoPublicDir,
     geoService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,

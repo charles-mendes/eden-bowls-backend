@@ -52,4 +52,37 @@ describe('user-owned pet mutation repositories', () => {
       ['Luna', 'foreign-pet', 7]
     );
   });
+
+  test('setImageUrl updates only image_url for the owned pet', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({ affectedRows: 1 })
+        .mockResolvedValueOnce([{
+          id: 'pet-1',
+          name: 'Luna',
+          breed: 'Mixed',
+          age_years: 3,
+          age_months: 0,
+          weight_input: 12,
+          weight_unit: 'kg',
+          size: 'medium',
+          activity_level: 'high',
+          pet_condition: 'ideal',
+          neutered: 1,
+          image_url: 'http://localhost:3000/pet-photos/pet-pet-1-abc.jpg'
+        }])
+    };
+    const repository = new OnboardingPetUpdateRepository(dataSource);
+
+    const pet = await repository.setImageUrl(7, 'pet-1', 'http://localhost:3000/pet-photos/pet-pet-1-abc.jpg');
+
+    expect(pet.image_url).toContain('/pet-photos/');
+    expect(dataSource.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('SET `image_url` = ?'),
+      ['http://localhost:3000/pet-photos/pet-pet-1-abc.jpg', 'pet-1', 7]
+    );
+  });
 });

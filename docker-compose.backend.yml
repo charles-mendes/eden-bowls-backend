@@ -16,6 +16,7 @@ services:
     volumes:
       - ./public/avatars:/app/public/avatars
       - ./public/feedback-photos:/app/public/feedback-photos
+      - ./public/pet-photos:/app/public/pet-photos
       - ./data:/app/data:ro
     healthcheck:
       test:
