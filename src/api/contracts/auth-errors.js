@@ -88,6 +88,21 @@ const AUTH_ERROR = {
     status: 429,
     code: 'otp_resend_rate_limited',
     message: 'Too many verification code requests. Try again later.'
+  },
+  INVITE_EXPIRED: {
+    status: 403,
+    code: 'invite_expired',
+    message: 'This invitation has expired. Ask an administrator to resend it.'
+  },
+  INVITE_RESEND_RATE_LIMITED: {
+    status: 429,
+    code: 'invite_resend_rate_limited',
+    message: 'Too many invitation emails. Try again later.'
+  },
+  PASSWORD_CHANGE_REQUIRED: {
+    status: 403,
+    code: 'password_change_required',
+    message: 'You must change your temporary password before continuing.'
   }
 };
 

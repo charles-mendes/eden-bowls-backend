@@ -20,6 +20,13 @@ function buildService(overrides = {}) {
     saveActivationStatus: jest.fn(async (userId, status) => {
       users[String(userId)].status = status;
     }),
+    upsertUserMeta: jest.fn(async () => {}),
+    deleteUserMeta: jest.fn(async () => {}),
+    findUserIdByEmail: jest.fn(async () => null),
+    createUser: jest.fn(),
+    updateDisplayName: jest.fn(),
+    updatePassword: jest.fn(),
+    getUserPass: jest.fn(),
     ...overrides.usersRepository
   };
 
@@ -87,14 +94,13 @@ describe('admin users roles', () => {
     });
   });
 
-  test('keeps allowlisted emails as admin even after storing another role', async () => {
+  test('blocks changing the stored role of an allowlisted email', async () => {
     const { service, users } = buildService({ adminEmails: 'ops@edenbowls.com' });
-    users['2'].storedRoles = '';
-    const result = await service.updateRoles('2', ['nutritionist'], { userId: '1' });
-
-    expect(result.storedRoles).toEqual(['nutritionist']);
-    expect(result.roles).toEqual(['admin', 'nutritionist']);
-    expect(result.lockedByAllowlist).toBe(true);
+    users['2'].storedRoles = '["admin"]';
+    await expect(service.updateRoles('2', ['nutritionist'], { userId: '1' })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'allowlist_role_locked' }
+    });
   });
 
   test('deactivates a customer and revokes refresh tokens', async () => {
@@ -118,6 +124,23 @@ describe('admin users roles', () => {
       statusCode: 422,
       message: 'Cannot change status of a staff account.'
     });
+  });
+
+  test('lets an admin deactivate a staff account and revoke sessions', async () => {
+    const refreshTokenRepository = {
+      revokeAllForUser: jest.fn().mockResolvedValue(1)
+    };
+    const { service, usersRepository } = buildService();
+    service.refreshTokenRepository = refreshTokenRepository;
+
+    const result = await service.updateStatus('2', 'inactive', {
+      userId: '1',
+      permissions: ['users.access.write']
+    });
+
+    expect(usersRepository.saveActivationStatus).toHaveBeenCalledWith('2', 'inactive');
+    expect(refreshTokenRepository.revokeAllForUser).toHaveBeenCalledWith('2', 'account_deactivated', expect.any(String));
+    expect(result.status).toBe('inactive');
   });
 
   test('blocks activating a pending account', async () => {

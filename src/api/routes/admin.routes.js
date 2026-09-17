@@ -7,6 +7,11 @@ const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = r
 const { parsePageQuery } = require('../validators/admin-pagination');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
 const {
+  parseCreateAccessInput,
+  parseUpdateAccessInput,
+  parsePasswordChangeInput
+} = require('../validators/admin-users-access.validator');
+const {
   parseCreateFeedbackInput,
   parseFeedbackActiveInput,
   parseFeedbackId,
@@ -47,6 +52,18 @@ function registerAdminRoutes(app, dependencies = {}) {
 
   app.get('/api/v1/admin/me', requirePermission(), async (request, response, next) => {
     await handle(response, next, async () => request.adminIdentity);
+  });
+
+  app.post('/api/v1/admin/me/password', requirePermission(), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.completePasswordChange(
+        request.adminIdentity,
+        parsePasswordChangeInput(request.body || {})
+      );
+    });
   });
 
   app.post('/api/v1/admin/nutrition/simulate', requirePermission('nutrition.simulate'), async (request, response, next) => {
@@ -446,7 +463,19 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.adminUsersService) {
         throw new HttpError(503, 'Users service is not available.');
       }
-      return dependencies.adminUsersService.list(request.query || {}, parsePageQuery(request.query));
+      return dependencies.adminUsersService.list(request.query || {}, parsePageQuery(request.query), request.adminIdentity);
+    });
+  });
+
+  app.post('/api/v1/admin/users', requirePermission('users.access.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.createAccess(
+        parseCreateAccessInput(request.body || {}),
+        request.adminIdentity
+      );
     });
   });
 
@@ -521,6 +550,37 @@ function registerAdminRoutes(app, dependencies = {}) {
         parseAccountStatusInput(request.body || {}),
         request.adminIdentity
       );
+    });
+  });
+
+  app.patch('/api/v1/admin/users/:userId', requirePermission('users.access.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.updateAccess(
+        request.params.userId,
+        parseUpdateAccessInput(request.body || {}),
+        request.adminIdentity
+      );
+    });
+  });
+
+  app.post('/api/v1/admin/users/:userId/invite', requirePermission('users.access.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.resendInvite(request.params.userId, request.adminIdentity);
+    });
+  });
+
+  app.delete('/api/v1/admin/users/:userId', requirePermission('users.access.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.softDelete(request.params.userId, request.adminIdentity);
     });
   });
 

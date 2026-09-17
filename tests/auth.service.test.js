@@ -248,6 +248,61 @@ describe('AuthService', () => {
     });
   });
 
+  test('lets pending staff with a valid invitation log in', async () => {
+    const repository = createRepository({
+      id: 9,
+      user_login: 'lia@edenbowls.com',
+      user_pass: 'e10adc3949ba59abbe56e057f20f883e',
+      user_email: 'lia@edenbowls.com',
+      user_nicename: 'lia',
+      display_name: 'Lia',
+      activation_status: 'pending',
+      must_change_password: '1',
+      invite_expires_at: String(Math.floor(Date.now() / 1000) + 3600),
+      deleted_at: ''
+    });
+    const service = new AuthService(repository, {
+      jwt: {
+        secret: 'test-secret',
+        algorithm: 'HS256',
+        issuer: 'http://localhost:3000',
+        expiresInSeconds: 3600
+      }
+    });
+
+    const response = await service.authenticate({ username: 'lia@edenbowls.com', password: '123456' });
+    expect(response.user_email).toBe('lia@edenbowls.com');
+    expect(typeof response.token).toBe('string');
+  });
+
+  test('rejects an expired staff invitation', async () => {
+    const repository = createRepository({
+      id: 9,
+      user_login: 'lia@edenbowls.com',
+      user_pass: 'e10adc3949ba59abbe56e057f20f883e',
+      user_email: 'lia@edenbowls.com',
+      user_nicename: 'lia',
+      display_name: 'Lia',
+      activation_status: 'pending',
+      must_change_password: '1',
+      invite_expires_at: '10',
+      deleted_at: ''
+    });
+    const service = new AuthService(repository, {
+      jwt: {
+        secret: 'test-secret',
+        algorithm: 'HS256',
+        issuer: 'http://localhost:3000',
+        expiresInSeconds: 3600
+      },
+      nowProvider: () => 100
+    });
+
+    await expect(service.authenticate({ username: 'lia@edenbowls.com', password: '123456' })).rejects.toMatchObject({
+      details: { code: 'invite_expired' }
+    });
+  });
+
   test('rejects deactivated accounts on login', async () => {
     const repository = createRepository({
       id: 4,

@@ -100,9 +100,10 @@ describe('AdminUsersRepository', () => {
     const repository = new AdminUsersRepository(dataSource);
     await repository.saveActivationStatus(8, 'inactive');
 
-    expect(dataSource.query.mock.calls[0][0]).toContain('hsr_activation_status');
+    expect(dataSource.query.mock.calls[0][0]).toContain('FROM `wp_usermeta`');
+    expect(dataSource.query.mock.calls[0][1]).toEqual([8, 'hsr_activation_status']);
     expect(dataSource.query.mock.calls[1][0]).toContain('INSERT INTO');
-    expect(dataSource.query.mock.calls[1][1]).toEqual([8, 'inactive']);
+    expect(dataSource.query.mock.calls[1][1]).toEqual([8, 'hsr_activation_status', 'inactive']);
   });
 
   test('clears stored roles by user id and meta key', async () => {

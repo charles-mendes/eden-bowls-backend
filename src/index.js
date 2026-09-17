@@ -96,6 +96,9 @@ const { AdminOnboardingService } = require('./services/admin-onboarding.service'
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
 const { AdminUsersService } = require('./services/admin-users.service');
+const { AdminAuditRepository } = require('./infrastructure/repositories/admin-audit.repository');
+const { AdminAuditService } = require('./services/admin-audit.service');
+const { createInviteMailer } = require('./infrastructure/mailers/invite-mailer');
 const { FeedbacksRepository } = require('./infrastructure/repositories/feedbacks.repository');
 const { FeedbacksService } = require('./services/feedbacks.service');
 const { AdminOnboardingRepository } = require('./infrastructure/repositories/admin-onboarding.repository');
@@ -474,12 +477,19 @@ async function bootstrap() {
     usersTableName: env.WP_USERS_TABLE_NAME,
     usermetaTableName: env.WP_USERMETA_TABLE_NAME
   });
+  const adminAuditService = new AdminAuditService({
+    repository: new AdminAuditRepository(dataSource),
+    logger
+  });
   const adminUsersService = new AdminUsersService({
     usersRepository: adminUsersRepository,
     profileService,
     profileRepository,
     refreshTokenRepository: authRefreshTokenRepository,
-    adminEmails: env.ADMIN_EMAILS
+    inviteMailer: createInviteMailer({ otpMailer }),
+    auditService: adminAuditService,
+    adminEmails: env.ADMIN_EMAILS,
+    adminAppUrl: env.ADMIN_APP_URL
   });
   const countryReader = new MaxMindCountryReader({ dbPath: env.GEO_MAXMIND_DB_PATH });
   await countryReader.open();

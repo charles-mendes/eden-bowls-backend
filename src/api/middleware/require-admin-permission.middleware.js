@@ -1,10 +1,22 @@
 const { HttpError } = require('../../core/http-error');
+const { AUTH_ERROR } = require('../contracts/auth-errors');
+
+function isPasswordChangeAllowedPath(method, path) {
+  const normalized = String(path || '').split('?')[0];
+  if (String(method || '').toUpperCase() === 'GET' && normalized === '/api/v1/admin/me') {
+    return true;
+  }
+
+  return String(method || '').toUpperCase() === 'POST' && normalized === '/api/v1/admin/me/password';
+}
 
 function sendAdminAuthError(response, error) {
   const statusCode = Number(error.statusCode || error.status || 500);
+  const details = error.details && typeof error.details === 'object' ? error.details : undefined;
   response.status(statusCode).json({
     success: false,
-    message: statusCode >= 500 ? 'Internal server error.' : error.message
+    message: statusCode >= 500 ? 'Internal server error.' : error.message,
+    ...(details && details.code ? { details: { code: details.code } } : {})
   });
 }
 
@@ -20,6 +32,14 @@ function buildRequireAdminPermission(dependencies = {}) {
       }
 
       const identity = await dependencies.adminIdentityService.requireOperational(request.currentUser.id);
+
+      if (identity.mustChangePassword && !isPasswordChangeAllowedPath(request.method, request.path)) {
+        throw new HttpError(
+          AUTH_ERROR.PASSWORD_CHANGE_REQUIRED.status,
+          AUTH_ERROR.PASSWORD_CHANGE_REQUIRED.message,
+          { code: AUTH_ERROR.PASSWORD_CHANGE_REQUIRED.code }
+        );
+      }
 
       if (permission && !identity.permissions.includes(permission)) {
         throw new HttpError(403, 'Forbidden.');
@@ -40,5 +60,6 @@ function buildRequireAdminPermission(dependencies = {}) {
 
 module.exports = {
   buildRequireAdminPermission,
-  sendAdminAuthError
+  sendAdminAuthError,
+  isPasswordChangeAllowedPath
 };

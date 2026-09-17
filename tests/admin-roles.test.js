@@ -12,6 +12,7 @@ describe('admin roles', () => {
     expect(ROLE_PERMISSIONS.operator).toContain('feedbacks.write');
     expect(ROLE_PERMISSIONS.operator).toContain('privacy.requests.write');
     expect(ROLE_PERMISSIONS.operator).not.toContain('users.roles.write');
+    expect(ROLE_PERMISSIONS.operator).not.toContain('users.access.write');
   });
 
   test('lets readonly list privacy requests but not write them', () => {
@@ -25,8 +26,9 @@ describe('admin roles', () => {
     expect(ROLE_PERMISSIONS.readonly).not.toContain('feedbacks.write');
   });
 
-  test('reserves role assignment for admin', () => {
+  test('reserves role assignment and access CRUD for admin', async () => {
     expect(ROLE_PERMISSIONS.admin).toContain('users.roles.write');
+    expect(ROLE_PERMISSIONS.admin).toContain('users.access.write');
   });
 
   test('bootstraps admin from allowlist email', () => {

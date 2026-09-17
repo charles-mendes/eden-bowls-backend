@@ -37,7 +37,7 @@ const ROLE_PERMISSIONS = {
   ]
 };
 
-ROLE_PERMISSIONS.admin = [...ROLE_PERMISSIONS.operator, 'users.roles.write'];
+ROLE_PERMISSIONS.admin = [...ROLE_PERMISSIONS.operator, 'users.roles.write', 'users.access.write'];
 
 const VALID_ROLES = new Set(['admin', 'operator', 'nutritionist', 'readonly', 'customer']);
 

@@ -5,6 +5,12 @@ const { generateOtp, hashOtp, otpMatches } = require('../core/otp');
 const { effectiveOtpTtlSeconds } = require('../core/otp-email');
 const { issueJwtToken } = require('../core/jwt-token');
 const { AUTH_ERROR } = require('../api/contracts/auth-errors');
+const {
+  INVITE_META_KEYS,
+  isInviteExpired,
+  isMustChangePassword,
+  isSoftDeleted
+} = require('../core/staff-invite');
 
 const CRITICAL_OPERATION_BLOCKED_STATUSES = new Set(['pending', 'inactive', 'suspended', 'banned']);
 
@@ -267,9 +273,7 @@ class AuthService {
       });
     }
 
-    if (this.activationBlocksAccess(user.activation_status)) {
-      throw this.activationAccessError(user.activation_status);
-    }
+    await this.assertLoginAllowed(user);
 
     const issuedAt = this.nowProvider();
     const token = this.issueAccessToken(user, issuedAt);
@@ -290,7 +294,13 @@ class AuthService {
     }
 
     const user = await this.repository.findUserById(userId);
-    if (!user || this.activationBlocksAccess(user.activation_status)) {
+    if (!user) {
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    try {
+      await this.assertLoginAllowed(user);
+    } catch (error) {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
@@ -352,7 +362,14 @@ class AuthService {
     }
 
     const user = await this.repository.findUserById(rotated.source.userId);
-    if (!user || this.activationBlocksAccess(user.activation_status)) {
+    if (!user) {
+      await this.refreshTokenRepository.revokeFamily(rotated.source.familyId, 'user_inactive', now);
+      throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    try {
+      await this.assertLoginAllowed(user);
+    } catch (_error) {
       await this.refreshTokenRepository.revokeFamily(rotated.source.familyId, 'user_inactive', now);
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
@@ -431,6 +448,76 @@ class AuthService {
 
   activationBlocksAccess(status) {
     return CRITICAL_OPERATION_BLOCKED_STATUSES.has(String(status || '').trim().toLowerCase());
+  }
+
+  async loadInviteState(user) {
+    if (!user) {
+      return {
+        mustChangePassword: false,
+        inviteExpiresAt: '',
+        deletedAt: ''
+      };
+    }
+
+    const hasInline = user.must_change_password != null
+      || user.invite_expires_at != null
+      || user.deleted_at != null;
+
+    if (hasInline) {
+      return {
+        mustChangePassword: isMustChangePassword(user.must_change_password),
+        inviteExpiresAt: user.invite_expires_at,
+        deletedAt: user.deleted_at
+      };
+    }
+
+    if (!this.repository || typeof this.repository.getUserMeta !== 'function') {
+      return {
+        mustChangePassword: false,
+        inviteExpiresAt: '',
+        deletedAt: ''
+      };
+    }
+
+    const [mustChangePassword, inviteExpiresAt, deletedAt] = await Promise.all([
+      this.repository.getUserMeta(user.id, INVITE_META_KEYS.mustChangePassword),
+      this.repository.getUserMeta(user.id, INVITE_META_KEYS.expiresAt),
+      this.repository.getUserMeta(user.id, INVITE_META_KEYS.deletedAt)
+    ]);
+
+    return {
+      mustChangePassword: isMustChangePassword(mustChangePassword),
+      inviteExpiresAt,
+      deletedAt
+    };
+  }
+
+  async assertLoginAllowed(user) {
+    const invite = await this.loadInviteState(user);
+    if (isSoftDeleted(invite.deletedAt)) {
+      throw this.activationAccessError('inactive');
+    }
+
+    const status = String(user.activation_status || '').trim().toLowerCase();
+    if (status === 'pending') {
+      if (invite.mustChangePassword) {
+        if (isInviteExpired(invite.inviteExpiresAt, this.nowProvider())) {
+          throw new HttpError(AUTH_ERROR.INVITE_EXPIRED.status, AUTH_ERROR.INVITE_EXPIRED.message, {
+            code: AUTH_ERROR.INVITE_EXPIRED.code
+          });
+        }
+
+        return invite;
+      }
+
+      throw this.activationAccessError('pending');
+    }
+
+    if (this.activationBlocksAccess(status)) {
+      throw this.activationAccessError(status);
+    }
+
+    return invite;
   }
 
   activationAccessError(status) {
