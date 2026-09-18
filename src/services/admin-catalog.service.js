@@ -2,6 +2,12 @@ const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
+const {
+  SEED_FLAVOR_ALIASES,
+  canonicalFlavorKey,
+  flavorKeyFromLabel,
+  parseFlavorAliases
+} = require('../core/flavors');
 
 function requiredCurrency(country) {
   if (country === 'US') {
@@ -34,6 +40,28 @@ function parseVariationFlavor(value) {
   }
 
   return flavor;
+}
+
+function parseVariationFlavorSlug(value, flavor) {
+  const requested = value == null ? '' : flavorKeyFromLabel(value);
+  const inferred = canonicalFlavorKey(requested || flavor || '');
+  if (!inferred) {
+    return undefined;
+  }
+  if (inferred.length > 64) {
+    throw new HttpError(422, 'Variation flavor slug must be at most 64 characters.');
+  }
+  return inferred;
+}
+
+function parseVariationFlavorAliases(value, flavorSlug) {
+  if (value == null) {
+    const seeded = SEED_FLAVOR_ALIASES[flavorSlug] || [];
+    return seeded.length > 0 ? seeded.join(',') : undefined;
+  }
+
+  const aliases = parseFlavorAliases(value);
+  return aliases.join(',');
 }
 
 function parseVariationPrice(value) {
@@ -315,7 +343,14 @@ class AdminCatalogService {
       const id = item.id == null ? '' : String(item.id).trim();
       const name = item.name == null ? undefined : String(item.name);
       const sku = item.sku == null ? undefined : String(item.sku);
+      const current = existingById.get(id);
       const flavor = parseVariationFlavor(item.flavor);
+      const flavorSlug = current && current.flavorSlug
+        ? current.flavorSlug
+        : parseVariationFlavorSlug(item.flavorSlug, flavor);
+      const flavorAliases = current && current.flavorSlug && item.flavorAliases == null
+        ? undefined
+        : parseVariationFlavorAliases(item.flavorAliases, flavorSlug);
       const regularPrice = parseVariationPrice(item.regularPrice);
 
       if (isNewVariationId(id, existingIds)) {
@@ -329,6 +364,8 @@ class AdminCatalogService {
           name: String(name || '').trim(),
           sku: String(sku || '').trim(),
           flavor,
+          flavorSlug,
+          flavorAliases,
           regularPrice,
           zoneId,
           menuOrder
@@ -336,13 +373,14 @@ class AdminCatalogService {
         continue;
       }
 
-      const current = existingById.get(id);
       const currentPrice = current && current.regularPrice != null ? Number(current.regularPrice) : null;
       await this.repository.updateVariation({
         id,
         name,
         sku,
         flavor,
+        flavorSlug,
+        flavorAliases,
         regularPrice,
         zoneId,
         priceChanged: regularPrice != null && currentPrice !== regularPrice

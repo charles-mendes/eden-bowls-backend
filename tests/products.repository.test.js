@@ -45,6 +45,8 @@ describe('ProductsRepository', () => {
       {
         variation_id: 1,
         flavor: 'Frango',
+        flavor_key: 'turkey',
+        flavor_aliases: [],
         weight: '300g',
         price: 29.9,
         currency: 'BRL'
@@ -124,6 +126,21 @@ describe('ProductsRepository', () => {
     await expect(repository.listFlavorLabelsByCountry('BR')).resolves.toEqual(['Beef', 'Lamb']);
     expect(dataSource.query.mock.calls[0][0]).toContain('attribute_pa_flavor');
     expect(dataSource.query.mock.calls[0][1]).toEqual(['BR']);
+  });
+
+  test('lists published flavor identities with slug and aliases', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn().mockResolvedValue([
+        { label: 'Frango', slug: 'turkey', aliases: 'chicken,frango,peru', menu_order: 1, variation_id: 1004 }
+      ])
+    };
+    const repository = new ProductsRepository(dataSource);
+
+    await expect(repository.listFlavorOptionsByCountry('BR')).resolves.toEqual([
+      { key: 'turkey', label: 'Frango', aliases: ['chicken', 'frango', 'peru'] }
+    ]);
+    expect(dataSource.query.mock.calls[0][0]).toContain('_flavor_slug');
   });
 
   test('returns an empty flavor list when catalog tables are missing', async () => {

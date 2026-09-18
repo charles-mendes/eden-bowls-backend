@@ -1,5 +1,13 @@
 const { HttpError } = require('./http-error');
-const { FLAVOR_CATALOG, FLAVOR_KEYS, flavorAliasKeys, flavorKeyFromLabel } = require('./flavors');
+const {
+  FLAVOR_CATALOG,
+  FLAVOR_KEYS,
+  SEED_FLAVOR_ALIASES,
+  canonicalFlavorKey,
+  flavorAliasKeys,
+  flavorKeyFromLabel
+} = require('./flavors');
+const { MARKETS } = require('./market');
 const { gramsToOz } = require('./simplified-consumption');
 
 const ANONYMOUS_PACK_SIZE_GRAMS = 300;
@@ -22,7 +30,7 @@ function uniqueSanitizeFlavors(flavors) {
   const result = [];
 
   for (const flavor of Array.isArray(flavors) ? flavors : []) {
-    const slug = sanitizeFlavorSlug(flavor);
+    const slug = canonicalFlavorKey(flavor) || sanitizeFlavorSlug(flavor);
     if (!slug || seen.has(slug)) {
       continue;
     }
@@ -75,8 +83,13 @@ function listFallbackCatalogItems(country) {
 
   for (const pack of catalog.packs) {
     for (const flavor of FLAVOR_KEYS) {
+      const labels = MARKETS[country] && MARKETS[country].flavorLabels
+        ? MARKETS[country].flavorLabels
+        : {};
       items.push({
         flavor,
+        flavor_label: labels[flavor] || flavor,
+        aliases: SEED_FLAVOR_ALIASES[flavor] || [],
         weight: pack.weight,
         price: pack.prices[flavor],
         currency: catalog.currency,
@@ -99,8 +112,11 @@ function flattenProductCatalog(payload) {
     const variations = Array.isArray(product.variations) ? product.variations : [];
 
     for (const variation of variations) {
+      const label = variation.flavor || fallbackFlavor;
       items.push({
-        flavor: variation.flavor || fallbackFlavor,
+        flavor: variation.flavor_key || canonicalFlavorKey(label) || flavorKeyFromLabel(label),
+        flavor_label: label,
+        aliases: Array.isArray(variation.flavor_aliases) ? variation.flavor_aliases : [],
         weight: variation.weight,
         price: variation.price,
         currency: variation.currency || product.currency,
@@ -117,16 +133,18 @@ function indexFlavorVariations(items) {
   const byFlavor = new Map();
 
   for (const item of Array.isArray(items) ? items : []) {
-    const flavor = sanitizeFlavorSlug(item && item.flavor);
+    const flavorKey = canonicalFlavorKey(item && (item.flavor_key || item.flavor))
+      || sanitizeFlavorSlug(item && item.flavor);
     const grams = parseWeightToGrams(item && item.weight);
     const price = Number(item && item.price);
 
-    if (!flavor || grams <= 0 || !Number.isFinite(price) || price <= 0) {
+    if (!flavorKey || grams <= 0 || !Number.isFinite(price) || price <= 0) {
       continue;
     }
 
     const variation = {
-      flavor,
+      flavor: flavorKey,
+      flavor_label: String(item.flavor_label || item.flavor || flavorKey).trim() || flavorKey,
       grams,
       price,
       weight: item.weight,
@@ -135,7 +153,7 @@ function indexFlavorVariations(items) {
       product_id: Number(item.product_id || 0)
     };
 
-    for (const alias of flavorAliasKeys(item.flavor)) {
+    for (const alias of flavorAliasKeys(flavorKey, null, item.aliases)) {
       if (!byFlavor.has(alias)) {
         byFlavor.set(alias, []);
       }
@@ -217,7 +235,8 @@ function buildCatalogPricingSnapshot(lineRequests, catalogItems, market) {
     lineItems.push({
       pet_id: String(request.pet_id || ''),
       pet_name: String(request.pet_name || ''),
-      flavor,
+      flavor: variation.flavor,
+      flavor_label: variation.flavor_label || variation.flavor,
       quantity,
       pack_size_grams: Math.round(variation.grams),
       pack_size_label: formatPackSizeLabel(variation.grams, country),

@@ -74,7 +74,7 @@ describe('onboarding plan snapshot routes', () => {
       { key: 'beef', label: 'Bovino' },
       { key: 'fish', label: 'Peixe' },
       { key: 'pork', label: 'Porco' },
-      { key: 'turkey', label: 'Peru' }
+      { key: 'turkey', label: 'Frango' }
     ]);
     expect(response.body.data.pets).toEqual([]);
     expect(response.body.data.consumption.pets).toEqual([]);
@@ -98,7 +98,7 @@ describe('onboarding plan snapshot routes', () => {
       { key: 'beef', label: 'Beef' },
       { key: 'fish', label: 'Fish' },
       { key: 'pork', label: 'Pork' },
-      { key: 'turkey', label: 'Turkey' }
+      { key: 'turkey', label: 'Chicken' }
     ]);
   });
 

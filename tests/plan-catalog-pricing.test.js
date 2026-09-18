@@ -13,6 +13,7 @@ describe('plan catalog pricing', () => {
   test('normalizes flavor slugs and drops duplicates', () => {
     expect(sanitizeFlavorSlug(' Beef ')).toBe('beef');
     expect(uniqueSanitizeFlavors(['beef', 'Beef', 'fish'])).toEqual(['beef', 'fish']);
+    expect(uniqueSanitizeFlavors(['chicken', 'turkey', 'frango'])).toEqual(['turkey']);
   });
 
   test('parses gram and ounce pack labels', () => {
@@ -55,8 +56,8 @@ describe('plan catalog pricing', () => {
 
     expect(pricing.subtotal).toBe(437.5);
     expect(pricing.line_items).toEqual([
-      expect.objectContaining({ flavor: 'bovino', variation_id: 1005, unit_price: 45, line_total: 225 }),
-      expect.objectContaining({ flavor: 'frango', variation_id: 1008, unit_price: 42.5, line_total: 212.5 })
+      expect.objectContaining({ flavor: 'beef', flavor_label: 'Bovino', variation_id: 1005, unit_price: 45, line_total: 225 }),
+      expect.objectContaining({ flavor: 'turkey', flavor_label: 'Frango', variation_id: 1008, unit_price: 42.5, line_total: 212.5 })
     ]);
   });
 
@@ -68,23 +69,63 @@ describe('plan catalog pricing', () => {
     );
 
     expect(pricing.line_items[0]).toMatchObject({
-      flavor: 'bovino',
+      flavor: 'beef',
       pack_size_grams: 500,
       unit_price: 45,
       line_total: 360
     });
   });
 
+  test('matches chicken requests to turkey variations in the fallback catalog', () => {
+    const pricing = buildCatalogPricingSnapshot(
+      [{ pet_id: 'pet-1', pet_name: 'Luna', flavor: 'chicken', quantity: 8, target_pack_size_grams: 500 }],
+      listFallbackCatalogItems('US'),
+      MARKETS.US
+    );
+
+    expect(pricing.line_items[0]).toMatchObject({
+      flavor: 'turkey',
+      flavor_label: 'Chicken',
+      unit_price: 42.5,
+      line_total: 340
+    });
+  });
+
+  test('prices a lamb variation from catalog meta instead of the hardcoded four', () => {
+    const pricing = buildCatalogPricingSnapshot(
+      [{ pet_id: 'pet-1', pet_name: 'Luna', flavor: 'lamb', quantity: 2, target_pack_size_grams: 300 }],
+      [{
+        flavor: 'lamb',
+        flavor_label: 'Cordeiro',
+        aliases: ['cordeiro'],
+        weight: '300g',
+        price: 40,
+        currency: 'BRL',
+        variation_id: 9001,
+        product_id: 100
+      }],
+      MARKETS.BR
+    );
+
+    expect(pricing.line_items[0]).toMatchObject({
+      flavor: 'lamb',
+      flavor_label: 'Cordeiro',
+      variation_id: 9001,
+      unit_price: 40,
+      line_total: 80
+    });
+  });
+
   test('rejects a flavor that is not in the catalog', () => {
     expect(() => buildCatalogPricingSnapshot(
-      [{ pet_id: 'pet-1', pet_name: 'Luna', flavor: 'chicken', quantity: 2, target_pack_size_grams: 300 }],
+      [{ pet_id: 'pet-1', pet_name: 'Luna', flavor: 'lamb', quantity: 2, target_pack_size_grams: 300 }],
       listFallbackCatalogItems('US'),
       MARKETS.US
     )).toThrow(HttpError);
 
     try {
       buildCatalogPricingSnapshot(
-        [{ pet_id: 'pet-1', pet_name: 'Luna', flavor: 'chicken', quantity: 2, target_pack_size_grams: 300 }],
+        [{ pet_id: 'pet-1', pet_name: 'Luna', flavor: 'lamb', quantity: 2, target_pack_size_grams: 300 }],
         listFallbackCatalogItems('US'),
         MARKETS.US
       );

@@ -1,4 +1,5 @@
-const { FLAVOR_CATALOG, FLAVOR_KEYS } = require('../../../core/flavors');
+const { FLAVOR_CATALOG, FLAVOR_KEYS, FLAVOR_SLUG_META, FLAVOR_ALIASES_META, SEED_FLAVOR_ALIASES } = require('../../../core/flavors');
+const { MARKETS } = require('../../../core/market');
 
 const FLAVOR_CATEGORY_TERM = { termId: 10, taxonomyId: 100, name: 'Flavors', slug: 'flavors' };
 const FLAVOR_TAG_TERMS = {
@@ -26,7 +27,12 @@ function slugifyWeight(weight) {
     .replace(/^_+|_+$/g, '');
 }
 
-function flavorLabel(flavor) {
+function flavorLabel(flavor, country) {
+  const labels = MARKETS[country] && MARKETS[country].flavorLabels;
+  if (labels && labels[flavor]) {
+    return labels[flavor];
+  }
+
   return flavor.charAt(0).toUpperCase() + flavor.slice(1);
 }
 
@@ -149,8 +155,13 @@ async function seedFlavorCatalog(queryRunner) {
       '_stripe_price_ids_by_currency',
       JSON.stringify({ [currencyKey]: stripePriceId })
     ]);
-    metaRows.push([entry.variationId, 'attribute_pa_flavor', flavorLabel(entry.flavor)]);
+    metaRows.push([entry.variationId, 'attribute_pa_flavor', flavorLabel(entry.flavor, entry.country)]);
     metaRows.push([entry.variationId, 'attribute_pa_weight', entry.weight]);
+    metaRows.push([entry.variationId, FLAVOR_SLUG_META, entry.flavor]);
+    const aliases = SEED_FLAVOR_ALIASES[entry.flavor];
+    if (aliases && aliases.length > 0) {
+      metaRows.push([entry.variationId, FLAVOR_ALIASES_META, aliases.join(',')]);
+    }
   }
 
   await queryRunner.query(

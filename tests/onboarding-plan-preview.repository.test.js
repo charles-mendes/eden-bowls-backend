@@ -139,6 +139,20 @@ describe('OnboardingPlanPreviewRepository', () => {
     expect(resolved.catalog_pricing.subtotal).toBe(200);
   });
 
+  test('returns catalog_pricing_unavailable in production when the database catalog is empty', async () => {
+    const repository = new OnboardingPlanPreviewRepository({
+      allowCatalogFallback: false,
+      productsRepository: {
+        listByCategory: jest.fn().mockResolvedValue({ products: [] })
+      }
+    });
+
+    await expect(repository.previewPlan(null, anonymousPayload(), MARKETS.BR)).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'catalog_pricing_unavailable' }
+    });
+  });
+
   test('falls back to the local catalog when the database catalog is not initialized', async () => {
     const productsRepository = {
       listByCategory: jest.fn().mockRejectedValue(new HttpError(503, 'missing', { code: 'catalog_not_initialized' }))
@@ -175,7 +189,7 @@ describe('OnboardingPlanPreviewRepository', () => {
     }), MARKETS.BR);
 
     expect(resolved.catalog_pricing.line_items[0]).toMatchObject({
-      flavor: 'bovino',
+      flavor: 'beef',
       pack_size_grams: 300,
       unit_price: 25,
       line_total: 200
@@ -206,8 +220,8 @@ describe('OnboardingPlanPreviewRepository', () => {
         products: [{
           product_id: 100,
           variations: [
-            { variation_id: 1005, flavor: 'Bovino', weight: '500g', price: 45, currency: 'BRL' },
-            { variation_id: 1008, flavor: 'Frango', weight: '500g', price: 42.5, currency: 'BRL' }
+            { variation_id: 1005, flavor: 'Bovino', flavor_key: 'beef', weight: '500g', price: 45, currency: 'BRL' },
+            { variation_id: 1008, flavor: 'Frango', flavor_key: 'turkey', flavor_aliases: ['chicken', 'frango', 'peru'], weight: '500g', price: 42.5, currency: 'BRL' }
           ]
         }]
       })
@@ -240,7 +254,7 @@ describe('OnboardingPlanPreviewRepository', () => {
     }, MARKETS.BR);
 
     expect(resolved.catalog_pricing.subtotal).toBe(437.5);
-    expect(resolved.catalog_pricing.line_items.map((item) => item.flavor)).toEqual(['bovino', 'frango']);
+    expect(resolved.catalog_pricing.line_items.map((item) => item.flavor)).toEqual(['beef', 'turkey']);
   });
 
   test('rejects duplicate flavor slugs that desync the weight list', async () => {

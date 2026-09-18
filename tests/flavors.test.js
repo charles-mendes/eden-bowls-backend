@@ -1,4 +1,4 @@
-const { FLAVOR_KEYS, flavorOptionsFromLabels, listFlavorOptions, listFlavorVariations } = require('../src/core/flavors');
+const { FLAVOR_KEYS, canonicalFlavorKey, flavorAliasKeys, flavorOptionsFromLabels, listFlavorOptions, listFlavorVariations } = require('../src/core/flavors');
 const { MARKETS } = require('../src/core/market');
 
 describe('flavor catalog', () => {
@@ -6,18 +6,35 @@ describe('flavor catalog', () => {
     expect(FLAVOR_KEYS).toEqual(['beef', 'fish', 'pork', 'turkey']);
   });
 
-  test('builds flavor options from catalog labels and localizes known keys', () => {
+  test('builds flavor options from stored catalog labels without remapping display text', () => {
     expect(flavorOptionsFromLabels(['Beef', 'Lamb', 'beef', ''], MARKETS.BR)).toEqual([
-      { key: 'beef', label: 'Bovino' },
+      { key: 'beef', label: 'Beef' },
       { key: 'lamb', label: 'Lamb' }
     ]);
   });
 
-  test('canonicalizes localized catalog labels to the same flavor key', () => {
+  test('canonicalizes localized catalog labels to the same flavor key and keeps the stored label', () => {
     expect(flavorOptionsFromLabels(['Bovino', 'Frango'], MARKETS.BR)).toEqual([
       { key: 'beef', label: 'Bovino' },
-      { key: 'frango', label: 'Frango' }
+      { key: 'turkey', label: 'Frango' }
     ]);
+  });
+
+  test('keeps an explicit slug that does not match the slugified label', () => {
+    expect(flavorOptionsFromLabels([
+      { key: 'turkey', label: 'Frango', aliases: ['chicken', 'frango', 'peru'] },
+      { key: 'lamb', label: 'Cordeiro' }
+    ], MARKETS.BR)).toEqual([
+      { key: 'turkey', label: 'Frango', aliases: ['chicken', 'frango', 'peru'] },
+      { key: 'lamb', label: 'Cordeiro' }
+    ]);
+  });
+
+  test('maps chicken aliases onto the turkey catalog key', () => {
+    expect(canonicalFlavorKey('chicken', MARKETS.BR)).toBe('turkey');
+    expect(canonicalFlavorKey('frango', MARKETS.US)).toBe('turkey');
+    expect(canonicalFlavorKey('peru', MARKETS.BR)).toBe('turkey');
+    expect(flavorAliasKeys('chicken', MARKETS.BR)).toEqual(expect.arrayContaining(['chicken', 'frango', 'peru', 'turkey']));
   });
 
   test('lists localized flavor options for Brazil and the United States', () => {
@@ -25,14 +42,14 @@ describe('flavor catalog', () => {
       { key: 'beef', label: 'Bovino' },
       { key: 'fish', label: 'Peixe' },
       { key: 'pork', label: 'Porco' },
-      { key: 'turkey', label: 'Peru' }
+      { key: 'turkey', label: 'Frango' }
     ]);
 
     expect(listFlavorOptions(MARKETS.US)).toEqual([
       { key: 'beef', label: 'Beef' },
       { key: 'fish', label: 'Fish' },
       { key: 'pork', label: 'Pork' },
-      { key: 'turkey', label: 'Turkey' }
+      { key: 'turkey', label: 'Chicken' }
     ]);
   });
 

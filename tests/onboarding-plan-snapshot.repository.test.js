@@ -50,8 +50,40 @@ describe('OnboardingPlanSnapshotRepository', () => {
     const data = await repository.getSnapshot(null, MARKETS.BR);
 
     expect(data.flavor_options).toEqual([
-      { key: 'beef', label: 'Bovino' },
+      { key: 'beef', label: 'Beef' },
       { key: 'lamb', label: 'Lamb' }
     ]);
+  });
+
+  test('uses catalog slug and label when the products repository returns flavor identities', async () => {
+    const repository = new OnboardingPlanSnapshotRepository({
+      productsRepository: {
+        listFlavorOptionsByCountry: jest.fn().mockResolvedValue([
+          { key: 'turkey', label: 'Frango', aliases: ['chicken', 'frango', 'peru'] },
+          { key: 'lamb', label: 'Cordeiro' }
+        ])
+      }
+    });
+
+    const data = await repository.getSnapshot(null, MARKETS.BR);
+
+    expect(data.flavor_options).toEqual([
+      { key: 'turkey', label: 'Frango' },
+      { key: 'lamb', label: 'Cordeiro' }
+    ]);
+  });
+
+  test('errors in production when the published catalog has no flavors', async () => {
+    const repository = new OnboardingPlanSnapshotRepository({
+      allowCatalogFallback: false,
+      productsRepository: {
+        listFlavorOptionsByCountry: jest.fn().mockResolvedValue([])
+      }
+    });
+
+    await expect(repository.getSnapshot(null, MARKETS.BR)).rejects.toMatchObject({
+      statusCode: 503,
+      details: { code: 'catalog_flavors_unavailable' }
+    });
   });
 });

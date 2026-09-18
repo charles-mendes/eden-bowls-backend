@@ -4,6 +4,15 @@ const {
   formatDeliveryAddress,
   planLabelFromLedger
 } = require('./stripe-subscription-map');
+const { canonicalFlavorKey, findCatalogFlavorOption } = require('./flavors');
+
+function flavorLabelFor(key, catalogOptions) {
+  const match = findCatalogFlavorOption(key, catalogOptions);
+  if (match && match.label) {
+    return match.label;
+  }
+  return key;
+}
 
 function readPets(row) {
   const snapshot = parseJsonColumn(row.petsSnapshot || row.pets_snapshot) || {};
@@ -46,30 +55,52 @@ function nextShipment(row) {
   };
 }
 
-function activeFlavors(row) {
-  const plan = parseJsonColumn(row.planSelection || row.plan_selection) || {};
+function activeFlavors(row, catalogOptions) {
   const flavors = [];
+  const plan = parseJsonColumn(row.planSelection || row.plan_selection) || {};
   for (const pet of Array.isArray(plan.pets) ? plan.pets : []) {
     for (const flavor of Array.isArray(pet.selected_flavors) ? pet.selected_flavors : []) {
-      if (flavor && !flavors.includes(flavor)) {
-        flavors.push(String(flavor));
+      const match = findCatalogFlavorOption(flavor, catalogOptions);
+      const key = (match && match.key) || canonicalFlavorKey(flavor);
+      if (key && !flavors.includes(key)) {
+        flavors.push(key);
       }
     }
   }
   return flavors;
 }
 
-function planItemsFromCatalog(catalog) {
-  return (Array.isArray(catalog.line_items) ? catalog.line_items : []).map((item) => ({
-    label: item.pet_name ? `${item.pet_name} — ${item.flavor || ''}`.trim() : (item.flavor || item.label || ''),
-    flavor: item.flavor || null,
-    quantity: item.quantity == null ? null : Number(item.quantity),
-    unit_amount: item.unit_price == null ? null : Number(item.unit_price),
-    line_total: item.line_total == null ? null : Number(item.line_total),
-    currency: item.currency || catalog.currency || null,
-    stripe_price_id: item.stripe_price_id || item.price_id || null,
-    source: 'plan_selection'
-  }));
+function activeFlavorOptions(row, catalogOptions) {
+  return activeFlavors(row, catalogOptions).map((key) => {
+    const match = findCatalogFlavorOption(key, catalogOptions);
+    return {
+      key,
+      label: match && match.label ? match.label : flavorLabelFor(key, catalogOptions)
+    };
+  });
+}
+
+function planItemsFromCatalog(catalog, catalogOptions) {
+  return (Array.isArray(catalog.line_items) ? catalog.line_items : []).map((item) => {
+    const match = findCatalogFlavorOption(item.flavor || item.flavor_label || item.label, catalogOptions);
+    const flavorKey = (match && match.key)
+      || canonicalFlavorKey(item.flavor || item.label)
+      || item.flavor
+      || null;
+    const flavorLabel = (match && match.label)
+      || item.flavor_label
+      || (flavorKey ? flavorLabelFor(flavorKey, catalogOptions) : (item.flavor || item.label || ''));
+    return {
+      label: item.pet_name ? `${item.pet_name} — ${flavorLabel}`.trim() : flavorLabel,
+      flavor: flavorKey,
+      quantity: item.quantity == null ? null : Number(item.quantity),
+      unit_amount: item.unit_price == null ? null : Number(item.unit_price),
+      line_total: item.line_total == null ? null : Number(item.line_total),
+      currency: item.currency || catalog.currency || null,
+      stripe_price_id: item.stripe_price_id || item.price_id || null,
+      source: 'plan_selection'
+    };
+  });
 }
 
 function packsPerMonth(catalog, plan) {
@@ -136,7 +167,8 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
     pets: pets.pets,
     packs_per_delivery: list.packs_per_month,
     frequency: term === 1 || !term ? 'monthly' : `${term}_month`,
-    active_flavors: activeFlavors(row),
+    active_flavors: activeFlavors(row, extras.catalogFlavorOptions),
+    active_flavor_options: activeFlavorOptions(row, extras.catalogFlavorOptions),
     price_per_cycle: list.order_total_per_month,
     cycle_unit: 'month',
     payment_method_brand: extras.paymentMethodBrand || row.paymentMethodBrand || row.payment_method_brand || null,
@@ -146,7 +178,7 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
     current_cycle: extras.currentCycle == null ? 1 : extras.currentCycle,
     total_cycles: term,
     billing_history: Array.isArray(extras.billingHistory) ? extras.billingHistory : [],
-    plan_items: planItemsFromCatalog(catalog),
+    plan_items: planItemsFromCatalog(catalog, extras.catalogFlavorOptions),
     plan_items_source: 'plan_selection',
     stripe_timeline: Array.isArray(extras.stripeTimeline) ? extras.stripeTimeline : [],
     edit_payment_pending: editPending,

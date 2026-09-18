@@ -80,6 +80,8 @@ describe('AdminCatalogService', () => {
       name: 'Beef 300g',
       sku: 'Beef-300g',
       flavor: 'Beef',
+      flavorSlug: 'beef',
+      flavorAliases: 'bovino,carne',
       regularPrice: 28,
       zoneId: 'br',
       priceChanged: true
@@ -89,6 +91,8 @@ describe('AdminCatalogService', () => {
       name: 'Lamb 300g',
       sku: 'LAMB-300',
       flavor: 'Lamb',
+      flavorSlug: 'lamb',
+      flavorAliases: undefined,
       regularPrice: 40,
       zoneId: 'br',
       menuOrder: 2

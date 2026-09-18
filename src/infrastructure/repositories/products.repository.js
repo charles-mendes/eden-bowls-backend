@@ -1,5 +1,12 @@
 const { HttpError } = require('../../core/http-error');
 const { PRODUCTS_ERROR } = require('../../api/contracts/products-errors');
+const {
+  FLAVOR_ALIASES_META,
+  FLAVOR_SLUG_META,
+  canonicalFlavorKey,
+  flavorKeyFromLabel,
+  parseFlavorAliases
+} = require('../../core/flavors');
 
 class ProductsRepository {
   constructor(dataSource, options = {}) {
@@ -204,9 +211,14 @@ class ProductsRepository {
         continue;
       }
 
+      const flavorLabel = this.extractVariationFlavor(variation);
+      const storedSlug = flavorKeyFromLabel(this.extractVariationFlavorSlug(variation));
+      const flavorKey = storedSlug || canonicalFlavorKey(flavorLabel);
       output.push({
         variation_id: Number(variation.variation_id),
-        flavor: this.extractVariationFlavor(variation),
+        flavor: flavorLabel,
+        flavor_key: flavorKey || flavorLabel,
+        flavor_aliases: this.extractVariationFlavorAliases(variation),
         weight: this.extractVariationWeight(variation),
         price: Number(price.toFixed(2)),
         currency
@@ -308,6 +320,68 @@ class ProductsRepository {
 
       throw error;
     }
+  }
+
+  async listFlavorOptionsByCountry(country) {
+    this.ensureDataSourceReady();
+
+    try {
+      const sql = [
+        'SELECT',
+        'TRIM(MIN(vm.meta_value)) AS label,',
+        `TRIM(COALESCE(MAX(slug.meta_value), '')) AS slug,`,
+        `TRIM(COALESCE(MAX(aliases.meta_value), '')) AS aliases,`,
+        'MIN(v.menu_order) AS menu_order,',
+        'MIN(v.ID) AS variation_id',
+        `FROM \`${this.tableNames.posts}\` v`,
+        `INNER JOIN \`${this.tableNames.posts}\` p ON p.ID = v.post_parent`,
+        `INNER JOIN \`${this.tableNames.postmeta}\` vm ON vm.post_id = v.ID`,
+        'AND vm.meta_key IN (\'attribute_pa_flavor\', \'attribute_flavor\', \'attribute_sabor\')',
+        `INNER JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID`,
+        'AND pm_country.meta_key = \'_cmpb_plan_country\'',
+        `LEFT JOIN \`${this.tableNames.postmeta}\` slug ON slug.post_id = v.ID AND slug.meta_key = '${FLAVOR_SLUG_META}'`,
+        `LEFT JOIN \`${this.tableNames.postmeta}\` aliases ON aliases.post_id = v.ID AND aliases.meta_key = '${FLAVOR_ALIASES_META}'`,
+        "WHERE v.post_type = 'product_variation'",
+        "AND v.post_status = 'publish'",
+        "AND p.post_type = 'product'",
+        "AND p.post_status = 'publish'",
+        'AND UPPER(COALESCE(pm_country.meta_value, "")) = ?',
+        'AND TRIM(COALESCE(vm.meta_value, "")) <> ""',
+        'GROUP BY COALESCE(NULLIF(TRIM(slug.meta_value), \'\'), vm.meta_value)',
+        'ORDER BY MIN(v.menu_order) ASC, MIN(v.ID) ASC'
+      ].join(' ');
+
+      const rows = await this.dataSource.query(sql, [String(country || '').trim().toUpperCase()]);
+      return (Array.isArray(rows) ? rows : []).flatMap((row) => {
+        const label = String(row.label || '').trim();
+        if (!label) {
+          return [];
+        }
+        const slug = flavorKeyFromLabel(row.slug);
+        const aliases = parseFlavorAliases(row.aliases);
+        return [{
+          key: slug || canonicalFlavorKey(label),
+          label,
+          aliases
+        }];
+      });
+    } catch (error) {
+      if (this.isCatalogMissingError(error)) {
+        return [];
+      }
+
+      throw error;
+    }
+  }
+
+  extractVariationFlavorSlug(variation) {
+    const meta = variation.meta || {};
+    return this.pickFirstMetaValue(meta, [FLAVOR_SLUG_META]);
+  }
+
+  extractVariationFlavorAliases(variation) {
+    const meta = variation.meta || {};
+    return parseFlavorAliases(meta[FLAVOR_ALIASES_META]);
   }
 
   extractVariationFlavor(variation) {

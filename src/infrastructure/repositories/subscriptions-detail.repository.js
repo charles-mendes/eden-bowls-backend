@@ -9,6 +9,7 @@ class SubscriptionsDetailRepository {
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.upsShipmentRepository = options.upsShipmentRepository || null;
+    this.productsRepository = options.productsRepository || null;
   }
 
   async getDetail(userId, subscriptionId) {
@@ -38,8 +39,18 @@ class SubscriptionsDetailRepository {
       paymentMethodBrand: row.paymentMethodBrand,
       paymentMethodLast4: row.paymentMethodLast4,
       billingHistory: [],
-      stripeTimeline: []
+      stripeTimeline: [],
+      catalogFlavorOptions: []
     };
+
+    if (this.productsRepository && typeof this.productsRepository.listFlavorOptionsByCountry === 'function') {
+      try {
+        const country = ledgerStripeAccount(row) === 'br' ? 'BR' : 'US';
+        extras.catalogFlavorOptions = await this.productsRepository.listFlavorOptionsByCountry(country);
+      } catch (_error) {
+        extras.catalogFlavorOptions = [];
+      }
+    }
 
     let stripeBilling = this.stripeBilling;
     try {

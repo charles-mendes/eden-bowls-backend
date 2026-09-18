@@ -28,7 +28,7 @@ isProject: false
 
 # PAY-01 — Separar Stripe BR e Stripe US
 
-**Status do código:** os todos do plano acima estão **completed**. Cutover (secrets, catálogo BR, cupons BR, webhooks, flag): [o-que-alterar-para-funcionar.md](./o-que-alterar-para-funcionar.md). O que ficou fora ou incompleto: [definicoes-nao-desenvolvidas.md](./definicoes-nao-desenvolvidas.md).
+**Status do código:** os todos do plano acima estão **completed**. Cutover (secrets, catálogo BR, cupons BR, webhooks, flag): [o-que-alterar-para-funcionar.md](./o-que-alterar-para-funcionar.md). Como pegar keys / cadastrar webhooks US e BR: [COMO-CONFIGURAR-STRIPE.md](./COMO-CONFIGURAR-STRIPE.md). O que ficou fora ou incompleto: [definicoes-nao-desenvolvidas.md](./definicoes-nao-desenvolvidas.md).
 
 Escopo: duas contas Stripe independentes (não Connect). Checkout, catálogo, cupons, webhook e admin passam a escolher a conta pelo país. **PIX/boleto e CPF ficam fora.** Assinaturas já existentes na secret atual são backfill `us`.
 

@@ -1,5 +1,10 @@
 const { PLAN_TERMS } = require('../../core/first-purchase-discount');
-const { flavorOptionsFromLabels, listFlavorOptions } = require('../../core/flavors');
+const {
+  allowFlavorCatalogFallback,
+  flavorOptionsFromCatalog,
+  listFlavorOptions
+} = require('../../core/flavors');
+const { HttpError } = require('../../core/http-error');
 const { MARKETS, resolveMarket } = require('../../core/market');
 const { consumptionLabels } = require('../../core/simplified-consumption');
 
@@ -7,6 +12,14 @@ class OnboardingPlanSnapshotRepository {
   constructor(options = {}) {
     this.recommendationRepository = options.recommendationRepository || null;
     this.productsRepository = options.productsRepository || null;
+    this.allowCatalogFallback = options.allowCatalogFallback;
+  }
+
+  allowsCatalogFallback() {
+    if (typeof this.allowCatalogFallback === 'boolean') {
+      return this.allowCatalogFallback;
+    }
+    return allowFlavorCatalogFallback();
   }
 
   async getSnapshot(userId, marketInput, petsOverride) {
@@ -39,17 +52,50 @@ class OnboardingPlanSnapshotRepository {
     };
   }
 
+  publicFlavorOptions(options) {
+    return (Array.isArray(options) ? options : []).map((option) => ({
+      key: option.key,
+      label: option.label
+    }));
+  }
+
+  emptyCatalogError() {
+    return new HttpError(503, 'Flavor catalog is unavailable.', { code: 'catalog_flavors_unavailable' });
+  }
+
   async resolveFlavorOptions(market) {
-    if (!this.productsRepository || typeof this.productsRepository.listFlavorLabelsByCountry !== 'function') {
-      return listFlavorOptions(market);
+    const fallback = () => {
+      if (!this.allowsCatalogFallback()) {
+        throw this.emptyCatalogError();
+      }
+      return this.publicFlavorOptions(listFlavorOptions(market));
+    };
+
+    if (!this.productsRepository) {
+      return fallback();
     }
 
     try {
-      const labels = await this.productsRepository.listFlavorLabelsByCountry(market.country);
-      const options = flavorOptionsFromLabels(labels, market);
-      return options.length > 0 ? options : listFlavorOptions(market);
-    } catch (_error) {
-      return listFlavorOptions(market);
+      let rows = [];
+      if (typeof this.productsRepository.listFlavorOptionsByCountry === 'function') {
+        rows = await this.productsRepository.listFlavorOptionsByCountry(market.country);
+      } else if (typeof this.productsRepository.listFlavorLabelsByCountry === 'function') {
+        rows = await this.productsRepository.listFlavorLabelsByCountry(market.country);
+      } else {
+        return fallback();
+      }
+
+      const options = flavorOptionsFromCatalog(rows, market);
+      if (options.length > 0) {
+        return this.publicFlavorOptions(options);
+      }
+
+      return fallback();
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      return fallback();
     }
   }
 }

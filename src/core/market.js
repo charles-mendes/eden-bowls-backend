@@ -16,7 +16,7 @@ const MARKETS = {
       beef: 'Beef',
       fish: 'Fish',
       pork: 'Pork',
-      turkey: 'Turkey'
+      turkey: 'Chicken'
     }
   },
   BR: {
@@ -34,7 +34,7 @@ const MARKETS = {
       beef: 'Bovino',
       fish: 'Peixe',
       pork: 'Porco',
-      turkey: 'Peru'
+      turkey: 'Frango'
     }
   }
 };

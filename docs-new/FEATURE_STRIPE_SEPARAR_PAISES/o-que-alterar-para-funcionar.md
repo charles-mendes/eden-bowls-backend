@@ -134,6 +134,8 @@ Checkout BR elegível bloqueia com `first_purchase_promo_not_configured` se o sl
 
 ## 7. Webhooks
 
+Passo a passo (keys, API version, `whsec_`, URLs US/BR e lista completa de eventos): [COMO-CONFIGURAR-STRIPE.md](./COMO-CONFIGURAR-STRIPE.md).
+
 Dois endpoints. Cada Dashboard aponta só para o path daquela conta. Assinatura inválida → 400; **não** tenta o outro secret.
 
 | Path | Secret | Alias |

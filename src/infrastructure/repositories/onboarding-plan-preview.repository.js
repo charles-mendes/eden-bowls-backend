@@ -1,4 +1,5 @@
 const { resolveMarket } = require('../../core/market');
+const { allowFlavorCatalogFallback } = require('../../core/flavors');
 const { normalizeDraftPets, petHasNutritionalProfile } = require('../../core/onboarding-draft-pets');
 const {
   ANONYMOUS_PACK_SIZE_GRAMS,
@@ -14,6 +15,14 @@ class OnboardingPlanPreviewRepository {
   constructor(options = {}) {
     this.recommendationRepository = options.recommendationRepository || null;
     this.productsRepository = options.productsRepository || null;
+    this.allowCatalogFallback = options.allowCatalogFallback;
+  }
+
+  allowsCatalogFallback() {
+    if (typeof this.allowCatalogFallback === 'boolean') {
+      return this.allowCatalogFallback;
+    }
+    return allowFlavorCatalogFallback();
   }
 
   async previewPlan(userId, payload = {}, marketInput) {
@@ -165,8 +174,15 @@ class OnboardingPlanPreviewRepository {
   }
 
   async loadCatalogItems(market) {
-    if (!this.productsRepository) {
+    const fallback = () => {
+      if (!this.allowsCatalogFallback()) {
+        throwPlanError(422, 'catalog_pricing_unavailable', 'Catalog pricing is unavailable.');
+      }
       return listFallbackCatalogItems(market.country);
+    };
+
+    if (!this.productsRepository) {
+      return fallback();
     }
 
     try {
@@ -186,7 +202,7 @@ class OnboardingPlanPreviewRepository {
       }
     }
 
-    return listFallbackCatalogItems(market.country);
+    return fallback();
   }
 }
 
