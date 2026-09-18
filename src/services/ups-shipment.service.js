@@ -21,6 +21,8 @@ class UpsShipmentService {
     this.labelStorage = options.labelStorage || null;
     this.shippingService = options.shippingService || null;
     this.adminBillingService = options.adminBillingService || null;
+    this.transactionalMailer = options.transactionalMailer || null;
+    this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
 
   ensureRepository() {
@@ -153,12 +155,30 @@ class UpsShipmentService {
         rawResponse: created.raw
       });
 
+      await this.notifyShippedMail({ subscription, shipment: saved });
+
       return { success: true, data: { shipment: this.present(saved), reused: false } };
     } catch (error) {
       if (pending?.id) {
         await this.repository.deletePending(pending.id).catch(() => {});
       }
       throw error;
+    }
+  }
+
+  async notifyShippedMail({ subscription, shipment }) {
+    if (!this.transactionalMailer) {
+      return;
+    }
+
+    try {
+      await this.transactionalMailer.notifyShipped({ subscription, shipment });
+    } catch (error) {
+      this.logger.error({
+        shipmentId: shipment && shipment.id,
+        to: subscription && subscription.user && subscription.user.email,
+        code: error && error.code
+      }, 'Transactional email failed.');
     }
   }
 

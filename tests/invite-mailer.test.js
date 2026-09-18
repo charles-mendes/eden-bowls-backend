@@ -39,7 +39,8 @@ describe('staff invite email', () => {
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
       to: 'lia@edenbowls.com',
       subject: 'Your Eden Bowls admin access',
-      text: expect.stringContaining('TempPassword#12345')
+      text: expect.stringContaining('TempPassword#12345'),
+      html: expect.stringContaining('TempPassword#12345')
     }));
     expect(JSON.stringify(logger)).not.toContain('TempPassword#12345');
   });

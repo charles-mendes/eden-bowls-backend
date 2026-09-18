@@ -29,7 +29,7 @@ Arquivos Node:
 - `src/config/env.js`
 - `src/index.js`
 
-Nao ha `PUT /profile/email`, recuperacao de senha, fila, HTML nem SendGrid.
+Nao ha `PUT /profile/email`, recuperacao de senha, fila nem SendGrid. OTP agora sai em HTML + texto.
 
 ---
 
@@ -56,7 +56,7 @@ Para a logica de `08-envio-email.md` caber no Node, as rotas **nao mudaram de pa
 | Item WP | Node antes | Node agora |
 |---|---|---|
 | SMTP Brevo 587 TLS | mailer fake | `nodemailer` com `AUTH_SMTP_*` (alias `HSR_SMTP_*`) |
-| Subject / body texto puro | inexistente | `Your verification code` + `expires in {N} minutes` |
+| Subject / body | inexistente | HTML da carta Eden + texto; subject PT `Seu código de verificação Eden Bowls` |
 | TTL `max(900, env)` | 600 s direto | piso 900 s (`effectiveOtpTtlSeconds`) |
 | Metas `hsr_activation_otp_hash/expires/attempts` | `hsr_otp_hash`, `hsr_otp_expires_at`, `hsr_otp_attempts` | chaves iguais ao HSR |
 | HMAC `AUTH_SALT` | secret JWT | `AUTH_OTP_PEPPER` → `AUTH_SALT` → JWT → `hsr-default-salt` |
@@ -215,11 +215,11 @@ O codigo em claro **nao** e persistido.
 | Campo | Valor |
 |---|---|
 | Destinatario | `user_email` |
-| Subject | `Your verification code` |
-| Body | `Your Eden Bowls verification code is {OTP}. This code expires in {N} minutes.` |
+| Subject | PT default `Seu código de verificação Eden Bowls` (`en-US`: `Your Eden Bowls verification code`) |
+| Body | texto + HTML da carta Eden (`src/core/otp-email.js`) |
 | `{N}` | `floor(TTL / 60)` → **15** |
-| Content-Type | `text/plain` |
-| HTML / template / anexo / link | nao |
+| Content-Type | `text/plain` + `text/html` |
+| HTML / template / anexo / link | HTML sim; sem anexo; OTP não vai em link |
 
 ---
 
@@ -307,9 +307,9 @@ sequenceDiagram
 
 | E-mail / recurso | Estado Node |
 |---|---|
-| Confirmacao de cadastro / OTP | implementado (texto puro, SMTP) |
-| Recuperacao de senha | **nao** (o modal so troca de tela) |
-| Confirmacao de pedido / envio / renovacao | WooCommerce / Stripe, fora deste backend |
+| Confirmacao de cadastro / OTP | implementado (HTML + texto, SMTP) |
+| Recuperacao de senha | template HTML pronto; API **nao** (o modal so troca de tela) |
+| Confirmacao de pedido / envio / renovacao | templates HTML prontos; disparo Stripe/UPS **nao** |
 | SDK SendGrid | **nao**. SMTP (Brevo no local) |
 | Fila / retry | **nao** |
 | Template HTML | **nao** |

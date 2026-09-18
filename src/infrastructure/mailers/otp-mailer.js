@@ -32,7 +32,7 @@ function createOtpMailer(options = {}) {
     ? options.createTransport
     : () => createSmtpTransport(smtp);
 
-  async function sendMail({ to, subject, text }) {
+  async function sendMail({ to, subject, text, html }) {
     const recipient = String(to || '').trim();
     if (!recipient) {
       throw new Error('Mail recipient is missing.');
@@ -40,6 +40,7 @@ function createOtpMailer(options = {}) {
 
     const mailSubject = String(subject || '').trim() || 'Eden Bowls';
     const mailText = String(text || '');
+    const mailHtml = String(html || '').trim();
 
     if (!String(smtp.host || '').trim()) {
       if (nodeEnv === 'production') {
@@ -58,12 +59,16 @@ function createOtpMailer(options = {}) {
 
     try {
       const transporter = createTransport();
-      await transporter.sendMail({
+      const payload = {
         from,
         to: recipient,
         subject: mailSubject,
         text: mailText
-      });
+      };
+      if (mailHtml) {
+        payload.html = mailHtml;
+      }
+      await transporter.sendMail(payload);
       logger.info({ to: recipient, subject: mailSubject }, 'Email sent.');
       return { skipped: false, subject: mailSubject };
     } catch (error) {
@@ -78,17 +83,18 @@ function createOtpMailer(options = {}) {
 
   return {
     sendMail,
-    async sendOtpEmail({ to, otp, expiresInSeconds }) {
+    async sendOtpEmail({ to, otp, expiresInSeconds, locale }) {
       const recipient = String(to || '').trim();
       if (!recipient) {
         throw new Error('OTP recipient is missing.');
       }
 
-      const content = buildOtpEmailContent({ otp, expiresInSeconds });
+      const content = buildOtpEmailContent({ otp, expiresInSeconds, locale });
       return sendMail({
         to: recipient,
         subject: content.subject,
-        text: content.text
+        text: content.text,
+        html: content.html
       });
     }
   };

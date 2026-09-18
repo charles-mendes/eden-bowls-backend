@@ -14,6 +14,8 @@ const rawEnvSchema = z.object({
   CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174,http://localhost:5175'),
   ADMIN_EMAILS: z.string().optional(),
   ADMIN_APP_URL: z.string().optional(),
+  STORE_APP_URL: z.string().optional(),
+  MAIL_OPS_TO: z.string().optional(),
   DB_HOST: z.string().default('localhost'),
   DB_PORT: z.string().default('3306'),
   DB_USER: z.string().default('root'),
@@ -147,6 +149,11 @@ function parseEnv(source = process.env) {
       .map((value) => value.trim())
       .filter(Boolean),
     ADMIN_APP_URL: firstNonEmpty(rawEnv.ADMIN_APP_URL, 'http://localhost:5174'),
+    STORE_APP_URL: firstNonEmpty(rawEnv.STORE_APP_URL, 'http://localhost:5173'),
+    MAIL_OPS_TO: String(rawEnv.MAIL_OPS_TO || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean),
     DB_HOST: rawEnv.DB_HOST,
     DB_PORT: Number(rawEnv.DB_PORT),
     DB_USER: rawEnv.DB_USER,

@@ -22,7 +22,8 @@ function createInviteMailer(options = {}) {
     return otpMailer.sendMail({
       to: recipient,
       subject: content.subject,
-      text: content.text
+      text: content.text,
+      html: content.html
     });
   }
 

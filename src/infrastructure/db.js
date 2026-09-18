@@ -35,9 +35,11 @@ const { ExtendUsShippingAndCreateUpsShipments1700000000013 } = require('./migrat
 const { SplitStripeAccounts1700000000014 } = require('./migrations/1700000000014-split-stripe-accounts');
 const { CreatePrivacyTables1700000000015 } = require('./migrations/1700000000015-create-privacy-tables');
 const { CreateAdminAuditEvents1700000000016 } = require('./migrations/1700000000016-create-admin-audit-events');
+const { CreateSubscriptionMailClaims1700000000017 } = require('./migrations/1700000000017-create-subscription-mail-claims');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
 const { buildPrivacyRequestEntitySchema } = require('./entities/privacy-request.entity');
 const { buildAdminAuditEventEntitySchema } = require('./entities/admin-audit-event.entity');
+const { buildSubscriptionMailClaimEntitySchema } = require('./entities/subscription-mail-claim.entity');
 
 function buildDataSourceOptions(env) {
   return {
@@ -65,7 +67,8 @@ function buildDataSourceOptions(env) {
       buildFeedbackEntitySchema(),
       buildPrivacyConsentEntitySchema(),
       buildPrivacyRequestEntitySchema(),
-      buildAdminAuditEventEntitySchema()
+      buildAdminAuditEventEntitySchema(),
+      buildSubscriptionMailClaimEntitySchema()
     ],
     migrations: [
       CreateBreedsTable1700000000000,
@@ -84,7 +87,8 @@ function buildDataSourceOptions(env) {
       ExtendUsShippingAndCreateUpsShipments1700000000013,
       SplitStripeAccounts1700000000014,
       CreatePrivacyTables1700000000015,
-      CreateAdminAuditEvents1700000000016
+      CreateAdminAuditEvents1700000000016,
+      CreateSubscriptionMailClaims1700000000017
     ],
     synchronize: false,
     logging: false,

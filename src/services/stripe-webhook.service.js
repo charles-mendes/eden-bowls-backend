@@ -28,6 +28,7 @@ class StripeWebhookService {
     this.ledgerRepository = options.ledgerRepository || null;
     this.customerStore = options.customerStore || null;
     this.shippingProductId = options.shippingProductId || '';
+    this.transactionalMailer = options.transactionalMailer || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
 
@@ -228,6 +229,36 @@ class StripeWebhookService {
       stripe_subscription_id: subscriptionId,
       stripe_invoice_id: invoice.id || undefined
     });
+
+    await this.notifyFirstCycleMail({
+      invoice,
+      subscriptionId,
+      promotedPending
+    });
+  }
+
+  async notifyFirstCycleMail({ invoice, subscriptionId, promotedPending }) {
+    if (!this.transactionalMailer) {
+      return;
+    }
+    if (promotedPending) {
+      return;
+    }
+    if (String(invoice.billing_reason || '') !== 'subscription_create') {
+      return;
+    }
+
+    try {
+      const ledger = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId) || {};
+      await this.transactionalMailer.notifyOrderConfirmed({ invoice, ledger, subscriptionId });
+      await this.transactionalMailer.notifyAdminNewSubscription({ invoice, ledger, subscriptionId });
+    } catch (error) {
+      this.logger.error({
+        invoiceId: invoice && invoice.id,
+        subscriptionId,
+        code: error && error.code
+      }, 'Transactional email failed.');
+    }
   }
 
   async handleInvoiceCreated(invoice, runtime = {}) {
@@ -295,7 +326,7 @@ class StripeWebhookService {
       ? String(object.payment_intent && object.payment_intent.id ? object.payment_intent.id : object.payment_intent || '')
       : String(object.id || '');
     const subscriptionId = extractSubscriptionIdFromInvoice(object)
-      || String(object.subscription || '');
+      || (typeof object.subscription === 'string' ? object.subscription : '');
 
     let userId = null;
     if (paymentIntentId.startsWith('pi_')) {
@@ -318,6 +349,9 @@ class StripeWebhookService {
     const ledger = subscriptionId.startsWith('sub_')
       ? await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId)
       : null;
+
+    await this.notifyPaymentFailedMail({ object, ledger, subscriptionId });
+
     if (ledger && ['active', 'trialing'].includes(ledger.status)) {
       return;
     }
@@ -327,6 +361,26 @@ class StripeWebhookService {
       stripe_payment_intent_id: paymentIntentId.startsWith('pi_') ? paymentIntentId : undefined,
       stripe_payment_intent_status: String(object.status || 'canceled')
     });
+  }
+
+  async notifyPaymentFailedMail({ object, ledger, subscriptionId }) {
+    if (!this.transactionalMailer) {
+      return;
+    }
+
+    try {
+      await this.transactionalMailer.notifyPaymentFailed({
+        object,
+        ledger: ledger || {},
+        subscriptionId
+      });
+    } catch (error) {
+      this.logger.error({
+        invoiceId: object && object.id,
+        subscriptionId,
+        code: error && error.code
+      }, 'Transactional email failed.');
+    }
   }
 
   async handleSubscriptionChanged(subscription, runtime = {}) {

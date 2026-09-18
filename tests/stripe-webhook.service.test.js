@@ -28,7 +28,8 @@ function buildService(overrides = {}) {
       eventsRepository,
       ledgerRepository,
       customerStore,
-      shippingProductId: 'prod_ship'
+      shippingProductId: 'prod_ship',
+      transactionalMailer: overrides.transactionalMailer || null
     }),
     stripeBilling,
     eventsRepository,
@@ -236,5 +237,120 @@ describe('StripeWebhookService', () => {
     expect(brBilling.constructEvent).toHaveBeenCalledTimes(1);
     expect(usBilling.constructEvent).not.toHaveBeenCalled();
     expect(eventsRepository.insertIfNew).not.toHaveBeenCalled();
+  });
+
+  test('sends order-confirmed and admin mail on subscription_create invoice.paid', async () => {
+    const transactionalMailer = {
+      notifyOrderConfirmed: jest.fn().mockResolvedValue({ claimed: true }),
+      notifyAdminNewSubscription: jest.fn().mockResolvedValue({ claimed: true })
+    };
+    const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_create',
+      type: 'invoice.paid',
+      data: {
+        object: {
+          id: 'in_1',
+          customer: 'cus_1',
+          subscription: 'sub_123',
+          billing_reason: 'subscription_create',
+          amount_paid: 18900,
+          currency: 'usd',
+          customer_email: 'ana@example.com'
+        }
+      }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      metadata: { wp_user_id: '7' }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      customerEmail: 'ana@example.com',
+      status: 'active'
+    });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(transactionalMailer.notifyOrderConfirmed).toHaveBeenCalledTimes(1);
+    expect(transactionalMailer.notifyAdminNewSubscription).toHaveBeenCalledTimes(1);
+    expect(transactionalMailer.notifyOrderConfirmed).toHaveBeenCalledWith(expect.objectContaining({
+      subscriptionId: 'sub_123',
+      invoice: expect.objectContaining({ id: 'in_1', billing_reason: 'subscription_create' })
+    }));
+  });
+
+  test('does not send P0 mail on subscription_cycle invoice.paid', async () => {
+    const transactionalMailer = {
+      notifyOrderConfirmed: jest.fn(),
+      notifyAdminNewSubscription: jest.fn()
+    };
+    const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_cycle',
+      type: 'invoice.paid',
+      data: {
+        object: {
+          id: 'in_cycle',
+          customer: 'cus_1',
+          subscription: 'sub_123',
+          billing_reason: 'subscription_cycle'
+        }
+      }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      metadata: { wp_user_id: '7' }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      status: 'active'
+    });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(transactionalMailer.notifyOrderConfirmed).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyAdminNewSubscription).not.toHaveBeenCalled();
+  });
+
+  test('sends payment-failed mail when ledger is already active', async () => {
+    const transactionalMailer = {
+      notifyPaymentFailed: jest.fn().mockResolvedValue({ claimed: true })
+    };
+    const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_fail',
+      type: 'invoice.payment_failed',
+      data: {
+        object: {
+          id: 'in_fail',
+          customer: 'cus_1',
+          subscription: 'sub_123',
+          amount_due: 18900,
+          currency: 'usd',
+          customer_email: 'ana@example.com'
+        }
+      }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      customerEmail: 'ana@example.com',
+      status: 'active'
+    });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(transactionalMailer.notifyPaymentFailed).toHaveBeenCalledTimes(1);
+    expect(ledgerRepository.updateCheckoutReference).not.toHaveBeenCalled();
   });
 });

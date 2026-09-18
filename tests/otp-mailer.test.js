@@ -2,11 +2,24 @@ const { createOtpMailer } = require('../src/infrastructure/mailers/otp-mailer');
 const { buildOtpEmailContent, effectiveOtpTtlSeconds } = require('../src/core/otp-email');
 
 describe('OTP email content', () => {
-  test('uses the WordPress plaintext subject and 15-minute copy', () => {
-    expect(buildOtpEmailContent({ otp: '847291', expiresInSeconds: 900 })).toEqual({
-      subject: 'Your verification code',
+  test('defaults to Portuguese HTML with the 15-minute code', () => {
+    const content = buildOtpEmailContent({ otp: '847291', expiresInSeconds: 900 });
+
+    expect(content.subject).toBe('Seu código de verificação Eden Bowls');
+    expect(content.text).toBe('Seu código de verificação Eden Bowls é 847291. Ele expira em 15 minutos.');
+    expect(content.html).toContain('847291');
+    expect(content.html).toContain('#7B876F');
+  });
+
+  test('keeps English copy when locale is en', () => {
+    expect(buildOtpEmailContent({
+      otp: '847291',
+      expiresInSeconds: 900,
+      locale: 'en-US'
+    })).toEqual(expect.objectContaining({
+      subject: 'Your Eden Bowls verification code',
       text: 'Your Eden Bowls verification code is 847291. This code expires in 15 minutes.'
-    });
+    }));
   });
 
   test('applies the 900s floor used by HSR_ACTIVATION_TTL', () => {
@@ -16,7 +29,7 @@ describe('OTP email content', () => {
 });
 
 describe('OTP mailer', () => {
-  test('sends plaintext OTP mail through SMTP without logging the code or password', async () => {
+  test('sends HTML and plaintext OTP mail without logging the code or password', async () => {
     const sendMail = jest.fn().mockResolvedValue({});
     const logger = { info: jest.fn(), error: jest.fn(), debug: jest.fn() };
     const mailer = createOtpMailer({
@@ -36,17 +49,18 @@ describe('OTP mailer', () => {
 
     await mailer.sendOtpEmail({ to: 'jane@example.com', otp: '847291', expiresInSeconds: 900 });
 
-    expect(sendMail).toHaveBeenCalledWith({
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
       from: { name: 'Eden Bowls', address: 'noreply@example.com' },
       to: 'jane@example.com',
-      subject: 'Your verification code',
-      text: 'Your Eden Bowls verification code is 847291. This code expires in 15 minutes.'
-    });
+      subject: 'Seu código de verificação Eden Bowls',
+      text: expect.stringContaining('847291'),
+      html: expect.stringContaining('847291')
+    }));
 
     const logged = JSON.stringify(logger.info.mock.calls);
     expect(logged).not.toContain('847291');
     expect(logged).not.toContain('smtp-secret');
-    expect(logged).toContain('Your verification code');
+    expect(logged).toContain('Seu código de verificação Eden Bowls');
   });
 
   test('fails closed in production when SMTP host is empty', async () => {
@@ -56,7 +70,7 @@ describe('OTP mailer', () => {
       to: 'jane@example.com',
       otp: '847291',
       expiresInSeconds: 900
-    })).rejects.toThrow('OTP mailer is not configured.');
+    })).rejects.toThrow('Mailer is not configured.');
   });
 
   test('logs SMTP failure without the message body', async () => {
@@ -76,8 +90,8 @@ describe('OTP mailer', () => {
     })).rejects.toThrow('relay down');
 
     expect(logger.error).toHaveBeenCalledWith(
-      { to: 'jane@example.com', subject: 'Your verification code', code: 'EENVELOPE' },
-      'OTP email failed.'
+      { to: 'jane@example.com', subject: 'Seu código de verificação Eden Bowls', code: 'EENVELOPE' },
+      'Email failed.'
     );
   });
 });

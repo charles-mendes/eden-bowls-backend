@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Correspondência Eden Bowls</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600&family=Tenor+Sans&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #212E25;
+      --parchment: #F5EFE2;
+      --moss: #7B876F;
+      --clay: #B08F66;
+      --paper: #FFFBF4;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--ink);
+      color: var(--parchment);
+      font-family: Quicksand, Helvetica, sans-serif;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.08;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+    header {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 64px 24px 24px;
+    }
+    .eyebrow {
+      letter-spacing: 0.42em;
+      text-transform: uppercase;
+      font-size: 11px;
+      color: var(--clay);
+      margin: 0 0 16px;
+    }
+    h1 {
+      font-family: "Tenor Sans", Georgia, serif;
+      font-weight: 400;
+      font-size: clamp(40px, 6vw, 72px);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin: 0 0 16px;
+    }
+    header p {
+      max-width: 42rem;
+      line-height: 1.7;
+      color: #d8d1c0;
+    }
+    .grid {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 12px 24px 80px;
+      display: grid;
+      gap: 28px;
+    }
+    @media (min-width: 900px) {
+      .grid { grid-template-columns: 1fr 1fr; }
+    }
+    .card {
+      background: var(--paper);
+      color: var(--ink);
+      padding: 22px;
+      border-radius: 4px 4px 28px 4px;
+    }
+    .kicker {
+      margin: 0 0 8px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      font-size: 10px;
+      color: var(--clay);
+    }
+    h2 {
+      font-family: "Tenor Sans", Georgia, serif;
+      font-weight: 400;
+      margin: 0 0 8px;
+    }
+    .subject {
+      margin: 0 0 16px;
+      color: #5C6758;
+      font-size: 14px;
+    }
+    .open {
+      display: inline-block;
+      margin-bottom: 16px;
+      color: var(--moss);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-size: 12px;
+      text-decoration: none;
+    }
+    iframe {
+      display: block;
+      width: 100%;
+      height: 640px;
+      border: 1px solid #D0C7AC;
+      background: #F5EFE2;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">Da cozinha</p>
+    <h1>Correspondência</h1>
+    <p>Cartas da Eden — não o pacote WooCommerce. Masthead verde-musgo, papel pergaminho, Tenor Sans. Os três primeiros já disparam no Node; o restante está pronto para o evento Stripe ou o fluxo de senha.</p>
+  </header>
+  <main class="grid">
+    <article class="card">
+      <p class="kicker">P0 · conta · dispara hoje</p>
+      <h2>OTP de cadastro</h2>
+      <p class="subject">Seu código de verificação Eden Bowls</p>
+      <a class="open" href="otp.html">Abrir carta</a>
+      <iframe title="OTP de cadastro" src="otp.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P0 · conta · template pronto</p>
+      <h2>Reset de senha</h2>
+      <p class="subject">Redefinir senha da Eden Bowls</p>
+      <a class="open" href="password-reset.html">Abrir carta</a>
+      <iframe title="Reset de senha" src="password-reset.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P0 · pedido · template pronto</p>
+      <h2>Assinatura confirmada</h2>
+      <p class="subject">A tigela de Luna já está na fila</p>
+      <a class="open" href="order-confirmed.html">Abrir carta</a>
+      <iframe title="Assinatura confirmada" src="order-confirmed.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P0 · pedido · template pronto</p>
+      <h2>Falha de pagamento</h2>
+      <p class="subject">A cobrança da tigela não passou</p>
+      <a class="open" href="payment-failed.html">Abrir carta</a>
+      <iframe title="Falha de pagamento" src="payment-failed.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P0 · pedido · template pronto</p>
+      <h2>Enviado com rastreio</h2>
+      <p class="subject">A tigela de Luna saiu da cozinha</p>
+      <a class="open" href="shipped.html">Abrir carta</a>
+      <iframe title="Enviado com rastreio" src="shipped.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P0 · operação · template pronto</p>
+      <h2>Admin · nova assinatura</h2>
+      <p class="subject">Nova assinatura paga na Eden Bowls</p>
+      <a class="open" href="admin-new-subscription.html">Abrir carta</a>
+      <iframe title="Admin · nova assinatura" src="admin-new-subscription.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P1 · ciclo · template pronto</p>
+      <h2>Recibo de renovação</h2>
+      <p class="subject">O ciclo de Luna foi cobrado</p>
+      <a class="open" href="renewal.html">Abrir carta</a>
+      <iframe title="Recibo de renovação" src="renewal.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P1 · ciclo · template pronto</p>
+      <h2>Pausa</h2>
+      <p class="subject">A tigela de Luna está pausada</p>
+      <a class="open" href="paused.html">Abrir carta</a>
+      <iframe title="Pausa" src="paused.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P1 · ciclo · template pronto</p>
+      <h2>Retomada</h2>
+      <p class="subject">A tigela de Luna voltou à fila</p>
+      <a class="open" href="resumed.html">Abrir carta</a>
+      <iframe title="Retomada" src="resumed.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P1 · ciclo · template pronto</p>
+      <h2>Cancelamento</h2>
+      <p class="subject">A assinatura de Luna foi encerrada</p>
+      <a class="open" href="cancelled.html">Abrir carta</a>
+      <iframe title="Cancelamento" src="cancelled.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P1 · ciclo · template pronto</p>
+      <h2>Mudança de plano</h2>
+      <p class="subject">O plano de Luna mudou</p>
+      <a class="open" href="plan-changed.html">Abrir carta</a>
+      <iframe title="Mudança de plano" src="plan-changed.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P1 · staff · dispara hoje</p>
+      <h2>Convite admin</h2>
+      <p class="subject">Seu acesso ao painel Eden Bowls</p>
+      <a class="open" href="invite.html">Abrir carta</a>
+      <iframe title="Convite admin" src="invite.html" loading="lazy"></iframe>
+    </article>
+    <article class="card">
+      <p class="kicker">P1 · staff · dispara hoje</p>
+      <h2>Verificação de privacidade</h2>
+      <p class="subject">Eden Bowls — confirme sua identidade</p>
+      <a class="open" href="privacy.html">Abrir carta</a>
+      <iframe title="Verificação de privacidade" src="privacy.html" loading="lazy"></iframe>
+    </article></main>
+</body>
+</html>

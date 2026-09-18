@@ -44,6 +44,8 @@ const { SubscriptionsEditPreviewRepository } = require('./infrastructure/reposit
 const { SubscriptionsRepository } = require('./infrastructure/repositories/subscriptions.repository');
 const { SubscriptionLedgerRepository } = require('./infrastructure/repositories/subscription-ledger.repository');
 const { StripeWebhookEventsRepository } = require('./infrastructure/repositories/stripe-webhook-events.repository');
+const { SubscriptionMailClaimsRepository } = require('./infrastructure/repositories/subscription-mail-claims.repository');
+const { createTransactionalMailer } = require('./infrastructure/mailers/transactional-mailer');
 const { OnboardingPetDeleteRepository } = require('./infrastructure/repositories/onboarding-pets-delete.repository');
 const { ProfileRepository } = require('./infrastructure/repositories/profile.repository');
 const { LocalAvatarStorage } = require('./infrastructure/storage/local-avatar-storage');
@@ -295,6 +297,15 @@ async function bootstrap() {
     petsSyncRepository: onboardingPetCreateRepository
   });
   const stripeWebhookEventsRepository = new StripeWebhookEventsRepository(dataSource);
+  const subscriptionMailClaimsRepository = new SubscriptionMailClaimsRepository(dataSource);
+  const transactionalMailer = createTransactionalMailer({
+    logger,
+    otpMailer,
+    claimsRepository: subscriptionMailClaimsRepository,
+    storeAppUrl: env.STORE_APP_URL,
+    adminAppUrl: env.ADMIN_APP_URL,
+    opsEmails: env.MAIL_OPS_TO
+  });
   const stripeWebhookService = new StripeWebhookService({
     stripeAccounts,
     stripeBilling,
@@ -303,6 +314,7 @@ async function bootstrap() {
     ledgerRepository: subscriptionLedgerRepository,
     customerStore: stripeCustomerStore,
     shippingProductId: env.STRIPE_US_SHIPPING_PRODUCT_ID,
+    transactionalMailer,
     logger
   });
   const onboardingSubscriptionCheckoutService = new OnboardingSubscriptionCheckoutService(onboardingSubscriptionCheckoutRepository, {
@@ -461,7 +473,9 @@ async function bootstrap() {
     upsClient,
     labelStorage: upsLabelStorage,
     shippingService,
-    adminBillingService
+    adminBillingService,
+    transactionalMailer,
+    logger
   });
   const adminCatalogRepository = new AdminCatalogRepository(dataSource, {
     postsTableName: env.WP_POSTS_TABLE_NAME,
