@@ -4,7 +4,7 @@ Documentacao do fluxo atual de OTP + SMTP no `eden-bowls-backend`.
 
 A analise antiga em `docs/email/08-envio-email.md` descrevia o plugin WordPress `headless-secure-registration`. Este diretorio documenta o que o Node faz hoje, o que as rotas de auth ja tinham, e o que ainda falta para paridade com o WP.
 
-O Node **dispara** OTP, convite de staff, verificacao de privacidade, pedido confirmado, aviso admin de nova assinatura, falha de pagamento e envio UPS (HTML + texto). Mapa de cada carta: [PONTOS_DE_DISPARO.md](./PONTOS_DE_DISPARO.md). Catalogo Woo vs Eden e previews: [CATALOGO_EMAILS_WP_VS_NODE.md](./CATALOGO_EMAILS_WP_VS_NODE.md). Nao ha fila, retry automatico apos SMTP, SDK SendGrid, nem API de recuperacao de senha.
+O Node **dispara** OTP, convite de staff, verificacao de privacidade, pedido confirmado, aviso admin de nova assinatura, falha de pagamento e envio UPS (HTML + texto). Mapa de cada carta: [PONTOS_DE_DISPARO.md](./PONTOS_DE_DISPARO.md). O que ainda falta (decisoes, tela de claims no painel, P1, reset): [PONTOS_FALTANTES.md](./PONTOS_FALTANTES.md). Catalogo Woo vs Eden e previews: [CATALOGO_EMAILS_WP_VS_NODE.md](./CATALOGO_EMAILS_WP_VS_NODE.md). Nao ha fila, retry automatico apos SMTP, SDK SendGrid, nem API de recuperacao de senha.
 
 Base local do Node: **`http://localhost:3000`**. O Vite (`http://localhost:5173`) e so a UI; auth nao passa por proxy.
 

@@ -60,6 +60,8 @@ Se o SMTP falhar **depois** do claim, o webhook já respondeu 200 e o `evt_…` 
 
 ## TODO P1
 
+Backlog completo (telas do painel, decisões, P1/P2, reset): [PONTOS_FALTANTES.md](./PONTOS_FALTANTES.md).
+
 Reenvio manual no admin para claims com `sent_at` NULL (sem reprocessar o pagamento). Também: renovação, pausa, retomar, cancelamento, mudança de plano, API de reset de senha.
 
 ## Envs
