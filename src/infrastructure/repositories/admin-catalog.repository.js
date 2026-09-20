@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { HttpError } = require('../../core/http-error');
+const { appendInFilter } = require('../../core/admin-market-scope');
 const {
   FLAVOR_ALIASES_META,
   FLAVOR_SLUG_META,
@@ -123,7 +124,7 @@ class AdminCatalogRepository {
     }
   }
 
-  async listProducts({ search, market, offset, perPage }) {
+  async listProducts({ search, market, markets, offset, perPage }) {
     this.ensureDataSource();
     const where = ["p.post_type = 'product'", "p.post_status IN ('publish', 'draft', 'private', 'pending')"];
     const params = [];
@@ -134,9 +135,11 @@ class AdminCatalogRepository {
       params.push(needle, needle);
     }
 
-    if (market) {
-      where.push('UPPER(COALESCE(pm_country.meta_value, "")) = ?');
-      params.push(String(market).trim().toUpperCase());
+    const marketList = Array.isArray(markets) && markets.length
+      ? markets.map((item) => String(item).trim().toUpperCase()).filter(Boolean)
+      : (market ? [String(market).trim().toUpperCase()] : []);
+    if (marketList.length) {
+      appendInFilter(where, params, 'UPPER(COALESCE(pm_country.meta_value, ""))', marketList);
     }
 
     try {

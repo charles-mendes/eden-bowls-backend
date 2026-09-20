@@ -1,13 +1,18 @@
 const { DateTime } = require('luxon');
 const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
-const { parseStripeAccountInput } = require('../core/stripe-account');
+const { parseStripeAccountInput, ledgerStripeAccount } = require('../core/stripe-account');
 const { toMysqlDateTime } = require('../core/stripe-subscription-map');
 const {
   DEFAULT_TIMEZONE,
   dueBucket,
   presentProductionQueueItem
 } = require('../core/production-queue-presenter');
+const {
+  constrainMarketQuery,
+  assertStripeAccountMarket,
+  shouldEnforceMarketScope
+} = require('../core/admin-market-scope');
 
 const QUEUE_MEMBERSHIP_STATUSES = new Set(['active', 'trialing', 'past_due']);
 
@@ -79,14 +84,15 @@ class AdminProductionService {
     this.now = options.now || (() => new Date());
   }
 
-  present(row, timezone) {
+  present(row, timezone, actor = {}) {
     return presentProductionQueueItem(row, {
       timezone,
-      now: this.now()
+      now: this.now(),
+      actor
     });
   }
 
-  async listQueue(query, pagination) {
+  async listQueue(query, pagination, actor = {}) {
     const timezone = resolveTimezone(query.timezone);
     const bounds = civilBounds({
       timezone,
@@ -97,11 +103,18 @@ class AdminProductionService {
     if (query.account) {
       account = parseStripeAccountInput(query.account);
     }
+    let stripeAccounts;
+    if (shouldEnforceMarketScope(actor)) {
+      const scoped = constrainMarketQuery(actor, query);
+      stripeAccounts = scoped.stripeAccounts;
+      account = scoped.stripeAccount || account;
+    }
 
     const listInput = {
       ...bounds,
       includeOverdue: query.includeOverdue !== false,
       account,
+      stripeAccounts,
       productionStatus: query.productionStatus || undefined,
       q: query.q || undefined,
       offset: pagination.offset,
@@ -113,13 +126,14 @@ class AdminProductionService {
       this.ledgerRepository.listQueueMetricRows({
         ...bounds,
         includeOverdue: query.includeOverdue !== false,
-        account
+        account,
+        stripeAccounts
       })
     ]);
 
     return {
       ...paginatedEnvelope({
-        items: result.items.map((item) => this.present(item, timezone)),
+        items: result.items.map((item) => this.present(item, timezone, actor)),
         total: result.total,
         page: pagination.page,
         perPage: pagination.perPage
@@ -137,6 +151,9 @@ class AdminProductionService {
     const row = await this.ledgerRepository.findById(id);
     if (!row) {
       throw new HttpError(404, 'Subscription not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertStripeAccountMarket(actor, ledgerStripeAccount(row));
     }
     if (!isQueueEligible(row)) {
       throw new HttpError(409, 'Subscription is not eligible for the production queue.', {
@@ -186,7 +203,7 @@ class AdminProductionService {
     }
 
     const updated = await this.ledgerRepository.findQueueRowById(row.id);
-    return this.present(updated || { ...row, productionStatus: body.status, note: body.note }, timezone);
+    return this.present(updated || { ...row, productionStatus: body.status, note: body.note }, timezone, actor);
   }
 }
 

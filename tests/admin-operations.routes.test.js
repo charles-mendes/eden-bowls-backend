@@ -68,4 +68,72 @@ describe('admin onboarding billing catalog users', () => {
     expect(adminHealth.status).toBe(200);
     expect(adminHealth.body).toEqual({ market: 'BR', currency: 'BRL', totalExpected: 0, totalMapped: 0, gaps: [] });
   });
+
+  test('hides a US customer and nested US subscription from a Brazil operator', async () => {
+    const { AdminUsersService } = require('../src/services/admin-users.service');
+    const { HttpError } = require('../src/core/http-error');
+    const brUser = {
+      id: '8',
+      email: 'br@edenbowls.com',
+      status: 'active',
+      createdAt: '2026-01-01 00:00:00',
+      displayName: 'BR Customer',
+      storedRoles: '["customer"]',
+      storedMarkets: '',
+      profileMarket: 'BR',
+      mustChangePassword: '',
+      inviteMailStatus: null,
+      inviteExpiresAt: null,
+      inviteResendCount: '',
+      inviteResendWindowStart: '',
+      deletedAt: null,
+      profile: { fullName: 'BR Customer', phone: null }
+    };
+    const adminUsersService = new AdminUsersService({
+      usersRepository: {
+        findUserById: jest.fn()
+          .mockResolvedValueOnce({ ...brUser, id: '91', email: 'us@edenbowls.com', profileMarket: 'US' })
+          .mockResolvedValueOnce(brUser)
+      },
+      ledgerRepository: {
+        listByUserId: jest.fn().mockResolvedValue([
+          { id: 1, stripeAccount: 'br', stripeSubscriptionId: 'sub_br', status: 'active', currentPeriodEnd: null, cancelAtPeriodEnd: false, planLabel: 'BR' },
+          { id: 2, stripeAccount: 'us', stripeSubscriptionId: 'sub_us', status: 'active', currentPeriodEnd: null, cancelAtPeriodEnd: false, planLabel: 'US' }
+        ])
+      }
+    });
+    const identity = {
+      userId: '7',
+      email: 'ops@edenbowls.com',
+      roles: ['operator'],
+      markets: ['BR'],
+      permissions: [...ROLE_PERMISSIONS.operator, 'market.br']
+    };
+    const app = createApp({
+      corsOrigins: ['http://localhost:5174'],
+      jwt,
+      adminIdentityService: {
+        requireOperational: jest.fn().mockResolvedValue(identity)
+      },
+      adminUsersService,
+      privacyService: {
+        getUserPrivacySnapshot: jest.fn().mockRejectedValue(new HttpError(404, 'Not found.'))
+      }
+    });
+
+    const hidden = await request(app)
+      .get('/api/v1/admin/users/91')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+    const snapshot = await request(app)
+      .get('/api/v1/admin/users/91/privacy')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+    const detail = await request(app)
+      .get('/api/v1/admin/users/8')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+
+    expect(hidden.status).toBe(404);
+    expect(snapshot.status).toBe(404);
+    expect(detail.status).toBe(200);
+    expect(detail.body.subscriptions.map((item) => item.stripeAccount)).toEqual(['br']);
+  });
 });

@@ -1,7 +1,9 @@
 const request = require('supertest');
 const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
-const { ROLE_PERMISSIONS } = require('../src/core/admin-roles');
+const { ADMIN_ROLES_META_KEY, ROLE_PERMISSIONS } = require('../src/core/admin-roles');
+const { ADMIN_MARKETS_META_KEY } = require('../src/core/admin-market-scope');
+const { AdminIdentityService } = require('../src/services/admin-identity.service');
 
 const jwt = { secret: 'test-secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
 const corsOrigins = ['http://localhost:5174'];
@@ -22,7 +24,8 @@ function adminApp(overrides = {}) {
         userId: '7',
         email: 'admin@edenbowls.com',
         roles: ['admin'],
-        permissions: ROLE_PERMISSIONS.admin
+        markets: ['BR', 'US'],
+        permissions: [...ROLE_PERMISSIONS.admin, 'market.br', 'market.us']
       })
     },
     authService: {
@@ -49,7 +52,65 @@ describe('admin me and nutrition routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.email).toBe('admin@edenbowls.com');
     expect(response.body.roles).toContain('admin');
+    expect(response.body.markets).toEqual(['BR', 'US']);
     expect(response.body.permissions).toContain('nutrition.simulate');
+    expect(response.body.permissions).toContain('market.br');
+    expect(response.body.permissions).toContain('market.us');
+  });
+
+  test('resolves stored operator markets without putting them on ROLE_PERMISSIONS', async () => {
+    const identityService = new AdminIdentityService({
+      authRepository: {
+        findUserById: async () => ({ id: 9, user_email: 'op@edenbowls.com', activation_status: 'active' }),
+        getUserMeta: async (_id, key) => {
+          if (key === ADMIN_ROLES_META_KEY) {
+            return '["operator"]';
+          }
+          if (key === ADMIN_MARKETS_META_KEY) {
+            return '["BR"]';
+          }
+          return '';
+        }
+      }
+    });
+
+    const identity = await identityService.resolve(9);
+    expect(identity.markets).toEqual(['BR']);
+    expect(identity.permissions).toContain('market.br');
+    expect(identity.permissions).not.toContain('market.us');
+    expect(ROLE_PERMISSIONS.operator).not.toContain('market.br');
+  });
+
+  test('flag on still lets unassigned staff reach /admin/me', async () => {
+    const previous = process.env.ADMIN_ENFORCE_STAFF_MARKET;
+    process.env.ADMIN_ENFORCE_STAFF_MARKET = 'true';
+    const app = adminApp({
+      adminIdentityService: {
+        requireOperational: jest.fn().mockResolvedValue({
+          userId: '11',
+          email: 'op@edenbowls.com',
+          roles: ['operator'],
+          markets: [],
+          permissions: ROLE_PERMISSIONS.operator
+        })
+      }
+    });
+
+    try {
+      const response = await request(app)
+        .get('/api/v1/admin/me')
+        .set('Authorization', `Bearer ${tokenFor(11)}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.email).toBe('op@edenbowls.com');
+      expect(response.body.markets).toEqual([]);
+    } finally {
+      if (previous == null) {
+        delete process.env.ADMIN_ENFORCE_STAFF_MARKET;
+      } else {
+        process.env.ADMIN_ENFORCE_STAFF_MARKET = previous;
+      }
+    }
   });
 
   test('forbids customer identities', async () => {

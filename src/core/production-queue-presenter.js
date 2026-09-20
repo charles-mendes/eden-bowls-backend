@@ -4,6 +4,7 @@ const {
   packsPerMonth
 } = require('./subscription-dashboard');
 const { parseJsonColumn } = require('./stripe-subscription-map');
+const { canAccessMarket } = require('./admin-market-scope');
 
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 
@@ -165,7 +166,9 @@ function presentProductionQueueItem(row, options = {}) {
   const lineItems = catalogItems.length > 0 ? catalogItems : lineItemsFromPets(plan);
   const packSizeLabel = packSizeLabelFor(lineItems);
   const daysUntil = civilDaysUntil(row.currentPeriodEnd || row.current_period_end, timezone, now);
-  const displayName = row.displayName || row.display_name || row.customerEmail || row.customer_email || '';
+  const address = jsonColumn(row.address);
+  const displayName = address.name || address.full_name || address.recipient
+    || row.customerEmail || row.customer_email || '';
   const periodEnd = toJsDate(row.currentPeriodEnd || row.current_period_end);
   const { country, city } = addressBits(row);
   const subtotal = Number.isFinite(Number(catalog.subtotal)) ? Number(catalog.subtotal) : null;
@@ -198,6 +201,7 @@ function presentProductionQueueItem(row, options = {}) {
     subtotal,
     currency: catalog.currency || (country === 'BR' ? 'BRL' : null),
     stripeAccount: String(row.stripeAccount || row.stripe_account || 'us').toLowerCase() || 'us',
+    customerProfileInScope: canAccessMarket(options.actor || {}, row.profileMarket || row.profile_market),
     dense: lineItems.length > 3 || packSizeLabel === 'misto',
     lineItems
   };

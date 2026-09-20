@@ -338,7 +338,6 @@ async function bootstrap() {
   });
   const onboardingZipcodeLookupService = new OnboardingZipcodeLookupService(onboardingZipcodeLookupRepository);
   const onboardingZipcodeRepository = new OnboardingZipcodeRepository(dataSource);
-  const onboardingZipcodeService = new OnboardingZipcodeService(onboardingZipcodeRepository);
   const subscriptionsActionsRepository = new SubscriptionsActionsRepository({
     ledgerRepository: subscriptionLedgerRepository,
     stripeAccounts,
@@ -383,6 +382,9 @@ async function bootstrap() {
   const profileRepository = new ProfileRepository(dataSource, {
     usersTableName: env.WP_USERS_TABLE_NAME,
     usermetaTableName: env.WP_USERMETA_TABLE_NAME
+  });
+  const onboardingZipcodeService = new OnboardingZipcodeService(onboardingZipcodeRepository, {
+    profileRepository
   });
   const avatarPublicDir = path.resolve(env.PROFILE_AVATAR_DIR);
   const avatarPublicBaseUrl = env.PROFILE_AVATAR_PUBLIC_BASE_URL || `${String(env.JWT_AUTH_ISSUER || '').replace(/\/+$/, '')}/avatars`;
@@ -477,6 +479,7 @@ async function bootstrap() {
     labelStorage: upsLabelStorage,
     shippingService,
     adminBillingService,
+    ledgerRepository: subscriptionLedgerRepository,
     transactionalMailer,
     logger
   });
@@ -511,6 +514,7 @@ async function bootstrap() {
     refreshTokenRepository: authRefreshTokenRepository,
     inviteMailer: createInviteMailer({ otpMailer }),
     auditService: adminAuditService,
+    ledgerRepository: subscriptionLedgerRepository,
     adminEmails: env.ADMIN_EMAILS,
     adminAppUrl: env.ADMIN_APP_URL
   });

@@ -13,6 +13,7 @@ const rawEnvSchema = z.object({
   LOG_LEVEL: z.string().optional(),
   CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174,http://localhost:5175'),
   ADMIN_EMAILS: z.string().optional(),
+  ADMIN_ENFORCE_STAFF_MARKET: z.string().optional(),
   ADMIN_APP_URL: z.string().optional(),
   STORE_APP_URL: z.string().optional(),
   MAIL_OPS_TO: z.string().optional(),
@@ -148,6 +149,7 @@ function parseEnv(source = process.env) {
       .split(',')
       .map((value) => value.trim())
       .filter(Boolean),
+    ADMIN_ENFORCE_STAFF_MARKET: toBoolean(rawEnv.ADMIN_ENFORCE_STAFF_MARKET, false),
     ADMIN_APP_URL: firstNonEmpty(rawEnv.ADMIN_APP_URL, 'http://localhost:5174'),
     STORE_APP_URL: firstNonEmpty(rawEnv.STORE_APP_URL, 'http://localhost:5173'),
     MAIL_OPS_TO: String(rawEnv.MAIL_OPS_TO || '')

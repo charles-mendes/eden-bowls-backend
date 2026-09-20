@@ -47,6 +47,9 @@ function buildService(overrides = {}) {
     saveStoredRoles: jest.fn(async (userId, roles) => {
       users[String(userId)].storedRoles = JSON.stringify(roles);
     }),
+    saveStoredMarkets: jest.fn(async (userId, markets) => {
+      users[String(userId)].storedMarkets = JSON.stringify(markets || []);
+    }),
     saveActivationStatus: jest.fn(async (userId, status) => {
       users[String(userId)].status = status;
     }),
@@ -104,13 +107,21 @@ describe('admin users access', () => {
     expect(parseCreateAccessInput({
       name: 'Lia',
       email: 'lia@edenbowls.com',
-      role: 'nutritionist'
+      role: 'nutritionist',
+      market: 'US'
     })).toEqual({
       name: 'Lia',
       email: 'lia@edenbowls.com',
       phone: '',
-      roles: ['nutritionist']
+      roles: ['nutritionist'],
+      markets: ['US']
     });
+
+    expect(() => parseCreateAccessInput({
+      name: 'Lia',
+      email: 'lia@edenbowls.com',
+      role: 'operator'
+    })).toThrow('Invalid request payload.');
 
     expect(() => parseUpdateAccessInput({ email: 'new@edenbowls.com' })).toThrow('Email cannot be changed after the account is created.');
   });
@@ -123,7 +134,8 @@ describe('admin users access', () => {
       name: 'Lia',
       email: 'lia@edenbowls.com',
       phone: '11988887777',
-      roles: ['nutritionist']
+      roles: ['nutritionist'],
+      markets: ['US']
     }, adminActor);
 
     expect(usersRepository.createUser).toHaveBeenCalledWith(expect.objectContaining({
@@ -133,6 +145,8 @@ describe('admin users access', () => {
     }));
     expect(usersRepository.saveActivationStatus).toHaveBeenCalledWith('9', 'pending');
     expect(usersRepository.saveStoredRoles).toHaveBeenCalledWith('9', ['nutritionist']);
+    expect(usersRepository.saveStoredMarkets).toHaveBeenCalledWith('9', ['US']);
+    expect(result.markets).toEqual(['US']);
     expect(inviteMailer.sendInviteEmail).toHaveBeenCalledWith(expect.objectContaining({
       to: 'lia@edenbowls.com',
       temporaryPassword: 'TempPassword#12345',
@@ -158,7 +172,8 @@ describe('admin users access', () => {
       name: 'Lia',
       email: 'lia@edenbowls.com',
       phone: '',
-      roles: ['operator']
+      roles: ['operator'],
+      markets: ['BR']
     }, adminActor);
 
     expect(result.inviteMailStatus).toBe('failed');
@@ -171,7 +186,8 @@ describe('admin users access', () => {
       name: 'Ops',
       email: 'ops@edenbowls.com',
       phone: '',
-      roles: ['operator']
+      roles: ['operator'],
+      markets: ['BR']
     }, adminActor)).rejects.toMatchObject({
       statusCode: 409,
       details: { code: 'account_email_exists' }

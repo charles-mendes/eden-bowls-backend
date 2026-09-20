@@ -119,4 +119,26 @@ describe('AdminUsersRepository', () => {
     expect(dataSource.query.mock.calls[0][0]).toContain('user_id');
     expect(dataSource.query.mock.calls[0][1]).toEqual([4, '_eden_admin_roles']);
   });
+
+  test('filters customer lists with EXISTS on profile market', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([{ total: 0 }])
+        .mockResolvedValueOnce([])
+    };
+    const repository = new AdminUsersRepository(dataSource);
+    await repository.listUsers({
+      offset: 0,
+      perPage: 20,
+      identity: { roles: ['operator'] },
+      markets: ['BR'],
+      filtered: false
+    });
+
+    const sql = dataSource.query.mock.calls[0][0];
+    expect(sql).toContain('EXISTS');
+    expect(sql).toContain('hsr_market_country');
+    expect(dataSource.query.mock.calls[0][1]).toEqual(['BR']);
+  });
 });

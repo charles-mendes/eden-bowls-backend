@@ -1,10 +1,12 @@
 const { z } = require('zod');
 const { HttpError } = require('../../core/http-error');
 const { OPERATIONAL_ROLES, normalizeAssignableRoles } = require('../../core/admin-roles');
+const { parseStaffAssignmentMarket } = require('../../core/admin-market-scope');
 
 const assignmentSchema = z.object({
   role: z.string().optional().nullable(),
-  roles: z.array(z.string()).optional()
+  roles: z.array(z.string()).optional(),
+  market: z.string().optional().nullable()
 });
 
 function parseRolesAssignmentInput(input) {
@@ -35,7 +37,11 @@ function parseRolesAssignmentInput(input) {
     }
   }
 
-  return normalizeAssignableRoles(requested);
+  const roles = normalizeAssignableRoles(requested);
+  return {
+    roles,
+    markets: parseStaffAssignmentMarket(input || {}, roles)
+  };
 }
 
 module.exports = {

@@ -17,6 +17,9 @@ function buildService(overrides = {}) {
     saveStoredRoles: jest.fn(async (userId, roles) => {
       users[String(userId)].storedRoles = JSON.stringify(roles);
     }),
+    saveStoredMarkets: jest.fn(async (userId, markets) => {
+      users[String(userId)].storedMarkets = JSON.stringify(markets || []);
+    }),
     saveActivationStatus: jest.fn(async (userId, status) => {
       users[String(userId)].status = status;
     }),
@@ -42,9 +45,26 @@ function buildService(overrides = {}) {
 
 describe('admin users roles', () => {
   test('parses a single role assignment', () => {
-    expect(parseRolesAssignmentInput({ role: 'operator' })).toEqual(['operator']);
-    expect(parseRolesAssignmentInput({ role: 'customer' })).toEqual([]);
-    expect(parseRolesAssignmentInput({ roles: ['nutritionist', 'customer'] })).toEqual(['nutritionist']);
+    expect(parseRolesAssignmentInput({ role: 'operator', market: 'BR' })).toEqual({
+      roles: ['operator'],
+      markets: ['BR']
+    });
+    expect(parseRolesAssignmentInput({ role: 'customer' })).toEqual({
+      roles: [],
+      markets: []
+    });
+    expect(parseRolesAssignmentInput({ roles: ['nutritionist', 'customer'], market: 'US' })).toEqual({
+      roles: ['nutritionist'],
+      markets: ['US']
+    });
+    expect(parseRolesAssignmentInput({ role: 'admin' })).toEqual({
+      roles: ['admin'],
+      markets: []
+    });
+  });
+
+  test('requires market for non-admin role assignment', () => {
+    expect(() => parseRolesAssignmentInput({ role: 'operator' })).toThrow('Invalid request payload.');
   });
 
   test('rejects unknown roles', () => {
@@ -53,11 +73,13 @@ describe('admin users roles', () => {
 
   test('grants operator access', async () => {
     const { service, usersRepository } = buildService();
-    const result = await service.updateRoles('3', ['operator'], { userId: '1' });
+    const result = await service.updateRoles('3', ['operator'], { userId: '1' }, { markets: ['BR'] });
 
     expect(usersRepository.saveStoredRoles).toHaveBeenCalledWith('3', ['operator']);
+    expect(usersRepository.saveStoredMarkets).toHaveBeenCalledWith('3', ['BR']);
     expect(result.roles).toEqual(['operator']);
     expect(result.storedRoles).toEqual(['operator']);
+    expect(result.markets).toEqual(['BR']);
   });
 
   test('revokes an assigned operational role', async () => {
@@ -78,7 +100,7 @@ describe('admin users roles', () => {
   });
 
   test('blocks removing the last admin', async () => {
-    const { service } = buildService({
+    const { service, usersRepository } = buildService({
       adminEmails: '',
       usersRepository: {
         listStaff: jest.fn(async () => ({
@@ -88,16 +110,18 @@ describe('admin users roles', () => {
       }
     });
 
-    await expect(service.updateRoles('1', ['operator'], { userId: '2' })).rejects.toMatchObject({
+    await expect(service.updateRoles('1', ['operator'], { userId: '2' }, { markets: ['BR'] })).rejects.toMatchObject({
       statusCode: 422,
       message: 'Cannot remove the last admin.'
     });
+    expect(usersRepository.saveStoredRoles).not.toHaveBeenCalled();
+    expect(usersRepository.saveStoredMarkets).not.toHaveBeenCalled();
   });
 
   test('blocks changing the stored role of an allowlisted email', async () => {
     const { service, users } = buildService({ adminEmails: 'ops@edenbowls.com' });
     users['2'].storedRoles = '["admin"]';
-    await expect(service.updateRoles('2', ['nutritionist'], { userId: '1' })).rejects.toMatchObject({
+    await expect(service.updateRoles('2', ['nutritionist'], { userId: '1' }, { markets: ['BR'] })).rejects.toMatchObject({
       statusCode: 422,
       details: { code: 'allowlist_role_locked' }
     });

@@ -14,6 +14,11 @@ const {
 } = require('../core/privacy');
 const { STRIPE_ACCOUNTS } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
+const {
+  constrainMarketQuery,
+  assertRecordMarket,
+  shouldEnforceMarketScope
+} = require('../core/admin-market-scope');
 
 function redactExportPayload(payload = {}) {
   if (!payload || typeof payload !== 'object') {
@@ -367,9 +372,16 @@ class PrivacyService {
     return row;
   }
 
-  async listAdminRequests(query, pagination) {
+  async listAdminRequests(query, pagination, actor = {}) {
     this.ensureRepository();
-    const result = await this.repository.listRequests({ ...query, now: this.now() }, pagination);
+    const listQuery = { ...query };
+    if (shouldEnforceMarketScope(actor)) {
+      const scoped = constrainMarketQuery(actor, query);
+      if (!(Array.isArray(actor.roles) && actor.roles.includes('admin') && !scoped.filtered)) {
+        listQuery.markets = scoped.markets;
+      }
+    }
+    const result = await this.repository.listRequests({ ...listQuery, now: this.now() }, pagination);
     return {
       ...result,
       items: result.items.map((item) => ({
@@ -379,11 +391,14 @@ class PrivacyService {
     };
   }
 
-  async getAdminRequest(id) {
+  async getAdminRequest(id, actor) {
     this.ensureRepository();
     const row = await this.repository.findRequestById(id);
     if (!row) {
       throw new HttpError(404, 'Privacy request not found.', { code: 'not_found' });
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertRecordMarket(actor, row.market);
     }
     return {
       ...row,
@@ -418,8 +433,8 @@ class PrivacyService {
     return this.getAdminRequest(row.id);
   }
 
-  async setInProgress(id, actorId) {
-    const row = await this.requireAdminRequest(id);
+  async setInProgress(id, actorId, actor) {
+    const row = await this.requireAdminRequest(id, actor);
     if (isTerminalStatus(row.status)) {
       throw new HttpError(422, 'Request is already closed.', { code: 'already_closed' });
     }
@@ -429,8 +444,8 @@ class PrivacyService {
     }).then((updated) => this.getAdminRequest(updated.id));
   }
 
-  async extendOnce(id, reason, actorId) {
-    const row = await this.requireAdminRequest(id);
+  async extendOnce(id, reason, actorId, actor) {
+    const row = await this.requireAdminRequest(id, actor);
     if (isTerminalStatus(row.status)) {
       throw new HttpError(422, 'Request is already closed.', { code: 'already_closed' });
     }
@@ -447,8 +462,8 @@ class PrivacyService {
     }).then((updated) => this.getAdminRequest(updated.id));
   }
 
-  async completeRequest(id, note, actorId) {
-    const row = await this.requireAdminRequest(id);
+  async completeRequest(id, note, actorId, actor) {
+    const row = await this.requireAdminRequest(id, actor);
     if (isTerminalStatus(row.status)) {
       throw new HttpError(422, 'Request is already closed.', { code: 'already_closed' });
     }
@@ -484,8 +499,8 @@ class PrivacyService {
     }).then((updated) => this.getAdminRequest(updated.id));
   }
 
-  async rejectRequest(id, note, actorId) {
-    const row = await this.requireAdminRequest(id);
+  async rejectRequest(id, note, actorId, actor) {
+    const row = await this.requireAdminRequest(id, actor);
     if (isTerminalStatus(row.status)) {
       throw new HttpError(422, 'Request is already closed.', { code: 'already_closed' });
     }
@@ -497,8 +512,8 @@ class PrivacyService {
     }).then((updated) => this.getAdminRequest(updated.id));
   }
 
-  async sendIdentityVerification(id) {
-    const row = await this.requireAdminRequest(id);
+  async sendIdentityVerification(id, actor) {
+    const row = await this.requireAdminRequest(id, actor);
     if (!row.userId) {
       throw new HttpError(422, 'Link a user before sending verification.', { code: 'user_not_linked' });
     }
@@ -528,8 +543,8 @@ class PrivacyService {
     return { sent: true, to: user.email };
   }
 
-  async markIdentityVerified(id, actorId) {
-    const row = await this.requireAdminRequest(id);
+  async markIdentityVerified(id, actorId, actor) {
+    const row = await this.requireAdminRequest(id, actor);
     if (!row.userId) {
       throw new HttpError(422, 'Link a user before verifying identity.', { code: 'user_not_linked' });
     }
@@ -562,8 +577,8 @@ class PrivacyService {
     return { verified: true, requestId: row.id };
   }
 
-  async downloadAdminPackage(id) {
-    const row = await this.requireAdminRequest(id);
+  async downloadAdminPackage(id, actor) {
+    const row = await this.requireAdminRequest(id, actor);
     if (row.type !== 'access' && row.type !== 'portability') {
       throw new HttpError(422, 'This request has no export package.', { code: 'no_export_package' });
     }
@@ -581,7 +596,14 @@ class PrivacyService {
     return this.buildExportPackage(row.userId);
   }
 
-  async getUserPrivacySnapshot(userId) {
+  async getUserPrivacySnapshot(userId, actor) {
+    if (shouldEnforceMarketScope(actor) && this.profileRepository) {
+      const user = await this.profileRepository.findUserById(userId);
+      if (!user) {
+        throw new HttpError(404, 'User not found.', { code: 'not_found' });
+      }
+      assertRecordMarket(actor, user.marketCountry);
+    }
     const [marketing, cookies, consents, requests] = await Promise.all([
       this.getMarketing({ userId }).catch(() => ({ marketingOptIn: false })),
       this.getCookiePreferences({ userId }).catch(() => ({ analytics: null, ads: null })),
@@ -596,11 +618,14 @@ class PrivacyService {
     };
   }
 
-  async requireAdminRequest(id) {
+  async requireAdminRequest(id, actor) {
     this.ensureRepository();
     const row = await this.repository.findRequestById(id);
     if (!row) {
       throw new HttpError(404, 'Privacy request not found.', { code: 'not_found' });
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertRecordMarket(actor, row.market);
     }
     return row;
   }

@@ -1,6 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const { buildForPet } = require('../core/nutrition-recommendation');
 const { convertWeight } = require('../core/market');
+const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 
 const LIFE_STAGE_TO_STATE = {
   puppy: 'crescimento',
@@ -26,7 +27,10 @@ function formatWeight(weightKg, country) {
 }
 
 class AdminNutritionService {
-  simulate({ country, pet = {}, questionnaire = {} }) {
+  simulate({ country, pet = {}, questionnaire = {} }, actor = {}) {
+    if (shouldEnforceMarketScope(actor)) {
+      constrainMarketQuery(actor, { country });
+    }
     const market = country === 'BR' ? 'BR' : 'US';
     const locale = market === 'BR' ? 'pt-BR' : 'en-US';
     const weight = Number(pet.weight);

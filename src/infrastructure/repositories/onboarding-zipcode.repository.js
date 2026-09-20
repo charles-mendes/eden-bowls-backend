@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { canonicalMarketFromCountry } = require('../../core/admin-market-scope');
 
 class OnboardingZipcodeRepository {
   constructor(dataSource, options = {}) {
@@ -11,9 +12,10 @@ class OnboardingZipcodeRepository {
       throw new HttpError(503, 'Database connection is not initialized.');
     }
 
+    const market = canonicalMarketFromCountry(payload.country);
     await this.dataSource.query(
-      `INSERT INTO \`${this.tableName}\` (\`user_id\`, \`address\`) VALUES (?, ?) ON DUPLICATE KEY UPDATE \`address\` = VALUES(\`address\`)`,
-      [userId, JSON.stringify(payload)]
+      `INSERT INTO \`${this.tableName}\` (\`user_id\`, \`address\`, \`market\`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE \`address\` = VALUES(\`address\`)`,
+      [userId, JSON.stringify(payload), market]
     );
 
     return {

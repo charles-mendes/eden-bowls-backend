@@ -72,4 +72,20 @@ describe('AdminNutritionService', () => {
       questionnaire: { nivel_atividade: 'BAIXO', score_corporal: 'ADEQUADO' }
     })).toThrow(HttpError);
   });
+
+  test('rejects a country outside the actor market', () => {
+    try {
+      service.simulate({
+        country: 'US',
+        pet: { type: 'dog', life_stage: 'adult', weight: 10, neutered: true, age: 4 },
+        questionnaire: { nivel_atividade: 'BAIXO', score_corporal: 'ADEQUADO' }
+      }, { roles: ['operator'], markets: ['BR'] });
+      throw new Error('expected market_forbidden');
+    } catch (error) {
+      expect(error).toMatchObject({
+        statusCode: 403,
+        details: { code: 'market_forbidden' }
+      });
+    }
+  });
 });

@@ -134,4 +134,30 @@ describe('admin shipping and coupon routes', () => {
     expect(response.status).toBe(422);
     expect(response.body.message).toContain('disabled');
   });
+
+  test('defaults coupon account to the operator market', async () => {
+    const stripeCouponService = {
+      mappingHealth: jest.fn().mockResolvedValue({ complete: true, missing_terms: [], mapping: {}, misconfig_count: 0 })
+    };
+    const app = createApp({
+      corsOrigins: ['http://localhost:5174'],
+      jwt,
+      stripeCouponService,
+      adminIdentityService: {
+        requireOperational: jest.fn().mockResolvedValue({
+          userId: '7',
+          email: 'ops@edenbowls.com',
+          roles: ['operator'],
+          markets: ['BR'],
+          permissions: [...ROLE_PERMISSIONS.operator, 'market.br']
+        })
+      }
+    });
+    const response = await request(app)
+      .get('/api/v1/admin/stripe/first-purchase-promos')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+
+    expect(response.status).toBe(200);
+    expect(stripeCouponService.mappingHealth).toHaveBeenCalledWith('br');
+  });
 });

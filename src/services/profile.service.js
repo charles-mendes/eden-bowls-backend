@@ -376,6 +376,9 @@ class ProfileService {
     }
 
     const saved = await this.repository.mergeAddress(user.id, patch, { createIfMissing: true });
+    if (typeof this.repository.stampProfileMarketOnce === 'function') {
+      await this.repository.stampProfileMarketOnce(user.id, country);
+    }
     return mapDelivery(saved, country);
   }
 

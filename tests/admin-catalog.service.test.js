@@ -26,6 +26,7 @@ describe('AdminCatalogService', () => {
     });
     expect(repository.listProducts).toHaveBeenCalledWith({
       market: 'BR',
+      markets: ['BR'],
       offset: 0,
       perPage: 500
     });
@@ -368,5 +369,21 @@ describe('AdminCatalogService', () => {
     expect(result.summary.skipped).toEqual([
       { variationId: '1001', reason: 'stripe_br_disabled' }
     ]);
+  });
+
+  test('lists products for the actor markets and 404s an out-of-scope product', async () => {
+    const repository = {
+      listProducts: jest.fn().mockResolvedValue({ total: 0, items: [] }),
+      getProduct: jest.fn().mockResolvedValue({ id: '91', planCountry: 'US', variants: [] })
+    };
+    const service = new AdminCatalogService({ repository });
+    const actor = { roles: ['operator'], markets: ['BR'] };
+
+    await service.listProducts({}, { offset: 0, perPage: 20, page: 1 }, actor);
+
+    expect(repository.listProducts).toHaveBeenCalledWith(expect.objectContaining({
+      markets: ['BR']
+    }));
+    await expect(service.getProduct('91', actor)).rejects.toMatchObject({ statusCode: 404 });
   });
 });

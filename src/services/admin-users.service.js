@@ -11,6 +11,7 @@ const {
   parseRoles,
   resolveAdminRoles
 } = require('../core/admin-roles');
+const { resolveStaffMarkets, constrainMarketQuery, assertRecordMarket, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const {
   INVITE_META_KEYS,
   INVITE_RESEND_MAX_ATTEMPTS,
@@ -29,6 +30,7 @@ class AdminUsersService {
     this.refreshTokenRepository = options.refreshTokenRepository || null;
     this.inviteMailer = options.inviteMailer || null;
     this.auditService = options.auditService || null;
+    this.ledgerRepository = options.ledgerRepository || null;
     this.adminEmails = parseAdminEmails(options.adminEmails);
     this.adminAppUrl = String(options.adminAppUrl || 'http://localhost:5174').replace(/\/+$/, '');
     this.inviteTtlSeconds = Number(options.inviteTtlSeconds || INVITE_TTL_SECONDS);
@@ -67,6 +69,7 @@ class AdminUsersService {
     return {
       storedRoles,
       roles,
+      markets: resolveStaffMarkets({ roles, storedMarkets: user.storedMarkets }),
       lockedByAllowlist: isAllowlistedEmail(user.email, this.adminEmails)
     };
   }
@@ -119,13 +122,39 @@ class AdminUsersService {
     await this.refreshTokenRepository.revokeAllForUser(userId, reason, this.toSqlDate(this.nowProvider()));
   }
 
+  assertCustomerInScope(actor, user) {
+    if (!shouldEnforceMarketScope(actor)) {
+      return;
+    }
+    assertRecordMarket(actor, user && user.profileMarket);
+  }
+
+  async scopedSubscriptions(userId, actor) {
+    if (!this.ledgerRepository || typeof this.ledgerRepository.listByUserId !== 'function') {
+      return [];
+    }
+
+    const items = await this.ledgerRepository.listByUserId(userId);
+    if (!shouldEnforceMarketScope(actor)) {
+      return items;
+    }
+
+    const scoped = constrainMarketQuery(actor, {});
+    const allowed = new Set(scoped.stripeAccounts);
+    return items.filter((item) => allowed.has(String(item.stripeAccount || '').toLowerCase()));
+  }
+
   async list(query, pagination, actor = {}) {
     const includeDeleted = String(query.includeDeleted || '') === '1' && this.actorCanManageAccess(actor);
+    const scoped = shouldEnforceMarketScope(actor) ? constrainMarketQuery(actor, query) : { markets: [], filtered: false };
     const result = await this.usersRepository.listUsers({
       q: query.q,
       offset: pagination.offset,
       perPage: pagination.perPage,
-      includeDeleted
+      includeDeleted,
+      identity: actor,
+      markets: scoped.markets,
+      filtered: scoped.filtered
     });
 
     return paginatedEnvelope({
@@ -155,11 +184,12 @@ class AdminUsersService {
     };
   }
 
-  async getById(userId) {
+  async getById(userId, actor = {}) {
     const user = await this.usersRepository.findUserById(userId);
     if (!user) {
       throw new HttpError(404, 'User not found.');
     }
+    this.assertCustomerInScope(actor, user);
 
     let profile = null;
     if (this.profileService) {
@@ -169,6 +199,16 @@ class AdminUsersService {
         profile = null;
       }
     }
+
+    const subscriptions = (await this.scopedSubscriptions(userId, actor)).map((item) => ({
+      id: String(item.id),
+      stripeSubscriptionId: item.stripeSubscriptionId,
+      stripeAccount: item.stripeAccount,
+      status: item.status,
+      currentPeriodEnd: item.currentPeriodEnd,
+      cancelAtPeriodEnd: item.cancelAtPeriodEnd,
+      planLabel: item.planLabel
+    }));
 
     return {
       id: String(user.id),
@@ -180,6 +220,7 @@ class AdminUsersService {
         phone: (profile && profile.phone) || (user.profile && user.profile.phone) || null
       },
       delivery: (profile && profile.delivery) || null,
+      subscriptions,
       ...this.presentRoles(user),
       ...this.presentInvite(user)
     };
@@ -239,7 +280,24 @@ class AdminUsersService {
     }
   }
 
-  async updateRoles(userId, nextRoles, actor = {}) {
+  async persistStaffMarkets(userId, roles, markets) {
+    if (!this.usersRepository || typeof this.usersRepository.saveStoredMarkets !== 'function') {
+      return;
+    }
+
+    if (Array.isArray(roles) && roles.includes('admin')) {
+      await this.usersRepository.saveStoredMarkets(userId, []);
+      return;
+    }
+
+    if (markets === undefined) {
+      return;
+    }
+
+    await this.usersRepository.saveStoredMarkets(userId, markets);
+  }
+
+  async updateRoles(userId, nextRoles, actor = {}, options = {}) {
     const user = await this.requireExistingUser(userId);
     const storedRoles = normalizeAssignableRoles(nextRoles);
     const currentEffective = resolveAdminRoles({
@@ -271,17 +329,19 @@ class AdminUsersService {
     }
 
     await this.usersRepository.saveStoredRoles(user.id, storedRoles);
-    await this.audit('roles.update', actor, user, { storedRoles });
+    await this.persistStaffMarkets(user.id, nextEffective, options.markets);
+    await this.audit('roles.update', actor, user, { storedRoles, markets: options.markets });
     const saved = await this.usersRepository.findUserById(user.id);
     return this.getRoles(saved.id);
   }
 
-  async updateDelivery(userId, payload = {}) {
+  async updateDelivery(userId, payload = {}, actor = {}) {
     if (!this.profileService || typeof this.profileService.updateDelivery !== 'function') {
       throw new HttpError(503, 'Profile service is not available.');
     }
 
     const user = await this.requireExistingUser(userId);
+    this.assertCustomerInScope(actor, user);
     const delivery = await this.profileService.updateDelivery({
       userId,
       payload,
@@ -296,6 +356,7 @@ class AdminUsersService {
 
   async updateStatus(userId, nextStatus, actor = {}) {
     const user = await this.requireExistingUser(userId);
+    this.assertCustomerInScope(actor, user);
     const roles = resolveAdminRoles({
       storedRoles: user.storedRoles,
       email: user.email,
@@ -333,18 +394,16 @@ class AdminUsersService {
     }
 
     await this.audit('status.update', actor, user, { from: current, to: nextStatus });
-    return this.getById(user.id);
+    return this.getById(user.id, actor);
   }
 
-  async updateDeliveryInstructions(userId, deliveryInstructions) {
+  async updateDeliveryInstructions(userId, deliveryInstructions, actor = {}) {
     if (!this.profileRepository) {
       throw new HttpError(503, 'Profile repository is not available.');
     }
 
-    const user = await this.profileRepository.findUserById(userId);
-    if (!user) {
-      throw new HttpError(404, 'User not found.');
-    }
+    const user = await this.requireExistingUser(userId);
+    this.assertCustomerInScope(actor, user);
 
     const saved = await this.profileRepository.mergeAddress(
       user.id,
@@ -393,6 +452,7 @@ class AdminUsersService {
 
     await this.usersRepository.saveActivationStatus(created.id, 'pending');
     await this.usersRepository.saveStoredRoles(created.id, input.roles);
+    await this.persistStaffMarkets(created.id, input.roles, input.markets);
     await this.usersRepository.upsertUserMeta(created.id, INVITE_META_KEYS.mustChangePassword, '1');
     await this.usersRepository.upsertUserMeta(created.id, INVITE_META_KEYS.expiresAt, String(expiresAt));
     await this.usersRepository.upsertUserMeta(created.id, INVITE_META_KEYS.resendCount, '0');
@@ -417,6 +477,7 @@ class AdminUsersService {
 
     await this.audit('access.create', actor, { id: created.id, email: input.email }, {
       roles: input.roles,
+      markets: input.markets,
       inviteMailStatus
     });
 
@@ -444,7 +505,7 @@ class AdminUsersService {
     }
 
     if (patch.roles) {
-      await this.updateRoles(user.id, patch.roles, actor);
+      await this.updateRoles(user.id, patch.roles, actor, { markets: patch.markets });
     } else {
       await this.audit('access.update', actor, user, {
         name: patch.name,

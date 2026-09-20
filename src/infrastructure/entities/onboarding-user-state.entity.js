@@ -37,6 +37,11 @@ function buildOnboardingUserStateEntitySchema(tableName = 'onboarding_user_state
         type: 'json',
         nullable: true
       },
+      market: {
+        type: 'varchar',
+        length: 2,
+        nullable: true
+      },
       createdAt: {
         name: 'created_at',
         type: 'datetime',

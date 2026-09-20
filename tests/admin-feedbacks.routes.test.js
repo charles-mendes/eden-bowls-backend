@@ -63,7 +63,7 @@ describe('admin feedback routes', () => {
     expect(feedbacksService.list).toHaveBeenCalledWith(expect.objectContaining({
       country: 'BR',
       page: 1
-    }));
+    }), expect.objectContaining({ userId: '7' }));
   });
 
   test('creates a feedback', async () => {
@@ -103,7 +103,7 @@ describe('admin feedback routes', () => {
       .send({ active: false });
 
     expect(response.status).toBe(200);
-    expect(feedbacksService.setActive).toHaveBeenCalledWith(3, false);
+    expect(feedbacksService.setActive).toHaveBeenCalledWith(3, false, expect.objectContaining({ userId: '7' }));
     expect(response.body.active).toBe(false);
   });
 

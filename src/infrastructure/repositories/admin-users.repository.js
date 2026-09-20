@@ -1,5 +1,10 @@
 const { HttpError } = require('../../core/http-error');
 const { ADMIN_ROLES_META_KEY } = require('../../core/admin-roles');
+const {
+  ADMIN_MARKETS_META_KEY,
+  PROFILE_MARKET_META_KEY,
+  appendCustomerMarketFilter
+} = require('../../core/admin-market-scope');
 const { INVITE_META_KEYS } = require('../../core/staff-invite');
 
 function metaRowId(row) {
@@ -52,6 +57,8 @@ class AdminUsersRepository {
       "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS status,",
       "MAX(CASE WHEN um.meta_key = 'billing_phone' THEN um.meta_value END) AS phone,",
       `MAX(CASE WHEN um.meta_key = '${ADMIN_ROLES_META_KEY}' THEN um.meta_value END) AS storedRoles,`,
+      `MAX(CASE WHEN um.meta_key = '${ADMIN_MARKETS_META_KEY}' THEN um.meta_value END) AS storedMarkets,`,
+      `MAX(CASE WHEN um.meta_key = '${PROFILE_MARKET_META_KEY}' THEN um.meta_value END) AS profileMarket,`,
       `MAX(CASE WHEN um.meta_key = '${INVITE_META_KEYS.mailStatus}' THEN um.meta_value END) AS inviteMailStatus,`,
       `MAX(CASE WHEN um.meta_key = '${INVITE_META_KEYS.expiresAt}' THEN um.meta_value END) AS inviteExpiresAt,`,
       `MAX(CASE WHEN um.meta_key = '${INVITE_META_KEYS.mustChangePassword}' THEN um.meta_value END) AS mustChangePassword,`,
@@ -69,6 +76,8 @@ class AdminUsersRepository {
       createdAt: row.createdAt || null,
       displayName: row.displayName ? String(row.displayName) : null,
       storedRoles: row.storedRoles == null ? '' : String(row.storedRoles),
+      storedMarkets: row.storedMarkets == null ? '' : String(row.storedMarkets),
+      profileMarket: row.profileMarket == null ? '' : String(row.profileMarket).trim().toUpperCase(),
       inviteMailStatus: row.inviteMailStatus ? String(row.inviteMailStatus) : null,
       inviteExpiresAt: row.inviteExpiresAt ? String(row.inviteExpiresAt) : null,
       mustChangePassword: String(row.mustChangePassword || ''),
@@ -91,7 +100,7 @@ class AdminUsersRepository {
     ].join(' ');
   }
 
-  async listUsers({ q, offset, perPage, includeDeleted = false }) {
+  async listUsers({ q, offset, perPage, includeDeleted = false, identity = null, markets = [], filtered = false }) {
     this.ensureDataSource();
     const where = [];
     const params = [];
@@ -101,6 +110,14 @@ class AdminUsersRepository {
       const needle = `%${String(q).trim().toLowerCase()}%`;
       params.push(needle, needle);
     }
+
+    appendCustomerMarketFilter(where, params, {
+      identity,
+      markets,
+      filtered,
+      usermetaTable: this.tableNames.usermeta,
+      userIdExpr: 'u.ID'
+    });
 
     const deletedSql = includeDeleted ? '' : this.deletedExcludeSql();
     const whereSql = where.length ? `WHERE ${where.join(' AND ')} ${deletedSql}` : (deletedSql ? `WHERE 1=1 ${deletedSql}` : '');
@@ -304,6 +321,17 @@ class AdminUsersRepository {
     }
 
     await this.upsertUserMeta(userId, ADMIN_ROLES_META_KEY, JSON.stringify(roles));
+  }
+
+  async saveStoredMarkets(userId, markets) {
+    this.ensureDataSource();
+
+    if (!Array.isArray(markets) || markets.length === 0) {
+      await this.deleteUserMeta(userId, ADMIN_MARKETS_META_KEY);
+      return;
+    }
+
+    await this.upsertUserMeta(userId, ADMIN_MARKETS_META_KEY, JSON.stringify(markets));
   }
 
   async saveActivationStatus(userId, status) {

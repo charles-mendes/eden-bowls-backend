@@ -8,6 +8,11 @@ const {
   resolveAdminRoles
 } = require('../core/admin-roles');
 const {
+  ADMIN_MARKETS_META_KEY,
+  marketPermissions,
+  resolveStaffMarkets
+} = require('../core/admin-market-scope');
+const {
   INVITE_META_KEYS,
   isInviteExpired,
   isMustChangePassword,
@@ -32,22 +37,25 @@ class AdminIdentityService {
       throw new HttpError(401, 'Authentication is required.');
     }
 
-    const storedRoles = typeof this.authRepository.getUserMeta === 'function'
-      ? await this.authRepository.getUserMeta(user.id, ADMIN_ROLES_META_KEY)
-      : '';
+    const canReadMeta = typeof this.authRepository.getUserMeta === 'function';
+    const [storedRoles, storedMarkets, invite] = await Promise.all([
+      canReadMeta ? this.authRepository.getUserMeta(user.id, ADMIN_ROLES_META_KEY) : '',
+      canReadMeta ? this.authRepository.getUserMeta(user.id, ADMIN_MARKETS_META_KEY) : '',
+      this.loadInviteState(user.id)
+    ]);
     const roles = resolveAdminRoles({
       storedRoles,
       email: user.user_email,
       adminEmails: this.adminEmails
     });
-
-    const invite = await this.loadInviteState(user.id);
+    const markets = resolveStaffMarkets({ roles, storedMarkets });
 
     return {
       userId: String(user.id),
       email: String(user.user_email || ''),
       roles,
-      permissions: permissionsForRoles(roles),
+      markets,
+      permissions: [...permissionsForRoles(roles), ...marketPermissions(markets)],
       mustChangePassword: invite.mustChangePassword,
       inviteExpiresAt: invite.inviteExpiresAt,
       deletedAt: invite.deletedAt,

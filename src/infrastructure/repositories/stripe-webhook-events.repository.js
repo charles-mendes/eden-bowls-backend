@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { appendInFilter } = require('../../core/admin-market-scope');
 
 function isDuplicateKeyError(error) {
   return Boolean(error && (error.code === 'ER_DUP_ENTRY' || error.errno === 1062));
@@ -55,13 +56,16 @@ class StripeWebhookEventsRepository {
     }
   }
 
-  async listEvents({ offset, perPage, type }) {
+  async listEvents({ offset, perPage, type, stripeAccounts }) {
     this.ensureDataSource();
     const where = [];
     const params = [];
     if (type) {
       where.push('`type` = ?');
       params.push(String(type));
+    }
+    if (Array.isArray(stripeAccounts) && stripeAccounts.length) {
+      appendInFilter(where, params, '`stripe_account`', stripeAccounts);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 

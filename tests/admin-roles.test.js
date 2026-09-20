@@ -15,6 +15,10 @@ describe('admin roles', () => {
     expect(ROLE_PERMISSIONS.operator).toContain('production.write');
     expect(ROLE_PERMISSIONS.operator).not.toContain('users.roles.write');
     expect(ROLE_PERMISSIONS.operator).not.toContain('users.access.write');
+    expect(ROLE_PERMISSIONS.operator).not.toContain('market.br');
+    expect(ROLE_PERMISSIONS.operator).not.toContain('market.us');
+    expect(ROLE_PERMISSIONS.admin).not.toContain('market.br');
+    expect(ROLE_PERMISSIONS.admin).not.toContain('market.us');
   });
 
   test('lets readonly list privacy requests but not write them', () => {

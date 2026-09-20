@@ -39,4 +39,15 @@ describe('AdminShippingService', () => {
       message: 'Shipping settings repository is not available.'
     });
   });
+
+  test('returns only in-scope shipping settings for a Brazil operator', async () => {
+    const settings = { br: { enabled: true }, us: { cost: 12.9 } };
+    const service = new AdminShippingService({
+      repository: { get: jest.fn().mockResolvedValue(settings) }
+    });
+
+    const result = await service.getSettings({ roles: ['operator'], markets: ['BR'] });
+
+    expect(result.data.settings).toEqual({ br: { enabled: true } });
+  });
 });

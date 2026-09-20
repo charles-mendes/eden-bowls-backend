@@ -1,6 +1,11 @@
 const { buildForPet } = require('../core/nutrition-recommendation');
 const { buildSimplifiedRecommendation } = require('../core/simplified-consumption');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
+const {
+  constrainMarketQuery,
+  assertRecordMarket,
+  shouldEnforceMarketScope
+} = require('../core/admin-market-scope');
 
 const STRIPE_STATUS_LABELS = {
   mixed: 'Misto',
@@ -132,8 +137,21 @@ class AdminOnboardingService {
     this.ledgerRepository = options.ledgerRepository;
   }
 
-  async list(query, pagination) {
-    const result = await this.repository.listCheckouts(query, pagination);
+  scopedQuery(query = {}, actor = {}) {
+    if (!shouldEnforceMarketScope(actor)) {
+      return query;
+    }
+
+    const scoped = constrainMarketQuery(actor, query);
+    const next = { ...query };
+    if (!(Array.isArray(actor.roles) && actor.roles.includes('admin') && !scoped.filtered)) {
+      next.markets = scoped.markets;
+    }
+    return next;
+  }
+
+  async list(query, pagination, actor = {}) {
+    const result = await this.repository.listCheckouts(this.scopedQuery(query, actor), pagination);
     return paginatedEnvelope({
       items: result.items,
       total: result.total,
@@ -142,28 +160,34 @@ class AdminOnboardingService {
     });
   }
 
-  async metrics(query) {
-    return this.repository.metrics(query);
+  async metrics(query, actor = {}) {
+    return this.repository.metrics(this.scopedQuery(query, actor));
   }
 
-  async csv(query = {}) {
+  async csv(query = {}, actor = {}) {
     const timezone = query.timezone;
     const filters = { ...query };
     delete filters.timezone;
-    const result = await this.repository.listCheckouts(filters, { offset: 0, perPage: 10000 });
+    const result = await this.repository.listCheckouts(this.scopedQuery(filters, actor), { offset: 0, perPage: 10000 });
     return toCsv(result.items, timezone);
   }
 
-  async getByUserId(userId) {
+  async getByUserId(userId, actor = {}) {
     const checkout = await this.repository.getCheckout(userId);
     if (!checkout) {
       const { HttpError } = require('../core/http-error');
       throw new HttpError(404, 'Checkout not found.');
     }
+    if (shouldEnforceMarketScope(actor)) {
+      assertRecordMarket(actor, checkout.market);
+    }
 
     const subscriptions = this.ledgerRepository
       ? await this.ledgerRepository.listByUserId(userId)
       : [];
+    const scopedSubscriptions = shouldEnforceMarketScope(actor)
+      ? subscriptions.filter((item) => constrainMarketQuery(actor, {}).stripeAccounts.includes(String(item.stripeAccount || '').toLowerCase()))
+      : subscriptions;
     const recommendations = checkout.pets.map((pet) => buildForPet({
       id: pet.id,
       name: pet.name,
@@ -197,7 +221,7 @@ class AdminOnboardingService {
         displayName: checkout.displayName,
         activationStatus: checkout.activationStatus
       },
-      subscriptions: subscriptions.map((item) => ({
+      subscriptions: scopedSubscriptions.map((item) => ({
         id: String(item.id),
         stripeSubscriptionId: item.stripeSubscriptionId,
         status: item.status,

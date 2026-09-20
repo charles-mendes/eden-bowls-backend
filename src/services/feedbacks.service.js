@@ -5,6 +5,11 @@ const {
   MAX_FEEDBACK_PHOTO_BYTES
 } = require('../core/feedbacks');
 const { compressFeedbackPhoto } = require('../infrastructure/imaging/feedback-photo');
+const {
+  constrainMarketQuery,
+  assertRecordMarket,
+  shouldEnforceMarketScope
+} = require('../core/admin-market-scope');
 
 function matchesMagicBytes(buffer, mimeType) {
   if (!buffer || !buffer.length) {
@@ -65,8 +70,15 @@ class FeedbacksService {
     this.compressPhoto = options.compressPhoto || compressFeedbackPhoto;
   }
 
-  async list(query = {}) {
-    const { total, items } = await this.repository.list(query);
+  async list(query = {}, actor = {}) {
+    const listQuery = { ...query };
+    if (shouldEnforceMarketScope(actor)) {
+      const scoped = constrainMarketQuery(actor, query);
+      if (!(Array.isArray(actor.roles) && actor.roles.includes('admin') && !scoped.filtered)) {
+        listQuery.countries = scoped.markets;
+      }
+    }
+    const { total, items } = await this.repository.list(listQuery);
     return paginatedEnvelope({
       items,
       total,
@@ -75,10 +87,13 @@ class FeedbacksService {
     });
   }
 
-  async getById(id) {
+  async getById(id, actor = {}) {
     const item = await this.repository.findById(id);
     if (!item) {
       throw new HttpError(404, 'Feedback not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertRecordMarket(actor, item.country);
     }
     return item;
   }
@@ -107,8 +122,8 @@ class FeedbacksService {
     }
   }
 
-  async update(id, input) {
-    const current = await this.getById(id);
+  async update(id, input, actor = {}) {
+    const current = await this.getById(id, actor);
     const fields = {};
 
     if (Object.prototype.hasOwnProperty.call(input, 'name')) {
@@ -146,13 +161,13 @@ class FeedbacksService {
     return this.repository.update(id, fields);
   }
 
-  async setActive(id, active) {
-    await this.getById(id);
+  async setActive(id, active, actor = {}) {
+    await this.getById(id, actor);
     return this.repository.update(id, { active: Boolean(active) });
   }
 
-  async remove(id) {
-    const current = await this.getById(id);
+  async remove(id, actor = {}) {
+    const current = await this.getById(id, actor);
     await this.repository.delete(id);
 
     if (current.photo && this.photoStorage && typeof this.photoStorage.delete === 'function') {

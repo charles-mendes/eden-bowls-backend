@@ -174,4 +174,29 @@ describe('AdminProductionService', () => {
 
     expect(result.productionStatus).toBe('in_production');
   });
+
+  test('forces stripe accounts on the production queue and 404s a US row for a Brazil operator', async () => {
+    const listQueue = jest.fn().mockResolvedValue({ total: 0, items: [] });
+    const listQueueMetricRows = jest.fn().mockResolvedValue([]);
+    const productionRepository = { findBySubscriptionAndPeriodEnd: jest.fn(), upsert: jest.fn() };
+    const service = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository: {
+        listQueue,
+        listQueueMetricRows,
+        findById: jest.fn().mockResolvedValue(ledgerRow({ stripeAccount: 'us' }))
+      },
+      productionRepository
+    });
+    const actor = { roles: ['operator'], markets: ['BR'] };
+
+    await service.listQueue({ windowDays: 7, includeOverdue: true }, { page: 1, perPage: 20, offset: 0 }, actor);
+
+    expect(listQueue).toHaveBeenCalledWith(expect.objectContaining({ stripeAccounts: ['br'] }));
+    await expect(service.updateStatus(91, {
+      status: 'in_production',
+      periodEnd: '2026-09-20T08:00:00.000Z'
+    }, actor)).rejects.toMatchObject({ statusCode: 404 });
+    expect(productionRepository.upsert).not.toHaveBeenCalled();
+  });
 });

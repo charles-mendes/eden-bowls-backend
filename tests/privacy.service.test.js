@@ -206,4 +206,19 @@ describe('PrivacyService', () => {
     });
     expect(result).toEqual({ analytics: 'granted', ads: 'denied' });
   });
+
+  test('hides a US privacy request and snapshot from a Brazil operator', async () => {
+    const { service } = createService({
+      repository: {
+        findRequestById: jest.fn().mockResolvedValue(requestRow({ market: 'US' }))
+      },
+      profileRepository: {
+        findUserById: jest.fn().mockResolvedValue({ id: 91, email: 'us@edenbowls.com', marketCountry: 'US' })
+      }
+    });
+    const actor = { roles: ['operator'], markets: ['BR'] };
+
+    await expect(service.getAdminRequest(91, actor)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(service.getUserPrivacySnapshot(91, actor)).rejects.toMatchObject({ statusCode: 404 });
+  });
 });

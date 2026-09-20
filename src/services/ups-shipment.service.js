@@ -1,5 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const { assertNotPoBoxAddress } = require('../core/po-box');
+const { assertStripeAccountMarket, shouldEnforceMarketScope } = require('../core/admin-market-scope');
+const { ledgerStripeAccount } = require('../core/stripe-account');
 
 function normalizeShipTo(address = {}) {
   return {
@@ -21,6 +23,7 @@ class UpsShipmentService {
     this.labelStorage = options.labelStorage || null;
     this.shippingService = options.shippingService || null;
     this.adminBillingService = options.adminBillingService || null;
+    this.ledgerRepository = options.ledgerRepository || null;
     this.transactionalMailer = options.transactionalMailer || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
@@ -59,8 +62,36 @@ class UpsShipmentService {
     };
   }
 
-  async listForSubscription(subscriptionId) {
+  async requireSubscriptionInScope(subscriptionId, actor) {
+    if (this.adminBillingService && typeof this.adminBillingService.getSubscription === 'function') {
+      return this.adminBillingService.getSubscription(subscriptionId, actor);
+    }
+    if (!this.ledgerRepository) {
+      return null;
+    }
+    const item = await this.ledgerRepository.findById(subscriptionId);
+    if (!item) {
+      throw new HttpError(404, 'Subscription not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertStripeAccountMarket(actor, ledgerStripeAccount(item));
+    }
+    return item;
+  }
+
+  async requireShipmentInScope(shipmentId, actor) {
     this.ensureRepository();
+    const shipment = await this.repository.findById(shipmentId);
+    if (!shipment) {
+      throw new HttpError(404, 'Shipment not found.');
+    }
+    await this.requireSubscriptionInScope(shipment.subscription_id, actor);
+    return shipment;
+  }
+
+  async listForSubscription(subscriptionId, actor = {}) {
+    this.ensureRepository();
+    await this.requireSubscriptionInScope(subscriptionId, actor);
     const items = await this.repository.listBySubscriptionId(subscriptionId);
     return {
       success: true,
@@ -68,7 +99,7 @@ class UpsShipmentService {
     };
   }
 
-  async createForSubscription({ subscriptionId, invoiceId }) {
+  async createForSubscription({ subscriptionId, invoiceId, actor }) {
     this.ensureRepository();
     this.ensureUps();
 
@@ -76,6 +107,8 @@ class UpsShipmentService {
     if (!invoice) {
       throw new HttpError(400, 'invoice_id is required.', { code: 'invoice_id_required' });
     }
+
+    await this.requireSubscriptionInScope(subscriptionId, actor);
 
     const existing = await this.repository.findActiveByInvoiceId(invoice);
     if (existing && existing.status === 'created') {
@@ -88,7 +121,7 @@ class UpsShipmentService {
     if (!this.adminBillingService) {
       throw new HttpError(503, 'Billing service is not available.');
     }
-    const subscription = await this.adminBillingService.getSubscription(subscriptionId);
+    const subscription = await this.adminBillingService.getSubscription(subscriptionId, actor);
     const address = subscription.address || {};
     const shipTo = normalizeShipTo(address);
     assertNotPoBoxAddress({
@@ -182,12 +215,8 @@ class UpsShipmentService {
     }
   }
 
-  async getLabel(shipmentId) {
-    this.ensureRepository();
-    const shipment = await this.repository.findById(shipmentId);
-    if (!shipment) {
-      throw new HttpError(404, 'Shipment not found.');
-    }
+  async getLabel(shipmentId, actor = {}) {
+    const shipment = await this.requireShipmentInScope(shipmentId, actor);
     if (!shipment.label_path || !this.labelStorage) {
       throw new HttpError(404, 'Label file not found.', { code: 'label_not_found' });
     }
@@ -205,13 +234,9 @@ class UpsShipmentService {
     };
   }
 
-  async voidShipment(shipmentId) {
-    this.ensureRepository();
+  async voidShipment(shipmentId, actor = {}) {
     this.ensureUps();
-    const shipment = await this.repository.findById(shipmentId);
-    if (!shipment) {
-      throw new HttpError(404, 'Shipment not found.');
-    }
+    const shipment = await this.requireShipmentInScope(shipmentId, actor);
     if (shipment.status === 'voided') {
       return { success: true, data: { shipment: this.present(shipment) } };
     }

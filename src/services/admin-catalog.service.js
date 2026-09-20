@@ -3,6 +3,11 @@ const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
+  constrainMarketQuery,
+  assertRecordMarket,
+  shouldEnforceMarketScope
+} = require('../core/admin-market-scope');
+const {
   SEED_FLAVOR_ALIASES,
   canonicalFlavorKey,
   flavorKeyFromLabel,
@@ -110,10 +115,36 @@ class AdminCatalogService {
     return resolveStripeBilling(this, stripeAccountFromMarket({ country }), { forCreation });
   }
 
-  async listProducts(query, pagination) {
+  scopedMarket(query = {}, actor = {}) {
+    if (!shouldEnforceMarketScope(actor)) {
+      return query.market;
+    }
+    const scoped = constrainMarketQuery(actor, query);
+    if (query.market) {
+      return scoped.market || query.market;
+    }
+    if (Array.isArray(actor.roles) && actor.roles.includes('admin') && !scoped.filtered) {
+      return undefined;
+    }
+    return scoped.market || (scoped.markets.length === 1 ? scoped.markets[0] : undefined);
+  }
+
+  scopedMarkets(query = {}, actor = {}) {
+    if (!shouldEnforceMarketScope(actor)) {
+      return query.market ? [query.market] : undefined;
+    }
+    const scoped = constrainMarketQuery(actor, query);
+    if (Array.isArray(actor.roles) && actor.roles.includes('admin') && !scoped.filtered) {
+      return undefined;
+    }
+    return scoped.markets;
+  }
+
+  async listProducts(query, pagination, actor = {}) {
     const result = await this.repository.listProducts({
       search: query.search,
       market: query.market,
+      markets: this.scopedMarkets(query, actor),
       offset: pagination.offset,
       perPage: pagination.perPage
     });
@@ -126,10 +157,13 @@ class AdminCatalogService {
     });
   }
 
-  async getProduct(productId) {
+  async getProduct(productId, actor = {}) {
     const product = await this.repository.getProduct(productId);
     if (!product) {
       throw new HttpError(404, 'Product not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertRecordMarket(actor, product.planCountry);
     }
     return product;
   }
@@ -192,15 +226,15 @@ class AdminCatalogService {
     return this.getProduct(productId);
   }
 
-  async deleteProduct(productId) {
-    const product = await this.getProduct(productId);
+  async deleteProduct(productId, actor = {}) {
+    const product = await this.getProduct(productId, actor);
     await this.archiveStripeCatalog(product);
     await this.repository.deleteProduct(product.id);
     return { deleted: true, id: product.id };
   }
 
-  async deleteVariation(productId, variationId) {
-    const product = await this.getProduct(productId);
+  async deleteVariation(productId, variationId, actor = {}) {
+    const product = await this.getProduct(productId, actor);
     const variant = (product.variants || []).find((item) => String(item.id) === String(variationId));
     if (!variant) {
       throw new HttpError(404, 'Variation not found.');
@@ -212,7 +246,7 @@ class AdminCatalogService {
       throw new HttpError(404, 'Variation not found.');
     }
 
-    return this.getProduct(productId);
+    return this.getProduct(productId, actor);
   }
 
   async archiveStripeCatalog(product = {}) {
@@ -248,8 +282,8 @@ class AdminCatalogService {
     }
   }
 
-  async patchProduct(productId, payload = {}) {
-    const product = await this.getProduct(productId);
+  async patchProduct(productId, payload = {}, actor = {}) {
+    const product = await this.getProduct(productId, actor);
 
     if (payload.planCountry) {
       const country = String(payload.planCountry).trim().toUpperCase();
@@ -326,7 +360,7 @@ class AdminCatalogService {
       await this.repository.updatePostStatus(product.id, 'draft');
     }
 
-    return this.getProduct(productId);
+    return this.getProduct(productId, actor);
   }
 
   async saveVariants(product, variants, country) {
@@ -388,9 +422,10 @@ class AdminCatalogService {
     }
   }
 
-  async listPricing(query, pagination) {
+  async listPricing(query, pagination, actor = {}) {
     const products = await this.repository.listProducts({
       market: query.market,
+      markets: this.scopedMarkets(query, actor),
       offset: 0,
       perPage: 500
     });
@@ -523,9 +558,12 @@ class AdminCatalogService {
     return this.lastSync;
   }
 
-  async health({ market, currency } = {}) {
+  async health(query = {}, actor = {}) {
+    const market = this.scopedMarket(query, actor) || query.market;
+    const currency = query.currency;
     const products = await this.repository.listProducts({
       market,
+      markets: this.scopedMarkets({ ...query, market }, actor),
       offset: 0,
       perPage: 500
     });

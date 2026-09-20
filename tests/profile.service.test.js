@@ -52,6 +52,7 @@ function createService(overrides = {}) {
       phone_country: 'US',
       ...patch
     })),
+    stampProfileMarketOnce: jest.fn().mockResolvedValue('US'),
     updateDisplayName: jest.fn().mockResolvedValue(undefined),
     upsertUserMeta: jest.fn().mockResolvedValue(undefined),
     getUserMeta: jest.fn().mockResolvedValue('https://cdn.example.com/avatars/77.jpg'),
@@ -313,6 +314,54 @@ describe('ProfileService', () => {
     });
     await noState.service.updatePersonal({ userId: 77, payload: { fullName: 'Jane', phone: '123' } });
     expect(noState.repository.mergeAddress).not.toHaveBeenCalled();
+  });
+
+  test('stamps profile market on first delivery and keeps it after a later US address', async () => {
+    const first = createService({
+      repository: {
+        findUserById: jest.fn().mockResolvedValue(createUser({ phoneCountry: 'BR' })),
+        getAddress: jest.fn().mockResolvedValue({ exists: false, address: null }),
+        mergeAddress: jest.fn().mockResolvedValue({
+          street: 'Rua A',
+          city: 'Sao Paulo',
+          state: 'SP',
+          zipcode: '01310100',
+          country: 'BR'
+        }),
+        stampProfileMarketOnce: jest.fn().mockResolvedValue('BR')
+      }
+    });
+
+    await first.service.updateDelivery({
+      userId: 77,
+      payload: { address: 'Rua A', city: 'Sao Paulo', state: 'SP', zipCode: '01310-100' }
+    });
+    expect(first.repository.stampProfileMarketOnce).toHaveBeenCalledWith(77, 'BR');
+
+    const later = createService({
+      repository: {
+        findUserById: jest.fn().mockResolvedValue(createUser({ phoneCountry: 'BR', marketCountry: 'BR' })),
+        getAddress: jest.fn().mockResolvedValue({
+          exists: true,
+          address: { country: 'BR', street: 'Rua A', city: 'Sao Paulo', state: 'SP', zipcode: '01310100' }
+        }),
+        mergeAddress: jest.fn().mockResolvedValue({
+          street: '123 Market St',
+          city: 'New York',
+          state: 'NY',
+          zipcode: '10001',
+          country: 'BR'
+        }),
+        stampProfileMarketOnce: jest.fn().mockResolvedValue('BR')
+      }
+    });
+
+    await later.service.updateDelivery({
+      userId: 77,
+      payload: { address: 'Rua B', city: 'Campinas', state: 'SP', zipCode: '13015-000' }
+    });
+    expect(later.repository.stampProfileMarketOnce).toHaveBeenCalledWith(77, 'BR');
+    expect(later.repository.mergeAddress.mock.calls[0][1].country).toBeUndefined();
   });
 
   test('accepts the current email and rejects another user or a missing password', async () => {

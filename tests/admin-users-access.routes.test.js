@@ -45,17 +45,37 @@ describe('admin users access routes', () => {
     const response = await request(app)
       .post('/api/v1/admin/users')
       .set('Authorization', `Bearer ${tokenFor()}`)
-      .send({ name: 'Lia', email: 'lia@edenbowls.com', role: 'nutritionist' });
+      .send({ name: 'Lia', email: 'lia@edenbowls.com', role: 'nutritionist', market: 'US' });
 
     expect(response.status).toBe(200);
     expect(adminUsersService.createAccess).toHaveBeenCalledWith({
       name: 'Lia',
       email: 'lia@edenbowls.com',
       phone: '',
-      roles: ['nutritionist']
+      roles: ['nutritionist'],
+      markets: ['US']
     }, identity);
     expect(response.body.inviteMailStatus).toBe('sent');
     expect(JSON.stringify(response.body)).not.toMatch(/password/i);
+  });
+
+  test('rejects invite without market', async () => {
+    const adminUsersService = { createAccess: jest.fn() };
+    const app = appWithIdentity({
+      userId: '7',
+      email: 'admin@edenbowls.com',
+      roles: ['admin'],
+      permissions: ROLE_PERMISSIONS.admin
+    }, { adminUsersService });
+
+    const response = await request(app)
+      .post('/api/v1/admin/users')
+      .set('Authorization', `Bearer ${tokenFor()}`)
+      .send({ name: 'Lia', email: 'lia@edenbowls.com', role: 'operator' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.details).toEqual({ code: 'market_required' });
+    expect(adminUsersService.createAccess).not.toHaveBeenCalled();
   });
 
   test('forbids operators from creating access', async () => {

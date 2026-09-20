@@ -71,10 +71,10 @@ describe('admin users roles routes', () => {
     const response = await request(app)
       .put('/api/v1/admin/users/8/roles')
       .set('Authorization', `Bearer ${tokenFor()}`)
-      .send({ role: 'operator' });
+      .send({ role: 'operator', market: 'US' });
 
     expect(response.status).toBe(200);
-    expect(adminUsersService.updateRoles).toHaveBeenCalledWith('8', ['operator'], identity);
+    expect(adminUsersService.updateRoles).toHaveBeenCalledWith('8', ['operator'], identity, { markets: ['US'] });
     expect(response.body.roles).toEqual(['operator']);
   });
 
@@ -95,6 +95,25 @@ describe('admin users roles routes', () => {
       .send({ role: 'admin' });
 
     expect(response.status).toBe(403);
+    expect(adminUsersService.updateRoles).not.toHaveBeenCalled();
+  });
+
+  test('requires market when assigning a non-admin role', async () => {
+    const adminUsersService = { updateRoles: jest.fn() };
+    const app = appWithIdentity({
+      userId: '7',
+      email: 'admin@edenbowls.com',
+      roles: ['admin'],
+      permissions: ROLE_PERMISSIONS.admin
+    }, { adminUsersService });
+
+    const response = await request(app)
+      .put('/api/v1/admin/users/8/roles')
+      .set('Authorization', `Bearer ${tokenFor()}`)
+      .send({ role: 'operator' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.details).toEqual({ code: 'market_required' });
     expect(adminUsersService.updateRoles).not.toHaveBeenCalled();
   });
 

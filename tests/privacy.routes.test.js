@@ -101,7 +101,7 @@ describe('admin privacy routes', () => {
     expect(response.body.items[0].id).toBe(41);
     expect(privacyService.listAdminRequests).toHaveBeenCalledWith(expect.objectContaining({
       overdue: true
-    }), expect.any(Object));
+    }), expect.any(Object), expect.objectContaining({ userId: '7' }));
   });
 
   test('blocks completing an unverified DSAR', async () => {

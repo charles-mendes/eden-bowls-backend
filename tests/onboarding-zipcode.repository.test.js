@@ -10,8 +10,9 @@ describe('OnboardingZipcodeRepository', () => {
 
     expect(result).toEqual({ zipcode: payload });
     expect(dataSource.query).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO `onboarding_user_state` (`user_id`, `address`) VALUES (?, ?) ON DUPLICATE KEY UPDATE'),
-      [7, JSON.stringify(payload)]
+      expect.stringContaining('INSERT INTO `onboarding_user_state` (`user_id`, `address`, `market`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `address` = VALUES(`address`)'),
+      [7, JSON.stringify(payload), 'US']
     );
+    expect(dataSource.query.mock.calls[0][0]).not.toContain('market` = VALUES');
   });
 });

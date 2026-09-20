@@ -61,13 +61,19 @@ class FeedbacksRepository {
     return String(value).replace(/[\\%_]/g, '\\$&');
   }
 
-  buildFilters({ country, active, search } = {}) {
+  buildFilters({ country, countries, active, search } = {}) {
     const filters = [];
     const params = [];
 
-    if (country) {
+    const countryList = Array.isArray(countries) && countries.length
+      ? countries
+      : (country ? [country] : []);
+    if (countryList.length === 1) {
       filters.push('`country` = ?');
-      params.push(country);
+      params.push(countryList[0]);
+    } else if (countryList.length > 1) {
+      filters.push(`\`country\` IN (${countryList.map(() => '?').join(', ')})`);
+      params.push(...countryList);
     }
 
     if (typeof active === 'boolean') {

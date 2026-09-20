@@ -37,6 +37,7 @@ const { CreatePrivacyTables1700000000015 } = require('./migrations/1700000000015
 const { CreateAdminAuditEvents1700000000016 } = require('./migrations/1700000000016-create-admin-audit-events');
 const { CreateSubscriptionMailClaims1700000000017 } = require('./migrations/1700000000017-create-subscription-mail-claims');
 const { CreateSubscriptionProductionCycles1700000000018 } = require('./migrations/1700000000018-create-subscription-production-cycles');
+const { AddOnboardingUserStateMarket1700000000019 } = require('./migrations/1700000000019-add-onboarding-user-state-market');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
 const { buildPrivacyRequestEntitySchema } = require('./entities/privacy-request.entity');
 const { buildAdminAuditEventEntitySchema } = require('./entities/admin-audit-event.entity');
@@ -92,7 +93,8 @@ function buildDataSourceOptions(env) {
       CreatePrivacyTables1700000000015,
       CreateAdminAuditEvents1700000000016,
       CreateSubscriptionMailClaims1700000000017,
-      CreateSubscriptionProductionCycles1700000000018
+      CreateSubscriptionProductionCycles1700000000018,
+      AddOnboardingUserStateMarket1700000000019
     ],
     synchronize: false,
     logging: false,

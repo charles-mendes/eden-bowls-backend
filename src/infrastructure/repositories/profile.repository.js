@@ -1,5 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const { parseJsonColumn } = require('../../core/stripe-subscription-map');
+const { PROFILE_MARKET_META_KEY, canonicalMarketFromCountry } = require('../../core/admin-market-scope');
 
 function isDuplicateEntry(error) {
   return Number(error && error.errno) === 1062 || String(error && error.code || '') === 'ER_DUP_ENTRY';
@@ -108,13 +109,29 @@ class ProfileRepository {
       ...(current.address || {}),
       ...patch
     };
+    const market = canonicalMarketFromCountry(next.country);
 
     await this.dataSource.query(
-      `INSERT INTO \`${this.tableNames.userState}\` (\`user_id\`, \`address\`) VALUES (?, ?) ON DUPLICATE KEY UPDATE \`address\` = VALUES(\`address\`)`,
-      [userId, JSON.stringify(next)]
+      `INSERT INTO \`${this.tableNames.userState}\` (\`user_id\`, \`address\`, \`market\`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE \`address\` = VALUES(\`address\`)`,
+      [userId, JSON.stringify(next), market]
     );
 
     return next;
+  }
+
+  async stampProfileMarketOnce(userId, country) {
+    const market = canonicalMarketFromCountry(country);
+    if (!market) {
+      return '';
+    }
+
+    const current = canonicalMarketFromCountry(await this.getUserMeta(userId, PROFILE_MARKET_META_KEY));
+    if (current) {
+      return current;
+    }
+
+    await this.upsertUserMeta(userId, PROFILE_MARKET_META_KEY, market);
+    return market;
   }
 
   async updateDisplayName(userId, fullName) {

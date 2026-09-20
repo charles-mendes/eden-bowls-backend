@@ -4,6 +4,7 @@ const {
   toMysqlDateTime,
   fromStripeUnix
 } = require('../../core/stripe-subscription-map');
+const { PROFILE_MARKET_META_KEY, appendInFilter } = require('../../core/admin-market-scope');
 
 function isMissingTableError(error) {
   const message = String(error && error.message ? error.message : '');
@@ -37,6 +38,7 @@ class SubscriptionLedgerRepository {
     this.dataSource = dataSource;
     this.tableName = options.tableName || 'stripe_subscriptions';
     this.userStateTableName = options.userStateTableName || 'onboarding_user_state';
+    this.usermetaTableName = options.usermetaTableName || 'wp_usermeta';
   }
 
   ensureDataSource() {
@@ -73,16 +75,32 @@ class SubscriptionLedgerRepository {
       editPaymentPending: Boolean(Number(row.edit_payment_pending)),
       editPending: parseJsonColumn(row.edit_pending),
       createdAt: row.created_at || null,
-      updatedAt: row.updated_at || null
+      updatedAt: row.updated_at || null,
+      profileMarket: row.profile_market ? String(row.profile_market).trim().toUpperCase() : ''
     };
   }
 
-  async listByUserId(userId) {
+  profileMarketJoinSql() {
+    return `LEFT JOIN \`${this.usermetaTableName}\` pm ON pm.user_id = s.user_id AND pm.meta_key = '${PROFILE_MARKET_META_KEY}'`;
+  }
+
+  async listByUserId(userId, options = {}) {
     this.ensureDataSource();
     try {
+      const where = ['s.`user_id` = ?'];
+      const params = [userId];
+      if (Array.isArray(options.stripeAccounts) && options.stripeAccounts.length) {
+        appendInFilter(where, params, 's.`stripe_account`', options.stripeAccounts);
+      }
       const rows = await this.dataSource.query(
-        `SELECT * FROM \`${this.tableName}\` WHERE \`user_id\` = ? ORDER BY COALESCE(\`updated_at\`, \`current_period_end\`, \`created_at\`) DESC`,
-        [userId]
+        [
+          `SELECT s.*, pm.meta_value AS profile_market`,
+          `FROM \`${this.tableName}\` s`,
+          this.profileMarketJoinSql(),
+          `WHERE ${where.join(' AND ')}`,
+          'ORDER BY COALESCE(s.`updated_at`, s.`current_period_end`, s.`created_at`) DESC'
+        ].join(' '),
+        params
       );
       return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row)).filter(Boolean);
     } catch (error) {
@@ -384,7 +402,12 @@ class SubscriptionLedgerRepository {
 
     try {
       const rows = await this.dataSource.query(
-        `SELECT * FROM \`${this.tableName}\` WHERE \`id\` = ? LIMIT 1`,
+        [
+          `SELECT s.*, pm.meta_value AS profile_market`,
+          `FROM \`${this.tableName}\` s`,
+          this.profileMarketJoinSql(),
+          'WHERE s.`id` = ? LIMIT 1'
+        ].join(' '),
         [numericId]
       );
       return this.mapRow(Array.isArray(rows) ? rows[0] : null);
@@ -396,27 +419,29 @@ class SubscriptionLedgerRepository {
     }
   }
 
-  async listAdmin({ status, q, stripeAccount, offset, perPage }) {
+  async listAdmin({ status, q, stripeAccount, stripeAccounts, offset, perPage }) {
     this.ensureDataSource();
     const where = [];
     const params = [];
     const normalizedStatus = String(status || 'active').trim();
 
     if (normalizedStatus === 'canceling') {
-      where.push("`cancel_at_period_end` = 1 AND `status` IN ('active', 'trialing', 'past_due')");
+      where.push("s.`cancel_at_period_end` = 1 AND s.`status` IN ('active', 'trialing', 'past_due')");
     } else if (normalizedStatus && normalizedStatus !== 'all') {
-      where.push('`status` = ?');
+      where.push('s.`status` = ?');
       params.push(normalizedStatus);
     }
 
-    if (stripeAccount) {
-      where.push('`stripe_account` = ?');
-      params.push(String(stripeAccount).trim().toLowerCase());
+    const accounts = Array.isArray(stripeAccounts) && stripeAccounts.length
+      ? stripeAccounts.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
+      : (stripeAccount ? [String(stripeAccount).trim().toLowerCase()] : []);
+    if (accounts.length) {
+      appendInFilter(where, params, 's.`stripe_account`', accounts);
     }
 
     if (q) {
       const needle = `%${String(q).trim()}%`;
-      where.push('(`stripe_subscription_id` LIKE ? OR `stripe_customer_id` LIKE ? OR `customer_email` LIKE ? OR CAST(`user_id` AS CHAR) LIKE ?)');
+      where.push('(s.`stripe_subscription_id` LIKE ? OR s.`stripe_customer_id` LIKE ? OR s.`customer_email` LIKE ? OR CAST(s.`user_id` AS CHAR) LIKE ?)');
       params.push(needle, needle, needle, needle);
     }
 
@@ -424,15 +449,17 @@ class SubscriptionLedgerRepository {
 
     try {
       const countRows = await this.dataSource.query(
-        `SELECT COUNT(*) AS total FROM \`${this.tableName}\` ${whereSql}`,
+        `SELECT COUNT(*) AS total FROM \`${this.tableName}\` s ${whereSql}`,
         params
       );
       const total = Number(Array.isArray(countRows) && countRows[0] ? countRows[0].total : 0);
       const rows = await this.dataSource.query(
         [
-          `SELECT * FROM \`${this.tableName}\``,
+          `SELECT s.*, pm.meta_value AS profile_market`,
+          `FROM \`${this.tableName}\` s`,
+          this.profileMarketJoinSql(),
           whereSql,
-          'ORDER BY COALESCE(`updated_at`, `created_at`) DESC',
+          'ORDER BY COALESCE(s.`updated_at`, s.`created_at`) DESC',
           'LIMIT ? OFFSET ?'
         ].join(' '),
         [...params, perPage, offset]
@@ -450,28 +477,41 @@ class SubscriptionLedgerRepository {
     }
   }
 
-  async metrics() {
+  async metrics({ stripeAccounts } = {}) {
     this.ensureDataSource();
     const now = new Date();
     const in7d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     const ago30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const where = [];
+    const params = [];
+    if (Array.isArray(stripeAccounts) && stripeAccounts.length) {
+      appendInFilter(where, params, '`stripe_account`', stripeAccounts.map((item) => String(item).trim().toLowerCase()));
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     try {
-      const rows = await this.dataSource.query(`SELECT * FROM \`${this.tableName}\``);
-      const items = (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row)).filter(Boolean);
-      const isCanceling = (item) => item.cancelAtPeriodEnd && ['active', 'trialing', 'past_due'].includes(item.status);
-      const periodEnd = (item) => item.currentPeriodEnd ? new Date(item.currentPeriodEnd) : null;
-
+      const rows = await this.dataSource.query(
+        [
+          'SELECT',
+          'COUNT(*) AS total,',
+          "SUM(CASE WHEN `status` IN ('active', 'trialing') THEN 1 ELSE 0 END) AS active,",
+          "SUM(CASE WHEN `cancel_at_period_end` = 1 AND `status` IN ('active', 'trialing', 'past_due') THEN 1 ELSE 0 END) AS canceling,",
+          "SUM(CASE WHEN `status` = 'past_due' THEN 1 ELSE 0 END) AS pastDue,",
+          "SUM(CASE WHEN `status` = 'canceled' AND `updated_at` IS NOT NULL AND `updated_at` >= ? THEN 1 ELSE 0 END) AS canceled30d,",
+          "SUM(CASE WHEN `current_period_end` IS NOT NULL AND `current_period_end` > ? AND `current_period_end` <= ? AND `status` IN ('active', 'trialing', 'past_due') THEN 1 ELSE 0 END) AS renewing7d",
+          `FROM \`${this.tableName}\``,
+          whereSql
+        ].join(' '),
+        [toMysqlDateTime(ago30d), toMysqlDateTime(now), toMysqlDateTime(in7d), ...params]
+      );
+      const row = Array.isArray(rows) ? rows[0] : null;
       return {
-        total: items.length,
-        active: items.filter((item) => item.status === 'active' || item.status === 'trialing').length,
-        canceling: items.filter(isCanceling).length,
-        pastDue: items.filter((item) => item.status === 'past_due').length,
-        canceled30d: items.filter((item) => item.status === 'canceled' && item.updatedAt && new Date(item.updatedAt) >= ago30d).length,
-        renewing7d: items.filter((item) => {
-          const end = periodEnd(item);
-          return end && end > now && end <= in7d && ['active', 'trialing', 'past_due'].includes(item.status);
-        }).length,
+        total: Number(row && row.total || 0),
+        active: Number(row && row.active || 0),
+        canceling: Number(row && row.canceling || 0),
+        pastDue: Number(row && row.pastDue || 0),
+        canceled30d: Number(row && row.canceled30d || 0),
+        renewing7d: Number(row && row.renewing7d || 0),
         mrr: 0,
         invoices30d: 0,
         generatedAt: now.toISOString()
@@ -523,11 +563,11 @@ class SubscriptionLedgerRepository {
     return [
       `FROM \`${this.tableName}\` s`,
       'LEFT JOIN `subscription_production_cycles` c ON c.subscription_id = s.id AND c.period_end = s.current_period_end',
-      'LEFT JOIN `wp_users` u ON u.ID = s.user_id'
+      this.profileMarketJoinSql()
     ].join(' ');
   }
 
-  queueMembership({ startOfToday, windowEndExclusive, overdueFloor, includeOverdue, account, productionStatus, q }) {
+  queueMembership({ startOfToday, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, q }) {
     const where = [
       "s.status IN ('active','trialing','past_due')",
       's.cancel_at_period_end = 0',
@@ -548,9 +588,11 @@ class SubscriptionLedgerRepository {
       startOfToday
     ];
 
-    if (account) {
-      where.push('s.stripe_account = ?');
-      params.push(String(account).trim().toLowerCase());
+    const accounts = Array.isArray(stripeAccounts) && stripeAccounts.length
+      ? stripeAccounts.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
+      : (account ? [String(account).trim().toLowerCase()] : []);
+    if (accounts.length) {
+      appendInFilter(where, params, 's.stripe_account', accounts);
     }
 
     if (productionStatus) {
@@ -580,7 +622,8 @@ class SubscriptionLedgerRepository {
       ...mapped,
       productionStatus: String(row.production_status || mapped.productionStatus || 'to_prepare'),
       note: row.production_note == null ? (mapped.note || null) : String(row.production_note),
-      displayName: row.display_name ? String(row.display_name) : null,
+      displayName: null,
+      profileMarket: row.profile_market ? String(row.profile_market).trim().toUpperCase() : mapped.profileMarket,
       paymentMethodLast4: null,
       paymentMethodBrand: null
     };
@@ -592,7 +635,7 @@ class SubscriptionLedgerRepository {
       's.stripe_account, s.status, s.plan_label, s.stripe_price_id, s.current_period_start, s.current_period_end,',
       's.cancel_at_period_end, s.pets_snapshot, s.plan_selection, s.shipping, s.address, s.subscription_term_months,',
       's.edit_payment_pending, s.edit_pending, s.created_at, s.updated_at,',
-      "COALESCE(c.status, 'to_prepare') AS production_status, c.note AS production_note, u.display_name AS display_name"
+      "COALESCE(c.status, 'to_prepare') AS production_status, c.note AS production_note, pm.meta_value AS profile_market"
     ].join(' ');
   }
 
@@ -637,7 +680,8 @@ class SubscriptionLedgerRepository {
       windowEndExclusive: input.windowEndExclusive,
       overdueFloor: input.overdueFloor,
       includeOverdue: input.includeOverdue,
-      account: input.account
+      account: input.account,
+      stripeAccounts: input.stripeAccounts
     });
     const joinSql = this.queueJoinSql();
 

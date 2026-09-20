@@ -15,6 +15,7 @@ function baseRow(overrides = {}) {
     paymentMethodLast4: '4242',
     subscriptionTermMonths: 1,
     address: {
+      name: 'Ana Costa',
       country: 'BR',
       city: 'São Paulo',
       street: 'Rua das Flores 100',
@@ -112,5 +113,24 @@ describe('presentProductionQueueItem', () => {
     expect(serialized).not.toContain('01310-000');
     expect(serialized).not.toContain('4242');
     expect(item.paymentMethodLast4).toBeUndefined();
+  });
+
+  test('uses ledger snapshot identity and flags out-of-scope profiles', () => {
+    const inScope = presentProductionQueueItem(baseRow({ profileMarket: 'BR' }), {
+      actor: { roles: ['operator'], markets: ['BR'], permissions: ['market.br'] }
+    });
+    const outOfScope = presentProductionQueueItem(baseRow({
+      stripeAccount: 'us',
+      profileMarket: 'BR',
+      address: { country: 'US', city: 'Austin', name: 'Ada' }
+    }), {
+      actor: { roles: ['operator'], markets: ['US'], permissions: ['market.us'] }
+    });
+
+    expect(inScope.displayName).toBe('Ana Costa');
+    expect(inScope.email).toBe('ana@edenbowls.com');
+    expect(inScope.customerProfileInScope).toBe(true);
+    expect(outOfScope.customerProfileInScope).toBe(false);
+    expect(outOfScope.email).toBe('ana@edenbowls.com');
   });
 });

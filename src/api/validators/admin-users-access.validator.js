@@ -1,6 +1,7 @@
 const { z } = require('zod');
 const { HttpError } = require('../../core/http-error');
 const { OPERATIONAL_ROLES, normalizeAssignableRoles } = require('../../core/admin-roles');
+const { parseStaffAssignmentMarket } = require('../../core/admin-market-scope');
 
 const emailSchema = z.string().trim().email();
 
@@ -8,13 +9,15 @@ const createSchema = z.object({
   name: z.string().trim().min(1).max(191),
   email: emailSchema,
   phone: z.string().trim().max(40).optional().nullable(),
-  role: z.string().trim().min(1)
+  role: z.string().trim().min(1),
+  market: z.string().trim().optional().nullable()
 });
 
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(191).optional(),
   phone: z.string().trim().max(40).optional().nullable(),
   role: z.string().trim().min(1).optional(),
+  market: z.string().trim().optional().nullable(),
   email: z.string().optional()
 });
 
@@ -43,11 +46,14 @@ function parseCreateAccessInput(input) {
     invalidPayload(parsed.error.issues);
   }
 
+  const roles = parseAccessRole(parsed.data.role);
+
   return {
     name: parsed.data.name,
     email: parsed.data.email.trim().toLowerCase(),
     phone: parsed.data.phone ? parsed.data.phone.trim() : '',
-    roles: parseAccessRole(parsed.data.role)
+    roles,
+    markets: parseStaffAssignmentMarket(input || {}, roles)
   };
 }
 
@@ -74,6 +80,7 @@ function parseUpdateAccessInput(input) {
   }
   if (parsed.data.role != null) {
     patch.roles = parseAccessRole(parsed.data.role);
+    patch.markets = parseStaffAssignmentMarket(body, patch.roles);
   }
 
   if (!Object.keys(patch).length) {

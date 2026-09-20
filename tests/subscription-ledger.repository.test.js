@@ -19,7 +19,7 @@ describe('SubscriptionLedgerRepository', () => {
     const rows = await repository.listByUserId(7);
     expect(rows).toHaveLength(1);
     expect(rows[0].stripeSubscriptionId).toBe('sub_123');
-    expect(query).toHaveBeenCalledWith(expect.stringContaining('WHERE `user_id` = ?'), [7]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('WHERE s.`user_id` = ?'), [7]);
   });
 
   test('upserts by stripe_subscription_id', async () => {
@@ -74,7 +74,7 @@ describe('SubscriptionLedgerRepository', () => {
         cancel_at_period_end: 0,
         production_status: 'to_prepare',
         production_note: null,
-        display_name: 'Ana Costa'
+        profile_market: 'BR'
       }]);
     const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
 
@@ -97,7 +97,9 @@ describe('SubscriptionLedgerRepository', () => {
     expect(sql).toContain('s.cancel_at_period_end = 0');
     expect(sql).toContain('ORDER BY s.current_period_end ASC, s.id ASC');
     expect(sql).toContain('LEFT JOIN `subscription_production_cycles`');
-    expect(sql).toContain('LEFT JOIN `wp_users`');
+    expect(sql).toContain('hsr_market_country');
+    expect(sql).not.toContain('LEFT JOIN `wp_users`');
+    expect(sql).not.toContain('u.display_name');
     expect(sql).not.toContain('payment_method_last4');
   });
 
@@ -120,5 +122,25 @@ describe('SubscriptionLedgerRepository', () => {
     expect(sql).toContain("s.status IN ('active','trialing','past_due')");
     expect(sql).not.toContain('customer_email LIKE');
     expect(sql).not.toContain("COALESCE(c.status,'to_prepare') = ?");
+  });
+
+  test('metrics count in SQL and filter by stripe account', async () => {
+    const query = jest.fn().mockResolvedValueOnce([{
+      total: 4,
+      active: 2,
+      canceling: 0,
+      pastDue: 1,
+      canceled30d: 0,
+      renewing7d: 1
+    }]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+
+    const result = await repository.metrics({ stripeAccounts: ['br'] });
+
+    expect(result.total).toBe(4);
+    expect(query.mock.calls[0][0]).toContain('COUNT(*) AS total');
+    expect(query.mock.calls[0][0]).not.toContain('SELECT *');
+    expect(query.mock.calls[0][0]).toContain('`stripe_account` = ?');
+    expect(query.mock.calls[0][1]).toEqual(expect.arrayContaining(['br']));
   });
 });

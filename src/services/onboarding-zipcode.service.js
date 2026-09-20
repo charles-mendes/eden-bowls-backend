@@ -32,8 +32,9 @@ function normalizePhoneCountry(phoneCountry) {
 }
 
 class OnboardingZipcodeService {
-  constructor(repository) {
+  constructor(repository, options = {}) {
     this.repository = repository;
+    this.profileRepository = options.profileRepository || null;
   }
 
   async setZipcode({ userId, payload = {} }) {
@@ -88,6 +89,9 @@ class OnboardingZipcodeService {
     };
 
     const data = await this.repository.saveZipcode(userId, normalizedPayload);
+    if (this.profileRepository && typeof this.profileRepository.stampProfileMarketOnce === 'function') {
+      await this.profileRepository.stampProfileMarketOnce(userId, country);
+    }
 
     return {
       success: true,

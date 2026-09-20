@@ -1,5 +1,8 @@
 const { HttpError } = require('../../core/http-error');
 const { AUTH_ERROR } = require('../contracts/auth-errors');
+const { constrainMarketQuery, assertStaffMarketAssigned } = require('../../core/admin-market-scope');
+
+const MARKET_SCOPES = ['none', 'query', 'record'];
 
 function isPasswordChangeAllowedPath(method, path) {
   const normalized = String(path || '').split('?')[0];
@@ -21,40 +24,61 @@ function sendAdminAuthError(response, error) {
 }
 
 function buildRequireAdminPermission(dependencies = {}) {
-  return (permission) => async (request, response, next) => {
-    try {
-      if (!dependencies.adminIdentityService) {
-        throw new HttpError(503, 'Admin identity service is not available.');
-      }
-
-      if (!request.currentUser || !request.currentUser.id) {
-        throw new HttpError(401, 'Authentication is required.');
-      }
-
-      const identity = await dependencies.adminIdentityService.requireOperational(request.currentUser.id);
-
-      if (identity.mustChangePassword && !isPasswordChangeAllowedPath(request.method, request.path)) {
-        throw new HttpError(
-          AUTH_ERROR.PASSWORD_CHANGE_REQUIRED.status,
-          AUTH_ERROR.PASSWORD_CHANGE_REQUIRED.message,
-          { code: AUTH_ERROR.PASSWORD_CHANGE_REQUIRED.code }
-        );
-      }
-
-      if (permission && !identity.permissions.includes(permission)) {
-        throw new HttpError(403, 'Forbidden.');
-      }
-
-      request.adminIdentity = identity;
-      next();
-    } catch (error) {
-      if (error instanceof HttpError) {
-        sendAdminAuthError(response, error);
-        return;
-      }
-
-      next(error);
+  return (permission, options) => {
+    const marketScope = options && options.market;
+    if (!MARKET_SCOPES.includes(marketScope)) {
+      throw new Error('Admin routes must declare market: none|query|record.');
     }
+
+    const middleware = async (request, response, next) => {
+      try {
+        if (!dependencies.adminIdentityService) {
+          throw new HttpError(503, 'Admin identity service is not available.');
+        }
+
+        if (!request.currentUser || !request.currentUser.id) {
+          throw new HttpError(401, 'Authentication is required.');
+        }
+
+        const identity = await dependencies.adminIdentityService.requireOperational(request.currentUser.id);
+
+        if (identity.mustChangePassword && !isPasswordChangeAllowedPath(request.method, request.path)) {
+          throw new HttpError(
+            AUTH_ERROR.PASSWORD_CHANGE_REQUIRED.status,
+            AUTH_ERROR.PASSWORD_CHANGE_REQUIRED.message,
+            { code: AUTH_ERROR.PASSWORD_CHANGE_REQUIRED.code }
+          );
+        }
+
+        if (permission && !identity.permissions.includes(permission)) {
+          throw new HttpError(403, 'Forbidden.');
+        }
+
+        request.adminIdentity = identity;
+        request.marketScope = marketScope;
+
+        if (marketScope === 'query') {
+          request.marketQuery = constrainMarketQuery(identity, {
+            ...(request.query || {}),
+            ...(request.body || {})
+          });
+        } else if (marketScope === 'record') {
+          assertStaffMarketAssigned(identity, { marketScope });
+        }
+
+        next();
+      } catch (error) {
+        if (error instanceof HttpError) {
+          sendAdminAuthError(response, error);
+          return;
+        }
+
+        next(error);
+      }
+    };
+
+    middleware.marketScope = marketScope;
+    return middleware;
   };
 }
 

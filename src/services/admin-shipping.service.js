@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 
 class AdminShippingService {
   constructor(options = {}) {
@@ -18,25 +19,58 @@ class AdminShippingService {
     }
   }
 
-  async getSettings() {
+  scopedSettings(settings, actor) {
+    if (!shouldEnforceMarketScope(actor)) {
+      return settings;
+    }
+    const scoped = constrainMarketQuery(actor, {});
+    if (scoped.markets.includes('BR') && scoped.markets.includes('US')) {
+      return settings;
+    }
+    const filtered = {};
+    if (scoped.markets.includes('BR') && settings && settings.br) {
+      filtered.br = settings.br;
+    }
+    if (scoped.markets.includes('US') && settings && settings.us) {
+      filtered.us = settings.us;
+    }
+    return filtered;
+  }
+
+  scopedPayload(payload, actor) {
+    if (!shouldEnforceMarketScope(actor)) {
+      return payload;
+    }
+    const scoped = constrainMarketQuery(actor, {});
+    const next = { ...payload };
+    if (!scoped.markets.includes('BR')) {
+      delete next.br;
+    }
+    if (!scoped.markets.includes('US')) {
+      delete next.us;
+    }
+    return next;
+  }
+
+  async getSettings(actor = {}) {
     this.ensureRepository();
     const settings = await this.repository.get();
     this.applyToShippingService(settings);
 
     return {
       success: true,
-      data: { settings }
+      data: { settings: this.scopedSettings(settings, actor) }
     };
   }
 
-  async saveSettings(payload = {}) {
+  async saveSettings(payload = {}, actor = {}) {
     this.ensureRepository();
-    const settings = await this.repository.save(payload);
+    const settings = await this.repository.save(this.scopedPayload(payload, actor));
     this.applyToShippingService(settings);
 
     return {
       success: true,
-      data: { settings }
+      data: { settings: this.scopedSettings(settings, actor) }
     };
   }
 

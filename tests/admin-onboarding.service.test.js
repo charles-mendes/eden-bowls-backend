@@ -54,4 +54,44 @@ describe('AdminOnboardingService.csv', () => {
       { offset: 0, perPage: 10000 }
     );
   });
+
+  test('filters list, metrics, and csv by onboarding market', async () => {
+    const repository = {
+      listCheckouts: jest.fn().mockResolvedValue({ total: 0, items: [] }),
+      metrics: jest.fn().mockResolvedValue({ totalCheckouts: 0 })
+    };
+    const service = new AdminOnboardingService({ repository });
+    const actor = { roles: ['operator'], markets: ['BR'] };
+
+    await service.list({ email: 'ada@' }, { page: 1, perPage: 20, offset: 0 }, actor);
+    await service.metrics({}, actor);
+    await service.csv({ email: 'ada@' }, actor);
+
+    expect(repository.listCheckouts).toHaveBeenCalledWith(
+      { email: 'ada@', markets: ['BR'] },
+      { offset: 0, page: 1, perPage: 20 }
+    );
+    expect(repository.metrics).toHaveBeenCalledWith({ markets: ['BR'] });
+    expect(repository.listCheckouts).toHaveBeenCalledWith(
+      { email: 'ada@', markets: ['BR'] },
+      { offset: 0, perPage: 10000 }
+    );
+  });
+
+  test('returns 404 for an out-of-scope session', async () => {
+    const service = new AdminOnboardingService({
+      repository: {
+        getCheckout: jest.fn().mockResolvedValue({
+          userId: '91',
+          market: 'US',
+          pets: [],
+          address: { country: 'US' }
+        })
+      }
+    });
+
+    await expect(service.getByUserId('91', { roles: ['operator'], markets: ['BR'] })).rejects.toMatchObject({
+      statusCode: 404
+    });
+  });
 });

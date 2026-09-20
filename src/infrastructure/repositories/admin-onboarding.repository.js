@@ -1,5 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const { parseJsonColumn } = require('../../core/stripe-subscription-map');
+const { appendInFilter } = require('../../core/admin-market-scope');
 
 function isMissingTableError(error) {
   const message = String(error && error.message ? error.message : '');
@@ -89,8 +90,10 @@ class AdminOnboardingRepository {
       params.push(String(query.frequency).trim());
     }
 
-    if (query.market) {
-      where.push("UPPER(JSON_UNQUOTE(JSON_EXTRACT(s.address, '$.country'))) = ?");
+    if (Array.isArray(query.markets) && query.markets.length) {
+      appendInFilter(where, params, 's.market', query.markets);
+    } else if (query.market) {
+      where.push('s.market = ?');
       params.push(String(query.market).trim().toUpperCase());
     }
 
@@ -127,7 +130,7 @@ class AdminOnboardingRepository {
           'SELECT s.user_id AS userId, u.user_email AS email, u.display_name AS displayName,',
           "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS activationStatus,",
           's.updated_at AS updatedAt, s.created_at AS createdAt, s.checkout_reference AS checkoutReference,',
-          's.plan_selection AS planSelection, s.recurrence AS recurrence, s.address AS address, s.shipping AS shipping,',
+          's.plan_selection AS planSelection, s.recurrence AS recurrence, s.address AS address, s.shipping AS shipping, s.market AS market,',
           `(SELECT COUNT(*) FROM \`${this.tableNames.pets}\` p WHERE p.user_id = s.user_id AND p.deleted_at IS NULL) AS petCount,`,
           `(SELECT COUNT(*) FROM \`${this.tableNames.subscriptions}\` sub WHERE sub.user_id = s.user_id) AS subscriptionCount,`,
           `(SELECT sub.status FROM \`${this.tableNames.subscriptions}\` sub WHERE sub.user_id = s.user_id ORDER BY COALESCE(sub.updated_at, sub.created_at) DESC LIMIT 1) AS stripeStatus,`,
@@ -136,7 +139,7 @@ class AdminOnboardingRepository {
           `INNER JOIN \`${this.tableNames.users}\` u ON u.ID = s.user_id`,
           `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
           `WHERE ${where}`,
-          'GROUP BY s.user_id, u.user_email, u.display_name, s.updated_at, s.created_at, s.checkout_reference, s.plan_selection, s.recurrence, s.address, s.shipping',
+          'GROUP BY s.user_id, u.user_email, u.display_name, s.updated_at, s.created_at, s.checkout_reference, s.plan_selection, s.recurrence, s.address, s.shipping, s.market',
           'ORDER BY s.updated_at DESC',
           'LIMIT ? OFFSET ?'
         ].join(' '),
@@ -179,9 +182,7 @@ class AdminOnboardingRepository {
         ? Number(planSelection.subscription_term_months)
         : null,
       firstInvoiceTotal: checkout && checkout.stripe_amount_paid != null ? checkout.stripe_amount_paid : null,
-      market: row.address && safeJson(row.address) && safeJson(row.address).country
-        ? String(safeJson(row.address).country).toUpperCase()
-        : null
+      market: row.market ? String(row.market).trim().toUpperCase() : null
     };
   }
 
@@ -233,6 +234,7 @@ class AdminOnboardingRepository {
       address: safeJson(row.address),
       shipping: safeJson(row.shipping),
       paymentReference: safeJson(row.payment_reference),
+      market: row.market ? String(row.market).trim().toUpperCase() : null,
       pets: (Array.isArray(pets) ? pets : []).map((pet) => ({
         id: String(pet.id),
         name: String(pet.name || '') || 'Unnamed pet',

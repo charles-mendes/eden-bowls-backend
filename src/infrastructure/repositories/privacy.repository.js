@@ -213,6 +213,13 @@ class PrivacyRepository {
       where.push('`user_id` = ?');
       params.push(query.userId);
     }
+    if (Array.isArray(query.markets) && query.markets.length) {
+      where.push(`\`market\` IN (${query.markets.map(() => '?').join(', ')})`);
+      params.push(...query.markets);
+    } else if (query.market) {
+      where.push('`market` = ?');
+      params.push(query.market);
+    }
     if (query.overdue) {
       where.push("`status` NOT IN ('completed', 'rejected') AND `due_at` IS NOT NULL AND `due_at` < ?");
       params.push(toSqlDateTime(query.now || new Date()));
