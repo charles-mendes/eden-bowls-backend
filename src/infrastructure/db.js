@@ -36,10 +36,12 @@ const { SplitStripeAccounts1700000000014 } = require('./migrations/1700000000014
 const { CreatePrivacyTables1700000000015 } = require('./migrations/1700000000015-create-privacy-tables');
 const { CreateAdminAuditEvents1700000000016 } = require('./migrations/1700000000016-create-admin-audit-events');
 const { CreateSubscriptionMailClaims1700000000017 } = require('./migrations/1700000000017-create-subscription-mail-claims');
+const { CreateSubscriptionProductionCycles1700000000018 } = require('./migrations/1700000000018-create-subscription-production-cycles');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
 const { buildPrivacyRequestEntitySchema } = require('./entities/privacy-request.entity');
 const { buildAdminAuditEventEntitySchema } = require('./entities/admin-audit-event.entity');
 const { buildSubscriptionMailClaimEntitySchema } = require('./entities/subscription-mail-claim.entity');
+const { buildSubscriptionProductionCycleEntitySchema } = require('./entities/subscription-production-cycle.entity');
 
 function buildDataSourceOptions(env) {
   return {
@@ -68,7 +70,8 @@ function buildDataSourceOptions(env) {
       buildPrivacyConsentEntitySchema(),
       buildPrivacyRequestEntitySchema(),
       buildAdminAuditEventEntitySchema(),
-      buildSubscriptionMailClaimEntitySchema()
+      buildSubscriptionMailClaimEntitySchema(),
+      buildSubscriptionProductionCycleEntitySchema()
     ],
     migrations: [
       CreateBreedsTable1700000000000,
@@ -88,7 +91,8 @@ function buildDataSourceOptions(env) {
       SplitStripeAccounts1700000000014,
       CreatePrivacyTables1700000000015,
       CreateAdminAuditEvents1700000000016,
-      CreateSubscriptionMailClaims1700000000017
+      CreateSubscriptionMailClaims1700000000017,
+      CreateSubscriptionProductionCycles1700000000018
     ],
     synchronize: false,
     logging: false,

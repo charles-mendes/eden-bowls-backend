@@ -11,6 +11,8 @@ describe('admin roles', () => {
     expect(ROLE_PERMISSIONS.operator).toContain('users.status.write');
     expect(ROLE_PERMISSIONS.operator).toContain('feedbacks.write');
     expect(ROLE_PERMISSIONS.operator).toContain('privacy.requests.write');
+    expect(ROLE_PERMISSIONS.operator).toContain('production.read');
+    expect(ROLE_PERMISSIONS.operator).toContain('production.write');
     expect(ROLE_PERMISSIONS.operator).not.toContain('users.roles.write');
     expect(ROLE_PERMISSIONS.operator).not.toContain('users.access.write');
   });
@@ -19,6 +21,12 @@ describe('admin roles', () => {
     expect(ROLE_PERMISSIONS.readonly).toContain('privacy.requests.read');
     expect(ROLE_PERMISSIONS.readonly).not.toContain('privacy.requests.write');
     expect(ROLE_PERMISSIONS.nutritionist).not.toContain('privacy.requests.read');
+  });
+
+  test('lets readonly list production but not write it', () => {
+    expect(ROLE_PERMISSIONS.readonly).toContain('production.read');
+    expect(ROLE_PERMISSIONS.readonly).not.toContain('production.write');
+    expect(ROLE_PERMISSIONS.nutritionist).not.toContain('production.read');
   });
 
   test('lets readonly list feedbacks but not write them', () => {

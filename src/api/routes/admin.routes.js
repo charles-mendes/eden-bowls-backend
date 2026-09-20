@@ -7,6 +7,10 @@ const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = r
 const { parsePageQuery } = require('../validators/admin-pagination');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
 const {
+  parseProductionQueueQuery,
+  parseProductionQueuePatch
+} = require('../validators/admin-production.validator');
+const {
   parseCreateAccessInput,
   parseUpdateAccessInput,
   parsePasswordChangeInput
@@ -324,6 +328,31 @@ function registerAdminRoutes(app, dependencies = {}) {
   });
   app.get('/api/v1/billing/catalog/sync/health', requirePermission('catalog.read'), handleCatalogHealth);
   app.get('/api/v1/billing/catalog/sync/status', requirePermission('catalog.read'), handleCatalogStatus);
+
+  app.get('/api/v1/admin/production/queue', requirePermission('production.read'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminProductionService) {
+        throw new HttpError(503, 'Production service is not available.');
+      }
+      return dependencies.adminProductionService.listQueue(
+        parseProductionQueueQuery(request.query || {}),
+        parsePageQuery(request.query, { defaultPerPage: 20 })
+      );
+    });
+  });
+
+  app.patch('/api/v1/admin/production/queue/:id', requirePermission('production.write'), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminProductionService) {
+        throw new HttpError(503, 'Production service is not available.');
+      }
+      return dependencies.adminProductionService.updateStatus(
+        request.params.id,
+        parseProductionQueuePatch(request.body || {}),
+        request.adminIdentity
+      );
+    });
+  });
 
   app.get('/api/v1/admin/billing/subscriptions', requirePermission('billing.subscribers.read'), async (request, response, next) => {
     await handle(response, next, async () => {

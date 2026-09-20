@@ -200,6 +200,10 @@ function mapLedgerToActionSummary(row) {
 }
 
 module.exports = {
+  catalogFrom,
+  packsPerMonth,
+  readPets,
+  planItemsFromCatalog,
   mapLedgerToDashboardListItem,
   mapLedgerToDashboardDetail,
   mapLedgerToActionSummary

@@ -518,6 +518,167 @@ class SubscriptionLedgerRepository {
 
     return { linked };
   }
+
+  queueJoinSql() {
+    return [
+      `FROM \`${this.tableName}\` s`,
+      'LEFT JOIN `subscription_production_cycles` c ON c.subscription_id = s.id AND c.period_end = s.current_period_end',
+      'LEFT JOIN `wp_users` u ON u.ID = s.user_id'
+    ].join(' ');
+  }
+
+  queueMembership({ startOfToday, windowEndExclusive, overdueFloor, includeOverdue, account, productionStatus, q }) {
+    const where = [
+      "s.status IN ('active','trialing','past_due')",
+      's.cancel_at_period_end = 0',
+      's.current_period_end IS NOT NULL',
+      `(
+        (s.current_period_end >= ? AND s.current_period_end < ?)
+        OR (
+          ? AND s.current_period_end >= ? AND s.current_period_end < ?
+          AND COALESCE(c.status,'to_prepare') <> 'ready'
+        )
+      )`
+    ];
+    const params = [
+      startOfToday,
+      windowEndExclusive,
+      includeOverdue ? 1 : 0,
+      overdueFloor,
+      startOfToday
+    ];
+
+    if (account) {
+      where.push('s.stripe_account = ?');
+      params.push(String(account).trim().toLowerCase());
+    }
+
+    if (productionStatus) {
+      where.push("COALESCE(c.status,'to_prepare') = ?");
+      params.push(String(productionStatus));
+    }
+
+    if (q) {
+      const needle = `%${String(q).trim()}%`;
+      where.push('(s.customer_email LIKE ? OR s.stripe_subscription_id LIKE ? OR s.stripe_customer_id LIKE ? OR CAST(s.user_id AS CHAR) LIKE ?)');
+      params.push(needle, needle, needle, needle);
+    }
+
+    return {
+      whereSql: `WHERE ${where.join(' AND ')}`,
+      params
+    };
+  }
+
+  mapQueueRow(row) {
+    const mapped = this.mapRow(row);
+    if (!mapped) {
+      return null;
+    }
+
+    return {
+      ...mapped,
+      productionStatus: String(row.production_status || mapped.productionStatus || 'to_prepare'),
+      note: row.production_note == null ? (mapped.note || null) : String(row.production_note),
+      displayName: row.display_name ? String(row.display_name) : null,
+      paymentMethodLast4: null,
+      paymentMethodBrand: null
+    };
+  }
+
+  queueSelectSql() {
+    return [
+      'SELECT s.id, s.user_id, s.customer_email, s.stripe_subscription_id, s.stripe_customer_id,',
+      's.stripe_account, s.status, s.plan_label, s.stripe_price_id, s.current_period_start, s.current_period_end,',
+      's.cancel_at_period_end, s.pets_snapshot, s.plan_selection, s.shipping, s.address, s.subscription_term_months,',
+      's.edit_payment_pending, s.edit_pending, s.created_at, s.updated_at,',
+      "COALESCE(c.status, 'to_prepare') AS production_status, c.note AS production_note, u.display_name AS display_name"
+    ].join(' ');
+  }
+
+  async listQueue(input = {}) {
+    this.ensureDataSource();
+    const { whereSql, params } = this.queueMembership(input);
+    const joinSql = this.queueJoinSql();
+
+    try {
+      const countRows = await this.dataSource.query(
+        `SELECT COUNT(*) AS total ${joinSql} ${whereSql}`,
+        params
+      );
+      const total = Number(Array.isArray(countRows) && countRows[0] ? countRows[0].total : 0);
+      const rows = await this.dataSource.query(
+        [
+          this.queueSelectSql(),
+          joinSql,
+          whereSql,
+          'ORDER BY s.current_period_end ASC, s.id ASC',
+          'LIMIT ? OFFSET ?'
+        ].join(' '),
+        [...params, input.perPage, input.offset]
+      );
+
+      return {
+        total,
+        items: (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean)
+      };
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return { total: 0, items: [] };
+      }
+      throw error;
+    }
+  }
+
+  async listQueueMetricRows(input = {}) {
+    this.ensureDataSource();
+    const { whereSql, params } = this.queueMembership({
+      startOfToday: input.startOfToday,
+      windowEndExclusive: input.windowEndExclusive,
+      overdueFloor: input.overdueFloor,
+      includeOverdue: input.includeOverdue,
+      account: input.account
+    });
+    const joinSql = this.queueJoinSql();
+
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT s.current_period_end, COALESCE(c.status,'to_prepare') AS production_status ${joinSql} ${whereSql}`,
+        params
+      );
+      return Array.isArray(rows) ? rows : [];
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async findQueueRowById(id) {
+    this.ensureDataSource();
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId) || numericId < 1) {
+      return null;
+    }
+
+    try {
+      const rows = await this.dataSource.query(
+        [
+          this.queueSelectSql(),
+          this.queueJoinSql(),
+          'WHERE s.id = ? LIMIT 1'
+        ].join(' '),
+        [numericId]
+      );
+      return this.mapQueueRow(Array.isArray(rows) ? rows[0] : null);
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
 }
 
 module.exports = {

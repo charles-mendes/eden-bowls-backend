@@ -43,6 +43,7 @@ const { SubscriptionsEditCommitRepository } = require('./infrastructure/reposito
 const { SubscriptionsEditPreviewRepository } = require('./infrastructure/repositories/subscriptions-edit-preview.repository');
 const { SubscriptionsRepository } = require('./infrastructure/repositories/subscriptions.repository');
 const { SubscriptionLedgerRepository } = require('./infrastructure/repositories/subscription-ledger.repository');
+const { SubscriptionProductionRepository } = require('./infrastructure/repositories/subscription-production.repository');
 const { StripeWebhookEventsRepository } = require('./infrastructure/repositories/stripe-webhook-events.repository');
 const { SubscriptionMailClaimsRepository } = require('./infrastructure/repositories/subscription-mail-claims.repository');
 const { createTransactionalMailer } = require('./infrastructure/mailers/transactional-mailer');
@@ -96,6 +97,7 @@ const { AdminNutritionService } = require('./services/admin-nutrition.service');
 const { AdminShippingService } = require('./services/admin-shipping.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
+const { AdminProductionService } = require('./services/admin-production.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
 const { AdminUsersService } = require('./services/admin-users.service');
 const { AdminAuditRepository } = require('./infrastructure/repositories/admin-audit.repository');
@@ -291,6 +293,7 @@ async function bootstrap() {
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
   const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
+  const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository, {
     planSelectionRepository: onboardingPlanSelectionRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -496,6 +499,11 @@ async function bootstrap() {
     repository: new AdminAuditRepository(dataSource),
     logger
   });
+  const adminProductionService = new AdminProductionService({
+    ledgerRepository: subscriptionLedgerRepository,
+    productionRepository: subscriptionProductionRepository,
+    auditService: adminAuditService
+  });
   const adminUsersService = new AdminUsersService({
     usersRepository: adminUsersRepository,
     profileService,
@@ -562,6 +570,7 @@ async function bootstrap() {
     adminShippingService,
     adminOnboardingService,
     adminBillingService,
+    adminProductionService,
     upsShipmentService,
     adminCatalogService,
     adminUsersService,
