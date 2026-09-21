@@ -99,6 +99,19 @@ function formatCsvFrequency(value) {
   return raw;
 }
 
+function formatCsvTermLabel(value) {
+  if (value === null || value === undefined || value === '') {
+    return '';
+  }
+
+  const months = typeof value === 'string' ? Number(value) : value;
+  if (!Number.isFinite(months) || months <= 0) {
+    return '';
+  }
+
+  return months === 1 ? '1 mês' : `${months} meses`;
+}
+
 function toCsv(items, timeZone) {
   const resolvedTimeZone = resolveTimeZone(timeZone);
   const header = [
@@ -108,9 +121,11 @@ function toCsv(items, timeZone) {
     'updatedAt',
     'stripeStatus',
     'stripeSubscriptionId',
+    // legado: Mensal/Quinzenal/Semanal (alias do prazo). Preferir termLabel.
     'frequency',
     'termMonths',
-    'firstInvoiceTotal'
+    'firstInvoiceTotal',
+    'termLabel'
   ];
   const lines = [header.join(',')];
 
@@ -119,7 +134,8 @@ function toCsv(items, timeZone) {
       ...item,
       updatedAt: formatCsvDate(item.updatedAt, resolvedTimeZone),
       stripeStatus: formatCsvStripeStatus(item.stripeStatus),
-      frequency: formatCsvFrequency(item.frequency)
+      frequency: formatCsvFrequency(item.frequency),
+      termLabel: formatCsvTermLabel(item.termMonths)
     };
 
     lines.push(header.map((key) => {
@@ -258,5 +274,6 @@ class AdminOnboardingService {
 }
 
 module.exports = {
-  AdminOnboardingService
+  AdminOnboardingService,
+  formatCsvTermLabel
 };

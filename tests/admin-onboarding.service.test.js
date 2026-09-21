@@ -1,4 +1,16 @@
-const { AdminOnboardingService } = require('../src/services/admin-onboarding.service');
+const { AdminOnboardingService, formatCsvTermLabel } = require('../src/services/admin-onboarding.service');
+
+const CSV_HEADER = 'userId,email,displayName,updatedAt,stripeStatus,stripeSubscriptionId,frequency,termMonths,firstInvoiceTotal,termLabel';
+
+function parseCsv(csv) {
+  const lines = String(csv).replace(/\n$/, '').split('\n');
+  const header = lines[0];
+  const rows = lines.slice(1).filter(Boolean).map((line) => {
+    const values = line.slice(1, -1).split('","');
+    return Object.fromEntries(header.split(',').map((key, index) => [key, values[index]]));
+  });
+  return { header, rows };
+}
 
 describe('AdminOnboardingService.csv', () => {
   function createService(items) {
@@ -31,6 +43,36 @@ describe('AdminOnboardingService.csv', () => {
     expect(csv).toContain('Mensal');
     expect(csv).not.toContain('mixed');
     expect(csv).not.toContain('monthly');
+
+    const parsed = parseCsv(csv);
+    expect(parsed.header).toBe(CSV_HEADER);
+    expect(csv.startsWith('\uFEFF')).toBe(false);
+    expect(parsed.rows[0]).toMatchObject({
+      frequency: 'Mensal',
+      termMonths: '1',
+      termLabel: '1 mês'
+    });
+  });
+
+  test('formatCsvTermLabel matches list wording and uses empty cells for missing terms', () => {
+    expect(formatCsvTermLabel(null)).toBe('');
+    expect(formatCsvTermLabel('')).toBe('');
+    expect(formatCsvTermLabel(0)).toBe('');
+    expect(formatCsvTermLabel(1)).toBe('1 mês');
+    expect(formatCsvTermLabel(3)).toBe('3 meses');
+    expect(formatCsvTermLabel(6)).toBe('6 meses');
+    expect(formatCsvTermLabel(12)).toBe('12 meses');
+  });
+
+  test('leaves termMonths and termLabel empty when the plan term is missing', async () => {
+    const service = createService([{ ...checkout, termMonths: null }]);
+    const csv = await service.csv({ timezone: 'UTC' });
+    const parsed = parseCsv(csv);
+
+    expect(parsed.header).toBe(CSV_HEADER);
+    expect(parsed.rows[0].frequency).toBe('Mensal');
+    expect(parsed.rows[0].termMonths).toBe('');
+    expect(parsed.rows[0].termLabel).toBe('');
   });
 
   test('uses Brazil clock when the browser timezone is America/Sao_Paulo', async () => {
