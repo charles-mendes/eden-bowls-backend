@@ -100,6 +100,39 @@ describe('AdminCatalogService', () => {
     });
   });
 
+  test('patchProduct with only one variation leaves plan fields and sibling variations untouched', async () => {
+    const product = {
+      id: '100',
+      active: false,
+      planCountry: 'BR',
+      planDays: 30,
+      variants: [
+        { id: '1001', name: 'Beef 300g', sku: 'Beef-300g', regularPrice: 25 },
+        { id: '1002', name: 'Lamb 300g', sku: 'LAMB-300', regularPrice: 40 }
+      ]
+    };
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue(product),
+      upsertPostMeta: jest.fn(),
+      createVariation: jest.fn(),
+      updateVariation: jest.fn(),
+      updatePostStatus: jest.fn()
+    };
+    const service = new AdminCatalogService({ repository });
+
+    await service.patchProduct('100', {
+      variants: [{ id: '1001', name: 'Beef 300g', sku: 'Beef-300g', flavor: 'Beef', regularPrice: 28 }]
+    });
+
+    const metaKeys = repository.upsertPostMeta.mock.calls.map((call) => call[1]);
+    expect(metaKeys).not.toContain('_cmpb_plan_country');
+    expect(metaKeys).not.toContain('_cmpb_plan_days');
+    expect(repository.updateVariation).toHaveBeenCalledTimes(1);
+    expect(repository.updateVariation).toHaveBeenCalledWith(expect.objectContaining({ id: '1001' }));
+    expect(repository.updateVariation).not.toHaveBeenCalledWith(expect.objectContaining({ id: '1002' }));
+    expect(repository.createVariation).not.toHaveBeenCalled();
+  });
+
   test('createProduct stores a Stripe product and optional first variation', async () => {
     const repository = {
       createProduct: jest.fn().mockResolvedValue('301'),
@@ -285,7 +318,7 @@ describe('AdminCatalogService', () => {
     expect(repository.deleteProduct).toHaveBeenCalledWith('2011');
   });
 
-  test('deleteProduct still removes the catalog row when Stripe archive fails', async () => {
+  test('deleteProduct keeps the catalog row when Stripe archive fails', async () => {
     const repository = {
       getProduct: jest.fn().mockResolvedValue({
         id: '2011',
@@ -299,8 +332,148 @@ describe('AdminCatalogService', () => {
     };
     const service = new AdminCatalogService({ repository, stripeBilling });
 
+    await expect(service.deleteProduct('2011')).rejects.toMatchObject({
+      statusCode: 502,
+      details: { code: 'stripe_product_archive_failed' }
+    });
+    expect(repository.deleteProduct).not.toHaveBeenCalled();
+  });
+
+  test('deleteProduct skips seed Stripe ids and still removes the catalog row', async () => {
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue({
+        id: '2011',
+        stripeProductId: 'prod_seed_2011',
+        variants: []
+      }),
+      deleteProduct: jest.fn().mockResolvedValue(true)
+    };
+    const stripeBilling = {
+      archiveCatalogProduct: jest.fn()
+    };
+    const service = new AdminCatalogService({ repository, stripeBilling });
+
     await expect(service.deleteProduct('2011')).resolves.toEqual({ deleted: true, id: '2011' });
+    expect(stripeBilling.archiveCatalogProduct).not.toHaveBeenCalled();
     expect(repository.deleteProduct).toHaveBeenCalledWith('2011');
+  });
+
+  test('catalog reads mark canDelete false when only a line-item price is referenced', async () => {
+    const repository = {
+      listProducts: jest.fn().mockResolvedValue({
+        total: 1,
+        items: [{
+          id: '10',
+          active: true,
+          variants: [
+            { id: '21', stripePriceId: 'price_used', stripePriceIdsByCurrency: { brl: 'price_used' } },
+            { id: '22', stripePriceId: 'price_free', stripePriceIdsByCurrency: { brl: 'price_free' } }
+          ]
+        }]
+      }),
+      getProduct: jest.fn().mockResolvedValue({
+        id: '10',
+        active: true,
+        variants: [
+          { id: '21', stripePriceId: 'price_used', stripePriceIdsByCurrency: { brl: 'price_used' } },
+          { id: '22', stripePriceId: 'price_free', stripePriceIdsByCurrency: { brl: 'price_free' } }
+        ]
+      })
+    };
+    const ledgerRepository = {
+      findReferencedCatalogIds: jest.fn().mockResolvedValue({
+        variationIds: [],
+        priceIds: ['price_used']
+      })
+    };
+    const service = new AdminCatalogService({ repository, ledgerRepository });
+
+    const list = await service.listProducts({}, { offset: 0, perPage: 20, page: 1 });
+    expect(list.items[0].canDelete).toBe(false);
+    expect(list.items[0].variants.map((item) => item.canDelete)).toEqual([false, true]);
+    expect(ledgerRepository.findReferencedCatalogIds).toHaveBeenCalledWith({
+      variationIds: ['21', '22'],
+      priceIds: ['price_used', 'price_free']
+    });
+
+    const detail = await service.getProduct('10');
+    expect(detail.canDelete).toBe(false);
+    expect(detail.variants.find((item) => item.id === '22').canDelete).toBe(true);
+  });
+
+  test('deleteProduct rejects a linked product before Stripe archive', async () => {
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue({
+        id: '2011',
+        stripeProductId: 'prod_live_2011',
+        variants: [{ id: '3001', stripePriceId: 'price_used' }]
+      }),
+      deleteProduct: jest.fn()
+    };
+    const stripeBilling = { archiveCatalogProduct: jest.fn() };
+    const ledgerRepository = {
+      findReferencedCatalogIds: jest.fn().mockResolvedValue({
+        variationIds: [],
+        priceIds: ['price_used']
+      })
+    };
+    const service = new AdminCatalogService({ repository, stripeBilling, ledgerRepository });
+
+    await expect(service.deleteProduct('2011')).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: 'product_in_use' }
+    });
+    expect(stripeBilling.archiveCatalogProduct).not.toHaveBeenCalled();
+    expect(repository.deleteProduct).not.toHaveBeenCalled();
+  });
+
+  test('mixed variations block the product and the linked variation only', async () => {
+    const product = {
+      id: '2011',
+      planCountry: 'BR',
+      stripeProductId: 'prod_live_2011',
+      variants: [
+        { id: 'A', stripeProductId: 'prod_live_a', stripePriceId: 'price_a' },
+        { id: 'B', stripeProductId: 'prod_live_b', stripePriceId: 'price_b' }
+      ]
+    };
+    const repository = {
+      getProduct: jest.fn()
+        .mockResolvedValueOnce(product)
+        .mockResolvedValueOnce(product)
+        .mockResolvedValueOnce({ ...product, variants: [product.variants[0]] })
+        .mockResolvedValueOnce(product),
+      deleteProduct: jest.fn(),
+      deleteVariation: jest.fn().mockResolvedValue(true)
+    };
+    const stripeBilling = {
+      archiveCatalogProduct: jest.fn().mockResolvedValue('prod_live_b')
+    };
+    const ledgerRepository = {
+      findReferencedCatalogIds: jest.fn().mockImplementation(async ({ variationIds }) => ({
+        variationIds: variationIds.includes('A') ? ['A'] : [],
+        priceIds: []
+      }))
+    };
+    const service = new AdminCatalogService({ repository, stripeBilling, ledgerRepository });
+
+    await expect(service.deleteProduct('2011')).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: 'product_in_use' }
+    });
+    expect(stripeBilling.archiveCatalogProduct).not.toHaveBeenCalled();
+    expect(repository.deleteProduct).not.toHaveBeenCalled();
+
+    const remaining = await service.deleteVariation('2011', 'B');
+    expect(stripeBilling.archiveCatalogProduct).toHaveBeenCalledWith('prod_live_b');
+    expect(stripeBilling.archiveCatalogProduct).not.toHaveBeenCalledWith('prod_live_a');
+    expect(repository.deleteVariation).toHaveBeenCalledWith('2011', 'B');
+    expect(remaining.variants.map((item) => item.id)).toEqual(['A']);
+
+    await expect(service.deleteVariation('2011', 'A')).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: 'variation_in_use' }
+    });
   });
 
   test('deleteVariation archives the variation Stripe product and returns the remaining product', async () => {

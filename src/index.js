@@ -490,6 +490,7 @@ async function bootstrap() {
   });
   const adminCatalogService = new AdminCatalogService({
     repository: adminCatalogRepository,
+    ledgerRepository: subscriptionLedgerRepository,
     stripeAccounts,
     stripeBilling,
     stripeBrEnabled: env.STRIPE_BR_ENABLED

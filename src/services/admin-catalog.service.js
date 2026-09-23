@@ -102,9 +102,41 @@ function unwrapStripePrice(ensured) {
   return { priceId: String(ensured || ''), productId: '' };
 }
 
+function priceIdsOf(variant = {}) {
+  const ids = [];
+  const direct = String(variant.stripePriceId || '').trim();
+  if (direct.startsWith('price_')) {
+    ids.push(direct);
+  }
+  const map = variant.stripePriceIdsByCurrency;
+  if (map && typeof map === 'object') {
+    for (const value of Object.values(map)) {
+      const price = String(value || '').trim();
+      if (price.startsWith('price_')) {
+        ids.push(price);
+      }
+    }
+  }
+  return ids;
+}
+
+function withCanDelete(product, usage) {
+  const variants = (product.variants || []).map((variant) => {
+    const linked = usage.variationIds.has(String(variant.id))
+      || priceIdsOf(variant).some((price) => usage.priceIds.has(price));
+    return { ...variant, canDelete: !linked };
+  });
+  return {
+    ...product,
+    variants,
+    canDelete: variants.every((variant) => variant.canDelete)
+  };
+}
+
 class AdminCatalogService {
   constructor(options = {}) {
     this.repository = options.repository;
+    this.ledgerRepository = options.ledgerRepository || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.stripeBrEnabled = options.stripeBrEnabled;
@@ -150,11 +182,40 @@ class AdminCatalogService {
     });
 
     return paginatedEnvelope({
-      items: result.items,
+      items: await this.annotateDeleteFlags(result.items || []),
       total: result.total,
       page: pagination.page,
       perPage: pagination.perPage
     });
+  }
+
+  async annotateDeleteFlags(products) {
+    const list = (products || []).filter(Boolean);
+    const variationIds = [];
+    const priceIds = [];
+    for (const product of list) {
+      for (const variant of product.variants || []) {
+        if (variant && variant.id != null) {
+          variationIds.push(String(variant.id));
+        }
+        priceIds.push(...priceIdsOf(variant));
+      }
+    }
+
+    const usage = { variationIds: new Set(), priceIds: new Set() };
+    const uniqueVariations = [...new Set(variationIds)];
+    const uniquePrices = [...new Set(priceIds)];
+    const lookup = this.ledgerRepository && this.ledgerRepository.findReferencedCatalogIds;
+    if (typeof lookup === 'function' && (uniqueVariations.length || uniquePrices.length)) {
+      const found = await lookup.call(this.ledgerRepository, {
+        variationIds: uniqueVariations,
+        priceIds: uniquePrices
+      });
+      usage.variationIds = new Set((found && found.variationIds || []).map(String));
+      usage.priceIds = new Set((found && found.priceIds || []).map(String));
+    }
+
+    return list.map((product) => withCanDelete(product, usage));
   }
 
   async getProduct(productId, actor = {}) {
@@ -165,7 +226,8 @@ class AdminCatalogService {
     if (shouldEnforceMarketScope(actor)) {
       assertRecordMarket(actor, product.planCountry);
     }
-    return product;
+    const [annotated] = await this.annotateDeleteFlags([product]);
+    return annotated;
   }
 
   async createProduct(payload = {}) {
@@ -228,6 +290,11 @@ class AdminCatalogService {
 
   async deleteProduct(productId, actor = {}) {
     const product = await this.getProduct(productId, actor);
+    if (product.canDelete === false) {
+      throw new HttpError(409, 'Product is linked to a subscription and cannot be deleted.', {
+        code: 'product_in_use'
+      });
+    }
     await this.archiveStripeCatalog(product);
     await this.repository.deleteProduct(product.id);
     return { deleted: true, id: product.id };
@@ -239,8 +306,13 @@ class AdminCatalogService {
     if (!variant) {
       throw new HttpError(404, 'Variation not found.');
     }
+    if (variant.canDelete === false) {
+      throw new HttpError(409, 'Variation is linked to a subscription and cannot be deleted.', {
+        code: 'variation_in_use'
+      });
+    }
 
-    await this.archiveStripeCatalog({ variants: [variant] });
+    await this.archiveStripeCatalog({ variants: [variant], planCountry: product.planCountry });
     const deleted = await this.repository.deleteVariation(product.id, variant.id);
     if (!deleted) {
       throw new HttpError(404, 'Variation not found.');
@@ -276,8 +348,13 @@ class AdminCatalogService {
     for (const stripeProductId of [...new Set(ids)]) {
       try {
         await stripeBilling.archiveCatalogProduct(stripeProductId);
-      } catch (_error) {
-        // Local catalog delete should succeed even if Stripe archive fails.
+      } catch (error) {
+        if (error instanceof HttpError) {
+          throw error;
+        }
+        throw new HttpError(502, 'Unable to archive Stripe product.', {
+          code: 'stripe_product_archive_failed'
+        });
       }
     }
   }

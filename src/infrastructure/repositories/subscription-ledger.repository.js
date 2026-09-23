@@ -723,6 +723,71 @@ class SubscriptionLedgerRepository {
       throw error;
     }
   }
+
+  async findReferencedCatalogIds({ variationIds = [], priceIds = [] } = {}) {
+    const variations = [...new Set(variationIds.map((id) => String(id).trim()).filter(Boolean))];
+    const prices = [...new Set(priceIds.map((id) => String(id).trim()).filter((id) => id.startsWith('price_')))];
+    if (!variations.length && !prices.length) {
+      return { variationIds: [], priceIds: [] };
+    }
+
+    this.ensureDataSource();
+    const where = [];
+    const params = [];
+    const inList = (column, values) => {
+      where.push(`${column} IN (${values.map(() => '?').join(', ')})`);
+      params.push(...values);
+    };
+    if (prices.length) {
+      inList('s.stripe_price_id', prices);
+      inList('jt.price_id', prices);
+      inList('jt.alt_price', prices);
+    }
+    if (variations.length) {
+      inList('jt.variation_id', variations);
+    }
+
+    try {
+      const rows = await this.dataSource.query(
+        [
+          'SELECT s.stripe_price_id AS column_price, jt.price_id AS line_price, jt.alt_price AS alt_price, jt.variation_id AS line_variation',
+          `FROM \`${this.tableName}\` s`,
+          'LEFT JOIN JSON_TABLE(',
+          'CASE WHEN JSON_VALID(s.plan_selection) THEN s.plan_selection ELSE JSON_OBJECT() END,',
+          "'$.catalog_pricing.line_items[*]' COLUMNS (",
+          "price_id VARCHAR(64) PATH '$.stripe_price_id',",
+          "alt_price VARCHAR(64) PATH '$.price_id',",
+          "variation_id VARCHAR(32) PATH '$.variation_id'",
+          ')',
+          ') jt ON TRUE',
+          `WHERE ${where.join(' OR ')}`
+        ].join(' '),
+        params
+      );
+      const usedVariations = new Set();
+      const usedPrices = new Set();
+      const variationSet = new Set(variations);
+      const priceSet = new Set(prices);
+      for (const row of Array.isArray(rows) ? rows : []) {
+        const variationId = row.line_variation == null ? '' : String(row.line_variation);
+        if (variationSet.has(variationId)) {
+          usedVariations.add(variationId);
+        }
+        for (const price of [row.column_price, row.line_price, row.alt_price]) {
+          const id = price == null ? '' : String(price);
+          if (priceSet.has(id)) {
+            usedPrices.add(id);
+          }
+        }
+      }
+      return { variationIds: [...usedVariations], priceIds: [...usedPrices] };
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return { variationIds: [], priceIds: [] };
+      }
+      throw error;
+    }
+  }
 }
 
 module.exports = {
