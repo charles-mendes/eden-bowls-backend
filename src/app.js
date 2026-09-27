@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -76,6 +77,22 @@ function corsMiddleware(config) {
   };
 }
 
+function metricsTokenMatches(request, expectedToken) {
+  const expected = String(expectedToken || '');
+  if (!expected) {
+    return false;
+  }
+
+  const match = String(request.headers.authorization || '').match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    return false;
+  }
+
+  const presentedDigest = crypto.createHash('sha256').update(match[1]).digest();
+  const expectedDigest = crypto.createHash('sha256').update(expected).digest();
+  return crypto.timingSafeEqual(presentedDigest, expectedDigest);
+}
+
 function createApp(dependencies = {}) {
   const app = express();
   const corsConfig = buildCorsConfig(dependencies.corsOrigins);
@@ -123,11 +140,31 @@ function createApp(dependencies = {}) {
     response.json({ status: 'alive' });
   });
 
-  app.get('/readiness', (request, response) => {
-    response.json({ status: 'ready' });
+  app.get('/readiness', async (request, response) => {
+    const dataSource = dependencies.dataSource;
+    if (!dataSource || typeof dataSource.query !== 'function') {
+      response.status(503).json({ status: 'not_ready' });
+      return;
+    }
+
+    try {
+      await dataSource.query('SELECT 1');
+      response.status(200).json({ status: 'ready' });
+    } catch (error) {
+      if (dependencies.logger && typeof dependencies.logger.error === 'function') {
+        dependencies.logger.error({ err: error }, 'Readiness query failed.');
+      }
+      response.status(503).json({ status: 'not_ready' });
+    }
   });
 
   app.get('/metrics', async (request, response, next) => {
+    const nodeEnv = dependencies.nodeEnv || process.env.NODE_ENV;
+    if (nodeEnv === 'production' && !metricsTokenMatches(request, dependencies.metricsToken)) {
+      response.status(404).end();
+      return;
+    }
+
     try {
       response.set('Content-Type', client.register.contentType);
       response.send(await client.register.metrics());

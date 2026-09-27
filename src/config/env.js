@@ -87,7 +87,15 @@ const rawEnvSchema = z.object({
   FEEDBACK_PHOTO_DIR: z.string().optional(),
   FEEDBACK_PHOTO_PUBLIC_BASE_URL: z.string().optional(),
   PET_PHOTO_DIR: z.string().optional(),
-  PET_PHOTO_PUBLIC_BASE_URL: z.string().optional()
+  PET_PHOTO_PUBLIC_BASE_URL: z.string().optional(),
+  UPS_CLIENT_ID: z.string().optional(),
+  UPS_CLIENT_SECRET: z.string().optional(),
+  UPS_ACCOUNT_NUMBER: z.string().optional(),
+  UPS_ENV: z.string().optional(),
+  UPS_HTTP_TIMEOUT_MS: z.string().optional(),
+  UPS_TRANSACTION_SRC: z.string().optional(),
+  UPS_LABEL_DIR: z.string().optional(),
+  METRICS_TOKEN: z.string().optional()
 });
 
 function firstNonEmpty(...values) {
@@ -118,6 +126,100 @@ function toBoolean(value, defaultValue = false) {
   return ['1', 'true', 'yes', 'on'].includes(normalized);
 }
 
+const FORBIDDEN_SECRET_VALUES = new Set(['change-this-in-production', 'hsr-default-salt']);
+
+function isRejectedSecret(value) {
+  const normalized = String(value ?? '').trim();
+  return normalized.length === 0 || FORBIDDEN_SECRET_VALUES.has(normalized);
+}
+
+function requireProductionSecret(label, value) {
+  if (isRejectedSecret(value)) {
+    throw new Error(`${label} must be set to a non-placeholder value in production.`);
+  }
+}
+
+function hostnameOfOrigin(origin) {
+  try {
+    return new URL(origin).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function isEdenbowlsComBrHost(hostname) {
+  return hostname === 'edenbowls.com.br' || hostname.endsWith('.edenbowls.com.br');
+}
+
+function isEdenbowlsComHost(hostname) {
+  if (isEdenbowlsComBrHost(hostname)) {
+    return false;
+  }
+  return hostname === 'edenbowls.com' || hostname.endsWith('.edenbowls.com');
+}
+
+function assertProductionEnv(rawEnv, resolved) {
+  if (rawEnv.NODE_ENV !== 'production') {
+    return;
+  }
+
+  requireProductionSecret('JWT_AUTH_SECRET_KEY', resolved.JWT_AUTH_SECRET_KEY);
+  requireProductionSecret('AUTH_OTP_PEPPER', firstNonEmpty(rawEnv.AUTH_OTP_PEPPER, rawEnv.AUTH_SALT));
+  requireProductionSecret('AUTH_SMTP_HOST', resolved.AUTH_SMTP_HOST);
+  requireProductionSecret('AUTH_MAIL_FROM', resolved.AUTH_MAIL_FROM);
+  requireProductionSecret('STRIPE_US_SECRET_KEY', resolved.STRIPE_US_SECRET_KEY);
+  requireProductionSecret('STRIPE_US_WEBHOOK_SECRET', resolved.STRIPE_US_WEBHOOK_SECRET);
+  requireProductionSecret('STRIPE_BR_SECRET_KEY', resolved.STRIPE_BR_SECRET_KEY);
+  requireProductionSecret('STRIPE_BR_WEBHOOK_SECRET', resolved.STRIPE_BR_WEBHOOK_SECRET);
+  requireProductionSecret('UPS_CLIENT_ID', resolved.UPS_CLIENT_ID);
+  requireProductionSecret('UPS_CLIENT_SECRET', resolved.UPS_CLIENT_SECRET);
+  requireProductionSecret('UPS_ACCOUNT_NUMBER', resolved.UPS_ACCOUNT_NUMBER);
+  requireProductionSecret('METRICS_TOKEN', resolved.METRICS_TOKEN);
+  requireProductionSecret('DB_PASSWORD', resolved.DB_PASSWORD);
+
+  const stripeBrFlag = String(rawEnv.STRIPE_BR_ENABLED ?? '').trim().toLowerCase();
+  if (stripeBrFlag !== 'true' && stripeBrFlag !== 'false') {
+    throw new Error('STRIPE_BR_ENABLED must be true or false in production.');
+  }
+
+  let issuer;
+  try {
+    issuer = new URL(String(rawEnv.JWT_AUTH_ISSUER || '').trim());
+  } catch {
+    throw new Error('JWT_AUTH_ISSUER must be an https URL in production.');
+  }
+  if (issuer.protocol !== 'https:' || issuer.hostname === 'localhost') {
+    throw new Error('JWT_AUTH_ISSUER must be an https URL and must not use localhost in production.');
+  }
+
+  const upsEnv = String(rawEnv.UPS_ENV ?? '').trim();
+  if (upsEnv !== 'production' && upsEnv !== 'cie') {
+    throw new Error('UPS_ENV must be production or cie in production.');
+  }
+
+  if (String(rawEnv.AUTH_REFRESH_COOKIE_DOMAIN || '').trim()) {
+    throw new Error('AUTH_REFRESH_COOKIE_DOMAIN must be empty in production.');
+  }
+
+  if (resolved.CORS_ORIGINS.length === 0) {
+    throw new Error('CORS_ORIGINS must list https origins in production.');
+  }
+
+  for (const origin of resolved.CORS_ORIGINS) {
+    const hostname = hostnameOfOrigin(origin);
+    if (!origin.startsWith('https://') || origin.includes('localhost') || hostname === 'localhost') {
+      throw new Error('CORS_ORIGINS must use https and must not include localhost in production.');
+    }
+  }
+
+  const hosts = resolved.CORS_ORIGINS.map(hostnameOfOrigin);
+  const hasCom = hosts.some(isEdenbowlsComHost);
+  const hasComBr = hosts.some(isEdenbowlsComBrHost);
+  if (hasCom && hasComBr && rawEnv.AUTH_REFRESH_COOKIE_SAME_SITE !== 'none') {
+    throw new Error('AUTH_REFRESH_COOKIE_SAME_SITE must be none when CORS_ORIGINS includes both edenbowls.com and edenbowls.com.br.');
+  }
+}
+
 function parseEnv(source = process.env) {
   const rawEnv = rawEnvSchema.parse(source);
   const refreshCookieSecure = toBoolean(rawEnv.AUTH_REFRESH_COOKIE_SECURE, rawEnv.NODE_ENV === 'production');
@@ -137,7 +239,7 @@ function parseEnv(source = process.env) {
 
   const smtpAuthRaw = firstNonEmpty(rawEnv.AUTH_SMTP_AUTH, rawEnv.HSR_SMTP_AUTH);
 
-  return {
+  const resolved = {
     NODE_ENV: rawEnv.NODE_ENV,
     PORT: Number(rawEnv.PORT),
     MODE: rawEnv.MODE,
@@ -220,11 +322,17 @@ function parseEnv(source = process.env) {
     UPS_CLIENT_ID: firstNonEmpty(rawEnv.UPS_CLIENT_ID),
     UPS_CLIENT_SECRET: firstNonEmpty(rawEnv.UPS_CLIENT_SECRET),
     UPS_ACCOUNT_NUMBER: firstNonEmpty(rawEnv.UPS_ACCOUNT_NUMBER),
-    UPS_ENV: firstNonEmpty(rawEnv.UPS_ENV, 'cie'),
+    UPS_ENV: rawEnv.NODE_ENV === 'production'
+      ? String(rawEnv.UPS_ENV ?? '').trim()
+      : firstNonEmpty(rawEnv.UPS_ENV, 'cie'),
     UPS_HTTP_TIMEOUT_MS: Number(firstNonEmpty(rawEnv.UPS_HTTP_TIMEOUT_MS, '5000')),
     UPS_TRANSACTION_SRC: firstNonEmpty(rawEnv.UPS_TRANSACTION_SRC, 'eden-bowls'),
-    UPS_LABEL_DIR: firstNonEmpty(rawEnv.UPS_LABEL_DIR) || './data/ups-labels'
+    UPS_LABEL_DIR: firstNonEmpty(rawEnv.UPS_LABEL_DIR) || './data/ups-labels',
+    METRICS_TOKEN: firstNonEmpty(rawEnv.METRICS_TOKEN)
   };
+
+  assertProductionEnv(rawEnv, resolved);
+  return resolved;
 }
 
 module.exports = {

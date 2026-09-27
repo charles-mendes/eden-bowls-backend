@@ -36,12 +36,14 @@ services:
     environment:
       DB_HOST: db
       DB_PORT: "3306"
+      UPS_LABEL_DIR: /app/ups-labels
     ports:
       - "127.0.0.1:${BACKEND_HTTP_PORT:-3000}:3000"
     volumes:
-      - ./public/avatars:/app/public/avatars
-      - ./public/feedback-photos:/app/public/feedback-photos
-      - ./public/pet-photos:/app/public/pet-photos
+      - eden-bowls-avatars-qa:/app/public/avatars
+      - eden-bowls-feedback-photos-qa:/app/public/feedback-photos
+      - eden-bowls-pet-photos-qa:/app/public/pet-photos
+      - eden-bowls-ups-labels-qa:/app/ups-labels
       - ./data:/app/data:ro
     healthcheck:
       test:
@@ -58,3 +60,7 @@ services:
 
 volumes:
   eden-bowls-mysql-qa-data:
+  eden-bowls-avatars-qa:
+  eden-bowls-feedback-photos-qa:
+  eden-bowls-pet-photos-qa:
+  eden-bowls-ups-labels-qa:

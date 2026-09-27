@@ -584,6 +584,10 @@ async function bootstrap() {
     avatarPublicDir,
     feedbackPhotoPublicDir,
     petPhotoPublicDir,
+    dataSource,
+    logger,
+    nodeEnv: env.NODE_ENV,
+    metricsToken: env.METRICS_TOKEN,
     geoService,
     jwt: {
       secret: env.JWT_AUTH_SECRET_KEY,
