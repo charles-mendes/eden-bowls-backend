@@ -4,6 +4,7 @@ function createPrivacyMailer(options = {}) {
   const logger = options.logger || { info() {}, error() {} };
   const nodeEnv = options.nodeEnv || process.env.NODE_ENV || 'development';
   const smtpMailer = options.otpMailer || null;
+  const emailAssetBaseUrl = options.emailAssetBaseUrl || '';
 
   return {
     async sendIdentityVerificationEmail({ to, confirmUrl, locale }) {
@@ -12,7 +13,11 @@ function createPrivacyMailer(options = {}) {
         throw new Error('Verification recipient is missing.');
       }
 
-      const content = buildPrivacyEmailContent({ confirmUrl, locale });
+      const content = buildPrivacyEmailContent({
+        confirmUrl,
+        locale,
+        assetBaseUrl: emailAssetBaseUrl
+      });
 
       if (!smtpMailer || typeof smtpMailer.sendMail !== 'function') {
         if (nodeEnv === 'production') {

@@ -80,13 +80,17 @@ function pillsHtml(items) {
 
 function detailsTableHtml(rows) {
   const body = (rows || [])
-    .filter((row) => row && row.label)
+    .filter((row) => row && row.label && String(row.value ?? '').trim())
     .map((row) => `
       <tr>
         <td style="padding:10px 0;border-bottom:1px solid ${BRAND.border};font-family:${FONT_BODY};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:${BRAND.muted};width:42%;">${escapeHtml(row.label)}</td>
-        <td style="padding:10px 0;border-bottom:1px solid ${BRAND.border};font-family:${FONT_BODY};font-size:15px;color:${BRAND.ink};">${escapeHtml(row.value || '—')}</td>
+        <td style="padding:10px 0;border-bottom:1px solid ${BRAND.border};font-family:${FONT_BODY};font-size:15px;color:${BRAND.ink};">${escapeHtml(row.value)}</td>
       </tr>`)
     .join('');
+
+  if (!body) {
+    return '';
+  }
 
   return `
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:8px 0 12px;">
@@ -94,21 +98,72 @@ function detailsTableHtml(rows) {
 </table>`.trim();
 }
 
+function emailAssetBase(assetBaseUrl, allowRelativeAssets) {
+  const raw = String(assetBaseUrl || '').trim();
+  if (!raw) {
+    return { base: '', relative: false };
+  }
+  if (/^https:\/\//i.test(raw)) {
+    return { base: raw.replace(/\/+$/, ''), relative: false };
+  }
+  if (
+    allowRelativeAssets
+    && /^[A-Za-z0-9._/-]+$/.test(raw)
+    && !raw.includes('..')
+  ) {
+    return { base: raw.replace(/\/+$/, ''), relative: true };
+  }
+  return { base: '', relative: false };
+}
+
+function logoSrc(resolved, fileName) {
+  if (!resolved.base) {
+    return '';
+  }
+  if (resolved.relative) {
+    return `${resolved.base}/${fileName}`;
+  }
+  return `${resolved.base}/email/${fileName}`;
+}
+
+function logoImg(src, width, height, margin) {
+  if (!src) {
+    return '';
+  }
+  return `<img src="${escapeHtml(src)}" width="${width}" height="${height}" alt="Eden Bowls" style="display:block;${margin}width:${width}px;height:${height}px;border:0;">`;
+}
+
 function wrapEmailHtml({
   locale,
   preheader,
   kicker,
   title,
-  innerHtml
+  innerHtml,
+  assetBaseUrl,
+  allowRelativeAssets
 }) {
   const pt = isPortuguese(locale);
   const preview = escapeHtml(preheader || '');
   const footerNote = pt
-    ? 'Carta automática da cozinha Eden. Dúvidas: '
-    : 'An automatic letter from the Eden kitchen. Questions: ';
+    ? 'E-mail automático da Eden Bowls. Dúvidas? Fale com a gente: '
+    : 'Automated email from Eden Bowls. Questions? Reach us at ';
   const legal = pt
-    ? 'Não encaminhe códigos nem senhas. Se você não reconhece este e-mail, ignore.'
-    : 'Do not forward codes or passwords. If you did not expect this email, ignore it.';
+    ? 'Nunca compartilhe códigos ou senhas. Se você não reconhece este e-mail, pode ignorá-lo.'
+    : "Never share codes or passwords. If you don't recognize this email, you can safely ignore it.";
+  const assets = emailAssetBase(assetBaseUrl, allowRelativeAssets);
+  const circle = logoImg(
+    logoSrc(assets, 'logo-circle@2x.png'),
+    96,
+    96,
+    'margin:0 auto;'
+  );
+  const horizontal = logoImg(
+    logoSrc(assets, 'logo-horizontal@2x.png'),
+    132,
+    47,
+    'margin:0 0 12px;'
+  );
+  const nameFallback = `<p style="margin:${circle ? '0' : '12px 0 0'};font-family:${FONT_DISPLAY};font-size:22px;letter-spacing:0.34em;text-transform:uppercase;color:${BRAND.parchment};">${escapeHtml(BRAND.name)}</p>`;
 
   return `<!DOCTYPE html>
 <html lang="${pt ? 'pt-BR' : 'en'}">
@@ -128,10 +183,10 @@ function wrapEmailHtml({
       <td align="center" style="padding:32px 16px;">
         <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;">
           <tr>
-            <td style="background:${BRAND.ink};padding:28px 36px 24px;text-align:center;">
-              <p style="margin:0 0 8px;font-family:${FONT_BODY};font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:${BRAND.clay};">${pt ? 'Da cozinha' : 'From the kitchen'}</p>
-              <p style="margin:0;font-family:${FONT_DISPLAY};font-size:22px;letter-spacing:0.34em;text-transform:uppercase;color:${BRAND.parchment};">Eden Bowls</p>
-              <p style="margin:14px auto 0;width:72px;border-bottom:2px solid ${BRAND.clay};line-height:0;font-size:0;">&nbsp;</p>
+            <td style="background:${BRAND.ink};padding:28px 36px 22px;text-align:center;">
+              ${circle}
+              ${circle ? '' : nameFallback}
+              <p style="margin:12px 0 0;font-family:${FONT_BODY};font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:${BRAND.clay};">${pt ? 'Da cozinha' : 'From the kitchen'}</p>
             </td>
           </tr>
           <tr>
@@ -142,8 +197,8 @@ function wrapEmailHtml({
             </td>
           </tr>
           <tr>
-            <td style="background:${BRAND.parchment};border:1px solid ${BRAND.border};border-top:0;padding:22px 36px 28px;">
-              <p style="margin:0 0 8px;font-family:${FONT_DISPLAY};font-size:13px;letter-spacing:0.2em;text-transform:uppercase;color:${BRAND.ink};">${escapeHtml(BRAND.name)}</p>
+            <td style="background:${BRAND.parchment};border:1px solid ${BRAND.border};border-top:0;padding:24px 36px 28px;">
+              ${horizontal || `<p style="margin:0 0 12px;font-family:${FONT_DISPLAY};font-size:13px;letter-spacing:0.2em;text-transform:uppercase;color:${BRAND.ink};">${escapeHtml(BRAND.name)}</p>`}
               <p style="margin:0 0 8px;font-family:${FONT_BODY};font-size:13px;line-height:1.6;color:${BRAND.muted};">${footerNote}<a href="mailto:${BRAND.support}" style="color:${BRAND.moss};text-decoration:none;">${BRAND.support}</a></p>
               <p style="margin:0;font-family:${FONT_BODY};font-size:12px;line-height:1.55;color:${BRAND.muted};">${escapeHtml(legal)}</p>
             </td>

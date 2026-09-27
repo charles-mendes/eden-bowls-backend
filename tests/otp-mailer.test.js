@@ -6,7 +6,7 @@ describe('OTP email content', () => {
     const content = buildOtpEmailContent({ otp: '847291', expiresInSeconds: 900 });
 
     expect(content.subject).toBe('Seu código de verificação Eden Bowls');
-    expect(content.text).toBe('Seu código de verificação Eden Bowls é 847291. Ele expira em 15 minutos.');
+    expect(content.text).toBe('Seu código de verificação Eden Bowls é 847291. Ele vale por 15 minutos e só funciona nesta sessão. Ninguém da Eden Bowls vai pedir esse código por telefone ou mensagem.');
     expect(content.html).toContain('847291');
     expect(content.html).toContain('#7B876F');
   });
@@ -18,7 +18,7 @@ describe('OTP email content', () => {
       locale: 'en-US'
     })).toEqual(expect.objectContaining({
       subject: 'Your Eden Bowls verification code',
-      text: 'Your Eden Bowls verification code is 847291. This code expires in 15 minutes.'
+      text: 'Your Eden Bowls verification code is 847291. It is valid for 15 minutes and only works in this session. No one from Eden Bowls will ever ask for this code by phone or text message.'
     }));
   });
 

@@ -27,6 +27,7 @@ function createSmtpTransport(smtp = {}) {
 
 function createOtpMailer(options = {}) {
   const logger = options.logger || { debug() {}, info() {}, error() {} };
+  const emailAssetBaseUrl = options.emailAssetBaseUrl || '';
   const nodeEnv = options.nodeEnv || process.env.NODE_ENV || 'development';
   const smtp = options.smtp || {};
   const createTransport = typeof options.createTransport === 'function'
@@ -90,7 +91,12 @@ function createOtpMailer(options = {}) {
         throw new Error('OTP recipient is missing.');
       }
 
-      const content = buildOtpEmailContent({ otp, expiresInSeconds, locale });
+      const content = buildOtpEmailContent({
+        otp,
+        expiresInSeconds,
+        locale,
+        assetBaseUrl: emailAssetBaseUrl
+      });
       return sendMail({
         to: recipient,
         subject: content.subject,
@@ -104,7 +110,12 @@ function createOtpMailer(options = {}) {
         throw new Error('Password reset recipient is missing.');
       }
 
-      const content = buildPasswordResetEmail({ firstName, resetUrl, locale });
+      const content = buildPasswordResetEmail({
+        firstName,
+        resetUrl,
+        locale,
+        assetBaseUrl: emailAssetBaseUrl
+      });
       return sendMail({
         to: recipient,
         subject: content.subject,

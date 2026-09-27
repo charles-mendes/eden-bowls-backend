@@ -254,6 +254,7 @@ function parseEnv(source = process.env) {
     ADMIN_ENFORCE_STAFF_MARKET: toBoolean(rawEnv.ADMIN_ENFORCE_STAFF_MARKET, false),
     ADMIN_APP_URL: firstNonEmpty(rawEnv.ADMIN_APP_URL, 'http://localhost:5174'),
     STORE_APP_URL: firstNonEmpty(rawEnv.STORE_APP_URL, 'http://localhost:5173'),
+    EMAIL_ASSET_BASE_URL: firstNonEmpty(rawEnv.EMAIL_ASSET_BASE_URL) || '',
     MAIL_OPS_TO: String(rawEnv.MAIL_OPS_TO || '')
       .split(',')
       .map((value) => value.trim())

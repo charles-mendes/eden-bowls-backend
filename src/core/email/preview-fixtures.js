@@ -37,14 +37,33 @@ const SAMPLE = {
   confirmUrl: 'https://api.edenbowls.com/api/v1/privacy/identity-confirm?token=preview'
 };
 
-function listEmailPreviews() {
+function listEmailPreviews(options = {}) {
+  const locale = options.locale || 'pt-BR';
+  const en = String(locale).toLowerCase().startsWith('en');
+  const shell = {
+    locale,
+    assetBaseUrl: options.assetBaseUrl,
+    allowRelativeAssets: options.allowRelativeAssets
+  };
+  const sample = en
+    ? {
+      ...SAMPLE,
+      flavors: ['Beef', 'Turkey'],
+      planName: 'Fresh Bowl · 14 days',
+      cycleLabel: 'Every 14 days',
+      totalLabel: '$189.00',
+      nextDeliveryLabel: 'Oct 2, 2026',
+      resumeAtLabel: 'Oct 16, 2026',
+      endsAtLabel: 'Sep 30, 2026'
+    }
+    : SAMPLE;
   return [
     {
       id: 'otp',
       group: 'P0 · conta',
       label: 'OTP de cadastro',
       wired: true,
-      content: buildOtpEmailContent({ otp: '847291', expiresInSeconds: 900, locale: 'pt-BR' })
+      content: buildOtpEmailContent({ otp: '847291', expiresInSeconds: 900, ...shell })
     },
     {
       id: 'password-reset',
@@ -52,73 +71,73 @@ function listEmailPreviews() {
       label: 'Reset de senha',
       wired: false,
       content: buildPasswordResetEmail({
-        firstName: SAMPLE.firstName,
-        resetUrl: SAMPLE.resetUrl,
-        locale: 'pt-BR'
+        firstName: sample.firstName,
+        resetUrl: sample.resetUrl,
+        ...shell
       })
     },
     {
       id: 'order-confirmed',
       group: 'P0 · pedido',
       label: 'Assinatura confirmada',
-      wired: false,
-      content: buildOrderConfirmedEmail({ ...SAMPLE, locale: 'pt-BR' })
+      wired: true,
+      content: buildOrderConfirmedEmail({ ...sample, ...shell })
     },
     {
       id: 'payment-failed',
       group: 'P0 · pedido',
       label: 'Falha de pagamento',
-      wired: false,
-      content: buildPaymentFailedEmail({ ...SAMPLE, amountLabel: SAMPLE.totalLabel, locale: 'pt-BR' })
+      wired: true,
+      content: buildPaymentFailedEmail({ ...sample, amountLabel: sample.totalLabel, ...shell })
     },
     {
       id: 'shipped',
       group: 'P0 · pedido',
       label: 'Enviado com rastreio',
-      wired: false,
-      content: buildShippedEmail({ ...SAMPLE, locale: 'pt-BR' })
+      wired: true,
+      content: buildShippedEmail({ ...sample, ...shell })
     },
     {
       id: 'admin-new-subscription',
       group: 'P0 · operação',
       label: 'Admin · nova assinatura',
-      wired: false,
-      content: buildAdminNewSubscriptionEmail({ ...SAMPLE, locale: 'pt-BR' })
+      wired: true,
+      content: buildAdminNewSubscriptionEmail({ ...sample, ...shell })
     },
     {
       id: 'renewal',
       group: 'P1 · ciclo',
       label: 'Recibo de renovação',
       wired: false,
-      content: buildRenewalEmail({ ...SAMPLE, locale: 'pt-BR' })
+      content: buildRenewalEmail({ ...sample, ...shell })
     },
     {
       id: 'paused',
       group: 'P1 · ciclo',
       label: 'Pausa',
       wired: false,
-      content: buildPausedEmail({ ...SAMPLE, locale: 'pt-BR' })
+      content: buildPausedEmail({ ...sample, ...shell })
     },
     {
       id: 'resumed',
       group: 'P1 · ciclo',
       label: 'Retomada',
       wired: false,
-      content: buildResumedEmail({ ...SAMPLE, locale: 'pt-BR' })
+      content: buildResumedEmail({ ...sample, ...shell })
     },
     {
       id: 'cancelled',
       group: 'P1 · ciclo',
       label: 'Cancelamento',
       wired: false,
-      content: buildCancelledEmail({ ...SAMPLE, locale: 'pt-BR' })
+      content: buildCancelledEmail({ ...sample, ...shell })
     },
     {
       id: 'plan-changed',
       group: 'P1 · ciclo',
       label: 'Mudança de plano',
       wired: false,
-      content: buildPlanChangedEmail({ ...SAMPLE, locale: 'pt-BR' })
+      content: buildPlanChangedEmail({ ...sample, ...shell })
     },
     {
       id: 'invite',
@@ -132,7 +151,7 @@ function listEmailPreviews() {
         roles: ['nutritionist'],
         panelUrl: SAMPLE.panelUrl,
         expiresAt: 1_700_000_000,
-        locale: 'pt-BR'
+        ...shell
       })
     },
     {
@@ -142,7 +161,7 @@ function listEmailPreviews() {
       wired: true,
       content: buildPrivacyEmailContent({
         confirmUrl: SAMPLE.confirmUrl,
-        locale: 'pt-BR'
+        ...shell
       })
     }
   ];

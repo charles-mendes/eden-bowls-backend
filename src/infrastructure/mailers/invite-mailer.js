@@ -3,6 +3,7 @@ const { buildInviteEmailContent } = require('../../core/invite-email');
 
 function createInviteMailer(options = {}) {
   const otpMailer = options.otpMailer || createOtpMailer(options);
+  const emailAssetBaseUrl = options.emailAssetBaseUrl || '';
 
   async function sendInviteEmail(payload = {}) {
     const recipient = String(payload.to || payload.email || '').trim();
@@ -16,7 +17,8 @@ function createInviteMailer(options = {}) {
       temporaryPassword: payload.temporaryPassword,
       roles: payload.roles,
       panelUrl: payload.panelUrl,
-      expiresAt: payload.expiresAt
+      expiresAt: payload.expiresAt,
+      assetBaseUrl: emailAssetBaseUrl
     });
 
     return otpMailer.sendMail({

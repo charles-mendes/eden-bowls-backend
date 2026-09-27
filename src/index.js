@@ -134,6 +134,7 @@ async function bootstrap() {
   const otpMailer = createOtpMailer({
     logger,
     nodeEnv: env.NODE_ENV,
+    emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
     smtp: {
       host: env.AUTH_SMTP_HOST,
       port: env.AUTH_SMTP_PORT,
@@ -308,7 +309,8 @@ async function bootstrap() {
     claimsRepository: subscriptionMailClaimsRepository,
     storeAppUrl: env.STORE_APP_URL,
     adminAppUrl: env.ADMIN_APP_URL,
-    opsEmails: env.MAIL_OPS_TO
+    opsEmails: env.MAIL_OPS_TO,
+    emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
   });
   const stripeWebhookService = new StripeWebhookService({
     stripeAccounts,
@@ -417,7 +419,8 @@ async function bootstrap() {
     mailer: createPrivacyMailer({
       logger,
       nodeEnv: env.NODE_ENV,
-      otpMailer
+      otpMailer,
+      emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
     }),
     publicBaseUrl: String(env.JWT_AUTH_ISSUER || '').replace(/\/+$/, ''),
     ipPepper: env.AUTH_OTP_PEPPER || env.JWT_AUTH_SECRET_KEY,
@@ -514,7 +517,10 @@ async function bootstrap() {
     profileService,
     profileRepository,
     refreshTokenRepository: authRefreshTokenRepository,
-    inviteMailer: createInviteMailer({ otpMailer }),
+    inviteMailer: createInviteMailer({
+      otpMailer,
+      emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
+    }),
     auditService: adminAuditService,
     ledgerRepository: subscriptionLedgerRepository,
     adminEmails: env.ADMIN_EMAILS,

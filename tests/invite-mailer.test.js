@@ -13,7 +13,7 @@ describe('staff invite email', () => {
       expiresAt: 1_700_000_000
     });
 
-    expect(content.subject).toBe('Your Eden Bowls admin access');
+    expect(content.subject).toBe('Your access to the Eden Bowls dashboard');
     expect(content.text).toContain('Nutricionista');
     expect(content.text).not.toContain('nutritionist');
     expect(content.text).toContain('TempPassword#12345');
@@ -38,7 +38,7 @@ describe('staff invite email', () => {
 
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
       to: 'lia@edenbowls.com',
-      subject: 'Your Eden Bowls admin access',
+      subject: 'Your access to the Eden Bowls dashboard',
       text: expect.stringContaining('TempPassword#12345'),
       html: expect.stringContaining('TempPassword#12345')
     }));

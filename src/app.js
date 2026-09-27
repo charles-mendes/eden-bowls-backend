@@ -116,6 +116,7 @@ function createApp(dependencies = {}) {
     next();
   });
   app.use(express.json({ limit: '1mb' }));
+  app.use('/email', express.static(dependencies.emailPublicDir || path.join(process.cwd(), 'public', 'email')));
   app.use('/avatars', express.static(dependencies.avatarPublicDir || path.join(process.cwd(), 'public', 'avatars')));
   app.use('/feedback-photos', express.static(dependencies.feedbackPhotoPublicDir || path.join(process.cwd(), 'public', 'feedback-photos')));
   app.use('/pet-photos', express.static(dependencies.petPhotoPublicDir || path.join(process.cwd(), 'public', 'pet-photos')));

@@ -26,6 +26,7 @@ function createTransactionalMailer(options = {}) {
   const otpMailer = options.otpMailer || null;
   const claimsRepository = options.claimsRepository || null;
   const storeAppUrl = options.storeAppUrl || 'http://localhost:5173';
+  const emailAssetBaseUrl = options.emailAssetBaseUrl || '';
   const adminAppUrl = options.adminAppUrl || 'http://localhost:5174';
   const opsEmails = Array.isArray(options.opsEmails) ? options.opsEmails.filter(Boolean) : [];
 
@@ -110,7 +111,8 @@ function createTransactionalMailer(options = {}) {
         : '',
       totalLabel: formatMoney(invoice.amount_paid || invoice.total, invoice.currency),
       dashboardUrl: dashboardPlansUrl(storeAppUrl),
-      locale
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
     });
 
     return sendClaimed({
@@ -141,7 +143,8 @@ function createTransactionalMailer(options = {}) {
       planName: ledger.planLabel || '',
       totalLabel: formatMoney(invoice.amount_paid || invoice.total, invoice.currency),
       adminUrl: joinPath(adminAppUrl, ''),
-      locale
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
     });
 
     if (!canSend()) {
@@ -211,7 +214,8 @@ function createTransactionalMailer(options = {}) {
       petName: petNameFrom(ledger),
       amountLabel: formatMoney(amount, object.currency),
       updatePaymentUrl: dashboardPlansUrl(storeAppUrl),
-      locale: localeFrom(ledger)
+      locale: localeFrom(ledger),
+      assetBaseUrl: emailAssetBaseUrl
     });
 
     return sendClaimed({
@@ -250,7 +254,8 @@ function createTransactionalMailer(options = {}) {
       trackingNumber,
       carrier: 'UPS',
       trackingUrl: `https://www.ups.com/track?tracknum=${encodeURIComponent(trackingNumber)}`,
-      locale: localeFrom(source)
+      locale: localeFrom(source),
+      assetBaseUrl: emailAssetBaseUrl
     });
 
     return sendClaimed({

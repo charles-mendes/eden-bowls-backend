@@ -13,39 +13,59 @@ function joinList(items) {
   return (items || []).filter(Boolean).join(', ');
 }
 
+function greet(pt, firstName) {
+  const name = String(firstName || '').trim();
+  if (pt) {
+    return name ? `Oi, ${name}.` : 'Oi.';
+  }
+  return name ? `Hi ${name},` : 'Hi,';
+}
+
+function petLabel(pt, petName) {
+  return String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
+}
+
+function renderLetter(fields) {
+  return wrapEmailHtml(fields);
+}
+
 function buildPasswordResetEmail({
   firstName,
   resetUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const name = String(firstName || '').trim() || (pt ? 'oi' : 'there');
+  const hello = greet(pt, firstName);
   const url = String(resetUrl || '').trim();
-  const subject = pt ? 'Redefinir senha da Eden Bowls' : 'Reset your Eden Bowls password';
+  const subject = pt ? 'Redefinir sua senha da Eden Bowls' : 'Reset your Eden Bowls password';
   const text = pt
-    ? `Oi ${name}, recebemos um pedido para redefinir sua senha. Abra este link: ${url}`
-    : `Hi ${name}, we received a request to reset your password. Open this link: ${url}`;
+    ? `${hello} Recebemos um pedido para redefinir a senha da sua conta. Se foi você, abra este link para criar uma nova senha: ${url}\nO link só pode ser usado uma vez e expira em pouco tempo. Se não foi você quem pediu, ignore este e-mail. Sua senha continua a mesma.`
+    : `${hello} we received a request to reset the password for your account. If that was you, open this link to choose a new one: ${url}\nThis link can only be used once and expires shortly. If you did not request this, you can ignore this email. Your password stays the same.`;
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${name}, alguém pediu uma senha nova nesta conta. Se foi você, o caminho está abaixo. Se não foi, deixe esta carta na mesa.`
-      : `Hi ${name}, someone asked for a new password on this account. If it was you, the path is below. If not, leave this letter on the table.`),
-    url ? buttonHtml({ href: url, label: pt ? 'Escolher nova senha' : 'Choose a new password' }) : '',
+      ? `${hello} Recebemos um pedido para redefinir a senha da sua conta. Se foi você, clique no botão abaixo para criar uma nova senha.`
+      : `${hello} we received a request to reset the password for your account. If that was you, click the button below to choose a new one.`),
+    url ? buttonHtml({ href: url, label: pt ? 'Criar nova senha' : 'Choose a new password' }) : '',
     mutedHtml(pt
-      ? 'O link expira em pouco tempo e só funciona uma vez.'
-      : 'The link expires soon and works only once.')
+      ? 'O link só pode ser usado uma vez e expira em pouco tempo. Se não foi você quem pediu, ignore este e-mail. Sua senha continua a mesma.'
+      : 'This link can only be used once and expires shortly. If you did not request this, you can ignore this email. Your password stays the same.')
   ].join('');
 
   return {
     id: 'password-reset',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'Um caminho curto para uma senha nova.' : 'A short path to a new password.',
+      preheader: pt ? 'Crie uma nova senha em poucos passos.' : 'Create a new password in a few steps.',
       kicker: pt ? 'Conta' : 'Account',
-      title: pt ? 'A chave da cozinha' : 'The kitchen key',
-      innerHtml
+      title: pt ? 'Redefinir senha' : 'Reset your password',
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
@@ -58,48 +78,58 @@ function buildOrderConfirmedEmail({
   cycleLabel,
   totalLabel,
   dashboardUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const name = String(firstName || '').trim() || (pt ? 'oi' : 'there');
-  const pet = String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
   const flavorList = joinList(flavors);
   const subject = pt
-    ? `A tigela de ${pet} já está na fila`
-    : `${pet}’s bowl is on the board`;
+    ? `A tigela da ${pet} entrou na cozinha`
+    : `${pet}'s bowl is in the kitchen`;
   const text = [
-    pt ? `Oi ${name}, a assinatura de ${pet} foi confirmada.` : `Hi ${name}, ${pet}’s subscription is confirmed.`,
-    planName ? `${pt ? 'Plano' : 'Plan'}: ${planName}` : '',
+    pt
+      ? `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. Nossa cozinha já começou a preparar a primeira entrega.`
+      : `${hello} your payment was approved and ${pet}'s subscription is active. Our kitchen has already started preparing the first delivery.`,
     flavorList ? `${pt ? 'Sabores' : 'Flavors'}: ${flavorList}` : '',
+    `${pt ? 'Pet' : 'Pet'}: ${pet}`,
+    planName ? `${pt ? 'Plano' : 'Plan'}: ${planName}` : '',
+    cycleLabel ? `${pt ? 'Frequência' : 'Frequency'}: ${cycleLabel}` : '',
     totalLabel ? `${pt ? 'Total' : 'Total'}: ${totalLabel}` : '',
     url
   ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${name}, o primeiro ciclo de ${pet} entrou na cozinha. Daqui para a frente, a carta chega quando a tigela muda de lugar — cobrada, pausada ou a caminho.`
-      : `Hi ${name}, ${pet}’s first cycle is in the kitchen. From here, a letter arrives when the bowl moves — charged, paused, or on the way.`),
+      ? `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. Nossa cozinha já começou a preparar a primeira entrega. Daqui para a frente, você recebe um e-mail sempre que a tigela dela mudar de lugar: cobrada, enviada, pausada ou com o plano ajustado.`
+      : `${hello} your payment was approved and ${pet}'s subscription is active. Our kitchen has already started preparing the first delivery. From now on, you'll get an email whenever the bowl moves: charged, shipped, paused or updated.`),
     pillsHtml(flavors),
     detailsTableHtml([
-      { label: pt ? 'Cão' : 'Dog', value: pet },
+      { label: 'Pet', value: pet },
       { label: pt ? 'Plano' : 'Plan', value: planName },
-      { label: pt ? 'Ciclo' : 'Cycle', value: cycleLabel },
-      { label: pt ? 'Total' : 'Total', value: totalLabel }
+      { label: pt ? 'Frequência' : 'Frequency', value: cycleLabel },
+      { label: 'Total', value: totalLabel }
     ]),
-    url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'See my plan' }) : ''
+    url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'View my plan' }) : ''
   ].join('');
 
   return {
     id: 'order-confirmed',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'Assinatura confirmada. A tigela entrou na fila.' : 'Subscription confirmed. The bowl is on the board.',
+      preheader: pt
+        ? 'Assinatura confirmada. A primeira entrega já está sendo preparada.'
+        : 'Subscription confirmed. The first delivery is already being prepared.',
       kicker: pt ? 'Primeiro ciclo' : 'First cycle',
-      title: pt ? `A tigela de ${pet}` : `${pet}’s bowl`,
-      innerHtml
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
@@ -109,38 +139,53 @@ function buildPaymentFailedEmail({
   petName,
   amountLabel,
   updatePaymentUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const name = String(firstName || '').trim() || (pt ? 'oi' : 'there');
-  const pet = String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
   const url = String(updatePaymentUrl || '').trim();
-  const subject = pt ? 'A cobrança da tigela não passou' : 'The bowl charge did not go through';
-  const text = pt
-    ? `Oi ${name}, a cobrança de ${pet}${amountLabel ? ` (${amountLabel})` : ''} não foi concluída. Atualize o pagamento: ${url}`
-    : `Hi ${name}, ${pet}’s charge${amountLabel ? ` (${amountLabel})` : ''} did not complete. Update payment: ${url}`;
+  const subject = pt
+    ? `Não conseguimos processar o pagamento da ${pet}`
+    : `We couldn't process ${pet}'s payment`;
+  const text = [
+    pt
+      ? `${hello} Tentamos cobrar o ciclo da ${pet}, mas o cartão não autorizou o pagamento. A tigela fica em espera até o pagamento ser confirmado.`
+      : `${hello} we tried to charge ${pet}'s cycle, but the card didn't authorize the payment. The bowl is on hold until the payment is confirmed.`,
+    amountLabel ? `${pt ? 'Valor' : 'Amount'}: ${amountLabel}` : '',
+    url,
+    pt
+      ? 'Se você já resolveu, pode ignorar este e-mail. O próximo ciclo segue normalmente.'
+      : "If you've already fixed this, you can ignore this email. The next cycle will continue as usual."
+  ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${name}, tentamos cobrar o ciclo de ${pet} e o cartão recusou. A fila pausa até o pagamento voltar a passar.`
-      : `Hi ${name}, we tried to charge ${pet}’s cycle and the card declined. The line waits until payment goes through.`),
-    amountLabel ? detailsTableHtml([{ label: pt ? 'Valor' : 'Amount', value: amountLabel }]) : '',
-    url ? buttonHtml({ href: url, label: pt ? 'Atualizar pagamento' : 'Update payment' }) : '',
+      ? `${hello} Tentamos cobrar o ciclo da ${pet}, mas o cartão não autorizou o pagamento. A tigela dela fica em espera até o pagamento ser confirmado. É só atualizar a forma de pagamento.`
+      : `${hello} we tried to charge ${pet}'s cycle, but the card didn't authorize the payment. The bowl is on hold until the payment is confirmed. Just update your payment method.`),
+    detailsTableHtml([{ label: pt ? 'Valor' : 'Amount', value: amountLabel }]),
+    url ? buttonHtml({ href: url, label: pt ? 'Atualizar pagamento' : 'Update payment method' }) : '',
     mutedHtml(pt
-      ? 'Se já resolveu, ignore esta carta. O próximo ciclo segue no ritmo combinado.'
-      : 'If you already fixed it, ignore this letter. The next cycle keeps the agreed rhythm.')
+      ? 'Se você já resolveu, pode ignorar este e-mail. O próximo ciclo segue normalmente.'
+      : "If you've already fixed this, you can ignore this email. The next cycle will continue as usual.")
   ].join('');
 
   return {
     id: 'payment-failed',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'O cartão recusou. A tigela espera.' : 'The card declined. The bowl is waiting.',
-      kicker: pt ? 'Cobrança' : 'Billing',
-      title: pt ? 'A conta da mesa voltou' : 'The check came back',
-      innerHtml
+      preheader: pt
+        ? 'Atualize a forma de pagamento para a cozinha voltar a preparar as tigelas.'
+        : 'Update your payment method so the kitchen can get back to preparing the bowls.',
+      kicker: pt ? 'Pagamento' : 'Payment',
+      title: pt ? 'O pagamento não foi aprovado' : "Your payment didn't go through",
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
@@ -151,42 +196,55 @@ function buildShippedEmail({
   trackingNumber,
   carrier,
   trackingUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const name = String(firstName || '').trim() || (pt ? 'oi' : 'there');
-  const pet = String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
   const tracking = String(trackingNumber || '').trim();
   const url = String(trackingUrl || '').trim();
-  const subject = pt ? `A tigela de ${pet} saiu da cozinha` : `${pet}’s bowl left the kitchen`;
+  const shipper = String(carrier || '').trim() || 'UPS';
+  const subject = pt
+    ? `A tigela da ${pet} saiu da cozinha`
+    : `${pet}'s bowl has left the kitchen`;
   const text = [
-    pt ? `Oi ${name}, o envio de ${pet} está a caminho.` : `Hi ${name}, ${pet}’s shipment is on the way.`,
+    pt
+      ? `${hello} As refeições da ${pet} já estão a caminho com a ${shipper}.`
+      : `${hello} ${pet}'s meals are on their way with ${shipper}.`,
     tracking ? `${pt ? 'Rastreio' : 'Tracking'}: ${tracking}` : '',
+    `${pt ? 'Pet' : 'Pet'}: ${pet}`,
+    `${pt ? 'Transportadora' : 'Carrier'}: ${shipper}`,
     url
   ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${name}, as tigelas de ${pet} deixaram a bancada. Guarde o código — é o fio entre a cozinha e a porta.`
-      : `Hi ${name}, ${pet}’s bowls left the counter. Keep the code — it is the thread between the kitchen and the door.`),
+      ? `${hello} As refeições da ${pet} já estão a caminho com a ${shipper}. Use o código abaixo para acompanhar a entrega até a sua porta.`
+      : `${hello} ${pet}'s meals are on their way with ${shipper}. Use the number below to follow the delivery to your door.`),
     tracking ? codeWellHtml(tracking) : '',
     detailsTableHtml([
-      { label: pt ? 'Cão' : 'Dog', value: pet },
-      { label: pt ? 'Transportadora' : 'Carrier', value: carrier }
+      { label: 'Pet', value: pet },
+      { label: pt ? 'Transportadora' : 'Carrier', value: shipper }
     ]),
-    url ? buttonHtml({ href: url, label: pt ? 'Acompanhar envio' : 'Track shipment' }) : ''
+    url ? buttonHtml({ href: url, label: pt ? 'Rastrear entrega' : 'Track delivery' }) : ''
   ].join('');
 
   return {
     id: 'shipped',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'Saiu para entrega. O código de rastreio está nesta carta.' : 'Out for delivery. The tracking code is in this letter.',
+      preheader: pt
+        ? 'Seu pedido foi enviado. O código de rastreio está aqui.'
+        : 'Your order has shipped. Your tracking number is here.',
       kicker: pt ? 'Entrega' : 'Delivery',
-      title: pt ? 'A caminho da tigela' : 'On the way to the bowl',
-      innerHtml
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
@@ -198,44 +256,50 @@ function buildAdminNewSubscriptionEmail({
   planName,
   totalLabel,
   adminUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const subject = pt ? 'Nova assinatura paga na Eden Bowls' : 'New paid Eden Bowls subscription';
+  const subject = pt ? 'Nova assinatura paga na Eden Bowls' : 'New paid subscription on Eden Bowls';
   const text = [
-    pt ? 'Uma nova assinatura foi paga.' : 'A new subscription was paid.',
-    customerName,
-    customerEmail,
-    petName,
-    planName,
-    totalLabel,
+    pt
+      ? 'Uma nova assinatura acaba de ser paga. Confira os dados do cliente e do plano no painel.'
+      : 'A new subscription has just been paid. Check the customer and plan details in the dashboard.',
+    customerName ? `${pt ? 'Cliente' : 'Customer'}: ${customerName}` : '',
+    customerEmail ? `E-mail: ${customerEmail}` : '',
+    petName ? `Pet: ${petName}` : '',
+    planName ? `${pt ? 'Plano' : 'Plan'}: ${planName}` : '',
+    totalLabel ? `Total: ${totalLabel}` : '',
     adminUrl
   ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? 'Entrou um primeiro ciclo pago. Confira o cliente e a tigela no painel.'
-      : 'A first paid cycle just landed. Check the customer and the bowl in the panel.'),
+      ? 'Uma nova assinatura acaba de ser paga. Confira os dados do cliente e do plano no painel.'
+      : 'A new subscription has just been paid. Check the customer and plan details in the dashboard.'),
     detailsTableHtml([
       { label: pt ? 'Cliente' : 'Customer', value: customerName },
-      { label: 'E-mail', value: customerEmail },
-      { label: pt ? 'Cão' : 'Dog', value: petName },
+      { label: pt ? 'E-mail' : 'Email', value: customerEmail },
+      { label: 'Pet', value: petName },
       { label: pt ? 'Plano' : 'Plan', value: planName },
-      { label: pt ? 'Total' : 'Total', value: totalLabel }
+      { label: 'Total', value: totalLabel }
     ]),
-    adminUrl ? buttonHtml({ href: adminUrl, label: pt ? 'Abrir no painel' : 'Open in the panel' }) : ''
+    adminUrl ? buttonHtml({ href: adminUrl, label: pt ? 'Abrir no painel' : 'Open dashboard' }) : ''
   ].join('');
 
   return {
     id: 'admin-new-subscription',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'Primeiro ciclo pago. Abrir no painel.' : 'First paid cycle. Open in the panel.',
-      kicker: pt ? 'Operação' : 'Ops',
-      title: pt ? 'Nova tigela na fila' : 'A new bowl on the board',
-      innerHtml
+      preheader: pt ? 'Primeiro ciclo pago. Confira no painel.' : 'First cycle paid. Check the dashboard.',
+      kicker: pt ? 'Operação' : 'Operations',
+      title: pt ? 'Nova tigela na fila' : 'New bowl in the queue',
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
@@ -247,40 +311,56 @@ function buildRenewalEmail({
   totalLabel,
   nextDeliveryLabel,
   dashboardUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const name = String(firstName || '').trim() || (pt ? 'oi' : 'there');
-  const pet = String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
-  const subject = pt ? `O ciclo de ${pet} foi cobrado` : `${pet}’s cycle was charged`;
-  const text = pt
-    ? `Oi ${name}, o ciclo de ${pet} foi cobrado${totalLabel ? ` (${totalLabel})` : ''}.`
-    : `Hi ${name}, ${pet}’s cycle was charged${totalLabel ? ` (${totalLabel})` : ''}.`;
+  const flavorList = joinList(flavors);
+  const subject = pt
+    ? `Mais um ciclo na cozinha: recibo da ${pet}`
+    : `Another cycle in the kitchen: ${pet}'s receipt`;
+  const text = [
+    pt
+      ? `${hello} A assinatura da ${pet} foi renovada e o pagamento do novo ciclo está confirmado. Este e-mail é o seu recibo.`
+      : `${hello} ${pet}'s subscription has been renewed and the payment for the new cycle is confirmed. This email is your receipt.`,
+    flavorList ? `${pt ? 'Sabores' : 'Flavors'}: ${flavorList}` : '',
+    `Pet: ${pet}`,
+    totalLabel ? `${pt ? 'Valor cobrado' : 'Amount charged'}: ${totalLabel}` : '',
+    nextDeliveryLabel ? `${pt ? 'Próxima entrega' : 'Next delivery'}: ${nextDeliveryLabel}` : '',
+    url
+  ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${name}, o ritmo da tigela de ${pet} segue. Esta carta é o recibo do ciclo — não um novo pedido solto.`
-      : `Hi ${name}, ${pet}’s bowl keeps its rhythm. This letter is the cycle receipt — not a one-off order.`),
+      ? `${hello} A assinatura da ${pet} foi renovada e o pagamento do novo ciclo está confirmado. Este e-mail é o seu recibo. Não precisa fazer nada: a cozinha segue no ritmo combinado.`
+      : `${hello} ${pet}'s subscription has been renewed and the payment for the new cycle is confirmed. This email is your receipt. Nothing to do: the kitchen keeps its usual rhythm.`),
     pillsHtml(flavors),
     detailsTableHtml([
-      { label: pt ? 'Cão' : 'Dog', value: pet },
-      { label: pt ? 'Cobrado' : 'Charged', value: totalLabel },
+      { label: 'Pet', value: pet },
+      { label: pt ? 'Valor cobrado' : 'Amount charged', value: totalLabel },
       { label: pt ? 'Próxima entrega' : 'Next delivery', value: nextDeliveryLabel }
     ]),
-    url ? buttonHtml({ href: url, label: pt ? 'Ver o ciclo' : 'See the cycle' }) : ''
+    url ? buttonHtml({ href: url, label: pt ? 'Ver detalhes do ciclo' : 'View cycle details' }) : ''
   ].join('');
 
   return {
     id: 'renewal',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'Recibo do ciclo. A tigela continua.' : 'Cycle receipt. The bowl continues.',
+      preheader: pt
+        ? 'Pagamento confirmado. A próxima entrega já tem data.'
+        : 'Payment confirmed. Your next delivery is scheduled.',
       kicker: pt ? 'Renovação' : 'Renewal',
-      title: pt ? 'Outra volta na mesa' : 'Another turn at the table',
-      innerHtml
+      title: pt ? 'Mais um ciclo na cozinha' : 'Another cycle in the kitchen',
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
@@ -290,38 +370,52 @@ function buildPausedEmail({
   petName,
   resumeAtLabel,
   dashboardUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const name = String(firstName || '').trim() || (pt ? 'oi' : 'there');
-  const pet = String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
-  const subject = pt ? `A tigela de ${pet} está pausada` : `${pet}’s bowl is paused`;
-  const text = pt
-    ? `Oi ${name}, a assinatura de ${pet} foi pausada.`
-    : `Hi ${name}, ${pet}’s subscription is paused.`;
+  const resume = String(resumeAtLabel || '').trim();
+  const subject = pt
+    ? `A tigela da ${pet} está pausada`
+    : `${pet}'s bowl is paused`;
+  const text = [
+    pt
+      ? `${hello} Pausamos a assinatura da ${pet} como você pediu. Enquanto estiver pausada, não haverá entregas nem cobranças.`
+      : `${hello} we've paused ${pet}'s subscription as you asked. While it's paused, there won't be any deliveries or charges.`,
+    `Pet: ${pet}`,
+    resume ? `${pt ? 'Retomada prevista' : 'Scheduled to resume'}: ${resume}` : '',
+    url
+  ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${name}, a cozinha guarda o lugar de ${pet}. Nada sai até você retomar.`
-      : `Hi ${name}, the kitchen is holding ${pet}’s place. Nothing leaves until you resume.`),
+      ? `${hello} Pausamos a assinatura da ${pet} como você pediu. Enquanto estiver pausada, não haverá entregas nem cobranças. A cozinha guarda o lugar dela, e você retoma quando quiser.`
+      : `${hello} we've paused ${pet}'s subscription as you asked. While it's paused, there won't be any deliveries or charges. The kitchen keeps the place, and you can resume whenever you like.`),
     detailsTableHtml([
-      { label: pt ? 'Cão' : 'Dog', value: pet },
-      { label: pt ? 'Retomar em' : 'Resume on', value: resumeAtLabel }
+      { label: 'Pet', value: pet },
+      { label: pt ? 'Retomada prevista' : 'Scheduled to resume', value: resume }
     ]),
-    url ? buttonHtml({ href: url, label: pt ? 'Retomar plano' : 'Resume plan' }) : ''
+    url ? buttonHtml({ href: url, label: pt ? 'Retomar assinatura' : 'Resume subscription' }) : ''
   ].join('');
 
   return {
     id: 'paused',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'A fila espera. Você retoma quando quiser.' : 'The line waits. You resume when you want.',
-      kicker: pt ? 'Pausa' : 'Pause',
-      title: pt ? 'A tigela na prateleira' : 'The bowl on the shelf',
-      innerHtml
+      preheader: pt
+        ? 'Nenhuma entrega ou cobrança até você retomar.'
+        : 'No deliveries or charges until you resume.',
+      kicker: pt ? 'Pausa' : 'Paused',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
@@ -331,38 +425,51 @@ function buildResumedEmail({
   petName,
   nextDeliveryLabel,
   dashboardUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const name = String(firstName || '').trim() || (pt ? 'oi' : 'there');
-  const pet = String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
-  const subject = pt ? `A tigela de ${pet} voltou à fila` : `${pet}’s bowl is back on the board`;
-  const text = pt
-    ? `Oi ${name}, a assinatura de ${pet} foi retomada.`
-    : `Hi ${name}, ${pet}’s subscription is resumed.`;
+  const subject = pt
+    ? `A ${pet} está de volta à cozinha`
+    : `${pet} is back in the kitchen`;
+  const text = [
+    pt
+      ? `${hello} A assinatura da ${pet} está ativa de novo e as entregas voltam ao ritmo normal.`
+      : `${hello} ${pet}'s subscription is active again and deliveries are back on schedule.`,
+    `Pet: ${pet}`,
+    nextDeliveryLabel ? `${pt ? 'Próxima entrega' : 'Next delivery'}: ${nextDeliveryLabel}` : '',
+    url
+  ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${name}, ${pet} voltou ao ritmo. A próxima tigela já tem data na bancada.`
-      : `Hi ${name}, ${pet} is back in rhythm. The next bowl already has a date on the counter.`),
+      ? `${hello} A assinatura da ${pet} está ativa de novo e as entregas voltam ao ritmo normal. A próxima tigela já tem data marcada.`
+      : `${hello} ${pet}'s subscription is active again and deliveries are back on schedule. The next bowl already has a date.`),
     detailsTableHtml([
-      { label: pt ? 'Cão' : 'Dog', value: pet },
+      { label: 'Pet', value: pet },
       { label: pt ? 'Próxima entrega' : 'Next delivery', value: nextDeliveryLabel }
     ]),
-    url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'See my plan' }) : ''
+    url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'View my plan' }) : ''
   ].join('');
 
   return {
     id: 'resumed',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'A pausa acabou. A tigela volta a sair.' : 'The pause is over. The bowl leaves again.',
-      kicker: pt ? 'Retomada' : 'Resume',
-      title: pt ? 'De volta à bancada' : 'Back on the counter',
-      innerHtml
+      preheader: pt
+        ? 'Assinatura retomada. As entregas voltam ao ritmo normal.'
+        : 'Subscription resumed. Deliveries are back on schedule.',
+      kicker: pt ? 'Retomada' : 'Resumed',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
@@ -372,38 +479,54 @@ function buildCancelledEmail({
   petName,
   endsAtLabel,
   dashboardUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const name = String(firstName || '').trim() || (pt ? 'oi' : 'there');
-  const pet = String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
-  const subject = pt ? `A assinatura de ${pet} foi encerrada` : `${pet}’s subscription is ending`;
-  const text = pt
-    ? `Oi ${name}, a assinatura de ${pet} foi cancelada${endsAtLabel ? ` e segue até ${endsAtLabel}` : ''}.`
-    : `Hi ${name}, ${pet}’s subscription is cancelled${endsAtLabel ? ` and runs until ${endsAtLabel}` : ''}.`;
+  const subject = pt
+    ? `A assinatura da ${pet} foi encerrada`
+    : `${pet}'s subscription has been cancelled`;
+  const text = [
+    pt
+      ? `${hello} Confirmamos o cancelamento da assinatura da ${pet}. Se ainda houver um ciclo pago, as entregas continuam até o fim dele; depois disso, não haverá novas cobranças.`
+      : `${hello} we've confirmed the cancellation of ${pet}'s subscription. If there's a paid cycle still running, deliveries continue until it ends; after that, there will be no further charges.`,
+    `Pet: ${pet}`,
+    endsAtLabel ? `${pt ? 'Válida até' : 'Active until'}: ${endsAtLabel}` : '',
+    url
+  ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${name}, recebemos o encerramento da tigela de ${pet}. Se ainda houver ciclo pago, ele chega até o fim combinado.`
-      : `Hi ${name}, we received the end of ${pet}’s bowl. If a paid cycle remains, it still arrives through the agreed date.`),
+      ? `${hello} Confirmamos o cancelamento da assinatura da ${pet}. Se ainda houver um ciclo pago, as entregas continuam até o fim dele; depois disso, não haverá novas cobranças.`
+      : `${hello} we've confirmed the cancellation of ${pet}'s subscription. If there's a paid cycle still running, deliveries continue until it ends; after that, there will be no further charges.`),
     detailsTableHtml([
-      { label: pt ? 'Cão' : 'Dog', value: pet },
+      { label: 'Pet', value: pet },
       { label: pt ? 'Válida até' : 'Active until', value: endsAtLabel }
     ]),
-    url ? buttonHtml({ href: url, label: pt ? 'Reabrir um plano' : 'Start a plan again' }) : ''
+    url ? buttonHtml({ href: url, label: pt ? 'Reativar assinatura' : 'Reactivate subscription' }) : '',
+    mutedHtml(pt
+      ? `Se mudar de ideia, a cozinha fica de portas abertas: é só reativar, que o plano e as preferências da ${pet} continuam salvos.`
+      : `If you change your mind, the kitchen door stays open: just reactivate, and ${pet}'s plan and preferences will still be saved.`)
   ].join('');
 
   return {
     id: 'cancelled',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'A mesa guarda o lugar, se você voltar.' : 'The table keeps a place, if you return.',
+      preheader: pt
+        ? `Sentiremos falta da ${pet}. A cozinha fica de portas abertas.`
+        : `We'll miss ${pet}. The kitchen door stays open.`,
       kicker: pt ? 'Cancelamento' : 'Cancellation',
-      title: pt ? 'A última tigela deste ciclo' : 'The last bowl of this cycle',
-      innerHtml
+      title: pt ? 'Assinatura encerrada' : 'Subscription cancelled',
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
@@ -415,40 +538,54 @@ function buildPlanChangedEmail({
   flavors,
   totalLabel,
   dashboardUrl,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 } = {}) {
   const pt = isPortuguese(locale || 'pt-BR');
-  const name = String(firstName || '').trim() || (pt ? 'oi' : 'there');
-  const pet = String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
-  const subject = pt ? `O plano de ${pet} mudou` : `${pet}’s plan changed`;
-  const text = pt
-    ? `Oi ${name}, o plano de ${pet} foi atualizado${planName ? `: ${planName}` : ''}.`
-    : `Hi ${name}, ${pet}’s plan was updated${planName ? `: ${planName}` : ''}.`;
+  const flavorList = joinList(flavors);
+  const subject = pt
+    ? `O cardápio da ${pet} mudou`
+    : `${pet}'s menu has changed`;
+  const text = [
+    pt
+      ? `${hello} As alterações no plano da ${pet} foram salvas, e a próxima entrega já sai com o novo cardápio.`
+      : `${hello} the changes to ${pet}'s plan have been saved, and the next delivery will go out with the new menu.`,
+    flavorList ? `${pt ? 'Sabores' : 'Flavors'}: ${flavorList}` : '',
+    `Pet: ${pet}`,
+    planName ? `${pt ? 'Plano' : 'Plan'}: ${planName}` : '',
+    totalLabel ? `Total: ${totalLabel}` : '',
+    url
+  ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${name}, a receita da tigela de ${pet} foi reescrita. Confira sabores e ciclo — a próxima saída já usa este cardápio.`
-      : `Hi ${name}, ${pet}’s bowl recipe was rewritten. Check flavors and cycle — the next ship-out already uses this menu.`),
+      ? `${hello} As alterações no plano da ${pet} foram salvas, e a próxima entrega já sai com o novo cardápio. Confira o resumo abaixo.`
+      : `${hello} the changes to ${pet}'s plan have been saved, and the next delivery will go out with the new menu. Here's a summary.`),
     pillsHtml(flavors),
     detailsTableHtml([
-      { label: pt ? 'Cão' : 'Dog', value: pet },
+      { label: 'Pet', value: pet },
       { label: pt ? 'Plano' : 'Plan', value: planName },
-      { label: pt ? 'Total' : 'Total', value: totalLabel }
+      { label: 'Total', value: totalLabel }
     ]),
-    url ? buttonHtml({ href: url, label: pt ? 'Ver detalhes' : 'See details' }) : ''
+    url ? buttonHtml({ href: url, label: pt ? 'Ver detalhes' : 'View details' }) : ''
   ].join('');
 
   return {
     id: 'plan-changed',
     subject,
     text,
-    html: wrapEmailHtml({
+    html: renderLetter({
       locale: locale || 'pt-BR',
-      preheader: pt ? 'Novo cardápio na tigela.' : 'A new menu in the bowl.',
+      preheader: pt ? 'Confira os novos sabores e o ciclo.' : 'Check the new recipes and cycle.',
       kicker: pt ? 'Plano' : 'Plan',
-      title: pt ? 'O cardápio mudou' : 'The menu changed',
-      innerHtml
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }

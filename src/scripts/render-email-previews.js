@@ -18,7 +18,8 @@ function renderIndex(previews) {
       <p class="kicker">${escapeHtml(item.group)} · ${item.wired ? 'dispara hoje' : 'template pronto'}</p>
       <h2>${escapeHtml(item.label)}</h2>
       <p class="subject">${escapeHtml(item.content.subject)}</p>
-      <a class="open" href="${escapeHtml(item.id)}.html">Abrir carta</a>
+      <a class="open" href="${escapeHtml(item.id)}.html">Abrir PT</a>
+      <a class="open" href="${escapeHtml(item.id)}.en.html">Abrir EN</a>
       <iframe title="${escapeHtml(item.label)}" src="${escapeHtml(item.id)}.html" loading="lazy"></iframe>
     </article>`).join('');
 
@@ -143,14 +144,29 @@ function renderIndex(previews) {
 
 function main() {
   fs.mkdirSync(outDir, { recursive: true });
-  const previews = listEmailPreviews();
-
-  for (const item of previews) {
-    fs.writeFileSync(path.join(outDir, `${item.id}.html`), item.content.html);
+  const imageDir = path.join(outDir, 'images');
+  fs.mkdirSync(imageDir, { recursive: true });
+  const logoDir = path.resolve(__dirname, '../../public/email');
+  for (const fileName of ['logo-circle@2x.png', 'logo-horizontal@2x.png']) {
+    fs.copyFileSync(path.join(logoDir, fileName), path.join(imageDir, fileName));
   }
 
-  fs.writeFileSync(path.join(outDir, 'index.html'), renderIndex(previews));
-  process.stdout.write(`Wrote ${previews.length} email previews to ${outDir}\n`);
+  const previewOptions = {
+    assetBaseUrl: 'images',
+    allowRelativeAssets: true
+  };
+  const portuguese = listEmailPreviews({ ...previewOptions, locale: 'pt-BR' });
+  const english = listEmailPreviews({ ...previewOptions, locale: 'en-US' });
+
+  for (const item of portuguese) {
+    fs.writeFileSync(path.join(outDir, `${item.id}.html`), item.content.html);
+  }
+  for (const item of english) {
+    fs.writeFileSync(path.join(outDir, `${item.id}.en.html`), item.content.html);
+  }
+
+  fs.writeFileSync(path.join(outDir, 'index.html'), renderIndex(portuguese));
+  process.stdout.write(`Wrote ${portuguese.length} PT and ${english.length} EN email previews to ${outDir}\n`);
 }
 
 main();

@@ -1,0 +1,11 @@
+Eden Bowls - e-mails transacionais v3 (PT + EN)
+
+pt/  13 templates em português
+en/  13 templates em inglês
+images/  logo-circle@2x.png (192x192, exibido a 96px) e logo-horizontal@2x.png (300x106, exibido a 132px)
+
+Os HTMLs referenciam as imagens como ../images/... Em produção, hospedar os dois PNGs em URL pública
+(https) e trocar o src. Clientes de e-mail não renderizam SVG nem data:URI de forma confiável.
+
+Placeholders a substituir pelo sistema: nome do tutor (Ana), pet (Luna), sabores, plano, valores, datas,
+código OTP, código de rastreio, links. Nos e-mails admin e convite: [endereço do painel] e [data e hora].

@@ -3,6 +3,7 @@ const { buildPrivacyEmailContent } = require('../src/core/privacy-email');
 const {
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,
+  buildPausedEmail,
   buildPaymentFailedEmail,
   buildShippedEmail
 } = require('../src/core/email/transactional-emails');
@@ -68,6 +69,80 @@ describe('transactional email catalog', () => {
   });
 });
 
+describe('designer email shell', () => {
+  test('uses https logos after stripping a trailing slash, and omits images otherwise', () => {
+    const https = buildOrderConfirmedEmail({
+      petName: 'Luna',
+      assetBaseUrl: 'https://api.example.com/'
+    });
+    expect(https.html).toContain('src="https://api.example.com/email/logo-circle@2x.png"');
+    expect(https.html).toContain('src="https://api.example.com/email/logo-horizontal@2x.png"');
+    expect(https.html).toContain('alt="Eden Bowls"');
+    expect(https.html).not.toContain('https://api.example.com//');
+    expect(https.html).toContain('E-mail automático da Eden Bowls');
+    expect(https.html).toContain('hello@edenbowls.com');
+
+    const http = buildOrderConfirmedEmail({
+      petName: 'Luna',
+      assetBaseUrl: 'http://api.example.com'
+    });
+    expect(http.html).not.toContain('<img');
+    expect(http.html).toContain('Eden Bowls');
+
+    const empty = buildOrderConfirmedEmail({ petName: 'Luna', locale: 'en-US' });
+    expect(empty.html).not.toContain('<img');
+    expect(empty.html).toContain('Automated email from Eden Bowls');
+  });
+
+  test('puts the pet name only in the letters that use it, and keeps frequency in months', () => {
+    const confirmed = buildOrderConfirmedEmail({
+      firstName: 'Ana',
+      petName: 'Luna',
+      cycleLabel: 'A cada 3 meses',
+      totalLabel: 'R$ 189,00',
+      locale: 'pt-BR'
+    });
+    expect(confirmed.subject).toBe('A tigela da Luna entrou na cozinha');
+    expect(confirmed.text).toContain('A cada 3 meses');
+    expect(confirmed.text).toContain('R$ 189,00');
+    expect(confirmed.text).not.toContain('14 dias');
+    expect(confirmed.text).not.toContain('A chave da cozinha');
+
+    const english = buildOrderConfirmedEmail({
+      petName: 'Luna',
+      cycleLabel: 'Every 3 months',
+      locale: 'en-US'
+    });
+    expect(english.subject).toBe("Luna's bowl is in the kitchen");
+
+    const invite = buildInviteEmailContent({
+      name: 'Lia',
+      email: 'lia@edenbowls.com',
+      temporaryPassword: 'TempPassword#12345',
+      roles: ['nutritionist'],
+      panelUrl: 'http://localhost:5174',
+      expiresAt: 1_700_000_000,
+      locale: 'pt-BR'
+    });
+    expect(invite.subject).toBe('Seu acesso ao painel da Eden Bowls');
+    expect(invite.subject).not.toContain('Lia');
+    expect(invite.html).not.toContain('A mesa dos bastidores');
+  });
+
+  test('shows a paused resume date only when the builder receives one', () => {
+    const missing = buildPausedEmail({ petName: 'Luna', locale: 'pt-BR' });
+    expect(missing.html).not.toContain('Retomada prevista');
+
+    const present = buildPausedEmail({
+      petName: 'Luna',
+      resumeAtLabel: '16 out 2026',
+      locale: 'pt-BR'
+    });
+    expect(present.html).toContain('Retomada prevista');
+    expect(present.html).toContain('16 out 2026');
+  });
+});
+
 describe('staff invite and privacy HTML', () => {
   test('keeps English invite copy by default', () => {
     const content = buildInviteEmailContent({
@@ -79,7 +154,8 @@ describe('staff invite and privacy HTML', () => {
       expiresAt: 1_700_000_000
     });
 
-    expect(content.subject).toBe('Your Eden Bowls admin access');
+    expect(content.subject).toBe('Your access to the Eden Bowls dashboard');
+    expect(content.subject).not.toContain('Lia');
     expect(content.html).toContain('TempPassword#12345');
   });
 
@@ -115,12 +191,12 @@ describe('staff invite and privacy HTML', () => {
     });
 
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
-      subject: 'Eden Bowls — confirme sua identidade',
+      subject: 'Confirme sua identidade para continuar',
       html: expect.stringContaining('https://example.com/confirm')
     }));
     expect(buildPrivacyEmailContent({
       confirmUrl: 'https://example.com/confirm',
       locale: 'pt-BR'
-    }).text).toContain('pedido de privacidade');
+    }).text).toContain('pedido relacionado aos dados');
   });
 });

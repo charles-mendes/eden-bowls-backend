@@ -24,7 +24,9 @@ function buildInviteEmailContent({
   roles,
   panelUrl,
   expiresAt,
-  locale
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
 }) {
   const pt = isPortuguese(locale || 'en');
   const displayName = String(name || '').trim() || (pt ? 'olá' : 'there');
@@ -33,45 +35,42 @@ function buildInviteEmailContent({
   const url = String(panelUrl || '').trim() || 'the admin panel';
   const expiry = formatExpiry(expiresAt);
 
-  const subject = pt ? 'Seu acesso ao painel Eden Bowls' : 'Your Eden Bowls admin access';
+  const subject = pt ? 'Seu acesso ao painel da Eden Bowls' : 'Your access to the Eden Bowls dashboard';
   const text = [
-    pt ? `Oi ${displayName},` : `Hi ${displayName},`,
+    pt ? `Oi, ${displayName}.` : `Hi ${displayName},`,
     '',
     pt
-      ? 'Uma conta foi criada para você no painel da Eden Bowls.'
-      : 'An administrator created an account for you on the Eden Bowls admin panel.',
+      ? 'Você foi convidada para acessar o painel interno da Eden Bowls. Entre com a senha temporária e troque-a no primeiro acesso.'
+      : "You've been invited to the Eden Bowls internal dashboard. Sign in with the temporary password and change it on your first login.",
     '',
-    `${pt ? 'Painel' : 'Panel URL'}: ${url}`,
-    `${pt ? 'E-mail' : 'Login email'}: ${loginEmail}`,
+    `${pt ? 'Painel' : 'Dashboard'}: ${url}`,
+    `${pt ? 'E-mail' : 'Email'}: ${loginEmail}`,
     `${pt ? 'Senha temporária' : 'Temporary password'}: ${temporaryPassword}`,
-    `${pt ? 'Papel' : 'Role'}: ${role}`,
-    `${pt ? 'Este convite expira em' : 'This invitation expires at'}: ${expiry}`,
+    `${pt ? 'Função' : 'Role'}: ${role}`,
+    `${pt ? 'Expira em' : 'Expires'}: ${expiry}`,
     '',
     pt
-      ? 'Você precisa trocar essa senha no primeiro login, antes de usar qualquer outra tela.'
-      : 'You must change this password on first login, before using any other screen.',
-    pt
-      ? 'Se o convite expirar, peça a um administrador para reenviar.'
-      : 'If the invitation expires, ask an administrator to resend it.',
+      ? 'Se o convite expirar, peça a um administrador para enviar um novo.'
+      : 'If the invitation expires, ask an administrator to send a new one.',
     '',
     'Eden Bowls'
   ].join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `Oi ${displayName}, a cozinha interna está aberta. Entre com a senha temporária e troque-a na primeira visita.`
-      : `Hi ${displayName}, the back kitchen is open. Sign in with the temporary password and change it on first visit.`),
+      ? `Oi, ${displayName}. Você foi convidada para acessar o painel interno da Eden Bowls. Entre com a senha temporária abaixo e troque-a no primeiro acesso.`
+      : `Hi ${displayName}, you've been invited to the Eden Bowls internal dashboard. Sign in with the temporary password below and change it on your first login.`),
     detailsTableHtml([
-      { label: pt ? 'Painel' : 'Panel', value: url },
+      { label: pt ? 'Painel' : 'Dashboard', value: url },
       { label: pt ? 'E-mail' : 'Email', value: loginEmail },
       { label: pt ? 'Senha temporária' : 'Temporary password', value: temporaryPassword },
-      { label: pt ? 'Papel' : 'Role', value: role },
-      { label: pt ? 'Expira' : 'Expires', value: expiry }
+      { label: pt ? 'Função' : 'Role', value: role },
+      { label: pt ? 'Expira em' : 'Expires', value: expiry }
     ]),
-    url.startsWith('http') ? buttonHtml({ href: url, label: pt ? 'Abrir o painel' : 'Open the panel' }) : '',
+    url.startsWith('http') ? buttonHtml({ href: url, label: pt ? 'Acessar o painel' : 'Open dashboard' }) : '',
     mutedHtml(pt
-      ? 'Se o convite expirar, peça a um administrador para reenviar.'
-      : 'If the invitation expires, ask an administrator to resend it.')
+      ? 'Se o convite expirar, peça a um administrador para enviar um novo.'
+      : 'If the invitation expires, ask an administrator to send a new one.')
   ].join('');
 
   return {
@@ -79,10 +78,12 @@ function buildInviteEmailContent({
     text,
     html: wrapEmailHtml({
       locale: locale || 'en',
-      preheader: pt ? 'Senha temporária para o painel.' : 'Temporary password for the admin panel.',
-      kicker: pt ? 'Equipe' : 'Staff',
-      title: pt ? 'A mesa dos bastidores' : 'A seat in the back kitchen',
-      innerHtml
+      preheader: pt ? 'Senha temporária para o primeiro acesso.' : 'Temporary password for your first login.',
+      kicker: pt ? 'Equipe' : 'Team',
+      title: pt ? 'Bem-vinda à equipe' : 'Welcome to the team',
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
     })
   };
 }
