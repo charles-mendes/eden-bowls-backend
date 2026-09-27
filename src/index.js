@@ -159,7 +159,8 @@ async function bootstrap() {
     otpPepper: env.AUTH_OTP_PEPPER,
     otpResendMaxAttempts: env.AUTH_OTP_RESEND_MAX_ATTEMPTS,
     otpResendWindowSeconds: env.AUTH_OTP_RESEND_WINDOW_SECONDS,
-    otpMailer
+    otpMailer,
+    storeAppUrl: env.STORE_APP_URL
   });
   const priceZonePolicyRepository = new PriceZonePolicyRepository(dataSource, {
     tableName: env.PRICE_ZONE_POLICY_TABLE_NAME

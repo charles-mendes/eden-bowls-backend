@@ -5,7 +5,9 @@ const {
   parseEmailExistsInput,
   parseRegisterInput,
   parseOtpVerifyInput,
-  parseOtpResendInput
+  parseOtpResendInput,
+  parseForgotPasswordInput,
+  parseResetPasswordInput
 } = require('../validators/auth-register.validator');
 
 function sendSignupError(response, error) {
@@ -198,6 +200,44 @@ function registerAuthRoutes(app, dependencies = {}) {
 
       const payload = parseOtpResendInput(request.body || {});
       const result = await dependencies.authService.resendOtp(payload);
+      sendSignupSuccess(response, 200, result);
+    } catch (error) {
+      if (error instanceof HttpError && error.details && error.details.code) {
+        sendSignupError(response, error);
+        return;
+      }
+
+      next(error);
+    }
+  });
+
+  app.post('/api/v1/auth/password/forgot', async (request, response, next) => {
+    try {
+      if (!dependencies.authService) {
+        throw new HttpError(503, 'Auth service is not available.');
+      }
+
+      const payload = parseForgotPasswordInput(request.body || {});
+      const result = await dependencies.authService.requestPasswordReset(payload);
+      sendSignupSuccess(response, 200, result);
+    } catch (error) {
+      if (error instanceof HttpError && error.details && error.details.code) {
+        sendSignupError(response, error);
+        return;
+      }
+
+      next(error);
+    }
+  });
+
+  app.post('/api/v1/auth/password/reset', async (request, response, next) => {
+    try {
+      if (!dependencies.authService) {
+        throw new HttpError(503, 'Auth service is not available.');
+      }
+
+      const payload = parseResetPasswordInput(request.body || {});
+      const result = await dependencies.authService.resetPassword(payload);
       sendSignupSuccess(response, 200, result);
     } catch (error) {
       if (error instanceof HttpError && error.details && error.details.code) {

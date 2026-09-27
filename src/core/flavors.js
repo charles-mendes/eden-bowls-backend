@@ -242,9 +242,11 @@ function flavorOptionsFromCatalog(rows, market) {
     }
 
     seen.add(key);
+    const labels = market && market.flavorLabels ? market.flavorLabels : {};
+    const storedLabel = row.label && row.label !== key ? row.label : '';
     const option = {
       key,
-      label: row.label || key
+      label: storedLabel || labels[key] || row.label || key
     };
     if (row.aliases.length > 0) {
       option.aliases = row.aliases;

@@ -59,10 +59,17 @@ describe('subscription dashboard flavor labels', () => {
     });
   });
 
-  test('does not invent a market label when the catalog is missing', () => {
-    const detail = mapLedgerToDashboardDetail(ledgerRow('br', ['turkey']));
+  test('uses the market label when the catalog label is missing', () => {
+    for (const alias of ['chicken', 'frango', 'peru', 'turkey']) {
+      const brazil = mapLedgerToDashboardDetail(ledgerRow('br', [alias]));
+      const unitedStates = mapLedgerToDashboardDetail(ledgerRow('us', [alias]));
 
-    expect(detail.active_flavor_options).toEqual([{ key: 'turkey', label: 'turkey' }]);
-    expect(detail.plan_items[0].label).toBe('Luna — turkey');
+      expect(brazil.active_flavors).toEqual(['turkey']);
+      expect(brazil.active_flavor_options).toEqual([{ key: 'turkey', label: 'Frango' }]);
+      expect(brazil.plan_items[0].label).toBe('Luna — Frango');
+      expect(unitedStates.active_flavor_options).toEqual([{ key: 'turkey', label: 'Chicken' }]);
+      expect(brazil.active_flavor_options[0].label).not.toMatch(/peru|turkey/i);
+      expect(unitedStates.active_flavor_options[0].label).not.toMatch(/peru|turkey/i);
+    }
   });
 });

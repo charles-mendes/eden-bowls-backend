@@ -5,13 +5,31 @@ const {
   planLabelFromLedger
 } = require('./stripe-subscription-map');
 const { canonicalFlavorKey, findCatalogFlavorOption } = require('./flavors');
+const { MARKETS } = require('./market');
 
-function flavorLabelFor(key, catalogOptions) {
-  const match = findCatalogFlavorOption(key, catalogOptions);
-  if (match && match.label) {
-    return match.label;
+function marketForAccount(account, currency) {
+  const normalized = String(account || '').trim().toLowerCase();
+  if (normalized === 'br' || String(currency || '').toUpperCase() === 'BRL') {
+    return MARKETS.BR;
   }
-  return key;
+  return MARKETS.US;
+}
+
+function flavorLabelFor(key, catalogOptions, market) {
+  const canonical = canonicalFlavorKey(key, market) || String(key || '');
+  const match = findCatalogFlavorOption(key, catalogOptions);
+  const catalogLabel = match && String(match.label || '').trim();
+  const rawKey = catalogLabel && catalogLabel.toLowerCase() === String(canonical || key || '').toLowerCase();
+  if (catalogLabel && !rawKey && catalogLabel.toLowerCase() !== 'peru') {
+    return catalogLabel;
+  }
+
+  const labels = market && market.flavorLabels ? market.flavorLabels : null;
+  if (labels && labels[canonical]) {
+    return labels[canonical];
+  }
+
+  return catalogLabel || canonical;
 }
 
 function readPets(row) {
@@ -70,26 +88,22 @@ function activeFlavors(row, catalogOptions) {
   return flavors;
 }
 
-function activeFlavorOptions(row, catalogOptions) {
-  return activeFlavors(row, catalogOptions).map((key) => {
-    const match = findCatalogFlavorOption(key, catalogOptions);
-    return {
-      key,
-      label: match && match.label ? match.label : flavorLabelFor(key, catalogOptions)
-    };
-  });
+function activeFlavorOptions(row, catalogOptions, market) {
+  return activeFlavors(row, catalogOptions).map((key) => ({
+    key,
+    label: flavorLabelFor(key, catalogOptions, market)
+  }));
 }
 
-function planItemsFromCatalog(catalog, catalogOptions) {
+function planItemsFromCatalog(catalog, catalogOptions, market) {
   return (Array.isArray(catalog.line_items) ? catalog.line_items : []).map((item) => {
     const match = findCatalogFlavorOption(item.flavor || item.flavor_label || item.label, catalogOptions);
     const flavorKey = (match && match.key)
-      || canonicalFlavorKey(item.flavor || item.label)
+      || canonicalFlavorKey(item.flavor || item.label, market)
       || item.flavor
       || null;
-    const flavorLabel = (match && match.label)
-      || item.flavor_label
-      || (flavorKey ? flavorLabelFor(flavorKey, catalogOptions) : (item.flavor || item.label || ''));
+    const flavorLabel = item.flavor_label
+      || (flavorKey ? flavorLabelFor(flavorKey, catalogOptions, market) : (item.flavor || item.label || ''));
     return {
       label: item.pet_name ? `${item.pet_name} — ${flavorLabel}`.trim() : flavorLabel,
       flavor: flavorKey,
@@ -157,6 +171,7 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
   const pets = readPets(row);
   const plan = parseJsonColumn(row.planSelection || row.plan_selection) || {};
   const catalog = catalogFrom(row);
+  const market = marketForAccount(row.stripeAccount || row.stripe_account, catalog.currency);
   const address = parseJsonColumn(row.address) || {};
   const term = Number(row.subscriptionTermMonths || row.subscription_term_months || plan.subscription_term_months || 0) || null;
   const cancelAtPeriodEnd = Boolean(Number(row.cancelAtPeriodEnd == null ? row.cancel_at_period_end : row.cancelAtPeriodEnd));
@@ -168,7 +183,7 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
     packs_per_delivery: list.packs_per_month,
     frequency: term === 1 || !term ? 'monthly' : `${term}_month`,
     active_flavors: activeFlavors(row, extras.catalogFlavorOptions),
-    active_flavor_options: activeFlavorOptions(row, extras.catalogFlavorOptions),
+    active_flavor_options: activeFlavorOptions(row, extras.catalogFlavorOptions, market),
     price_per_cycle: list.order_total_per_month,
     cycle_unit: 'month',
     payment_method_brand: extras.paymentMethodBrand || row.paymentMethodBrand || row.payment_method_brand || null,
@@ -178,7 +193,7 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
     current_cycle: extras.currentCycle == null ? 1 : extras.currentCycle,
     total_cycles: term,
     billing_history: Array.isArray(extras.billingHistory) ? extras.billingHistory : [],
-    plan_items: planItemsFromCatalog(catalog, extras.catalogFlavorOptions),
+    plan_items: planItemsFromCatalog(catalog, extras.catalogFlavorOptions, market),
     plan_items_source: 'plan_selection',
     stripe_timeline: Array.isArray(extras.stripeTimeline) ? extras.stripeTimeline : [],
     edit_payment_pending: editPending,

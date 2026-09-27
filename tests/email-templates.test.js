@@ -43,6 +43,7 @@ describe('transactional email catalog', () => {
     expect(failed.html).toContain('Atualizar pagamento');
     expect(shipped.html).toContain('1Z999');
     expect(reset.text).toContain('https://edenbowls.com/reset-password?token=abc');
+    expect(reset.html).toContain('/reset-password?token=abc');
   });
 
   test('escapes HTML in customer-facing fields', () => {

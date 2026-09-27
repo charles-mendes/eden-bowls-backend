@@ -561,3 +561,155 @@ describe('AuthService', () => {
     expect(repository.saveOtpChallenge).not.toHaveBeenCalled();
   });
 });
+
+function createPasswordResetRepository(user) {
+  const state = {
+    user: user
+      ? {
+        reset_count: 0,
+        reset_window_start: 0,
+        reset_token_hash: '',
+        reset_expires_at: 0,
+        ...user
+      }
+      : null,
+    passwordHash: ''
+  };
+
+  return {
+    state,
+    findUserForPasswordReset: jest.fn(async (email) => {
+      if (!state.user || state.user.user_email !== email) {
+        return null;
+      }
+      return { ...state.user };
+    }),
+    savePasswordResetRate: jest.fn(async (_id, rate) => {
+      state.user.reset_count = rate.count;
+      state.user.reset_window_start = rate.windowStart;
+    }),
+    savePasswordResetChallenge: jest.fn(async (_id, challenge) => {
+      state.user.reset_token_hash = challenge.tokenHash;
+      state.user.reset_expires_at = challenge.expiresAt;
+    }),
+    findUserByResetTokenHash: jest.fn(async (hash) => {
+      if (!state.user || !state.user.reset_token_hash || state.user.reset_token_hash !== hash) {
+        return null;
+      }
+      return { ...state.user };
+    }),
+    completePasswordReset: jest.fn(async (_id, passwordHash) => {
+      state.passwordHash = passwordHash;
+      state.user.reset_token_hash = '';
+      state.user.reset_expires_at = 0;
+    })
+  };
+}
+
+function tokenFromResetCall(mailer) {
+  const url = mailer.sendPasswordResetEmail.mock.calls.at(-1)[0].resetUrl;
+  return new URL(url).searchParams.get('token');
+}
+
+describe('AuthService password reset', () => {
+  function createService(repository, nowRef) {
+    const mailer = { sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined) };
+    const service = new AuthService(repository, {
+      otpPepper: 'pepper',
+      otpResendMaxAttempts: 3,
+      otpResendWindowSeconds: 3600,
+      storeAppUrl: 'https://shop.example',
+      otpMailer: mailer,
+      hashPassword: (value) => `hashed:${value}`,
+      nowProvider: () => nowRef.now
+    });
+    return { service, mailer };
+  }
+
+  test('stores a hash, replaces it on a second request, and rejects the first token', async () => {
+    const nowRef = { now: 1_700_000_000 };
+    const repository = createPasswordResetRepository({
+      id: 7,
+      user_email: 'ana@example.com',
+      display_name: 'Ana'
+    });
+    const { service, mailer } = createService(repository, nowRef);
+
+    await service.requestPasswordReset({ email: 'ana@example.com' });
+    const firstToken = tokenFromResetCall(mailer);
+    const firstHash = repository.state.user.reset_token_hash;
+    expect(firstHash).not.toBe(firstToken);
+    expect(repository.state.user.reset_expires_at).toBe(nowRef.now + 30 * 60);
+
+    await service.requestPasswordReset({ email: 'ana@example.com' });
+    const secondToken = tokenFromResetCall(mailer);
+    expect(repository.state.user.reset_token_hash).not.toBe(firstHash);
+    expect(mailer.sendPasswordResetEmail.mock.calls[1][0].resetUrl).toBe(
+      `https://shop.example/reset-password?token=${encodeURIComponent(secondToken)}`
+    );
+
+    await expect(service.resetPassword({ token: firstToken, password: 'NewPass1' })).rejects.toMatchObject({
+      statusCode: 400,
+      details: { code: 'password_reset_invalid' }
+    });
+    await expect(service.resetPassword({ token: secondToken, password: 'NewPass1' })).resolves.toEqual({
+      updated: true
+    });
+    expect(repository.state.passwordHash).toBe('hashed:NewPass1');
+  });
+
+  test('rejects an expired token and a token that already changed the password', async () => {
+    const nowRef = { now: 1_700_000_000 };
+    const repository = createPasswordResetRepository({
+      id: 7,
+      user_email: 'ana@example.com',
+      display_name: 'Ana'
+    });
+    const { service, mailer } = createService(repository, nowRef);
+
+    await service.requestPasswordReset({ email: 'ana@example.com' });
+    const token = tokenFromResetCall(mailer);
+    nowRef.now += (30 * 60) + 1;
+    await expect(service.resetPassword({ token, password: 'NewPass1' })).rejects.toMatchObject({
+      details: { code: 'password_reset_invalid' }
+    });
+    expect(repository.completePasswordReset).not.toHaveBeenCalled();
+
+    nowRef.now = 1_700_000_000;
+    await service.requestPasswordReset({ email: 'ana@example.com' });
+    const freshToken = tokenFromResetCall(mailer);
+    await service.resetPassword({ token: freshToken, password: 'NewPass1' });
+    await expect(service.resetPassword({ token: freshToken, password: 'OtherPass2' })).rejects.toMatchObject({
+      details: { code: 'password_reset_invalid' }
+    });
+    expect(repository.state.passwordHash).toBe('hashed:NewPass1');
+  });
+
+  test('does not email an unknown address and stops after the OTP resend limit', async () => {
+    const nowRef = { now: 1_700_000_000 };
+    const repository = createPasswordResetRepository({
+      id: 7,
+      user_email: 'ana@example.com',
+      display_name: 'Ana'
+    });
+    const { service, mailer } = createService(repository, nowRef);
+
+    await expect(service.requestPasswordReset({ email: 'missing@example.com' })).resolves.toEqual({
+      accepted: true
+    });
+    expect(mailer.sendPasswordResetEmail).not.toHaveBeenCalled();
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await expect(service.requestPasswordReset({ email: 'ana@example.com' })).resolves.toEqual({
+        accepted: true
+      });
+    }
+    expect(mailer.sendPasswordResetEmail).toHaveBeenCalledTimes(3);
+
+    await expect(service.requestPasswordReset({ email: 'ana@example.com' })).resolves.toEqual({
+      accepted: true
+    });
+    expect(mailer.sendPasswordResetEmail).toHaveBeenCalledTimes(3);
+    expect(repository.savePasswordResetChallenge).toHaveBeenCalledTimes(3);
+  });
+});

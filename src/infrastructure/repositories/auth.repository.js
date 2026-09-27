@@ -1,6 +1,13 @@
 const { HttpError } = require('../../core/http-error');
 const { AUTH_ERROR } = require('../../api/contracts/auth-errors');
 
+const PASSWORD_RESET_META_KEYS = {
+  tokenHash: 'hsr_password_reset_hash',
+  expiresAt: 'hsr_password_reset_expires',
+  resendCount: 'hsr_password_reset_count',
+  resendWindowStart: 'hsr_password_reset_window_start'
+};
+
 const OTP_META_KEYS = {
   activationStatus: 'hsr_activation_status',
   otpHash: 'hsr_activation_otp_hash',
@@ -247,6 +254,112 @@ class AuthRepository {
       await this.deleteUserMetaWithManager(manager, userId, OTP_META_KEYS.otpAttempts);
       await this.deleteUserMetaWithManager(manager, userId, OTP_META_KEYS.otpResendCount);
       await this.deleteUserMetaWithManager(manager, userId, OTP_META_KEYS.otpResendWindowStart);
+    });
+  }
+
+  async findUserForPasswordReset(email) {
+    this.ensureDataSource();
+
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    const sql = [
+      'SELECT u.ID AS id, u.user_email, u.display_name,',
+      `MAX(CASE WHEN um.meta_key = '${PASSWORD_RESET_META_KEYS.tokenHash}' THEN um.meta_value END) AS reset_token_hash,`,
+      `MAX(CASE WHEN um.meta_key = '${PASSWORD_RESET_META_KEYS.expiresAt}' THEN um.meta_value END) AS reset_expires_at,`,
+      `MAX(CASE WHEN um.meta_key = '${PASSWORD_RESET_META_KEYS.resendCount}' THEN um.meta_value END) AS reset_count,`,
+      `MAX(CASE WHEN um.meta_key = '${PASSWORD_RESET_META_KEYS.resendWindowStart}' THEN um.meta_value END) AS reset_window_start`,
+      `FROM \`${this.tableNames.users}\` u`,
+      `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
+      'WHERE LOWER(u.user_email) = ?',
+      'GROUP BY u.ID, u.user_email, u.display_name',
+      'LIMIT 1'
+    ].join(' ');
+    const rows = await this.dataSource.query(sql, [normalized]);
+    const user = Array.isArray(rows) ? rows[0] : null;
+
+    if (!user) {
+      return null;
+    }
+
+    return {
+      id: Number(user.id),
+      user_email: String(user.user_email || ''),
+      display_name: String(user.display_name || ''),
+      reset_token_hash: String(user.reset_token_hash || ''),
+      reset_expires_at: Number(user.reset_expires_at || 0),
+      reset_count: Number(user.reset_count || 0),
+      reset_window_start: Number(user.reset_window_start || 0)
+    };
+  }
+
+  async savePasswordResetChallenge(userId, challenge) {
+    this.ensureDataSource();
+
+    await this.dataSource.transaction(async (manager) => {
+      await this.upsertUserMetaWithManager(manager, userId, PASSWORD_RESET_META_KEYS.tokenHash, challenge.tokenHash);
+      await this.upsertUserMetaWithManager(manager, userId, PASSWORD_RESET_META_KEYS.expiresAt, String(challenge.expiresAt));
+    });
+  }
+
+  async savePasswordResetRate(userId, state) {
+    this.ensureDataSource();
+
+    await this.dataSource.transaction(async (manager) => {
+      await this.upsertUserMetaWithManager(manager, userId, PASSWORD_RESET_META_KEYS.resendCount, String(state.count || 0));
+      await this.upsertUserMetaWithManager(manager, userId, PASSWORD_RESET_META_KEYS.resendWindowStart, String(state.windowStart || 0));
+    });
+  }
+
+  async findUserByResetTokenHash(tokenHash) {
+    this.ensureDataSource();
+
+    const hash = String(tokenHash || '').trim();
+    if (!hash) {
+      return null;
+    }
+
+    const sql = [
+      'SELECT u.ID AS id, u.user_email,',
+      'hash.meta_value AS reset_token_hash,',
+      'exp.meta_value AS reset_expires_at',
+      `FROM \`${this.tableNames.users}\` u`,
+      `INNER JOIN \`${this.tableNames.usermeta}\` hash ON hash.user_id = u.ID AND hash.meta_key = ?`,
+      `LEFT JOIN \`${this.tableNames.usermeta}\` exp ON exp.user_id = u.ID AND exp.meta_key = ?`,
+      'WHERE hash.meta_value = ?',
+      'LIMIT 1'
+    ].join(' ');
+    const rows = await this.dataSource.query(sql, [
+      PASSWORD_RESET_META_KEYS.tokenHash,
+      PASSWORD_RESET_META_KEYS.expiresAt,
+      hash
+    ]);
+    const user = Array.isArray(rows) ? rows[0] : null;
+
+    if (!user) {
+      return null;
+    }
+
+    return {
+      id: Number(user.id),
+      user_email: String(user.user_email || ''),
+      reset_token_hash: String(user.reset_token_hash || ''),
+      reset_expires_at: Number(user.reset_expires_at || 0)
+    };
+  }
+
+  async completePasswordReset(userId, passwordHash) {
+    this.ensureDataSource();
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `UPDATE \`${this.tableNames.users}\` SET \`user_pass\` = ? WHERE \`ID\` = ?`,
+        [passwordHash, userId]
+      );
+      await this.deleteUserMetaWithManager(manager, userId, PASSWORD_RESET_META_KEYS.tokenHash);
+      await this.deleteUserMetaWithManager(manager, userId, PASSWORD_RESET_META_KEYS.expiresAt);
     });
   }
 

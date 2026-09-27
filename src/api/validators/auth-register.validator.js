@@ -26,6 +26,15 @@ const otpResendSchema = z.object({
   uid: z.coerce.number().int().positive()
 });
 
+const forgotPasswordSchema = z.object({
+  email: z.string().trim().email().max(100)
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().trim().min(16).max(512),
+  password: z.string().min(8).regex(/[A-Z]/).regex(/[0-9]/)
+});
+
 function parseOrThrow(schema, input) {
   const parsed = schema.safeParse(input || {});
 
@@ -61,9 +70,22 @@ function parseOtpResendInput(input) {
   return parseOrThrow(otpResendSchema, input);
 }
 
+function parseForgotPasswordInput(input) {
+  const data = parseOrThrow(forgotPasswordSchema, input);
+  return {
+    email: data.email.toLowerCase()
+  };
+}
+
+function parseResetPasswordInput(input) {
+  return parseOrThrow(resetPasswordSchema, input);
+}
+
 module.exports = {
   parseEmailExistsInput,
   parseRegisterInput,
   parseOtpVerifyInput,
-  parseOtpResendInput
+  parseOtpResendInput,
+  parseForgotPasswordInput,
+  parseResetPasswordInput
 };

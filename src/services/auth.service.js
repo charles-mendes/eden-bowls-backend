@@ -26,6 +26,8 @@ class AuthService {
     this.otpResendWindowSeconds = Number(options.otpResendWindowSeconds || 3600);
     this.otpPepper = String(options.otpPepper || options.jwt && options.jwt.secret || 'hsr-default-salt');
     this.otpMailer = options.otpMailer || null;
+    this.storeAppUrl = String(options.storeAppUrl || 'http://localhost:5173').replace(/\/$/, '');
+    this.passwordResetTtlSeconds = Number(options.passwordResetTtlSeconds || 30 * 60);
     this.privacyService = options.privacyService || null;
     this.hashPassword = typeof options.hashPassword === 'function' ? options.hashPassword : hashWordpressPassword;
     this.randomOtp = typeof options.randomOtp === 'function' ? options.randomOtp : generateOtp;
@@ -231,6 +233,96 @@ class AuthService {
       count: count + 1,
       windowStart
     });
+  }
+
+  async requestPasswordReset(payload) {
+    if (!this.repository || typeof this.repository.findUserForPasswordReset !== 'function') {
+      throw new HttpError(503, 'Auth repository is not available.');
+    }
+
+    const accepted = { accepted: true };
+    const user = await this.repository.findUserForPasswordReset(payload.email);
+    if (!user) {
+      return accepted;
+    }
+
+    const allowed = await this.consumePasswordReset(user);
+    if (!allowed) {
+      return accepted;
+    }
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = this.nowProvider() + this.passwordResetTtlSeconds;
+    await this.repository.savePasswordResetChallenge(user.id, {
+      tokenHash: this.hashOtpValue(token),
+      expiresAt
+    });
+
+    try {
+      await this.sendPasswordResetEmail({
+        to: user.user_email,
+        firstName: user.display_name,
+        resetUrl: this.passwordResetUrl(token)
+      });
+    } catch (error) {
+      throw new HttpError(503, 'Unable to send the reset email.', {
+        code: 'password_reset_email_failed'
+      });
+    }
+
+    return accepted;
+  }
+
+  async consumePasswordReset(user) {
+    const now = this.nowProvider();
+    const windowStart = Number(user.reset_window_start || 0);
+    const count = Number(user.reset_count || 0);
+    const windowExpired = !windowStart || now - windowStart >= this.otpResendWindowSeconds;
+
+    if (windowExpired) {
+      await this.repository.savePasswordResetRate(user.id, { count: 1, windowStart: now });
+      return true;
+    }
+
+    if (count >= this.otpResendMaxAttempts) {
+      return false;
+    }
+
+    await this.repository.savePasswordResetRate(user.id, {
+      count: count + 1,
+      windowStart
+    });
+    return true;
+  }
+
+  passwordResetUrl(token) {
+    return `${this.storeAppUrl}/reset-password?token=${encodeURIComponent(token)}`;
+  }
+
+  async sendPasswordResetEmail(payload) {
+    if (!this.otpMailer || typeof this.otpMailer.sendPasswordResetEmail !== 'function') {
+      throw new Error('Password reset mailer is not configured.');
+    }
+
+    await this.otpMailer.sendPasswordResetEmail(payload);
+  }
+
+  async resetPassword(payload) {
+    if (!this.repository || typeof this.repository.findUserByResetTokenHash !== 'function') {
+      throw new HttpError(503, 'Auth repository is not available.');
+    }
+
+    const token = String(payload.token || '');
+    const user = await this.repository.findUserByResetTokenHash(this.hashOtpValue(token));
+    const now = this.nowProvider();
+    if (!user || !user.reset_expires_at || now >= Number(user.reset_expires_at)) {
+      throw new HttpError(400, 'This reset link is invalid or has expired.', {
+        code: 'password_reset_invalid'
+      });
+    }
+
+    await this.repository.completePasswordReset(user.id, this.hashPassword(payload.password));
+    return { updated: true };
   }
 
   async sendOtpEmail(payload) {

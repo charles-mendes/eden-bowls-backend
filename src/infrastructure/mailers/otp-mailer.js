@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer');
 const { buildOtpEmailContent } = require('../../core/otp-email');
+const { buildPasswordResetEmail } = require('../../core/email/transactional-emails');
 
 function createSmtpTransport(smtp = {}) {
   const encryption = String(smtp.encryption || '').trim().toLowerCase();
@@ -90,6 +91,20 @@ function createOtpMailer(options = {}) {
       }
 
       const content = buildOtpEmailContent({ otp, expiresInSeconds, locale });
+      return sendMail({
+        to: recipient,
+        subject: content.subject,
+        text: content.text,
+        html: content.html
+      });
+    },
+    async sendPasswordResetEmail({ to, firstName, resetUrl, locale }) {
+      const recipient = String(to || '').trim();
+      if (!recipient) {
+        throw new Error('Password reset recipient is missing.');
+      }
+
+      const content = buildPasswordResetEmail({ firstName, resetUrl, locale });
       return sendMail({
         to: recipient,
         subject: content.subject,

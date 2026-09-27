@@ -53,6 +53,18 @@ describe('flavor catalog', () => {
     ]);
   });
 
+  test('uses the market label when the catalog row has no display label', () => {
+    expect(flavorOptionsFromLabels(
+      [{ key: 'turkey', label: '', aliases: ['chicken', 'frango', 'peru'] }],
+      MARKETS.BR
+    )).toEqual([
+      expect.objectContaining({ key: 'turkey', label: 'Frango' })
+    ]);
+    expect(flavorOptionsFromLabels([{ key: 'turkey', label: '' }], MARKETS.US)).toEqual([
+      expect.objectContaining({ key: 'turkey', label: 'Chicken' })
+    ]);
+  });
+
   test('lists Brazil pack prices for 300g and 500g', () => {
     expect(listFlavorVariations('BR')).toEqual([
       { flavor: 'beef', weight: '300g', price: 25, currency: 'BRL', zoneId: 'br' },
