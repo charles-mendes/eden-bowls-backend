@@ -22,7 +22,7 @@ With `MODE=http` and background jobs disabled, the process MUST serve the existi
 
 ### Requirement: Only one scheduler tick runs a given job
 
-Two overlapping processes MUST NOT execute the same job tick at the same time. A tick that cannot acquire the lock MUST skip that job and MUST leave stored work unchanged. A tick MUST release the lock when it finishes or when its timeout elapses.
+Two overlapping processes MUST NOT execute the same job tick at the same time. A tick that cannot acquire the lock MUST skip that job and MUST leave stored work unchanged. A tick MUST release the lock when the tick function finishes. If the process dies, the lock MUST be released when its database connection drops. There is no separate lock timeout. Per-item timeouts bound the work inside the tick and MUST NOT be treated as a lock timeout.
 
 #### Scenario: Second tick skips
 
@@ -31,11 +31,16 @@ Two overlapping processes MUST NOT execute the same job tick at the same time. A
 
 ### Requirement: Webhook events stay pending until dispatch succeeds
 
-Persisting a Stripe webhook MUST record the event as pending and MUST NOT mark it processed at insert time. The HTTP handler MUST return success to Stripe after the event is stored, including when the first dispatch fails, so Stripe delivery and local retry are not both the recovery path. If the event cannot be stored, the handler MUST return an error so Stripe can redeliver. A duplicate delivery of an event already stored MUST NOT dispatch it again from the HTTP handler.
+Persisting a Stripe webhook MUST record the event as pending and MUST NOT mark it processed at insert time. The HTTP handler MUST return success to Stripe after the event is stored, including when the first dispatch fails, so Stripe delivery and local retry are not both the recovery path. If the event cannot be stored, the handler MUST return an error and MUST NOT dispatch, so Stripe can redeliver. A duplicate delivery of an event already stored MUST NOT dispatch it again from the HTTP handler.
 
 The first dispatch MAY run inside the webhook request. On failure the event MUST remain pending with an attempt count and a next-attempt time. A scheduled retry MUST re-read the event from Stripe by id and account, then run the same dispatch. Retry MUST be idempotent for ledger writes and mail claims. The retry job MUST run at least once per minute, MUST take at most 20 events per tick, MUST wait at least 30 seconds between attempts for the same event, MUST stop after 8 attempts or 24 hours, and MUST spend at most 30 seconds on one event. A terminal failure MUST mark the event failed and MUST stop retrying it. Success MUST mark it processed.
 
 The admin webhook list MUST return `pending`, `failed`, or `processed` from that stored state and MUST return the stored attempt count. It MUST NOT report an event as processed only because the row exists.
+
+#### Scenario: Store failure asks Stripe to redeliver
+
+- **WHEN** Stripe delivers an event and storing the row fails
+- **THEN** the handler returns an error and does not dispatch
 
 #### Scenario: Dispatch fails after the event is stored
 
@@ -59,7 +64,7 @@ The admin webhook list MUST return `pending`, `failed`, or `processed` from that
 
 ### Requirement: Ledger reconcile refreshes subscription periods without charging
 
-A scheduled reconcile MUST page through local subscription rows and refresh status, period start, period end, and cancel-at-period-end from Stripe. It MUST NOT create invoices, MUST NOT change prices, and MUST NOT cancel subscriptions. It MUST run at most once per hour, MUST read at most 50 subscriptions per tick, and MUST continue when one subscription fails. One subscription read MUST time out at 15 seconds. A failed row MUST remain as stored and MUST be eligible on a later tick. The manual admin reconcile endpoint MUST keep working and MUST NOT be limited to the first 100 rows as its only completeness mechanism; the scheduled job is what walks the rest of the ledger over successive ticks.
+A scheduled reconcile MUST page through local subscription rows and refresh status, period start, period end, and cancel-at-period-end from Stripe. It MUST NOT create invoices, MUST NOT change prices, and MUST NOT cancel subscriptions. It MUST run at most once per hour, MUST read at most 50 subscriptions per tick, and MUST continue when one subscription fails. One subscription read MUST time out at 15 seconds. A failed row MUST remain as stored. The cursor MUST advance past it, so that subscription is read again only after the cursor wraps. A ledger of N subscriptions MUST take ceil(N/50) hourly ticks to finish one cycle. The manual admin reconcile endpoint MUST keep its current behavior, including reading at most the first 100 subscription rows. Rows beyond those 100 are the scheduled job's responsibility.
 
 The production queue due date MUST keep being derived from the refreshed period end. The job MUST NOT create or advance production-cycle status.
 
@@ -71,7 +76,12 @@ The production queue due date MUST keep being derived from the refreshed period 
 #### Scenario: One Stripe error does not stop the page
 
 - **WHEN** retrieve fails for one subscription in the page
-- **THEN** the other subscriptions in that page are still refreshed and the failed row is unchanged
+- **THEN** the other subscriptions in that page are still refreshed, the failed row is unchanged, and the cursor moves past that row
+
+#### Scenario: Failed subscription waits for a full cursor wrap
+
+- **WHEN** retrieve fails for one subscription and the cursor advances past it
+- **THEN** that subscription is not read again until the cursor wraps, and a ledger of N subscriptions takes ceil(N/50) hourly ticks to complete one cycle
 
 #### Scenario: Reconcile does not move production status
 
@@ -99,7 +109,7 @@ The mailer MUST keep claiming a send at most once per subscription, template, an
 
 ### Requirement: In-transit UPS shipments refresh tracking
 
-A scheduled tick MUST call UPS tracking for shipments that have a tracking number and are not delivered or voided. It MUST run at most every 30 minutes, MUST take at most 20 shipments per tick, and MUST spend at most 10 seconds on one track call. A track failure MUST leave the stored tracking as it was and MUST NOT void the shipment. The job MUST NOT buy labels or create shipments.
+A scheduled tick MUST call UPS tracking for shipments that have a tracking number and are not delivered or voided. It MUST run at most every 30 minutes and MUST take at most 20 shipments per tick. One track call MUST stop at the minimum of 10 seconds and the configured UPS client timeout. When that client timeout is 5 seconds, the call MUST stop at 5 seconds. When the client timeout is above 10 seconds, the tick MUST still stop the call at 10 seconds. A track failure MUST leave the stored tracking as it was and MUST NOT void the shipment. The job MUST NOT buy labels or create shipments.
 
 #### Scenario: Open shipment is polled
 
@@ -113,7 +123,7 @@ A scheduled tick MUST call UPS tracking for shipments that have a tracking numbe
 
 ### Requirement: Expired refresh tokens are deleted
 
-A daily tick MUST delete refresh-token rows whose expiry is in the past. It MUST NOT delete unexpired or merely rotated rows that are still inside the replay window. The tick MUST be idempotent.
+Refresh cleanup MUST be its own scheduled job, with its own lock, separate from webhook retention. It MUST run every 24 hours and MUST delete refresh-token rows whose expiry is in the past. It MUST NOT delete unexpired or merely rotated rows that are still inside the replay window. The job MUST be idempotent.
 
 #### Scenario: Expired row is removed
 
@@ -127,7 +137,7 @@ A daily tick MUST delete refresh-token rows whose expiry is in the past. It MUST
 
 ### Requirement: Old processed webhook events are deleted
 
-A daily tick MUST delete webhook events that are processed and older than 90 days. It MUST NOT delete pending or failed events, regardless of age.
+Webhook retention MUST be its own scheduled job, with its own lock, separate from refresh cleanup. It MUST run every 24 hours and MUST delete webhook events that are processed and older than 90 days. It MUST NOT delete pending or failed events, regardless of age.
 
 #### Scenario: Old processed event is removed
 
@@ -141,9 +151,14 @@ A daily tick MUST delete webhook events that are processed and older than 90 day
 
 ### Requirement: Each tick is observable
 
-Every tick MUST log the job name, duration, counts of scanned, succeeded, and failed items, and MUST NOT log raw webhook bodies, card data, or SMTP credentials. A tick failure MUST be an error log and MUST NOT crash the HTTP server when both run in one process. Metrics MUST expose the last tick result per job name.
+Every tick MUST log its job name and its duration. Count fields MUST use that job's own names: webhook retry logs scanned, succeeded, and failed; ledger reconcile logs scanned, updated, and failed; mail resend logs sent, failed, and exhausted; UPS tracking logs scanned, updated, and failed; refresh cleanup and webhook retention each log how many rows were deleted. A mail claim that fails and stays retryable MUST increment failed and MUST NOT increment exhausted. The attempt that marks the claim exhausted MUST increment exhausted and MUST NOT also increment failed for that same claim. Logs MUST NOT include raw webhook bodies, card data, or SMTP credentials. A tick failure MUST be an error log and MUST NOT crash the HTTP server when both run in one process. Metrics MUST expose the last tick result per job name.
 
 #### Scenario: Failed item is counted
 
 - **WHEN** a tick processes a page and one item fails
-- **THEN** the log includes that job name and a failed count of at least one, and the process keeps running
+- **THEN** the log includes that job name, a duration, and a failed count of at least one, and the process keeps running
+
+#### Scenario: Exhausted mail is separate from a retryable failure
+
+- **WHEN** a mail tick has one claim failing for the fifth time and another failing for the second time
+- **THEN** the log counts the fifth failure as exhausted and the second failure as failed

@@ -788,6 +788,24 @@ class SubscriptionLedgerRepository {
       throw error;
     }
   }
+
+  async listAfterId(afterId, limit) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT * FROM \`${this.tableName}\` WHERE \`id\` > ? ORDER BY \`id\` ASC LIMIT ?`,
+      [Number(afterId) || 0, limit]
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row)).filter(Boolean);
+  }
+
+  async hasIdAfter(id) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT \`id\` FROM \`${this.tableName}\` WHERE \`id\` > ? ORDER BY \`id\` ASC LIMIT 1`,
+      [Number(id) || 0]
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  }
 }
 
 module.exports = {

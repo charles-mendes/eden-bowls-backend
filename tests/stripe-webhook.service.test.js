@@ -8,7 +8,11 @@ function buildService(overrides = {}) {
     addShippingInvoiceItem: jest.fn().mockResolvedValue({})
   };
   const eventsRepository = overrides.eventsRepository || {
-    insertIfNew: jest.fn().mockResolvedValue({ inserted: true })
+    insertIfNew: jest.fn().mockResolvedValue({ inserted: true }),
+    markProcessed: jest.fn().mockResolvedValue(undefined),
+    scheduleRetry: jest.fn().mockResolvedValue(undefined),
+    markFailed: jest.fn().mockResolvedValue(undefined),
+    listDue: jest.fn().mockResolvedValue([])
   };
   const ledgerRepository = overrides.ledgerRepository || {
     findByStripeSubscriptionId: jest.fn().mockResolvedValue(null),
@@ -29,7 +33,8 @@ function buildService(overrides = {}) {
       ledgerRepository,
       customerStore,
       shippingProductId: 'prod_ship',
-      transactionalMailer: overrides.transactionalMailer || null
+      transactionalMailer: overrides.transactionalMailer || null,
+      withTimeout: overrides.withTimeout
     }),
     stripeBilling,
     eventsRepository,
@@ -352,5 +357,144 @@ describe('StripeWebhookService', () => {
 
     expect(transactionalMailer.notifyPaymentFailed).toHaveBeenCalledTimes(1);
     expect(ledgerRepository.updateCheckoutReference).not.toHaveBeenCalled();
+  });
+
+  test('returns 200 and keeps the event pending when dispatch throws', async () => {
+    const { service, stripeBilling, eventsRepository, ledgerRepository } = buildService();
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_fail',
+      type: 'invoice.paid',
+      data: { object: { id: 'in_1', subscription: 'sub_123' } }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      stripeCustomerId: 'cus_1'
+    });
+    ledgerRepository.upsert.mockRejectedValue(new Error('dispatch failed'));
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(eventsRepository.markProcessed).not.toHaveBeenCalled();
+    expect(eventsRepository.scheduleRetry).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'evt_fail',
+      attempts: 1
+    }));
+    const nextAttemptAt = eventsRepository.scheduleRetry.mock.calls[0][0].nextAttemptAt;
+    expect(nextAttemptAt.getTime()).toBeGreaterThan(Date.now() + 20 * 1000);
+  });
+
+  test('does not dispatch again when the event was already stored', async () => {
+    const { service, stripeBilling, eventsRepository, ledgerRepository } = buildService();
+    eventsRepository.insertIfNew.mockResolvedValue({ inserted: false });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_dup',
+      type: 'invoice.paid',
+      data: { object: { id: 'in_1', subscription: 'sub_123' } }
+    });
+    const dispatch = jest.spyOn(service, 'dispatch');
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(eventsRepository.markProcessed).not.toHaveBeenCalled();
+    expect(ledgerRepository.upsert).not.toHaveBeenCalled();
+  });
+
+  test('returns an error and does not dispatch when the insert fails', async () => {
+    const { service, stripeBilling, eventsRepository } = buildService();
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_insert',
+      type: 'invoice.paid',
+      data: { object: { id: 'in_1', subscription: 'sub_123' } }
+    });
+    eventsRepository.insertIfNew.mockRejectedValue(new Error('insert failed'));
+    const dispatch = jest.spyOn(service, 'dispatch');
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .rejects.toThrow('insert failed');
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(eventsRepository.markProcessed).not.toHaveBeenCalled();
+  });
+
+  test('retries a pending event and marks it processed', async () => {
+    const { service, stripeBilling, eventsRepository } = buildService();
+    const event = {
+      id: 'evt_retry',
+      type: 'invoice.paid',
+      data: { object: { id: 'in_1', subscription: 'sub_123' } }
+    };
+    eventsRepository.listDue.mockResolvedValue([{
+      eventId: 'evt_retry',
+      stripeAccount: 'us',
+      attempts: 1,
+      createdAt: new Date()
+    }]);
+    stripeBilling.retrieveEvent = jest.fn().mockResolvedValue(event);
+    const dispatch = jest.spyOn(service, 'dispatch').mockResolvedValue(undefined);
+
+    await expect(service.retryPending()).resolves.toEqual({ scanned: 1, succeeded: 1, failed: 0 });
+    expect(eventsRepository.listDue).toHaveBeenCalledWith(expect.objectContaining({ limit: 20 }));
+    expect(dispatch).toHaveBeenCalledWith(event, expect.objectContaining({ account: 'us' }));
+    expect(eventsRepository.markProcessed).toHaveBeenCalledWith({
+      eventId: 'evt_retry',
+      stripeAccount: 'us'
+    });
+  });
+
+  test('marks a missing Stripe event failed without side effects', async () => {
+    const { service, stripeBilling, eventsRepository, ledgerRepository } = buildService();
+    eventsRepository.listDue.mockResolvedValue([{
+      eventId: 'evt_gone',
+      stripeAccount: 'us',
+      attempts: 1,
+      createdAt: new Date()
+    }]);
+    stripeBilling.retrieveEvent = jest.fn().mockResolvedValue(null);
+
+    await expect(service.retryPending()).resolves.toMatchObject({ failed: 1, succeeded: 0 });
+    expect(eventsRepository.markFailed).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'evt_gone',
+      lastError: 'stripe_event_missing'
+    }));
+    expect(ledgerRepository.upsert).not.toHaveBeenCalled();
+  });
+
+  test('stops retrying after 8 attempts', async () => {
+    const { service, stripeBilling, eventsRepository } = buildService();
+    eventsRepository.listDue.mockResolvedValue([{
+      eventId: 'evt_cap',
+      stripeAccount: 'us',
+      attempts: 7,
+      createdAt: new Date()
+    }]);
+    stripeBilling.retrieveEvent = jest.fn().mockRejectedValue(new Error('stripe down'));
+
+    await service.retryPending();
+
+    expect(eventsRepository.markFailed).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'evt_cap',
+      attempts: 8
+    }));
+    expect(eventsRepository.scheduleRetry).not.toHaveBeenCalled();
+  });
+
+  test('passes a 30 second timeout to each event retry', async () => {
+    const withTimeout = jest.fn().mockRejectedValue(Object.assign(new Error('timeout'), { code: 'timeout' }));
+    const { service, stripeBilling, eventsRepository } = buildService({ withTimeout });
+    stripeBilling.retrieveEvent = jest.fn(() => new Promise(() => {}));
+    eventsRepository.listDue.mockResolvedValue([{
+      eventId: 'evt_slow',
+      stripeAccount: 'us',
+      attempts: 0,
+      createdAt: new Date()
+    }]);
+
+    await service.retryPending();
+
+    expect(withTimeout).toHaveBeenCalledWith(expect.any(Promise), 30000);
+    expect(eventsRepository.scheduleRetry).toHaveBeenCalled();
   });
 });

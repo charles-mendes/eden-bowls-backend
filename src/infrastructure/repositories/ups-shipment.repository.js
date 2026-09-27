@@ -168,6 +168,21 @@ class UpsShipmentRepository {
     );
     return this.findById(id);
   }
+
+  async listOpenForTracking(limit) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      [
+        `SELECT * FROM \`${this.tableName}\``,
+        "WHERE `tracking_number` IS NOT NULL AND `tracking_number` <> ''",
+        "AND `status` NOT IN ('delivered', 'voided')",
+        'ORDER BY `id` ASC',
+        'LIMIT ?'
+      ].join(' '),
+      [limit]
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row)).filter(Boolean);
+  }
 }
 
 module.exports = {

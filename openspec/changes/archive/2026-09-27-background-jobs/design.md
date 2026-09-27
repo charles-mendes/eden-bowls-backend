@@ -44,7 +44,18 @@ What the code does today, and why each candidate is in or out:
 
 `MODE=cron` (and `MODE=worker`, same behavior) bootstraps the existing services and runs an in-process timer loop. It does not call `listen`. `MODE=all`, or `MODE=http` with `ENABLE_BACKGROUND_JOBS=true`, starts the same loop beside the server.
 
-Each tick takes `GET_LOCK(name, 0)`. Timeout 0 means skip if another process holds it. The lock is released in `finally`. Lock names are per job (`eden_job_webhook_retry`, and one name per job below).
+Each tick takes `GET_LOCK(name, 0)`. Timeout 0 means skip if another process holds it. The lock is released in `finally` when the tick function returns. There is no timer that releases the lock before that function ends. If the process dies, MySQL releases the lock when the connection drops. Per-item timeouts bound the work inside the tick. They are not a lock timeout.
+
+Lock names, one per job:
+
+- `eden_job_webhook_retry`
+- `eden_job_ledger_reconcile`
+- `eden_job_mail_resend`
+- `eden_job_ups_tracking`
+- `eden_job_refresh_cleanup`
+- `eden_job_webhook_retention`
+
+Every tick log includes the job name and the duration in milliseconds. Count names stay the ones listed on each contract below. `exhausted` is not folded into `failed`.
 
 Alternative considered: cron hitting an internal HTTP route. Rejected because it needs a shared secret and still runs the work inside the API process, which the proposal keeps free to stay HTTP-only. Alternative considered: a broker. Rejected because nothing in the repo speaks one, and the volume is periodic batch reads, not a stream.
 
@@ -69,7 +80,7 @@ Responsável de todos: o processo agendador. O request HTTP continua dono da pri
 - Retry: até 8 tentativas ou 24h desde o insert. Espera mínima de 30s (`next_attempt_at`).
 - Timeout: 30s por evento. Tick inteiro limitado a 20 eventos.
 - Falha: incrementa `attempts`, grava `last_error` curto, agenda a próxima. Na última, `failed_at`. Não devolve 500 para a Stripe depois do insert.
-- Observabilidade: log `job=webhook_retry` com scanned, succeeded, failed. Métrica `eden_job_last_success_timestamp{job}` e `eden_job_items_failed_total{job}`.
+- Observabilidade: log `job=webhook_retry` com duração, scanned, succeeded, failed. Métrica `eden_job_last_success_timestamp{job}` e `eden_job_items_failed_total{job}`.
 - Banco: update da linha do evento; upsert do ledger só se o dispatch chegar lá.
 - Stripe: `events.retrieve` e as leituras que o dispatch já faz (`subscriptions.retrieve`). Sem criar cobrança.
 - UPS / e-mail: só se o evento reprocessado for um que já dispara `shipped` ou os três e-mails do webhook. O claim impede o segundo envio.
@@ -82,7 +93,7 @@ Responsável de todos: o processo agendador. O request HTTP continua dono da pri
 - Retry: a assinatura que falha fica de fora do avanço do cursor? Não. Avança o cursor mesmo assim e a falha volta na volta seguinte do ciclo, senão um id quebrado trava a fila. Contar a falha no log.
 - Timeout: 15s por `subscriptions.retrieve`.
 - Falha: log e segue. Sem `failed_at` por assinatura.
-- Observabilidade: scanned, updated, failed.
+- Observabilidade: duração, scanned, updated, failed.
 - Banco: `stripe_subscriptions` apenas colunas já escritas pelo reconcile. Sem `subscription_production_cycles`.
 - Stripe: somente retrieve. Sem invoice, sem update de subscription.
 - UPS / e-mail: nenhum.
@@ -93,9 +104,10 @@ Responsável de todos: o processo agendador. O request HTTP continua dono da pri
 - Frequency: 5 min.
 - Idempotência: unique key. O tick seleciona `sent_at IS NULL AND exhausted_at IS NULL AND claimed_at < now - 2 minutes`. Envia e só então `markSent`. Não chama `claimMailSend` de novo.
 - Retry: 5 tentativas. A primeira do request conta.
+- Batch: no máximo 20 claims por tick.
 - Timeout: 20s por SMTP.
-- Falha: incrementa `attempts`. Na quinta, `exhausted_at`. A linha fica para auditoria.
-- Observabilidade: sent, failed, exhausted. Sem endereço completo no log; o mailer já loga destinatário em falha — manter, sem corpo.
+- Falha: incrementa `attempts`. Na quinta, `exhausted_at`. A linha fica para auditoria. Uma falha que ainda cabe em nova tentativa conta como `failed`. A tentativa que grava `exhausted_at` conta como `exhausted` e não também como `failed` dessa claim.
+- Observabilidade: duração, sent, failed, exhausted. Sem endereço completo no log; o mailer já loga destinatário em falha — manter, sem corpo.
 - Banco: update do claim.
 - Stripe: nenhum.
 - E-mail: SMTP dos quatro templates. Não cria template novo.
@@ -107,31 +119,36 @@ Responsável de todos: o processo agendador. O request HTTP continua dono da pri
 - Frequency: 30 min.
 - Idempotência: `updateTracking` substitui o payload guardado. Não cria shipment.
 - Retry: falha isolada não incrementa um teto; o próximo tick tenta de novo. Um shipment sem resposta não bloqueia os outros.
-- Timeout: 10s, já alinhado à ordem de grandeza de `UPS_HTTP_TIMEOUT_MS` (5s hoje; o tick usa o menor entre 10s e o timeout do cliente).
+- Batch: no máximo 20 shipments por tick.
+- Timeout: `min(10s, UPS_HTTP_TIMEOUT_MS)`. O default do cliente é 5s, então o teto efetivo hoje é 5s. Se o timeout do cliente passar de 10s, o tick ainda corta em 10s.
 - Falha: log, tracking anterior permanece.
-- Observabilidade: scanned, updated, failed.
+- Observabilidade: duração, scanned, updated, failed.
 - Banco: colunas de tracking já atualizadas por `refreshTracking`.
 - UPS: `track` apenas. Sem ship, sem void.
 - Stripe / e-mail: nenhum neste tick. O e-mail `shipped` continua no momento em que o operador compra a etiqueta.
 
 **Refresh cleanup**
 
+- Lock: `eden_job_refresh_cleanup`. Não compartilha lock com a retenção de webhooks.
 - Trigger: timer diário.
 - Frequency: 24h.
 - Idempotência: `DELETE WHERE expires_at < now`.
 - Retry: o próximo dia cobre falha. Sem teto.
 - Timeout: uma statement.
 - Falha: log. Não apagar em lote cego se a query falhar.
+- Observabilidade: duração e quantas linhas foram apagadas.
 - Banco: `auth_refresh_tokens` (nome real da tabela via env, default do repositório).
 - Stripe / UPS / e-mail: nenhum.
 
 **Webhook retention**
 
+- Lock: `eden_job_webhook_retention`. Não compartilha lock com a limpeza de refresh tokens.
 - Trigger: timer diário.
 - Frequency: 24h.
 - Idempotência: `DELETE` de processados com `processed_at` anterior a 90 dias.
 - Retry: próximo dia.
 - Falha: log. Nunca incluir `failed_at IS NOT NULL` nem pendentes.
+- Observabilidade: duração e quantas linhas foram apagadas.
 - Banco: só `stripe_webhook_events`.
 - Stripe / UPS / e-mail: nenhum.
 

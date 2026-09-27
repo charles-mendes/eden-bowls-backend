@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { withTimeout } = require('../core/with-timeout');
 const { parseStripeAccountInput } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
@@ -7,6 +8,12 @@ const {
   mapStripeStatus,
   extractCardFromPaymentMethod
 } = require('../core/stripe-subscription-map');
+
+const WEBHOOK_EVENT_TIMEOUT_MS = 30 * 1000;
+const WEBHOOK_RETRY_BATCH = 20;
+const WEBHOOK_RETRY_GAP_MS = 30 * 1000;
+const WEBHOOK_MAX_ATTEMPTS = 8;
+const WEBHOOK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const HANDLED_TYPES = new Set([
   'invoice.paid',
@@ -30,6 +37,7 @@ class StripeWebhookService {
     this.shippingProductId = options.shippingProductId || '';
     this.transactionalMailer = options.transactionalMailer || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
+    this.withTimeout = options.withTimeout || withTimeout;
   }
 
   async handle({ account, rawBody, signature }) {
@@ -68,7 +76,15 @@ class StripeWebhookService {
       return { received: true };
     }
 
+    const pending = {
+      eventId: event.id,
+      stripeAccount,
+      attempts: 0,
+      createdAt: new Date()
+    };
+
     if (!HANDLED_TYPES.has(event.type)) {
+      await this.eventsRepository.markProcessed({ eventId: event.id, stripeAccount });
       return { received: true };
     }
 
@@ -80,7 +96,9 @@ class StripeWebhookService {
 
     try {
       await this.dispatch(event, runtime);
+      await this.eventsRepository.markProcessed({ eventId: event.id, stripeAccount });
     } catch (error) {
+      await this.noteFailure(pending, error);
       this.logger.error({
         err: error,
         eventId: event.id,
@@ -90,6 +108,92 @@ class StripeWebhookService {
     }
 
     return { received: true };
+  }
+
+  async retryPending(options = {}) {
+    if (!this.eventsRepository || typeof this.eventsRepository.listDue !== 'function') {
+      return { scanned: 0, succeeded: 0, failed: 0 };
+    }
+
+    const timeoutMs = options.timeoutMs || WEBHOOK_EVENT_TIMEOUT_MS;
+    const rows = await this.eventsRepository.listDue({
+      limit: options.limit || WEBHOOK_RETRY_BATCH,
+      now: options.now || new Date()
+    });
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const row of rows) {
+      const outcome = await this.retryOne(row, timeoutMs);
+      if (outcome.ok) {
+        succeeded += 1;
+      } else {
+        failed += 1;
+      }
+    }
+
+    return { scanned: rows.length, succeeded, failed };
+  }
+
+  async retryOne(row, timeoutMs) {
+    try {
+      await this.withTimeout(this.redeliver(row), timeoutMs);
+      await this.eventsRepository.markProcessed({
+        eventId: row.eventId,
+        stripeAccount: row.stripeAccount
+      });
+      return { ok: true };
+    } catch (error) {
+      if (error && error.code === 'stripe_event_missing') {
+        await this.eventsRepository.markFailed({
+          eventId: row.eventId,
+          stripeAccount: row.stripeAccount,
+          attempts: Number(row.attempts || 0),
+          lastError: 'stripe_event_missing'
+        });
+        return { ok: false, terminal: true };
+      }
+      await this.noteFailure(row, error);
+      return { ok: false };
+    }
+  }
+
+  async redeliver(row) {
+    const stripeBilling = resolveStripeBilling(this, row.stripeAccount);
+    const event = await stripeBilling.retrieveEvent(row.eventId);
+    if (!event) {
+      const missing = new Error('Stripe event is missing.');
+      missing.code = 'stripe_event_missing';
+      throw missing;
+    }
+    await this.dispatch(event, {
+      account: row.stripeAccount,
+      stripeBilling,
+      shippingProductId: stripeBilling.shippingProductId || this.shippingProductId || ''
+    });
+  }
+
+  async noteFailure(row, error, now = new Date()) {
+    const attempts = Number(row.attempts || 0) + 1;
+    const createdAt = row.createdAt ? new Date(row.createdAt) : now;
+    const expired = now.getTime() - createdAt.getTime() >= WEBHOOK_MAX_AGE_MS;
+    const lastError = String(error && error.message ? error.message : 'dispatch_failed').slice(0, 500);
+    if (attempts >= WEBHOOK_MAX_ATTEMPTS || expired) {
+      await this.eventsRepository.markFailed({
+        eventId: row.eventId,
+        stripeAccount: row.stripeAccount,
+        attempts,
+        lastError
+      });
+      return;
+    }
+    await this.eventsRepository.scheduleRetry({
+      eventId: row.eventId,
+      stripeAccount: row.stripeAccount,
+      attempts,
+      lastError,
+      nextAttemptAt: new Date(now.getTime() + WEBHOOK_RETRY_GAP_MS)
+    });
   }
 
   summarize(event) {
@@ -422,5 +526,8 @@ class StripeWebhookService {
 }
 
 module.exports = {
+  WEBHOOK_EVENT_TIMEOUT_MS,
+  WEBHOOK_RETRY_BATCH,
+  WEBHOOK_MAX_ATTEMPTS,
   StripeWebhookService
 };

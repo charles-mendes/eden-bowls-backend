@@ -76,6 +76,81 @@ class SubscriptionMailClaimsRepository {
       [claimId]
     );
   }
+
+  async savePayload(id, payload) {
+    this.ensureDataSource();
+    const claimId = Number(id);
+    if (!Number.isSafeInteger(claimId) || claimId <= 0) {
+      return;
+    }
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`payload\` = ? WHERE \`id\` = ? AND \`sent_at\` IS NULL`,
+      [JSON.stringify(payload), claimId]
+    );
+  }
+
+  async recordSendFailure(id, error) {
+    this.ensureDataSource();
+    const claimId = Number(id);
+    if (!Number.isSafeInteger(claimId) || claimId <= 0) {
+      return { attempts: 0, exhausted: false };
+    }
+    const message = String(error && error.message ? error.message : 'smtp_failed').slice(0, 500);
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`attempts\` = \`attempts\` + 1, \`last_error\` = ?, \`exhausted_at\` = CASE WHEN \`attempts\` + 1 >= 5 THEN CURRENT_TIMESTAMP ELSE \`exhausted_at\` END WHERE \`id\` = ? AND \`sent_at\` IS NULL AND \`exhausted_at\` IS NULL`,
+      [message, claimId]
+    );
+    const rows = await this.dataSource.query(
+      `SELECT \`attempts\`, \`exhausted_at\` AS exhaustedAt FROM \`${this.tableName}\` WHERE \`id\` = ?`,
+      [claimId]
+    );
+    const row = Array.isArray(rows) ? rows[0] : null;
+    return {
+      attempts: Number(row && row.attempts) || 0,
+      exhausted: Boolean(row && row.exhaustedAt)
+    };
+  }
+
+  async listResendable({ olderThan, limit = 20, templates = [] } = {}) {
+    this.ensureDataSource();
+    const names = (Array.isArray(templates) ? templates : []).map((item) => String(item)).filter(Boolean);
+    if (!names.length) {
+      return [];
+    }
+    const placeholders = names.map(() => '?').join(', ');
+    const rows = await this.dataSource.query(
+      [
+        'SELECT `id`, `template`, `payload`, `attempts`, `sent_at` AS sentAt, `claimed_at` AS claimedAt',
+        `FROM \`${this.tableName}\``,
+        `WHERE \`sent_at\` IS NULL AND \`exhausted_at\` IS NULL AND \`claimed_at\` <= ? AND \`template\` IN (${placeholders})`,
+        'ORDER BY `claimed_at` ASC',
+        'LIMIT ?'
+      ].join(' '),
+      [olderThan, ...names, limit]
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => ({
+      id: Number(row.id),
+      template: String(row.template || ''),
+      attempts: Number(row.attempts || 0),
+      sentAt: row.sentAt,
+      claimedAt: row.claimedAt,
+      payload: parsePayload(row.payload)
+    }));
+  }
+}
+
+function parsePayload(value) {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === 'object') {
+    return value;
+  }
+  try {
+    return JSON.parse(value);
+  } catch (_error) {
+    return null;
+  }
 }
 
 module.exports = {

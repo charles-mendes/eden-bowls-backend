@@ -1,3 +1,4 @@
+const { withTimeout } = require('../../core/with-timeout');
 const {
   buildAdminNewSubscriptionEmail,
   buildOrderConfirmedEmail,
@@ -20,6 +21,11 @@ const TEMPLATES = {
   paymentFailed: 'payment_failed',
   shipped: 'shipped'
 };
+
+const RESEND_TEMPLATES = Object.values(TEMPLATES);
+const RESEND_BATCH = 20;
+const RESEND_MIN_AGE_MS = 2 * 60 * 1000;
+const SMTP_TIMEOUT_MS = 20 * 1000;
 
 function createTransactionalMailer(options = {}) {
   const logger = options.logger || { error() {}, warn() {}, info() {} };
@@ -69,24 +75,31 @@ function createTransactionalMailer(options = {}) {
     }
 
     try {
-      const result = await otpMailer.sendMail({
+      await rememberPayload(claim.id, {
         to: recipient,
         subject: content.subject,
         text: content.text,
         html: content.html
       });
+      const result = await withTimeout(otpMailer.sendMail({
+        to: recipient,
+        subject: content.subject,
+        text: content.text,
+        html: content.html
+      }), SMTP_TIMEOUT_MS);
       if (!result || result.skipped !== true) {
         await claimsRepository.markSent(claim.id);
       }
       return { skipped: Boolean(result && result.skipped), claimed: true };
     } catch (error) {
-      logger.error({
-        to: recipient,
-        subject: content.subject,
-        template,
-        code: error && error.code
-      }, 'Transactional email failed.');
-      return { skipped: false, failed: true, claimed: true };
+      const failure = await recordClaimFailure(claim.id, error);
+      logSendFailure(template, claim.id, failure);
+      return {
+        skipped: false,
+        failed: !failure.exhausted,
+        exhausted: failure.exhausted,
+        claimed: true
+      };
     }
   }
 
@@ -171,14 +184,20 @@ function createTransactionalMailer(options = {}) {
     }
 
     try {
+      await rememberPayload(claim.id, {
+        recipients: opsEmails,
+        subject: content.subject,
+        text: content.text,
+        html: content.html
+      });
       let delivered = false;
       for (const to of opsEmails) {
-        const result = await otpMailer.sendMail({
+        const result = await withTimeout(otpMailer.sendMail({
           to,
           subject: content.subject,
           text: content.text,
           html: content.html
-        });
+        }), SMTP_TIMEOUT_MS);
         if (!result || result.skipped !== true) {
           delivered = true;
         }
@@ -188,12 +207,9 @@ function createTransactionalMailer(options = {}) {
       }
       return { skipped: !delivered, claimed: true };
     } catch (error) {
-      logger.error({
-        subject: content.subject,
-        template: TEMPLATES.adminNewSubscription,
-        code: error && error.code
-      }, 'Transactional email failed.');
-      return { skipped: false, failed: true, claimed: true };
+      const failure = await recordClaimFailure(claim.id, error);
+      logSendFailure(TEMPLATES.adminNewSubscription, claim.id, failure);
+      return { skipped: false, failed: !failure.exhausted, exhausted: failure.exhausted, claimed: true };
     }
   }
 
@@ -267,16 +283,96 @@ function createTransactionalMailer(options = {}) {
     });
   }
 
+  async function resendUnsent({ now = new Date(), limit = RESEND_BATCH } = {}) {
+    if (!claimsRepository || typeof claimsRepository.listResendable !== 'function' || !otpMailer) {
+      return { scanned: 0, sent: 0, failed: 0, exhausted: 0 };
+    }
+
+    const olderThan = new Date(now.getTime() - RESEND_MIN_AGE_MS);
+    const rows = await claimsRepository.listResendable({
+      olderThan,
+      limit,
+      templates: RESEND_TEMPLATES
+    });
+    const batch = rows.filter((row) => !row.sentAt).slice(0, RESEND_BATCH);
+    let sent = 0;
+    let failed = 0;
+    let exhausted = 0;
+
+    for (const row of batch) {
+      try {
+        await deliverStored(row);
+        await claimsRepository.markSent(row.id);
+        sent += 1;
+      } catch (error) {
+        const failure = await recordClaimFailure(row.id, error);
+        logSendFailure(row.template, row.id, failure);
+        if (failure.exhausted) {
+          exhausted += 1;
+        } else {
+          failed += 1;
+        }
+      }
+    }
+
+    return { scanned: batch.length, sent, failed, exhausted };
+  }
+
+  async function deliverStored(row) {
+    const payload = row.payload;
+    if (!payload) {
+      throw new Error('missing_payload');
+    }
+    const recipients = Array.isArray(payload.recipients) && payload.recipients.length
+      ? payload.recipients
+      : [payload.to];
+    for (const to of recipients) {
+      if (!to) {
+        throw new Error('missing_recipient');
+      }
+      await withTimeout(otpMailer.sendMail({
+        to,
+        subject: payload.subject,
+        text: payload.text,
+        html: payload.html
+      }), SMTP_TIMEOUT_MS);
+    }
+  }
+
+  async function rememberPayload(claimId, payload) {
+    if (claimsRepository && typeof claimsRepository.savePayload === 'function') {
+      await claimsRepository.savePayload(claimId, payload);
+    }
+  }
+
+  async function recordClaimFailure(claimId, error) {
+    if (!claimsRepository || typeof claimsRepository.recordSendFailure !== 'function') {
+      return { attempts: 0, exhausted: false };
+    }
+    return claimsRepository.recordSendFailure(claimId, error);
+  }
+
+  function logSendFailure(template, claimId, failure) {
+    if (failure && failure.exhausted) {
+      logger.info({ template, claimId, outcome: 'exhausted' }, 'Transactional email exhausted.');
+      return;
+    }
+    logger.error({ template, claimId, outcome: 'failed' }, 'Transactional email failed.');
+  }
+
   return {
     notifyOrderConfirmed,
     notifyAdminNewSubscription,
     notifyPaymentFailed,
     notifyShipped,
-    sendClaimed
+    sendClaimed,
+    resendUnsent
   };
 }
 
 module.exports = {
   TEMPLATES,
+  RESEND_TEMPLATES,
+  RESEND_BATCH,
   createTransactionalMailer
 };

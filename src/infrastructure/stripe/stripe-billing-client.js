@@ -1020,6 +1020,24 @@ class StripeBillingClient {
     }
   }
 
+  async retrieveEvent(eventId) {
+    const stripe = this.ensureClient();
+    const id = String(eventId || '').trim();
+    if (!id) {
+      return null;
+    }
+
+    try {
+      return await stripe.events.retrieve(id);
+    } catch (error) {
+      const code = error && (error.code || (error.raw && error.raw.code));
+      if (code === 'resource_missing') {
+        return null;
+      }
+      throw error;
+    }
+  }
+
   async retrieveSubscription(subscriptionId, options = {}) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();

@@ -34,6 +34,25 @@ function buildSubscriptionMailClaimEntitySchema(tableName = 'subscription_mail_c
         name: 'sent_at',
         type: 'datetime',
         nullable: true
+      },
+      attempts: {
+        type: 'int',
+        default: 0
+      },
+      lastError: {
+        name: 'last_error',
+        type: String,
+        length: 500,
+        nullable: true
+      },
+      exhaustedAt: {
+        name: 'exhausted_at',
+        type: 'datetime',
+        nullable: true
+      },
+      payload: {
+        type: 'json',
+        nullable: true
       }
     },
     uniques: [

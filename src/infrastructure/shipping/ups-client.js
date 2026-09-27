@@ -96,7 +96,7 @@ class UpsClient {
       method: options.method || 'GET',
       headers,
       body: options.jsonBody !== undefined ? options.jsonBody : options.body,
-      timeoutMs: this.timeoutMs,
+      timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : this.timeoutMs,
       fetchImpl: this.fetchImpl
     });
 
@@ -336,7 +336,7 @@ class UpsClient {
     };
   }
 
-  async track(trackingNumber) {
+  async track(trackingNumber, options = {}) {
     const inquiry = String(trackingNumber || '').trim();
     if (!inquiry) {
       throw new HttpError(400, 'Tracking number is required.', { code: 'invalid_tracking' });
@@ -344,7 +344,8 @@ class UpsClient {
     const headers = await this.authHeaders();
     const response = await this.request(`/api/track/v1/details/${encodeURIComponent(inquiry)}`, {
       method: 'GET',
-      headers
+      headers,
+      timeoutMs: options.timeoutMs
     });
     return response;
   }

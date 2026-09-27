@@ -38,6 +38,8 @@ const { CreateAdminAuditEvents1700000000016 } = require('./migrations/1700000000
 const { CreateSubscriptionMailClaims1700000000017 } = require('./migrations/1700000000017-create-subscription-mail-claims');
 const { CreateSubscriptionProductionCycles1700000000018 } = require('./migrations/1700000000018-create-subscription-production-cycles');
 const { AddOnboardingUserStateMarket1700000000019 } = require('./migrations/1700000000019-add-onboarding-user-state-market');
+const { AddBackgroundJobSchema1700000000020 } = require('./migrations/1700000000020-add-background-job-schema');
+const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
 const { buildPrivacyRequestEntitySchema } = require('./entities/privacy-request.entity');
 const { buildAdminAuditEventEntitySchema } = require('./entities/admin-audit-event.entity');
@@ -72,7 +74,8 @@ function buildDataSourceOptions(env) {
       buildPrivacyRequestEntitySchema(),
       buildAdminAuditEventEntitySchema(),
       buildSubscriptionMailClaimEntitySchema(),
-      buildSubscriptionProductionCycleEntitySchema()
+      buildSubscriptionProductionCycleEntitySchema(),
+      buildBackgroundJobCursorEntitySchema()
     ],
     migrations: [
       CreateBreedsTable1700000000000,
@@ -94,7 +97,8 @@ function buildDataSourceOptions(env) {
       CreateAdminAuditEvents1700000000016,
       CreateSubscriptionMailClaims1700000000017,
       CreateSubscriptionProductionCycles1700000000018,
-      AddOnboardingUserStateMarket1700000000019
+      AddOnboardingUserStateMarket1700000000019,
+      AddBackgroundJobSchema1700000000020
     ],
     synchronize: false,
     logging: false,

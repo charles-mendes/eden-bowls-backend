@@ -2,6 +2,8 @@ require('reflect-metadata');
 
 const path = require('path');
 const { parseEnv } = require('./config/env');
+const { startProcess } = require('./core/process-mode');
+const { startBackgroundJobs } = require('./services/background-jobs.service');
 const { createLogger } = require('./core/logger');
 const { createApp } = require('./app');
 const { createDataSource } = require('./infrastructure/db');
@@ -605,13 +607,23 @@ async function bootstrap() {
     trustProxy: env.TRUST_PROXY
   });
 
-  const server = app.listen(env.PORT, () => {
-    logger.info({ port: env.PORT, mode: env.MODE }, 'Server started.');
-  });
-
-  server.on('error', (error) => {
-    logger.error(error, 'HTTP server failed to listen.');
-    process.exit(1);
+  startProcess({
+    app,
+    env,
+    logger,
+    onSchedule: () => startBackgroundJobs({
+      dataSource,
+      logger,
+      stripeWebhookService,
+      stripeAccounts,
+      stripeBilling,
+      ledgerRepository: subscriptionLedgerRepository,
+      transactionalMailer,
+      upsShipmentRepository,
+      upsClient,
+      refreshTokenRepository: authRefreshTokenRepository,
+      eventsRepository: stripeWebhookEventsRepository
+    })
   });
 }
 

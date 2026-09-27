@@ -34,6 +34,7 @@ services:
     env_file:
       - .env
     environment:
+      MODE: http
       DB_HOST: db
       DB_PORT: "3306"
       UPS_LABEL_DIR: /app/ups-labels
@@ -57,6 +58,29 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+
+  cron:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eden-bowls-backend-qa-cron
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      MODE: cron
+      DB_HOST: db
+      DB_PORT: "3306"
+      UPS_LABEL_DIR: /app/ups-labels
+    volumes:
+      - eden-bowls-avatars-qa:/app/public/avatars
+      - eden-bowls-feedback-photos-qa:/app/public/feedback-photos
+      - eden-bowls-pet-photos-qa:/app/public/pet-photos
+      - eden-bowls-ups-labels-qa:/app/ups-labels
+      - ./data:/app/data:ro
 
 volumes:
   eden-bowls-mysql-qa-data:

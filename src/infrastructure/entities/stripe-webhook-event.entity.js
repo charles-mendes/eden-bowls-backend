@@ -25,6 +25,31 @@ function buildStripeWebhookEventEntitySchema(tableName = 'stripe_webhook_events'
       processedAt: {
         name: 'processed_at',
         type: 'datetime',
+        nullable: true
+      },
+      attempts: {
+        type: 'int',
+        default: 0
+      },
+      lastError: {
+        name: 'last_error',
+        type: String,
+        length: 500,
+        nullable: true
+      },
+      nextAttemptAt: {
+        name: 'next_attempt_at',
+        type: 'datetime',
+        nullable: true
+      },
+      failedAt: {
+        name: 'failed_at',
+        type: 'datetime',
+        nullable: true
+      },
+      createdAt: {
+        name: 'created_at',
+        type: 'datetime',
         createDate: true
       },
       payloadSummary: {
