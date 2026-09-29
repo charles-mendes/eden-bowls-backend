@@ -2,7 +2,7 @@
 
 O código do PAY-01 já roteia duas merchant accounts independentes (não Connect). **Cartão continua o único método.** Checkout Brasil só cria `cus_` / `sub_` na conta BR quando `STRIPE_BR_ENABLED=true`.
 
-US já funciona com as variáveis legadas (`STRIPE_SECRET_KEY`, `VITE_STRIPE_PUBLISHABLE_KEY`). Brasil é aditivo: secrets + catálogo + cupons + webhooks + flag.
+US usa só `STRIPE_US_SECRET_KEY`. `STRIPE_SECRET_KEY` is not read. A loja continua com `VITE_STRIPE_PUBLISHABLE_KEY`. Brasil é aditivo: secrets + catálogo + cupons + webhooks + flag.
 
 Não ligar a flag antes dos passos abaixo. Objetos criados na conta BR **não voltam** para a US.
 
@@ -46,13 +46,13 @@ Na conta BR nova, conferir a API version do Dashboard. O SDK **não** herda a de
 
 Arquivos: `eden-bowls-backend/.env` (local) e o `.env` da VPS (a partir de `.env.qa.example`). O compose QA lê `env_file: .env`; não precisa listar cada `STRIPE_*` no YAML.
 
-US herda o valor legado se `_US` estiver vazio.
+`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read.
 
 | Variável | Conta | Fallback |
 |----------|--------|----------|
-| `STRIPE_US_SECRET_KEY` | US | `STRIPE_SECRET_KEY` |
+| `STRIPE_US_SECRET_KEY` | US | nenhum. `STRIPE_SECRET_KEY` is not read |
 | `STRIPE_BR_SECRET_KEY` | BR | nenhum — obrigatória para criar BR |
-| `STRIPE_US_WEBHOOK_SECRET` | US | `STRIPE_WEBHOOK_SECRET` |
+| `STRIPE_US_WEBHOOK_SECRET` | US | nenhum. `STRIPE_WEBHOOK_SECRET` is not read |
 | `STRIPE_BR_WEBHOOK_SECRET` | BR | nenhum |
 | `STRIPE_API_VERSION` | ambas | `2025-09-30.clover` |
 | `STRIPE_US_AUTOMATIC_TAX` | só US | — |

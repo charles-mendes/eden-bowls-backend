@@ -33,13 +33,13 @@ Env (`src/config/env.js` + `.env.example`):
 
 | Env | Uso | Default Node |
 |---|---|---|
-| `STRIPE_SECRET_KEY` | `api_key` | 503 `stripe_secret_missing` |
+| `STRIPE_US_SECRET_KEY` | `api_key` US | 503 `stripe_secret_missing`. `STRIPE_SECRET_KEY` is not read |
 | `STRIPE_API_VERSION` | `apiVersion` do client | `2025-09-30.clover` |
 | `STRIPE_MAX_RETRIES` | `maxNetworkRetries` | **2** (PHP vazio = 0; nao copiar 0) |
 | `STRIPE_US_AUTOMATIC_TAX` | `automatic_tax.enabled` se pais US | **true** |
 | Frete | `shipping_product_id` na metadata da assinatura | checkout cria `Shipping` `txcd_92010001` na conta da assinatura |
 | `STRIPE_FIRST_PURCHASE_PROMO_1M` / `3M` / `6M` | mapa `promo_` | vazio → 503 se elegivel |
-| `STRIPE_WEBHOOK_SECRET` | so o webhook | 503 so naquele path |
+| `STRIPE_US_WEBHOOK_SECRET` | webhook US | 503 so naquele path. `STRIPE_WEBHOOK_SECRET` is not read |
 
 `createOnboardingSubscription` **nao** chama `paymentIntents.create` nem `checkout.sessions.create`. O PI nasce da invoice da subscription (`expand: latest_invoice.payment_intent`).
 

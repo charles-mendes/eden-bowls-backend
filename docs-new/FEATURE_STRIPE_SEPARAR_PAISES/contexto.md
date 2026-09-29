@@ -3,7 +3,7 @@ name: Split Stripe BR US
 overview: Separar Stripe Brasil e Stripe EUA em duas merchant accounts independentes, roteando por país do mercado. Cartão continua o único método. PIX/boleto ficam fora. Rollout BR atrás de kill switch.
 todos:
   - id: registry-env
-    content: Env dual + StripeAccounts registry + resolveStripeAccount; pin apiVersion; STRIPE_BR_ENABLED kill switch; fallback das vars atuais para US
+    content: Env dual + StripeAccounts registry + resolveStripeAccount; pin apiVersion; STRIPE_BR_ENABLED kill switch; STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are not read
     status: completed
   - id: persistence
     content: "Migration 0014 no mesmo MySQL: ledger/webhooks/promos + UPDATE wp_usermeta no DataSource Node (sem WP-CLI)"
@@ -64,10 +64,10 @@ Objetos `cus_`, `pm_`, `price_`, `sub_`, `promo_`, `prod_` não atravessam conta
 
 Arquivos: [`src/config/env.js`](eden-bowls-backend/src/config/env.js), [`.env.example`](eden-bowls-backend/.env.example), [`.env.qa.example`](eden-bowls-backend/.env.qa.example), compose, [`src/index.js`](eden-bowls-backend/src/index.js).
 
-Novas vars (US herda as atuais se as `_US` estiverem vazias):
+Novas vars (sem fallback das nomes antigos):
 
-- `STRIPE_BR_SECRET_KEY` / `STRIPE_US_SECRET_KEY` (fallback: `STRIPE_SECRET_KEY` → US)
-- `STRIPE_BR_WEBHOOK_SECRET` / `STRIPE_US_WEBHOOK_SECRET` (fallback: `STRIPE_WEBHOOK_SECRET` → US)
+- `STRIPE_BR_SECRET_KEY` / `STRIPE_US_SECRET_KEY` (`STRIPE_SECRET_KEY` is not read)
+- `STRIPE_BR_WEBHOOK_SECRET` / `STRIPE_US_WEBHOOK_SECRET` (`STRIPE_WEBHOOK_SECRET` is not read)
 - Frete não usa variável de ambiente. O checkout grava `shipping_product_id` na metadata da assinatura, na mesma conta.
 - `STRIPE_US_AUTOMATIC_TAX` permanece só no client US
 - `STRIPE_BR_ENABLED` (`false` por default). `true` só depois de secrets + catalog sync + cupons BR mapeados

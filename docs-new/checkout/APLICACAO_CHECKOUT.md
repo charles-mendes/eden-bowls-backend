@@ -317,7 +317,7 @@ Alem do JWT/Stripe coupon ja existente:
 | `SHIPPING_BR_KM_PER_DAY` / `MIN_DAYS` / `MAX_DAYS` | prazo | 80 / 2 / 10 |
 | `SHIPPING_BR_CENTER_LAT` / `LNG` | CD | obrigatorio em prod; 0 → 422 |
 | `NOMINATIM_USER_AGENT` | autocomplete + geocode BR | `EdenBowlShipping/1.0 (...)` |
-| `STRIPE_SECRET_KEY` | preview, cartoes, checkout | ja no plugin Stripe |
+| `STRIPE_US_SECRET_KEY` | preview, cartoes, checkout | conta US. `STRIPE_SECRET_KEY` is not read |
 | `STRIPE_US_AUTOMATIC_TAX` | sales-tax quote vira 0 | flag WP |
 
 ## 8. Testes minimos na transicao

@@ -14,7 +14,7 @@ function notConfiguredError(account) {
       stripe_account: STRIPE_ACCOUNTS.BR
     });
   }
-  return new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', {
+  return new HttpError(503, 'STRIPE_US_SECRET_KEY is not configured.', {
     code: 'stripe_secret_missing',
     stripe_account: STRIPE_ACCOUNTS.US
   });

@@ -48,7 +48,8 @@ class StripeWebhookService {
     const stripeBilling = resolveStripeBilling(this, stripeAccount);
 
     if (!webhookSecret) {
-      throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
+      const webhookName = stripeAccount === 'br' ? 'STRIPE_BR_WEBHOOK_SECRET' : 'STRIPE_US_WEBHOOK_SECRET';
+      throw new HttpError(503, `${webhookName} is not configured.`, {
         code: 'stripe_webhook_secret_missing',
         stripe_account: stripeAccount
       });

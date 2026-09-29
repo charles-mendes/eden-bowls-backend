@@ -206,7 +206,8 @@ class OnboardingSubscriptionCheckoutService {
     }
 
     if (!stripeBilling) {
-      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', {
+      const secretName = stripeAccount === 'br' ? 'STRIPE_BR_SECRET_KEY' : 'STRIPE_US_SECRET_KEY';
+      throw new HttpError(503, `${secretName} is not configured.`, {
         code: 'stripe_secret_missing',
         stripe_account: stripeAccount
       });

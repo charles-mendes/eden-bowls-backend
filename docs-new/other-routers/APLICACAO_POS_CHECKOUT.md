@@ -32,7 +32,7 @@ ACK **nao** substitui webhook. UI pode otimista-`paid`; o dominio so fecha em `i
 | Tema | Decisao no Node |
 |---|---|
 | Path webhook | `POST /stripe/v1/webhook` **fora** de `/api/v1` (igual `/shipping/v1/*`). `buildBearerTokenMiddleware` ja ignora path que nao comeca com `/api/v1` |
-| Auth webhook | header `Stripe-Signature` + `STRIPE_WEBHOOK_SECRET`; **raw body** **antes** de `express.json()` |
+| Auth webhook | header `Stripe-Signature` + `STRIPE_US_WEBHOOK_SECRET`; **raw body** **antes** de `express.json()`. `STRIPE_WEBHOOK_SECRET` is not read |
 | Path dashboard | `/api/v1/subscriptions...` (front ja chama; rotas ja registradas) |
 | Auth dashboard | JWT; `401` sem `currentUser.id`. Actions e commit: `assertCriticalOperationAllowed` (actions ja faz) |
 | Envelope | `{ success, data }` nas rotas `/api/v1`. Webhook: `{ received: true }` (Stripe so exige 2xx) |
@@ -161,14 +161,14 @@ Idempotencia: `INSERT` unique. Duplicate → 200 sem reprocessar.
 
 ## 6. Env
 
-Alem de `STRIPE_SECRET_KEY` ja em `src/config/env.js` e `.env.example`:
+Alem de `STRIPE_US_SECRET_KEY` em `src/config/env.js` e `.env.example` (`STRIPE_SECRET_KEY` is not read):
 
 | Variavel | Uso |
 |---|---|
-| `STRIPE_WEBHOOK_SECRET` | `whsec_...` — verificar `Stripe-Signature`. Sem isso → **503 so neste path** |
+| `STRIPE_US_WEBHOOK_SECRET` | `whsec_...` — verificar `Stripe-Signature` no path US. Sem isso → **503 so neste path**. `STRIPE_WEBHOOK_SECRET` is not read |
 | `WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME` | eligibility legado; apos o ledger Node, eligibility passa a ler `stripe_subscriptions` |
 
-Adicionar `STRIPE_WEBHOOK_SECRET` em `rawEnvSchema` (optional string) e em `.env.example`.
+O schema le `STRIPE_US_WEBHOOK_SECRET`, nao `STRIPE_WEBHOOK_SECRET` (not read).
 
 Dashboard Stripe: endpoint `{API}/stripe/v1/webhook`. Eventos minimos: `invoice.paid`, `invoice.created`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`.
 
@@ -207,10 +207,10 @@ src/app.js
 src/index.js
   # instanciar ledger + webhook events + stripeWebhookService
   # passar dataSource/stripeBilling aos repositorios de subscriptions
-  # passar STRIPE_WEBHOOK_SECRET
+  # passar STRIPE_US_WEBHOOK_SECRET. STRIPE_WEBHOOK_SECRET is not read
 
-src/config/env.js          # STRIPE_WEBHOOK_SECRET
-.env.example               # STRIPE_WEBHOOK_SECRET=
+src/config/env.js          # STRIPE_US_WEBHOOK_SECRET. STRIPE_WEBHOOK_SECRET is not read
+.env.example               # STRIPE_US_WEBHOOK_SECRET=. STRIPE_WEBHOOK_SECRET is not read
 
 src/infrastructure/db.js   # entities + migration 0009
 

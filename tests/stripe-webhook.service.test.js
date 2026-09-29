@@ -46,12 +46,53 @@ function buildService(overrides = {}) {
 
 describe('StripeWebhookService', () => {
   test('returns 503 when the webhook secret is not configured', async () => {
-    const { service } = buildService({ webhookSecret: '' });
+    const { service, stripeBilling } = buildService({ webhookSecret: '' });
 
     await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' })).rejects.toMatchObject({
+      message: expect.stringContaining('STRIPE_US_WEBHOOK_SECRET'),
       statusCode: 503,
       details: { code: 'stripe_webhook_secret_missing' }
     });
+    expect(stripeBilling.constructEvent).not.toHaveBeenCalled();
+  });
+
+  test('names only the path webhook secret when that account is not configured', async () => {
+    const { StripeAccounts } = require('../src/infrastructure/stripe/stripe-accounts');
+    const usBilling = { constructEvent: jest.fn() };
+    const brBilling = { constructEvent: jest.fn() };
+    const service = new StripeWebhookService({
+      stripeAccounts: new StripeAccounts({
+        us: usBilling,
+        br: brBilling,
+        brEnabled: false,
+        usWebhookSecret: '',
+        brWebhookSecret: ''
+      }),
+      eventsRepository: { insertIfNew: jest.fn() },
+      ledgerRepository: { upsert: jest.fn() }
+    });
+
+    await expect(service.handle({
+      account: 'us',
+      rawBody: Buffer.from('{}'),
+      signature: 'sig'
+    })).rejects.toMatchObject({
+      message: expect.stringContaining('STRIPE_US_WEBHOOK_SECRET'),
+      statusCode: 503,
+      details: { code: 'stripe_webhook_secret_missing' }
+    });
+    await expect(service.handle({
+      account: 'br',
+      rawBody: Buffer.from('{}'),
+      signature: 'sig'
+    })).rejects.toMatchObject({
+      message: expect.stringContaining('STRIPE_BR_WEBHOOK_SECRET'),
+      statusCode: 503,
+      details: { code: 'stripe_webhook_secret_missing' }
+    });
+
+    expect(usBilling.constructEvent).not.toHaveBeenCalled();
+    expect(brBilling.constructEvent).not.toHaveBeenCalled();
   });
 
   test('returns 400 when Stripe-Signature is missing', async () => {

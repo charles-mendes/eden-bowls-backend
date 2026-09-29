@@ -30,7 +30,7 @@ Arquivos:
 - `tests/stripe-webhook.routes.test.js`
 - `tests/stripe-webhook.service.test.js`
 
-Env: `STRIPE_US_WEBHOOK_SECRET` (fallback `STRIPE_WEBHOOK_SECRET`) e `STRIPE_BR_WEBHOOK_SECRET`.
+Env: `STRIPE_US_WEBHOOK_SECRET` e `STRIPE_BR_WEBHOOK_SECRET`. `STRIPE_WEBHOOK_SECRET` is not read.
 
 ## Responsabilidade
 
@@ -46,7 +46,7 @@ Pública. **Sem JWT**. Auth = `Stripe-Signature` + secret da conta do path:
 
 | Path | Secret |
 |------|--------|
-| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET` (fallback `STRIPE_WEBHOOK_SECRET`) |
+| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET`. `STRIPE_WEBHOOK_SECRET` is not read |
 | `/stripe/v1/webhook/br` | `STRIPE_BR_WEBHOOK_SECRET` |
 
 Path **fora** de `/api/v1`: `buildBearerTokenMiddleware` já faz `next()` se `!request.path.startsWith('/api/v1')` — igual `/shipping/v1/*` e `/health`.
@@ -214,7 +214,7 @@ Resolver user no ACK repository ja le `checkout_reference` por `user_id`. O webh
 
 | Variavel | Conta | Fallback |
 |----------|--------|----------|
-| `STRIPE_US_WEBHOOK_SECRET` | US | `STRIPE_WEBHOOK_SECRET` |
+| `STRIPE_US_WEBHOOK_SECRET` | US | nenhum. `STRIPE_WEBHOOK_SECRET` is not read |
 | `STRIPE_BR_WEBHOOK_SECRET` | BR | nenhum |
 
 Sem secret da conta do path → 503 neste path, nao derrubar o resto da API.

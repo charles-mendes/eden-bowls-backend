@@ -110,9 +110,8 @@ Arquivo da API: `eden-bowls-backend/.env` (QA VPS: o `.env` que o compose lê). 
 
 | Variável | Conta | Fallback |
 |----------|--------|----------|
-| `STRIPE_US_SECRET_KEY` | US | `STRIPE_SECRET_KEY` |
+| `STRIPE_US_SECRET_KEY` | US | nenhum. `STRIPE_SECRET_KEY` is not read |
 | `STRIPE_BR_SECRET_KEY` | BR | nenhum — obrigatória para criar na conta BR |
-| `STRIPE_SECRET_KEY` | legado US | — |
 
 Exemplo:
 
@@ -165,7 +164,7 @@ Cada endpoint = um `whsec_`. US test, US live, BR test e BR live são quatro sec
 
 | Path | Variável | Fallback |
 |------|----------|----------|
-| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET` | `STRIPE_WEBHOOK_SECRET` |
+| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET` | nenhum. `STRIPE_WEBHOOK_SECRET` is not read |
 | `/stripe/v1/webhook/br` | `STRIPE_BR_WEBHOOK_SECRET` | nenhum |
 
 ```env
@@ -390,7 +389,7 @@ STRIPE_MAX_RETRIES=2
 STRIPE_US_AUTOMATIC_TAX=true
 STRIPE_BR_ENABLED=false
 
-# US (legado STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET ainda funciona)
+# US. STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are not read
 STRIPE_US_SECRET_KEY=
 STRIPE_US_WEBHOOK_SECRET=
 

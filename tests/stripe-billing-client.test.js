@@ -569,9 +569,19 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
 });
 
 describe('StripeBillingClient.ensureClient', () => {
-  test('reports a missing secret key', () => {
-    const client = new StripeBillingClient({});
+  test('names STRIPE_US_SECRET_KEY when the US secret is missing', () => {
+    const client = new StripeBillingClient({ account: 'us' });
     expect(() => client.ensureClient()).toThrow(expect.objectContaining({
+      message: expect.stringContaining('STRIPE_US_SECRET_KEY'),
+      statusCode: 503,
+      details: expect.objectContaining({ code: 'stripe_secret_missing' })
+    }));
+  });
+
+  test('names STRIPE_BR_SECRET_KEY when a Brazil client is called directly', () => {
+    const client = new StripeBillingClient({ account: 'br' });
+    expect(() => client.ensureClient()).toThrow(expect.objectContaining({
+      message: expect.stringContaining('STRIPE_BR_SECRET_KEY'),
       statusCode: 503,
       details: expect.objectContaining({ code: 'stripe_secret_missing', stripe_account: 'us' })
     }));

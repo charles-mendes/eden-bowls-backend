@@ -167,7 +167,8 @@ class StripeBillingClient {
         code: 'stripe_sdk_missing'
       });
     }
-    throw this.httpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
+    const secretName = this.account === 'br' ? 'STRIPE_BR_SECRET_KEY' : 'STRIPE_US_SECRET_KEY';
+    throw this.httpError(503, `${secretName} is not configured.`, { code: 'stripe_secret_missing' });
   }
 
   async ensureRecurringPrice({ lookupKey, currency, unitAmount, nickname, stripeProductId }) {
@@ -1001,7 +1002,8 @@ class StripeBillingClient {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     if (!secret) {
-      throw this.httpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
+      const webhookName = this.account === 'br' ? 'STRIPE_BR_WEBHOOK_SECRET' : 'STRIPE_US_WEBHOOK_SECRET';
+      throw this.httpError(503, `${webhookName} is not configured.`, {
         code: 'stripe_webhook_secret_missing'
       });
     }

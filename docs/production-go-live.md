@@ -17,7 +17,7 @@ The store repo constant `DOMAIN_COM_URL` is `https://www.edenbowls.com`. `DOMAIN
 - `JWT_AUTH_SECRET_KEY`
 - `AUTH_OTP_PEPPER` or `AUTH_SALT` (the JWT secret is not a pepper)
 - `AUTH_SMTP_HOST` and `AUTH_MAIL_FROM`
-- Stripe US secret and webhook secret (`STRIPE_US_*`, or the legacy `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET`)
+- Stripe US secret and webhook secret (`STRIPE_US_SECRET_KEY` and `STRIPE_US_WEBHOOK_SECRET` only; `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read)
 - `STRIPE_BR_SECRET_KEY` and `STRIPE_BR_WEBHOOK_SECRET`
 - `UPS_CLIENT_ID`, `UPS_CLIENT_SECRET`, `UPS_ACCOUNT_NUMBER`
 - `METRICS_TOKEN`
@@ -48,7 +48,7 @@ Register webhooks at:
 - `POST /stripe/v1/webhook/us`
 - `POST /stripe/v1/webhook/br`
 
-The legacy `POST /stripe/v1/webhook` is the US endpoint. Put each signing secret in `STRIPE_US_WEBHOOK_SECRET` and `STRIPE_BR_WEBHOOK_SECRET`.
+The legacy `POST /stripe/v1/webhook` is the US endpoint. Put each signing secret in `STRIPE_US_WEBHOOK_SECRET` and `STRIPE_BR_WEBHOOK_SECRET`. Production accepts only `STRIPE_US_SECRET_KEY` and `STRIPE_US_WEBHOOK_SECRET` for the US account. A host env outside this repo must copy any live legacy secret onto those names before deploy. `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read.
 
 Shipping is not an environment product id. Checkout stores `shipping_product_id` on the subscription. Before production, review subscriptions that have a positive shipping amount and no `shipping_product_id`: that renewal adds no shipping line and only logs a warning. More than one `Shipping` product can exist after a process restart or two concurrent first checkouts. A QA host env that is not this repo `.env` must drop `STRIPE_US_SHIPPING_PRODUCT_ID`, `STRIPE_SHIPPING_PRODUCT_ID`, and `STRIPE_BR_SHIPPING_PRODUCT_ID` at deploy; those names are not read.
 

@@ -39,7 +39,7 @@ Publica. **Sem JWT**. Auth = header `Stripe-Signature` + o secret da **mesma** c
 
 | Path | Secret |
 |------|--------|
-| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET` (fallback `STRIPE_WEBHOOK_SECRET`) |
+| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET`. `STRIPE_WEBHOOK_SECRET` is not read |
 | `/stripe/v1/webhook/br` | `STRIPE_BR_WEBHOOK_SECRET` |
 
 Path **fora** de `/api/v1` para o `bearer-token.middleware` nao exigir Bearer. Igual `/shipping/v1/*`.
@@ -187,7 +187,7 @@ Nao gravar `client_secret` no ledger. Customer meta: `_hsr_stripe_customer_id_us
 
 | Variavel | Conta | Fallback |
 |----------|--------|----------|
-| `STRIPE_US_WEBHOOK_SECRET` | US | `STRIPE_WEBHOOK_SECRET` |
+| `STRIPE_US_WEBHOOK_SECRET` | US | nenhum. `STRIPE_WEBHOOK_SECRET` is not read |
 | `STRIPE_BR_WEBHOOK_SECRET` | BR | nenhum |
 
 Sem secret da conta do path → 503 neste path, nao derrubar o resto da API.
