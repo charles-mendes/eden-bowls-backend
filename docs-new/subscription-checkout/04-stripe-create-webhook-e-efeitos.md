@@ -6,7 +6,7 @@ Parte da serie `POST /api/v1/onboarding/subscription/checkout`.
 - Fluxo Stripe-first: [02-fluxo-stripe-first.md](./02-fluxo-stripe-first.md)
 - Ramo Woo descartado: [03-o-que-nao-portar-order-first.md](./03-o-que-nao-portar-order-first.md)
 
-Origem WP: `docs/subscription-checkout/04-stripe-webhook-e-efeitos.md`.
+Origem WP: `docs/archive/wordpress-migration/subscription-checkout/04-stripe-webhook-e-efeitos.md`.
 
 Este arquivo cobre o que acontece **depois** que o service decide criar a subscription: `StripeBillingClient.createOnboardingSubscription`, tax, cupom, idempotencia, persistencia, webhook `invoice.paid` e notas de implementacao.
 

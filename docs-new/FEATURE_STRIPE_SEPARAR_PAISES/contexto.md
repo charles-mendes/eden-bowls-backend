@@ -138,7 +138,7 @@ Dois paths explícitos (secret óbvio, sem tentar os dois):
 
 [`stripe-webhook.routes.js`](eden-bowls-backend/src/api/routes/stripe-webhook.routes.js) + [`stripe-webhook.service.js`](eden-bowls-backend/src/services/stripe-webhook.service.js): `handle({ account, rawBody, signature })` usa o client/secret da conta, persiste `stripe_account` no evento e no upsert do ledger. `invoice.created` injeta frete com o `shipping_product_id` da metadata da assinatura, na mesma conta. Assinatura inválida → 400 (não tenta o outro secret).
 
-Atualizar script `stripe:listen` / docs [`ROTA_STRIPE_WEBHOOK.md`](eden-bowls-backend/docs/other-routers/ROTA_STRIPE_WEBHOOK.md) para dois forwards.
+Atualizar script `stripe:listen` / docs [`ROTA_STRIPE_WEBHOOK.md`](eden-bowls-backend/docs/archive/wordpress-migration/other-routers/ROTA_STRIPE_WEBHOOK.md) para dois forwards.
 
 ---
 

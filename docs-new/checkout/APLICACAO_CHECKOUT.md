@@ -7,7 +7,7 @@ Fonte PHP (projeto original):
 - `pawbowl-wp/wp/wp-content/plugins/headless-secure-registration/`
 - `pawbowl-wp/wp/wp-content/plugins/pawbowl-stripe-billing/`
 
-Analises WP: `docs/checkout/`. Contratos Node atuais: [README.md](./README.md) e [CHECKOUT_RULES.md](./CHECKOUT_RULES.md).
+Analises WP: `docs/archive/wordpress-migration/checkout/`. Contratos Node atuais: [README.md](./README.md) e [CHECKOUT_RULES.md](./CHECKOUT_RULES.md).
 
 Este arquivo e o guia de transicao. Nao copiar PHP. Nao recriar `session_id` / `account-link` / `x-session-token`.
 
@@ -37,7 +37,7 @@ O front (`onboardingApi.ts` / `shippingApi.ts`) ja chama os paths novos. O Expre
 | Tema | WP | Decisao no Node |
 |---|---|---|
 | Path onboarding | `/wp-json/custom/v1/onboarding/session/:id/...` | `/api/v1/onboarding/...` (front ja usa) |
-| Path frete publico | `/wp-json/shipping/v1/calculate` e `/settings` | criar no Express nos **mesmos paths** que `shippingApi.ts` chama hoje (`/shipping/v1/...` no `VITE_API_BASE_URL`), para nao quebrar o front |
+| Path frete publico | legado substituido | `POST /shipping/v1/calculate` e `GET /shipping/v1/settings` em `shipping.routes.js` |
 | Auth lookup/autocomplete | sessao obrigatoria + rate limit por sessao | **publicas** (ja e o contrato do front) |
 | Auth escritas / cobranca | sessao; checkout exige `linked_user_id` + `account-link` | JWT; checkout/ACK usam `assertCriticalOperationAllowed` no lugar de `account-link` |
 | Envelope | `{ success, data }` + `session_id` | `{ success, data }` **sem** `session_id` |

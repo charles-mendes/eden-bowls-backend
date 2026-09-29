@@ -4,7 +4,7 @@ Documentacao de **implementacao** do Place Order no `eden-bowls-backend`.
 
 Escopo: converter o estado autenticado do usuario (plano + endereco + frete) em cobranca Stripe da **primeira fatura**, devolver `stripe_client_secret` para o front confirmar o PaymentIntent, e gravar ledger `incomplete`. A cobranca so fecha no webhook `invoice.paid`.
 
-Origem WP: `docs/subscription-checkout/01-onboarding-subscription-checkout.md`. Nao copiar PHP. Nao recriar sessao.
+Origem WP: `docs/archive/wordpress-migration/subscription-checkout/01-onboarding-subscription-checkout.md`. Nao copiar PHP. Nao recriar sessao.
 
 Stripe (create, tax, cupom, lock, webhook): [04-stripe-create-webhook-e-efeitos.md](./04-stripe-create-webhook-e-efeitos.md).
 

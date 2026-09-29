@@ -25,16 +25,18 @@ Guia de transicao (ordem, arquivos, schema): [APLICACAO_POS_CHECKOUT.md](./APLIC
 | Eligibility 1a compra | le `WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME` (`wp_hsr_stripe_subscriptions`); tabela ausente = sem assinatura ativa |
 | Preview imposto US | `StripeBillingClient.previewSubscriptionInvoice` |
 
-## O que falta converter
+## Rotas registradas
 
-| WP (legado) | Node (hoje) | Documento |
+O prefixo `/custom/v1` abaixo e o legado substituido. O Node registra as rotas da coluna do meio em `src/app.js`.
+
+| Legado substituido | Node (hoje) | Documento |
 |---|---|---|
-| `POST /custom/v1/stripe-webhook` | **nao existe** | [ROTA_STRIPE_WEBHOOK.md](./ROTA_STRIPE_WEBHOOK.md) |
-| `GET /custom/v1/subscriptions` | rota existe, stub `[]` | [ROTA_SUBSCRIPTIONS.md](./ROTA_SUBSCRIPTIONS.md) |
-| `GET /custom/v1/subscriptions/:id/detail` | rota existe, stub Premium/Milo | [ROTA_SUBSCRIPTIONS_DETAIL.md](./ROTA_SUBSCRIPTIONS_DETAIL.md) |
-| `POST /custom/v1/subscriptions/:id/actions` | rota existe, stub `queued` (nao chama Stripe) | [ROTA_SUBSCRIPTIONS_ACTIONS.md](./ROTA_SUBSCRIPTIONS_ACTIONS.md) |
-| `POST /custom/v1/subscriptions/:id/edit/preview` | rota existe, stub `hash-123` | [ROTA_SUBSCRIPTIONS_EDIT_PREVIEW.md](./ROTA_SUBSCRIPTIONS_EDIT_PREVIEW.md) |
-| `POST /custom/v1/subscriptions/:id/edit/commit` | **404** (`createApp` nao registra) | [ROTA_SUBSCRIPTIONS_EDIT_COMMIT.md](./ROTA_SUBSCRIPTIONS_EDIT_COMMIT.md) |
+| `POST /custom/v1/stripe-webhook` | `POST /stripe/v1/webhook`, `/stripe/v1/webhook/br`, `/stripe/v1/webhook/us` | [ROTA_STRIPE_WEBHOOK.md](./ROTA_STRIPE_WEBHOOK.md) |
+| `GET /custom/v1/subscriptions` | `GET /api/v1/subscriptions` | [ROTA_SUBSCRIPTIONS.md](./ROTA_SUBSCRIPTIONS.md) |
+| `GET /custom/v1/subscriptions/:id/detail` | `GET /api/v1/subscriptions/:subscriptionId/detail` | [ROTA_SUBSCRIPTIONS_DETAIL.md](./ROTA_SUBSCRIPTIONS_DETAIL.md) |
+| `POST /custom/v1/subscriptions/:id/actions` | `POST /api/v1/subscriptions/:subscriptionId/actions` | [ROTA_SUBSCRIPTIONS_ACTIONS.md](./ROTA_SUBSCRIPTIONS_ACTIONS.md) |
+| `POST /custom/v1/subscriptions/:id/edit/preview` | `POST /api/v1/subscriptions/:subscriptionId/edit/preview` | [ROTA_SUBSCRIPTIONS_EDIT_PREVIEW.md](./ROTA_SUBSCRIPTIONS_EDIT_PREVIEW.md) |
+| `POST /custom/v1/subscriptions/:id/edit/commit` | `POST /api/v1/subscriptions/:subscriptionId/edit/commit` | [ROTA_SUBSCRIPTIONS_EDIT_COMMIT.md](./ROTA_SUBSCRIPTIONS_EDIT_COMMIT.md) |
 
 ## Jornada no front atual
 

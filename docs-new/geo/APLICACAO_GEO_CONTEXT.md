@@ -4,15 +4,15 @@ Como a implementacao WordPress (`GeoApi` + `GeoDetectionService`) se encaixa no 
 
 ## 1. O que ja existe no Node e o que falta
 
-O backend ja trata **mercado** (US/USD vs BR/BRL). Ainda nao trata **deteccao geografica** (de onde veio a request).
+O backend trata **mercado** (US/USD vs BR/BRL) e **deteccao geografica** em `GET /api/v1/geo/context`.
 
 | Responsabilidade | WP (hoje) | Node (hoje) | Node (alvo) |
 |---|---|---|---|
-| Inferir `com` / `com.br` pelo host da request | `GeoApi::resolve_domain_from_request` | nao existe | `src/core/geo-detection.js` |
-| Resolver IP do visitante | `GeoDetectionService::detect_request_ip` (e um segundo metodo divergente em `GeoApi`) | nao existe | um unico helper, politica unificada |
-| Lookup MaxMind Country | `maxmind-db/reader` + `.mmdb` | nao existe | reader injetado, arquivo local |
+| Inferir `com` / `com.br` pelo host da request | legado substituido | `detectDomainFromRequest` em `src/core/geo-detection.js` | permanece |
+| Resolver IP do visitante | legado substituido | `detectRequestIp` em `src/core/geo-detection.js` | permanece |
+| Lookup MaxMind Country | legado substituido | `src/infrastructure/geo/maxmind-country-reader.js` | permanece |
 | Normalizar pais `US\|BR\|OTHER\|UNKNOWN` | `normalize_country` | `market.normalizeCountry` so aceita `US\|BR` | funcao **separada** em geo-detection |
-| Devolver `{ domain, country, ip, region, source, presetId }` | `GET /custom/v1/geo/context` | 404 | `GET /api/v1/geo/context` |
+| Devolver `{ domain, country, ip, region, source, presetId }` | legado substituido | `GET /api/v1/geo/context` | permanece |
 | Usar dominio/pais **ja conhecidos** em onboarding | — | `parseRequestMarket` + `resolveMarket` | permanece igual |
 
 Nao reutilizar `parseRequestMarket` nesta rota. Esse validator le `query` / `body` / `X-Eden-Country` / `X-Eden-Domain` — valores que o **cliente declara**. A rota geo e a origem desses valores: ela infere host e IP, nao confia no header de mercado.
