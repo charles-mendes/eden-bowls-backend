@@ -62,6 +62,21 @@ describe('parseEnv', () => {
     ]);
     expect(env.STRIPE_BR_ENABLED).toBe(true);
     expect(env.UPS_ENV).toBe('cie');
+    expect(env.STRIPE_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_US_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_BR_SHIPPING_PRODUCT_ID).toBeUndefined();
+  });
+
+  test('ignores leftover shipping product ids', () => {
+    const env = parseEnv(productionEnv({
+      STRIPE_SHIPPING_PRODUCT_ID: 'prod_legacy',
+      STRIPE_US_SHIPPING_PRODUCT_ID: 'prod_us',
+      STRIPE_BR_SHIPPING_PRODUCT_ID: 'prod_br'
+    }));
+
+    expect(env.STRIPE_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_US_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_BR_SHIPPING_PRODUCT_ID).toBeUndefined();
   });
 
   test('accepts STRIPE_BR_ENABLED false', () => {

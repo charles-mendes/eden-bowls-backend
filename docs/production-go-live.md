@@ -50,6 +50,8 @@ Register webhooks at:
 
 The legacy `POST /stripe/v1/webhook` is the US endpoint. Put each signing secret in `STRIPE_US_WEBHOOK_SECRET` and `STRIPE_BR_WEBHOOK_SECRET`.
 
+Shipping is not an environment product id. Checkout stores `shipping_product_id` on the subscription. Before production, review subscriptions that have a positive shipping amount and no `shipping_product_id`: that renewal adds no shipping line and only logs a warning. More than one `Shipping` product can exist after a process restart or two concurrent first checkouts. A QA host env that is not this repo `.env` must drop `STRIPE_US_SHIPPING_PRODUCT_ID`, `STRIPE_SHIPPING_PRODUCT_ID`, and `STRIPE_BR_SHIPPING_PRODUCT_ID` at deploy; those names are not read.
+
 ## UPS
 
 `UPS_ENV=cie` uses the UPS customer integration environment. `UPS_ENV=production` uses `https://onlinetools.ups.com`. QA keeps `cie`.

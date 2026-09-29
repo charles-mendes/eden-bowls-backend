@@ -124,7 +124,6 @@ Alem de `STRIPE_SECRET_KEY` ja usado no checkout:
 | Variavel | Uso |
 |---|---|
 | `STRIPE_WEBHOOK_SECRET` | `whsec_...` — verificar `Stripe-Signature` |
-| `STRIPE_SHIPPING_PRODUCT_ID` | ja no `.env.example`; `invoice.created` reusa para ciclos seguintes |
 | `WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME` | ja default `wp_hsr_stripe_subscriptions` na eligibility |
 
 ## 7. Arquivos a criar e a alterar

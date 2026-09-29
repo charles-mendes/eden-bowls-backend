@@ -54,8 +54,6 @@ US herda o valor legado se `_US` estiver vazio.
 | `STRIPE_BR_SECRET_KEY` | BR | nenhum — obrigatória para criar BR |
 | `STRIPE_US_WEBHOOK_SECRET` | US | `STRIPE_WEBHOOK_SECRET` |
 | `STRIPE_BR_WEBHOOK_SECRET` | BR | nenhum |
-| `STRIPE_US_SHIPPING_PRODUCT_ID` | US | `STRIPE_SHIPPING_PRODUCT_ID` |
-| `STRIPE_BR_SHIPPING_PRODUCT_ID` | BR | nenhum — criar `prod_` de frete **na conta BR** |
 | `STRIPE_API_VERSION` | ambas | `2025-09-30.clover` |
 | `STRIPE_US_AUTOMATIC_TAX` | só US | — |
 | `STRIPE_BR_ENABLED` | criação BR | default `false` |
@@ -113,7 +111,7 @@ No painel: Catálogo → mercado **BR** / moeda **BRL** → Sync.
 
 Conferir health: mapped = expected, sem gaps. Sem `price_` BR o checkout BR falha mesmo com a flag on.
 
-O product de frete (`STRIPE_BR_SHIPPING_PRODUCT_ID`) é criado à mão no Dashboard BR (o sync de bowls não cobre shipping). Sem ele, o 2º ciclo some o frete no `invoice.created`.
+O checkout grava `shipping_product_id` na metadata da assinatura, na mesma conta Stripe. O sync de bowls não cobre frete. Sem esse id, o 2º ciclo não adiciona frete no `invoice.created`.
 
 ---
 

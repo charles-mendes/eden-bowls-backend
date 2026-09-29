@@ -21,7 +21,7 @@ Guia de transicao (ordem, arquivos, schema): [APLICACAO_POS_CHECKOUT.md](./APLIC
 | Place Order Stripe | `POST /api/v1/onboarding/subscription/checkout` — `StripeBillingClient.createOnboardingSubscription`; grava `checkout_reference` + `cus_` em `wp_usermeta._hsr_stripe_customer_id` |
 | ACK do PaymentIntent | `POST /api/v1/onboarding/payment-intent/ack` — persiste status em `checkout_reference`; **nao** confirma cobranca |
 | Customer Stripe | `StripeCustomerStore` |
-| Frete 1a invoice | checkout injeta `add_invoice_items` via `STRIPE_SHIPPING_PRODUCT_ID` |
+| Frete 1a invoice | checkout cria o produto `Shipping` na conta da assinatura e grava `shipping_product_id` na metadata |
 | Eligibility 1a compra | le `WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME` (`wp_hsr_stripe_subscriptions`); tabela ausente = sem assinatura ativa |
 | Preview imposto US | `StripeBillingClient.previewSubscriptionInvoice` |
 

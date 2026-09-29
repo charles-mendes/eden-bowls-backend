@@ -93,16 +93,14 @@ function createStripeAccountsFromEnv(env = {}) {
     secretKey: env.STRIPE_US_SECRET_KEY,
     apiVersion,
     maxNetworkRetries,
-    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
-    shippingProductId: env.STRIPE_US_SHIPPING_PRODUCT_ID
+    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX
   });
   const br = new StripeBillingClient({
     account: STRIPE_ACCOUNTS.BR,
     secretKey: env.STRIPE_BR_SECRET_KEY,
     apiVersion,
     maxNetworkRetries,
-    automaticTaxEnabled: false,
-    shippingProductId: env.STRIPE_BR_SHIPPING_PRODUCT_ID
+    automaticTaxEnabled: false
   });
 
   return new StripeAccounts({

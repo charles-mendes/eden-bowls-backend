@@ -66,8 +66,11 @@ function buildClient(overrides = {}) {
     stripe,
     client: new StripeBillingClient({
       client: stripe,
+      account: overrides.account,
       automaticTaxEnabled: overrides.automaticTaxEnabled !== false,
-      shippingProductId: overrides.shippingProductId || 'prod_ship'
+      shippingProductId: Object.prototype.hasOwnProperty.call(overrides, 'shippingProductId')
+        ? overrides.shippingProductId
+        : 'prod_ship'
     })
   };
 }
@@ -113,6 +116,69 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
       { idempotencyKey: 'eb-sub-create-7-test' }
     );
     expect(stripe.subscriptions.create.mock.calls[0][0].expand).toBeUndefined();
+  });
+
+  test('creates a Shipping product and reuses it for the next checkout', async () => {
+    const { stripe, client } = buildClient({ shippingProductId: '' });
+    stripe.products.create.mockResolvedValueOnce({ id: 'prod_created' });
+
+    await client.createOnboardingSubscription(validInput);
+    await client.createOnboardingSubscription({
+      ...validInput,
+      idempotencyKey: 'eb-sub-create-7-second'
+    });
+
+    expect(stripe.products.create).toHaveBeenCalledTimes(1);
+    expect(stripe.products.create).toHaveBeenCalledWith({
+      name: 'Shipping',
+      tax_code: 'txcd_92010001'
+    });
+    expect(stripe.subscriptions.create.mock.calls[0][0].metadata.shipping_product_id).toBe('prod_created');
+    expect(stripe.subscriptions.create.mock.calls[1][0].metadata.shipping_product_id).toBe('prod_created');
+    expect(stripe.subscriptions.create.mock.calls[0][0].add_invoice_items[0].price_data.product).toBe('prod_created');
+  });
+
+  test('does not create a shipping product when the quote has no cost', async () => {
+    const { stripe, client } = buildClient({ shippingProductId: '' });
+
+    await client.createOnboardingSubscription({
+      ...validInput,
+      shipping: { cost: 0 }
+    });
+
+    expect(stripe.products.create).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.create.mock.calls[0][0].metadata.shipping_product_id).toBeUndefined();
+    expect(stripe.subscriptions.create.mock.calls[0][0].add_invoice_items).toBeUndefined();
+  });
+
+  test('creates the BR shipping product on the BR client', async () => {
+    const us = buildClient({ account: 'us', shippingProductId: '' });
+    const br = buildClient({ account: 'br', automaticTaxEnabled: false, shippingProductId: '' });
+
+    await br.client.createOnboardingSubscription({
+      ...validInput,
+      currency: 'brl',
+      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' }
+    });
+
+    expect(br.stripe.products.create).toHaveBeenCalledWith({
+      name: 'Shipping',
+      tax_code: 'txcd_92010001'
+    });
+    expect(br.stripe.subscriptions.create.mock.calls[0][0].metadata.shipping_product_id).toBe('prod_ship');
+    expect(us.stripe.products.create).not.toHaveBeenCalled();
+    expect(us.stripe.subscriptions.create).not.toHaveBeenCalled();
+  });
+
+  test('does not create the subscription when the shipping product is rejected', async () => {
+    const { stripe, client } = buildClient({ shippingProductId: '' });
+    stripe.products.create.mockRejectedValue(new Error('stripe down'));
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      details: { code: 'stripe_subscription_failed' }
+    });
+    expect(stripe.subscriptions.create).not.toHaveBeenCalled();
   });
 
   test('retrieves confirmation_secret when create returns only an invoice id', async () => {

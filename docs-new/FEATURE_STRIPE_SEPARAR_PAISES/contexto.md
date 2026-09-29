@@ -68,7 +68,7 @@ Novas vars (US herda as atuais se as `_US` estiverem vazias):
 
 - `STRIPE_BR_SECRET_KEY` / `STRIPE_US_SECRET_KEY` (fallback: `STRIPE_SECRET_KEY` → US)
 - `STRIPE_BR_WEBHOOK_SECRET` / `STRIPE_US_WEBHOOK_SECRET` (fallback: `STRIPE_WEBHOOK_SECRET` → US)
-- `STRIPE_BR_SHIPPING_PRODUCT_ID` / `STRIPE_US_SHIPPING_PRODUCT_ID` (fallback: `STRIPE_SHIPPING_PRODUCT_ID` → US)
+- Frete não usa variável de ambiente. O checkout grava `shipping_product_id` na metadata da assinatura, na mesma conta.
 - `STRIPE_US_AUTOMATIC_TAX` permanece só no client US
 - `STRIPE_BR_ENABLED` (`false` por default). `true` só depois de secrets + catalog sync + cupons BR mapeados
 - `STRIPE_API_VERSION` **obrigatória e compartilhada** pelos dois clients (hoje `2025-09-30.clover` em [`.env.example`](eden-bowls-backend/.env.example)). Conta BR nova no Dashboard pode nascer com outra API version; o SDK **não** herda a default da conta — passa `apiVersion` explícita em `createStripeSdk` nos dois. Sem omitir.
@@ -136,7 +136,7 @@ Dois paths explícitos (secret óbvio, sem tentar os dois):
 - `POST /stripe/v1/webhook/us`
 - Manter `POST /stripe/v1/webhook` como alias US só no cutover
 
-[`stripe-webhook.routes.js`](eden-bowls-backend/src/api/routes/stripe-webhook.routes.js) + [`stripe-webhook.service.js`](eden-bowls-backend/src/services/stripe-webhook.service.js): `handle({ account, rawBody, signature })` usa o client/secret da conta, persiste `stripe_account` no evento e no upsert do ledger. `invoice.created` injeta frete com o `STRIPE_*_SHIPPING_PRODUCT_ID` da mesma conta. Assinatura inválida → 400 (não tenta o outro secret).
+[`stripe-webhook.routes.js`](eden-bowls-backend/src/api/routes/stripe-webhook.routes.js) + [`stripe-webhook.service.js`](eden-bowls-backend/src/services/stripe-webhook.service.js): `handle({ account, rawBody, signature })` usa o client/secret da conta, persiste `stripe_account` no evento e no upsert do ledger. `invoice.created` injeta frete com o `shipping_product_id` da metadata da assinatura, na mesma conta. Assinatura inválida → 400 (não tenta o outro secret).
 
 Atualizar script `stripe:listen` / docs [`ROTA_STRIPE_WEBHOOK.md`](eden-bowls-backend/docs/other-routers/ROTA_STRIPE_WEBHOOK.md) para dois forwards.
 

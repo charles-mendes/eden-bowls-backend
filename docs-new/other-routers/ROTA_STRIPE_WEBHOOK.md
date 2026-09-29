@@ -87,7 +87,7 @@ Sem este evento, Meu Plano fica vazio e a 2a compra ainda pode receber cupom de 
 
 O checkout Node so coloca frete na **1a** invoice (`add_invoice_items`). Ciclos seguintes **somem o frete** se este handler nao existir.
 
-Alvo: se `billing_reason === 'subscription_cycle'` (nao `subscription_create`), invoice `status === 'draft'`, e a sub/ledger tiver shipping persistido, chamar `invoiceItems.create` com o product da **mesma** conta (`STRIPE_US_SHIPPING_PRODUCT_ID` / `STRIPE_BR_SHIPPING_PRODUCT_ID`; US herda `STRIPE_SHIPPING_PRODUCT_ID`) **antes** da invoice fechar.
+Alvo: se `billing_reason === 'subscription_cycle'` (nao `subscription_create`), invoice `status === 'draft'`, e a sub/ledger tiver shipping persistido, chamar `invoiceItems.create` com o `shipping_product_id` gravado na metadata da assinatura, na mesma conta, **antes** da invoice fechar. Sem esse `prod_`, o handler não adiciona frete e registra um aviso.
 
 Checkout precisa gravar na metadata da Subscription (hoje so tem `wp_user_id` + `source`):
 
@@ -216,8 +216,6 @@ Resolver user no ACK repository ja le `checkout_reference` por `user_id`. O webh
 |----------|--------|----------|
 | `STRIPE_US_WEBHOOK_SECRET` | US | `STRIPE_WEBHOOK_SECRET` |
 | `STRIPE_BR_WEBHOOK_SECRET` | BR | nenhum |
-| `STRIPE_US_SHIPPING_PRODUCT_ID` | US | `STRIPE_SHIPPING_PRODUCT_ID` |
-| `STRIPE_BR_SHIPPING_PRODUCT_ID` | BR | nenhum |
 
 Sem secret da conta do path → 503 neste path, nao derrubar o resto da API.
 

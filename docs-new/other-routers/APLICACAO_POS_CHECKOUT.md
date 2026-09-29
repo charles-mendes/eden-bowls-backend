@@ -161,12 +161,11 @@ Idempotencia: `INSERT` unique. Duplicate → 200 sem reprocessar.
 
 ## 6. Env
 
-Alem de `STRIPE_SECRET_KEY` / `STRIPE_SHIPPING_PRODUCT_ID` ja em `src/config/env.js` e `.env.example`:
+Alem de `STRIPE_SECRET_KEY` ja em `src/config/env.js` e `.env.example`:
 
 | Variavel | Uso |
 |---|---|
 | `STRIPE_WEBHOOK_SECRET` | `whsec_...` — verificar `Stripe-Signature`. Sem isso → **503 so neste path** |
-| `STRIPE_SHIPPING_PRODUCT_ID` | `invoice.created` reusa o mesmo product do checkout |
 | `WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME` | eligibility legado; apos o ledger Node, eligibility passa a ler `stripe_subscriptions` |
 
 Adicionar `STRIPE_WEBHOOK_SECRET` em `rawEnvSchema` (optional string) e em `.env.example`.

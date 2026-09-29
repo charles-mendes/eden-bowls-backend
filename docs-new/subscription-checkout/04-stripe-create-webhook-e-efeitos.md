@@ -37,7 +37,7 @@ Env (`src/config/env.js` + `.env.example`):
 | `STRIPE_API_VERSION` | `apiVersion` do client | `2025-09-30.clover` |
 | `STRIPE_MAX_RETRIES` | `maxNetworkRetries` | **2** (PHP vazio = 0; nao copiar 0) |
 | `STRIPE_US_AUTOMATIC_TAX` | `automatic_tax.enabled` se pais US | **true** |
-| `STRIPE_SHIPPING_PRODUCT_ID` | product do `add_invoice_items` / `invoice.created` | vazio → cria `Shipping` `txcd_92010001` na hora |
+| Frete | `shipping_product_id` na metadata da assinatura | checkout cria `Shipping` `txcd_92010001` na conta da assinatura |
 | `STRIPE_FIRST_PURCHASE_PROMO_1M` / `3M` / `6M` | mapa `promo_` | vazio → 503 se elegivel |
 | `STRIPE_WEBHOOK_SECRET` | so o webhook | 503 so naquele path |
 
@@ -269,7 +269,7 @@ Nao ler: sessao HSR, carrinho Woo, `WC_Tax`.
 | Stripe Customer / PM attach / Subscription / Invoice / PI | sim |
 | `stripe_subscriptions` | sim (`incomplete`) |
 | lock de create | alvo |
-| `STRIPE_SHIPPING_PRODUCT_ID` em runtime | se criou product (nao persistir em option WP; logar para o ops colar no env) |
+| `shipping_product_id` na metadata da assinatura | checkout grava o `prod_` usado na primeira invoice |
 | misconfig count do cupom | sim (`incrementMisconfigMetric`) |
 | Flexible `fsb_subscription` | **nao** |
 

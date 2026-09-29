@@ -78,7 +78,7 @@ WP: injeta frete com `invoiceItems.create` usando metadata de shipping gravada n
 
 O checkout Node so coloca frete na **1a** invoice (`add_invoice_items`). Ciclos seguintes **somem o frete** se este handler nao existir.
 
-Alvo: se a invoice e `subscription_cycle` (nao a primeira) e ha shipping persistido, adicionar o product de frete da **mesma** conta (`STRIPE_US_SHIPPING_PRODUCT_ID` / `STRIPE_BR_SHIPPING_PRODUCT_ID`; US herda `STRIPE_SHIPPING_PRODUCT_ID`) **antes** da invoice fechar. So em `draft`.
+Alvo: se a invoice e `subscription_cycle` (nao a primeira) e ha shipping persistido, adicionar o frete com o `shipping_product_id` da metadata da assinatura, na mesma conta, **antes** da invoice fechar. So em `draft`. Sem esse `prod_`, o handler não adiciona frete e registra um aviso.
 
 ### 3) `payment_intent.succeeded` / `processing`
 

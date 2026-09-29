@@ -32,7 +32,8 @@ function buildService(overrides = {}) {
       eventsRepository,
       ledgerRepository,
       customerStore,
-      shippingProductId: 'prod_ship',
+      shippingProductId: overrides.shippingProductId === undefined ? 'prod_ship' : overrides.shippingProductId,
+      logger: overrides.logger || { error() {}, warn() {}, info() {} },
       transactionalMailer: overrides.transactionalMailer || null,
       withTimeout: overrides.withTimeout
     }),
@@ -155,6 +156,144 @@ describe('StripeWebhookService', () => {
       amount: 1290,
       currency: 'usd'
     });
+  });
+
+  test('uses the subscription shipping product id instead of a cached one', async () => {
+    const logger = { error() {}, warn: jest.fn(), info() {} };
+    const { service, stripeBilling } = buildService({
+      shippingProductId: 'prod_cached',
+      logger
+    });
+    stripeBilling.shippingProductId = 'prod_cached';
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_meta',
+      type: 'invoice.created',
+      data: {
+        object: {
+          id: 'in_cycle',
+          status: 'draft',
+          billing_reason: 'subscription_cycle',
+          customer: 'cus_1',
+          subscription: 'sub_123',
+          currency: 'usd'
+        }
+      }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      metadata: {
+        shipping_amount_minor: '1290',
+        shipping_currency: 'usd',
+        shipping_product_id: 'prod_meta'
+      }
+    });
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(stripeBilling.addShippingInvoiceItem).toHaveBeenCalledWith(expect.objectContaining({
+      productId: 'prod_meta',
+      amount: 1290
+    }));
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test('uses the ledger shipping cost when metadata amount is missing', async () => {
+    const { service, stripeBilling, ledgerRepository } = buildService({ shippingProductId: '' });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      shipping: { cost: 12.9 }
+    });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_ledger',
+      type: 'invoice.created',
+      data: {
+        object: {
+          id: 'in_cycle',
+          status: 'draft',
+          billing_reason: 'subscription_cycle',
+          customer: 'cus_1',
+          subscription: 'sub_123',
+          currency: 'usd'
+        }
+      }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      metadata: { shipping_product_id: 'prod_ship' }
+    });
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(stripeBilling.addShippingInvoiceItem).toHaveBeenCalledWith(expect.objectContaining({
+      productId: 'prod_ship',
+      amount: 1290,
+      currency: 'usd'
+    }));
+  });
+
+  test('warns and skips shipping when the subscription has no product id', async () => {
+    const logger = { error() {}, warn: jest.fn(), info() {} };
+    const { service, stripeBilling } = buildService({
+      shippingProductId: 'prod_cached',
+      logger
+    });
+    stripeBilling.shippingProductId = 'prod_cached';
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_missing',
+      type: 'invoice.created',
+      data: {
+        object: {
+          id: 'in_cycle',
+          status: 'draft',
+          billing_reason: 'subscription_cycle',
+          customer: 'cus_1',
+          subscription: 'sub_123',
+          currency: 'usd'
+        }
+      }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      metadata: { shipping_amount_minor: '1290', shipping_currency: 'usd' }
+    });
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(stripeBilling.addShippingInvoiceItem).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith({
+      subscriptionId: 'sub_123',
+      stripe_account: 'us'
+    }, 'invoice.created skipped shipping: shipping_product_id missing.');
+  });
+
+  test('does not add shipping or warn when the cycle has no shipping amount', async () => {
+    const logger = { error() {}, warn: jest.fn(), info() {} };
+    const { service, stripeBilling } = buildService({
+      shippingProductId: 'prod_cached',
+      logger
+    });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_zero',
+      type: 'invoice.created',
+      data: {
+        object: {
+          id: 'in_cycle',
+          status: 'draft',
+          billing_reason: 'subscription_cycle',
+          customer: 'cus_1',
+          subscription: 'sub_123',
+          currency: 'usd'
+        }
+      }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      metadata: {}
+    });
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(stripeBilling.addShippingInvoiceItem).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   test('rejects a BR-signed payload on the US endpoint without trying the BR secret', async () => {

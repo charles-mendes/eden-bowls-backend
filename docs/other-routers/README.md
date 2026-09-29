@@ -20,7 +20,7 @@ Identidade no Node: **JWT**. Sem `session_id`. Sem Woo `fsb_subscription`. Persi
 | Place Order Stripe | `POST /api/v1/onboarding/subscription/checkout` — cria Subscription, devolve `stripe_client_secret` |
 | ACK do PaymentIntent | `POST /api/v1/onboarding/payment-intent/ack` — persiste status; **nao** confirma cobranca |
 | Customer Stripe | `wp_usermeta._hsr_stripe_customer_id` via `StripeCustomerStore` |
-| Frete 1a invoice | checkout injeta via `add_invoice_items` / `STRIPE_SHIPPING_PRODUCT_ID` |
+| Frete 1a invoice | checkout cria o produto `Shipping` na conta da assinatura e grava `shipping_product_id` na metadata |
 
 ## O que falta converter
 

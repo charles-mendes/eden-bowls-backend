@@ -390,18 +390,16 @@ STRIPE_MAX_RETRIES=2
 STRIPE_US_AUTOMATIC_TAX=true
 STRIPE_BR_ENABLED=false
 
-# US (legado STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_SHIPPING_PRODUCT_ID ainda funciona)
+# US (legado STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET ainda funciona)
 STRIPE_US_SECRET_KEY=
 STRIPE_US_WEBHOOK_SECRET=
-STRIPE_US_SHIPPING_PRODUCT_ID=
 
 # BR (sem fallback)
 STRIPE_BR_SECRET_KEY=
 STRIPE_BR_WEBHOOK_SECRET=
-STRIPE_BR_SHIPPING_PRODUCT_ID=
 ```
 
-Só ligue `STRIPE_BR_ENABLED=true` depois de: secrets BR, product de frete BR, catálogo BR, cupons BR e webhook BR recebendo evento de teste.
+Só ligue `STRIPE_BR_ENABLED=true` depois de: secrets BR, catálogo BR, cupons BR e webhook BR recebendo evento de teste. O frete BR usa o `shipping_product_id` gravado na assinatura, não uma variável de ambiente.
 
 ### Loja (`eden-bowls/.env`)
 
