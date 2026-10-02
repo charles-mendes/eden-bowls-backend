@@ -17,7 +17,7 @@ A local process MUST verify CLI-forwarded events with the signing secret printed
 
 Operator documentation MUST state that the store publishable key for a country and an environment is the publishable key of the same merchant account as that environment's API secret for that country. QA and local store builds use the QA test publishable keys. The production store build uses the live publishable keys.
 
-Secret keys, publishable keys, and webhook signing secrets MUST NOT appear in git, in documentation, in env templates, or in this change. `.env.example` and `.env.qa.example` MUST keep the regional names and empty values. A search of tracked files MUST also cover history, and the ignore path for this change MUST include both `openspec/changes/cutover-stripe-environment-accounts` and `openspec/changes/archive`.
+Secret keys, publishable keys, and webhook signing secrets MUST NOT appear on the HEAD of PR1 or PR2, in documentation at that HEAD, in env templates, or in this change. `.env.example` and `.env.qa.example` MUST keep the regional names and empty values. Commits before PR1 may still contain the retired sandbox account fragment `TObKd` and the placeholder suffixes `US...` and `BR...`. History is not rewritten. The repository is public. Those historical values are unusable after the rotations in tasks 4.2 and 4.3. The ignore path for this change MUST include both `openspec/changes/cutover-stripe-environment-accounts` and `openspec/changes/archive`.
 
 #### Scenario: QA and local are not the retired sandbox
 
@@ -34,10 +34,11 @@ Secret keys, publishable keys, and webhook signing secrets MUST NOT appear in gi
 - **WHEN** an operator follows the localhost webhook doc
 - **THEN** it tells them to put the `stripe listen` signing secret for the QA account of that country into the local env, and it tells them not to paste the QA or production dashboard signing secret there
 
-#### Scenario: Tracked files and history do not contain merchant secrets
+#### Scenario: PR1 and PR2 do not contain merchant secrets
 
-- **WHEN** tracked files and git history are searched for live secret keys, test secret keys, or webhook signing secrets
-- **THEN** the only matches are empty template assignments, synthetic CI placeholders, and documentation that names the prefix without a real key, and no merchant key or dashboard signing secret is present
+- **WHEN** the HEAD of PR1 or PR2 is searched for live secret keys, test secret keys, publishable keys of a real account, or webhook signing secrets, excluding this change directory and the archive
+- **THEN** there is no match, and every remaining test-key prefix on that HEAD is a synthetic CI placeholder
+- **AND** matches in commits before PR1 are historical test material (retired sandbox account fragment `TObKd`, or the placeholder suffixes `US...` and `BR...`), history is not rewritten, and those secrets are unusable after the rotations in tasks 4.2 and 4.3
 
 ### Requirement: Stored Stripe ids belong to one merchant account
 
