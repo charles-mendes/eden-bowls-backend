@@ -210,7 +210,7 @@ class StripeWebhookService {
   async dispatch(event, runtime) {
     const object = event.data && event.data.object ? event.data.object : {};
     if (event.type === 'invoice.paid') {
-      await this.handleInvoicePaid(object, runtime);
+      await this.handleInvoicePaid(object, runtime, event);
       return;
     }
     if (event.type === 'invoice.created') {
@@ -218,6 +218,11 @@ class StripeWebhookService {
       return;
     }
     if (event.type === 'payment_intent.succeeded' || event.type === 'payment_intent.processing') {
+      const marker = this.edenEnvValue(object.metadata);
+      if (marker && marker !== this.edenEnvLabel()) {
+        this.warnIgnored(event, 'marker_mismatch', { stripe_account: runtime.account });
+        return;
+      }
       await this.handlePaymentIntentUpdate(object);
       return;
     }
@@ -226,6 +231,13 @@ class StripeWebhookService {
       return;
     }
     if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
+      const marker = this.edenEnvValue(object.metadata);
+      if (!marker || marker !== this.edenEnvLabel()) {
+        this.warnIgnored(event, marker ? 'marker_mismatch' : 'marker_missing', {
+          stripe_account: runtime.account
+        });
+        return;
+      }
       await this.handleSubscriptionChanged(object, runtime);
     }
   }
@@ -277,10 +289,42 @@ class StripeWebhookService {
     return extractCardFromPaymentMethod(paymentMethod);
   }
 
-  async handleInvoicePaid(invoice, runtime = {}) {
+  edenEnvLabel() {
+    return String(process.env.EDEN_RUNTIME || '').trim();
+  }
+
+  warnIgnored(event, reason, extra = {}) {
+    this.logger.warn({
+      type: event && event.type,
+      eventId: event && event.id,
+      stripe_account: extra.stripe_account,
+      reason
+    }, 'Stripe webhook ignored.');
+  }
+
+  edenEnvValue(metadata) {
+    if (!metadata || typeof metadata !== 'object') {
+      return '';
+    }
+    return String(metadata.eden_env || '').trim();
+  }
+
+  async handleInvoicePaid(invoice, runtime = {}, event = {}) {
     const subscriptionId = extractSubscriptionIdFromInvoice(invoice);
     const subscription = await this.retrieveSubscriptionSafe(subscriptionId, runtime.stripeBilling);
-    const metadata = (subscription && subscription.metadata) || invoice.subscription_details && invoice.subscription_details.metadata || {};
+    const subscriptionMeta = subscription && subscription.metadata ? subscription.metadata : null;
+    const detailMeta = invoice.subscription_details && invoice.subscription_details.metadata
+      ? invoice.subscription_details.metadata
+      : null;
+    const edenEnv = this.edenEnvValue(subscriptionMeta) || this.edenEnvValue(detailMeta);
+    const runtimeLabel = this.edenEnvLabel();
+    if (!edenEnv || edenEnv !== runtimeLabel) {
+      this.warnIgnored(event, edenEnv ? 'marker_mismatch' : 'marker_missing', {
+        stripe_account: runtime.account
+      });
+      return;
+    }
+    const metadata = subscriptionMeta || detailMeta || {};
     const context = await this.resolveUserContext({
       subscriptionId,
       customerId: invoice.customer,

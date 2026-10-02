@@ -74,6 +74,7 @@ const rawEnvSchema = z.object({
   STRIPE_BR_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_US_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_BR_ENABLED: z.string().optional(),
+  EDEN_RUNTIME: z.string().optional(),
   NOMINATIM_USER_AGENT: z.string().optional(),
   GEO_MAXMIND_DB_PATH: z.string().default('./data/GeoLite2-Country.mmdb'),
   GEO_TRUST_PROXY_HEADERS: z.string().optional(),
@@ -216,8 +217,18 @@ function assertProductionEnv(rawEnv, resolved) {
   }
 }
 
+const EDEN_RUNTIMES = new Set(['local', 'qa', 'production']);
+
+function assertEdenRuntime(rawEnv) {
+  const value = String(rawEnv.EDEN_RUNTIME || '').trim();
+  if (!EDEN_RUNTIMES.has(value)) {
+    throw new Error('EDEN_RUNTIME must be local, qa, or production.');
+  }
+}
+
 function parseEnv(source = process.env) {
   const rawEnv = rawEnvSchema.parse(source);
+  assertEdenRuntime(rawEnv);
   const refreshCookieSecure = toBoolean(rawEnv.AUTH_REFRESH_COOKIE_SECURE, rawEnv.NODE_ENV === 'production');
 
   if (rawEnv.NODE_ENV === 'production' && !refreshCookieSecure) {
@@ -238,6 +249,7 @@ function parseEnv(source = process.env) {
   const resolved = {
     NODE_ENV: rawEnv.NODE_ENV,
     SENTRY_DSN: String(rawEnv.SENTRY_DSN || '').trim(),
+    EDEN_RUNTIME: String(rawEnv.EDEN_RUNTIME || '').trim(),
     PORT: Number(rawEnv.PORT),
     MODE: rawEnv.MODE,
     ENABLE_BACKGROUND_JOBS: toBoolean(rawEnv.ENABLE_BACKGROUND_JOBS),

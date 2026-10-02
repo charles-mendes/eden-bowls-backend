@@ -90,8 +90,12 @@ class SubscriptionsEditCommitRepository {
       wp_user_id: String(userId),
       user_id: String(userId),
       source: 'eden_bowls_node',
-      subscription_term_months: String(proposedTerm)
+      subscription_term_months: String(proposedTerm),
+      eden_env: String(process.env.EDEN_RUNTIME || '').trim()
     };
+    if (!metadata.eden_env) {
+      throw new HttpError(500, 'EDEN_RUNTIME must be local, qa, or production.');
+    }
     if (shippingCost > 0) {
       metadata.shipping_amount_minor = String(Math.round(shippingCost * 100));
       metadata.shipping_currency = String(proposed.currency || 'usd').toLowerCase();
