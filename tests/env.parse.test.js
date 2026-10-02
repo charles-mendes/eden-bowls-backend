@@ -90,6 +90,7 @@ describe('parseEnv', () => {
   test('ignores legacy Stripe credentials when the regional keys are absent', () => {
     const env = parseEnv({
       NODE_ENV: 'development',
+      EDEN_RUNTIME: 'local',
       STRIPE_SECRET_KEY: 'sk_legacy',
       STRIPE_WEBHOOK_SECRET: 'whsec_legacy'
     });
@@ -103,6 +104,7 @@ describe('parseEnv', () => {
   test('ignores legacy Stripe credentials when the regional keys are set', () => {
     const env = parseEnv({
       NODE_ENV: 'development',
+      EDEN_RUNTIME: 'local',
       STRIPE_SECRET_KEY: 'sk_legacy',
       STRIPE_WEBHOOK_SECRET: 'whsec_legacy',
       STRIPE_US_SECRET_KEY: 'sk_us',
@@ -116,7 +118,7 @@ describe('parseEnv', () => {
   });
 
   test('defaults the shared Stripe API version and retries', () => {
-    const env = parseEnv({ NODE_ENV: 'development' });
+    const env = parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local' });
 
     expect(env.STRIPE_API_VERSION).toBe('2025-09-30.clover');
     expect(env.STRIPE_MAX_RETRIES).toBe(2);
