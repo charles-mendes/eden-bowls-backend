@@ -574,7 +574,7 @@ describe('StripeBillingClient.ensureClient', () => {
     expect(() => client.ensureClient()).toThrow(expect.objectContaining({
       message: expect.stringContaining('STRIPE_US_SECRET_KEY'),
       statusCode: 503,
-      details: expect.objectContaining({ code: 'stripe_secret_missing' })
+      details: expect.objectContaining({ code: 'stripe_secret_missing', stripe_account: 'us' })
     }));
   });
 
@@ -583,7 +583,7 @@ describe('StripeBillingClient.ensureClient', () => {
     expect(() => client.ensureClient()).toThrow(expect.objectContaining({
       message: expect.stringContaining('STRIPE_BR_SECRET_KEY'),
       statusCode: 503,
-      details: expect.objectContaining({ code: 'stripe_secret_missing', stripe_account: 'us' })
+      details: expect.objectContaining({ code: 'stripe_secret_missing', stripe_account: 'br' })
     }));
   });
 });
