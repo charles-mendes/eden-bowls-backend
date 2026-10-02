@@ -48,7 +48,8 @@ class StripeWebhookService {
     const stripeBilling = resolveStripeBilling(this, stripeAccount);
 
     if (!webhookSecret) {
-      throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
+      const webhookName = stripeAccount === 'br' ? 'STRIPE_BR_WEBHOOK_SECRET' : 'STRIPE_US_WEBHOOK_SECRET';
+      throw new HttpError(503, `${webhookName} is not configured.`, {
         code: 'stripe_webhook_secret_missing',
         stripe_account: stripeAccount
       });
@@ -378,7 +379,7 @@ class StripeWebhookService {
     const metadata = (subscription && subscription.metadata) || {};
     let amountMinor = Number(metadata.shipping_amount_minor || 0);
     let currency = metadata.shipping_currency || invoice.currency || 'usd';
-    let productId = metadata.shipping_product_id || runtime.shippingProductId || this.shippingProductId;
+    const productId = metadata.shipping_product_id;
 
     if (!amountMinor && subscriptionId) {
       const ledger = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
@@ -389,7 +390,15 @@ class StripeWebhookService {
       }
     }
 
-    if (amountMinor <= 0 || !productId || !String(productId).startsWith('prod_')) {
+    if (amountMinor <= 0) {
+      return;
+    }
+
+    if (!productId || !String(productId).startsWith('prod_')) {
+      this.logger.warn({
+        subscriptionId,
+        stripe_account: runtime.account
+      }, 'invoice.created skipped shipping: shipping_product_id missing.');
       return;
     }
 

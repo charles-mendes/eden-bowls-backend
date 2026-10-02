@@ -6,7 +6,7 @@ Parte da serie `POST /api/v1/onboarding/subscription/checkout`.
 - Fluxo Stripe-first: [02-fluxo-stripe-first.md](./02-fluxo-stripe-first.md)
 - Ramo Woo descartado: [03-o-que-nao-portar-order-first.md](./03-o-que-nao-portar-order-first.md)
 
-Origem WP: `docs/subscription-checkout/04-stripe-webhook-e-efeitos.md`.
+Origem WP: `docs/archive/wordpress-migration/subscription-checkout/04-stripe-webhook-e-efeitos.md`.
 
 Este arquivo cobre o que acontece **depois** que o service decide criar a subscription: `StripeBillingClient.createOnboardingSubscription`, tax, cupom, idempotencia, persistencia, webhook `invoice.paid` e notas de implementacao.
 
@@ -33,13 +33,13 @@ Env (`src/config/env.js` + `.env.example`):
 
 | Env | Uso | Default Node |
 |---|---|---|
-| `STRIPE_SECRET_KEY` | `api_key` | 503 `stripe_secret_missing` |
+| `STRIPE_US_SECRET_KEY` | `api_key` US | 503 `stripe_secret_missing`. `STRIPE_SECRET_KEY` is not read |
 | `STRIPE_API_VERSION` | `apiVersion` do client | `2025-09-30.clover` |
 | `STRIPE_MAX_RETRIES` | `maxNetworkRetries` | **2** (PHP vazio = 0; nao copiar 0) |
 | `STRIPE_US_AUTOMATIC_TAX` | `automatic_tax.enabled` se pais US | **true** |
-| `STRIPE_SHIPPING_PRODUCT_ID` | product do `add_invoice_items` / `invoice.created` | vazio → cria `Shipping` `txcd_92010001` na hora |
+| Frete | `shipping_product_id` na metadata da assinatura | checkout cria `Shipping` `txcd_92010001` na conta da assinatura |
 | `STRIPE_FIRST_PURCHASE_PROMO_1M` / `3M` / `6M` | mapa `promo_` | vazio → 503 se elegivel |
-| `STRIPE_WEBHOOK_SECRET` | so o webhook | 503 so naquele path |
+| `STRIPE_US_WEBHOOK_SECRET` | webhook US | 503 so naquele path. `STRIPE_WEBHOOK_SECRET` is not read |
 
 `createOnboardingSubscription` **nao** chama `paymentIntents.create` nem `checkout.sessions.create`. O PI nasce da invoice da subscription (`expand: latest_invoice.payment_intent`).
 
@@ -269,7 +269,7 @@ Nao ler: sessao HSR, carrinho Woo, `WC_Tax`.
 | Stripe Customer / PM attach / Subscription / Invoice / PI | sim |
 | `stripe_subscriptions` | sim (`incomplete`) |
 | lock de create | alvo |
-| `STRIPE_SHIPPING_PRODUCT_ID` em runtime | se criou product (nao persistir em option WP; logar para o ops colar no env) |
+| `shipping_product_id` na metadata da assinatura | checkout grava o `prod_` usado na primeira invoice |
 | misconfig count do cupom | sim (`incrementMisconfigMetric`) |
 | Flexible `fsb_subscription` | **nao** |
 

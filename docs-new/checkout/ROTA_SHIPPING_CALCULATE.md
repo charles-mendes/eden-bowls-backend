@@ -11,8 +11,8 @@ Elas **nao estao registradas** em `src/app.js`. Nao ha `src/api/routes` de shipp
 
 Analise WP (origem):
 
-- `docs/checkout/shipping/02-shipping-v1-calculate.md`
-- `docs/checkout/shipping/03-shipping-v1-settings.md`
+- `docs/archive/wordpress-migration/checkout/shipping/02-shipping-v1-calculate.md`
+- `docs/archive/wordpress-migration/checkout/shipping/03-shipping-v1-settings.md`
 
 No WP eram publicas (`permission = true`), sem sessao e sem JWT. Nao persistiam. O snapshot persistido e outra rota: [ROTA_ONBOARDING_SHIPPING.md](./ROTA_ONBOARDING_SHIPPING.md).
 

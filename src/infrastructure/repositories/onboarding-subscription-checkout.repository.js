@@ -181,12 +181,6 @@ class OnboardingSubscriptionCheckoutRepository {
           priceId = '';
         }
       }
-      if (!priceId) {
-        const fallback = String(meta._stripe_price_id || '').trim();
-        if (fallback.startsWith('price_')) {
-          priceId = fallback;
-        }
-      }
       if (priceId) {
         map.set(postId, priceId);
       }

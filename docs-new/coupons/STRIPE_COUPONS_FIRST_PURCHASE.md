@@ -578,7 +578,7 @@ Prioridade: o apply so e seguro depois de eligibility real **e** mapa `promo_`. 
 | `StripeCouponService` | mapa, health, misconfig, create coupon+promo, list |
 | Persistencia do mapa `promo_` | tabela ou settings JSON |
 | Metrica misconfig | incrementada no checkout |
-| SDK `stripe` + envs `STRIPE_SECRET_KEY` | `package.json` hoje nao tem a dependencia |
+| SDK `stripe` + `STRIPE_US_SECRET_KEY` | `STRIPE_SECRET_KEY` is not read |
 | `StripeSubscriptionService.createSubscription` | `discounts: [{ promotion_code }]`; validar prefixo `promo_` |
 | Fonte de pedidos para eligibility | tabela Node **ou** leitura Woo `wp_posts` |
 | Fonte de assinaturas ativas | ledger Node **ou** `wp_hsr_stripe_subscriptions` se o DB for compartilhado |

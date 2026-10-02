@@ -145,18 +145,19 @@ describe('admin users roles routes', () => {
   });
 
   test('updates a customer delivery address', async () => {
+    const identity = {
+      userId: '7',
+      email: 'ops@edenbowls.com',
+      roles: ['operator'],
+      permissions: ROLE_PERMISSIONS.operator
+    };
     const adminUsersService = {
       updateDelivery: jest.fn().mockResolvedValue({
         success: true,
         data: { address: 'Rua B', city: 'Curitiba', state: 'PR', zipCode: '80010000', complement: '', deliveryInstructions: '' }
       })
     };
-    const app = appWithIdentity({
-      userId: '7',
-      email: 'ops@edenbowls.com',
-      roles: ['operator'],
-      permissions: ROLE_PERMISSIONS.operator
-    }, { adminUsersService });
+    const app = appWithIdentity(identity, { adminUsersService });
 
     const response = await request(app)
       .patch('/api/v1/admin/users/8/delivery')
@@ -169,7 +170,7 @@ describe('admin users roles routes', () => {
       city: 'Curitiba',
       state: 'PR',
       zipCode: '80010-000'
-    });
+    }, identity);
   });
 
   test('forbids readonly from changing account status', async () => {

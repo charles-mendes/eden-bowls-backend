@@ -9,6 +9,7 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
   const ledgerTable = `it_${suffix}_stripe_subscriptions`;
   const cycleTable = `it_${suffix}_subscription_production_cycles`;
   const usersTable = `it_${suffix}_wp_users`;
+  const usermetaTable = `it_${suffix}_usermeta`;
 
   const dataSource = new DataSource({
     type: 'mysql',
@@ -33,6 +34,13 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
       ID bigint unsigned NOT NULL,
       display_name varchar(250) NOT NULL DEFAULT '',
       PRIMARY KEY (ID)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    await dataSource.query(`CREATE TABLE \`${usermetaTable}\` (
+      umeta_id bigint unsigned NOT NULL AUTO_INCREMENT,
+      user_id bigint unsigned NOT NULL,
+      meta_key varchar(255) NULL,
+      meta_value longtext NULL,
+      PRIMARY KEY (umeta_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
     await dataSource.query(`CREATE TABLE \`${ledgerTable}\` (
       id int unsigned NOT NULL AUTO_INCREMENT,
@@ -68,13 +76,15 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
     repository = new SubscriptionLedgerRepository(dataSource, {
-      tableName: ledgerTable
+      tableName: ledgerTable,
+      usermetaTableName: usermetaTable
     });
     repository.queueJoinSql = function queueJoinSql() {
       return [
         `FROM \`${ledgerTable}\` s`,
         `LEFT JOIN \`${cycleTable}\` c ON c.subscription_id = s.id AND c.period_end = s.current_period_end`,
-        `LEFT JOIN \`${usersTable}\` u ON u.ID = s.user_id`
+        `LEFT JOIN \`${usersTable}\` u ON u.ID = s.user_id`,
+        this.profileMarketJoinSql()
       ].join(' ');
     };
   });
@@ -84,6 +94,7 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
       await dataSource.query(`DROP TABLE IF EXISTS \`${cycleTable}\``);
       await dataSource.query(`DROP TABLE IF EXISTS \`${ledgerTable}\``);
       await dataSource.query(`DROP TABLE IF EXISTS \`${usersTable}\``);
+      await dataSource.query(`DROP TABLE IF EXISTS \`${usermetaTable}\``);
       await dataSource.destroy();
     }
   });

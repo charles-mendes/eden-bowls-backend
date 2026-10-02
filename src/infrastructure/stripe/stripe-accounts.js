@@ -14,7 +14,7 @@ function notConfiguredError(account) {
       stripe_account: STRIPE_ACCOUNTS.BR
     });
   }
-  return new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', {
+  return new HttpError(503, 'STRIPE_US_SECRET_KEY is not configured.', {
     code: 'stripe_secret_missing',
     stripe_account: STRIPE_ACCOUNTS.US
   });
@@ -93,16 +93,14 @@ function createStripeAccountsFromEnv(env = {}) {
     secretKey: env.STRIPE_US_SECRET_KEY,
     apiVersion,
     maxNetworkRetries,
-    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
-    shippingProductId: env.STRIPE_US_SHIPPING_PRODUCT_ID
+    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX
   });
   const br = new StripeBillingClient({
     account: STRIPE_ACCOUNTS.BR,
     secretKey: env.STRIPE_BR_SECRET_KEY,
     apiVersion,
     maxNetworkRetries,
-    automaticTaxEnabled: false,
-    shippingProductId: env.STRIPE_BR_SHIPPING_PRODUCT_ID
+    automaticTaxEnabled: false
   });
 
   return new StripeAccounts({

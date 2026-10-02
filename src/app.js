@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const Sentry = require('@sentry/node');
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -214,6 +215,10 @@ function createApp(dependencies = {}) {
   app.use((request, response, next) => {
     next(new HttpError(404, 'Route not found.'));
   });
+
+  if (Sentry.getClient()) {
+    Sentry.setupExpressErrorHandler(app);
+  }
 
   app.use((error, request, response, next) => {
     if (response.headersSent) {

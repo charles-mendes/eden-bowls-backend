@@ -1,22 +1,16 @@
 # Geo no backend Node
 
-Documentacao de como a rota WordPress `GET /wp-json/custom/v1/geo/context` sera aplicada no `eden-bowls-backend` (Express, CommonJS).
+Contrato da rota atual `GET /api/v1/geo/context` no `eden-bowls-backend` (Express, CommonJS). `registerGeoRoutes` em `src/app.js` registra essa rota.
 
-A analise de origem esta em:
-
-- `docs/geo/DOCUMENTACAO_TECNICA_ROTA_CUSTOM_V1_GEO_CONTEXT.md`
-- `docs/geo/ROTA_GEO_CONTEXT_FRONTEND.md`
-
-Este diretorio descreve o desenho **para o Node atual**. A rota **ainda nao existe** em `src/`. Nao ha `GET /api/v1/geo/context` registrado em `src/app.js`.
+A analise historica da migracao esta em `docs/archive/wordpress-migration/geo/`. Nao e modelo de implementacao.
 
 ## Estado atual
 
 | Camada | Situacao |
 |---|---|
-| WordPress | rota viva em `headless-secure-registration` |
-| Node Express | **nao implementada** |
-| `src/core/market.js` | ja resolve mercado US/BR a partir de `domain`/`country` **depois** que o front ja sabe o dominio |
-| Frontend | `fetchBackendGeoState()` ainda chama `/custom/v1/geo/context` (prefixo WP) |
+| Node Express | `GET /api/v1/geo/context` registrada |
+| `src/core/market.js` | resolve mercado US/BR a partir de `domain`/`country` depois que o front ja sabe o dominio |
+| Frontend | `fetchBackendGeoState()` chama `/api/v1/geo/context` |
 | Banco | esta rota nao usa MySQL; so arquivo MaxMind `.mmdb` |
 
 Com `VITE_API_BASE_URL=http://localhost:3000` e simulacao geo desligada, o front cai no fallback `.com` / `UNKNOWN`.

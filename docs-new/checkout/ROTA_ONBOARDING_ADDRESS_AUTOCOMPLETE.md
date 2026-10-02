@@ -23,7 +23,7 @@ Rota legado WordPress (substituida):
 
 - `POST /custom/v1/onboarding/session/:sessionId/address/autocomplete`
 
-Analise WP detalhada: `docs/checkout/address-autocomplete/01-onboarding-address-autocomplete.md`.
+Analise WP detalhada: `docs/archive/wordpress-migration/checkout/address-autocomplete/01-onboarding-address-autocomplete.md`.
 
 Nao ha `session_id`. Nao ha `x-session-token`. A rota e **publica**. **Nao persiste** endereco.
 

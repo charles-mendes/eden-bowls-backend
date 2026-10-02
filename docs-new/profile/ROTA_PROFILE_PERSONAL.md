@@ -13,7 +13,7 @@ Front:
 
 Rota legado WordPress:
 
-- `PUT|PATCH|POST /custom/v1/profile/personal` — `docs/profile/02-put-profile-personal.md`
+- `PUT|PATCH|POST /custom/v1/profile/personal` — `docs/archive/wordpress-migration/profile/02-put-profile-personal.md`
 
 ## Responsabilidade
 

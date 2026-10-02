@@ -17,7 +17,7 @@ The store repo constant `DOMAIN_COM_URL` is `https://www.edenbowls.com`. `DOMAIN
 - `JWT_AUTH_SECRET_KEY`
 - `AUTH_OTP_PEPPER` or `AUTH_SALT` (the JWT secret is not a pepper)
 - `AUTH_SMTP_HOST` and `AUTH_MAIL_FROM`
-- Stripe US secret and webhook secret (`STRIPE_US_*`, or the legacy `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET`)
+- Stripe US secret and webhook secret (`STRIPE_US_SECRET_KEY` and `STRIPE_US_WEBHOOK_SECRET` only; `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read)
 - `STRIPE_BR_SECRET_KEY` and `STRIPE_BR_WEBHOOK_SECRET`
 - `UPS_CLIENT_ID`, `UPS_CLIENT_SECRET`, `UPS_ACCOUNT_NUMBER`
 - `METRICS_TOKEN`
@@ -47,8 +47,22 @@ Register webhooks at:
 
 - `POST /stripe/v1/webhook/us`
 - `POST /stripe/v1/webhook/br`
+- `https://qa-api.edenbowls.com/stripe/v1/webhook/br`
+- `https://qa-api.edenbowls.com/stripe/v1/webhook/us`
+- `https://api.edenbowls.com/stripe/v1/webhook/br`
+- `https://api.edenbowls.com/stripe/v1/webhook/us`
 
-The legacy `POST /stripe/v1/webhook` is the US endpoint. Put each signing secret in `STRIPE_US_WEBHOOK_SECRET` and `STRIPE_BR_WEBHOOK_SECRET`.
+`api.edenbowls.com` is not a host in `infra/caddy/Caddyfile`. A live signed-event check is blocked until DNS, TLS, and a reverse proxy outside this repo route `POST /stripe/v1/webhook/br` and `POST /stripe/v1/webhook/us` to the production API. Do not add that hostname to the Caddyfile. The two live webhook endpoints stay disabled until that host routes both paths and the live signing secrets are loaded. Live secrets are written only after the ledger count and the customer-meta count are each zero, including when a ledger price id is a seed placeholder.
+
+QA API deploy follows a successful CI run on `main` and reads the host `.env`. `EDEN_RUNTIME` must already be set before a build that requires it is merged. This repo has no production deploy workflow.
+
+Production Stripe rollback stops the production store, because `STRIPE_BR_ENABLED=false` only stops Brazil. QA Stripe rollback restores the dump taken before the retire script. Repeating the cutover deletes `background_job_cursors` where `job_name` is `stripe_ledger_retire`. Schema-migration rollback stays a database dump restore.
+
+Each endpoint (US and BR, test and live) must subscribe to the 28 events in `src/infrastructure/stripe/stripe-webhook-events.js`. Do not select “all events” and do not register a shorter list. The same list is what `npm run stripe:listen` and `npm run stripe:listen:br` forward locally.
+
+The legacy `POST /stripe/v1/webhook` is the US endpoint. Put each signing secret in `STRIPE_US_WEBHOOK_SECRET` and `STRIPE_BR_WEBHOOK_SECRET`. Production accepts only `STRIPE_US_SECRET_KEY` and `STRIPE_US_WEBHOOK_SECRET` for the US account. A host env outside this repo must copy any live legacy secret onto those names before deploy. `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read.
+
+Shipping is not an environment product id. Checkout stores `shipping_product_id` on the subscription. Before production, review subscriptions that have a positive shipping amount and no `shipping_product_id`: that renewal adds no shipping line and only logs a warning. More than one `Shipping` product can exist after a process restart or two concurrent first checkouts. A QA host env that is not this repo `.env` must drop `STRIPE_US_SHIPPING_PRODUCT_ID`, `STRIPE_SHIPPING_PRODUCT_ID`, and `STRIPE_BR_SHIPPING_PRODUCT_ID` at deploy; those names are not read.
 
 ## UPS
 

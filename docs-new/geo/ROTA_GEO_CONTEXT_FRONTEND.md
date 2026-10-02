@@ -12,15 +12,15 @@ Local: `http://localhost:3000/api/v1/geo/context`
 
 Em QA, depois do proxy apontar para o Express: a rota REST continua `/api/v1/geo/context`. O prefixo `/qa-api` (se existir) e rewrite, nao parte do path Express.
 
-Hoje o front ainda chama o WordPress:
+O front chama o Node:
 
 ```text
-GET {VITE_API_BASE_URL}/custom/v1/geo/context
+GET {VITE_API_BASE_URL}/api/v1/geo/context
 ```
 
-Arquivo: `eden-bowls/src/lib/geo/backendGeo.ts`.
+Arquivo: `eden-bowls/src/lib/geo/backendGeo.ts`. A rota esta registrada em `src/app.js`.
 
-A rota **ainda nao existe** no Node. Com `VITE_API_BASE_URL=http://localhost:3000` e `VITE_GEO_SIM_FORCE_ENABLED` diferente de `true`, o `fetch` falha e o `GeoProvider` cai no fallback.
+Com `VITE_GEO_SIM_FORCE_ENABLED=true`, o `GeoProvider` usa simulacao e nao chama a rota. Sem essa flag, o fetch vai para `/api/v1/geo/context`.
 
 ## Objetivo
 
@@ -94,41 +94,17 @@ FALLBACK_GEO_STATE = {
 
 A tela de plano assume mercado US.
 
-## O que muda no frontend na migracao
+## O que o frontend ja faz
 
-### 1. Path em `backendGeo.ts`
+`backendGeo.ts` chama `` `${resolveApiBaseUrl()}/api/v1/geo/context` ``. `resolveApiBaseUrl()` tira a barra final de `VITE_API_BASE_URL`. O mock E2E responde `GET /api/v1/geo/context`.
 
-De:
-
-```ts
-`${resolveApiBaseUrl()}/custom/v1/geo/context`
-```
-
-Para:
-
-```ts
-`${resolveApiBaseUrl()}/api/v1/geo/context`
-```
-
-`resolveApiBaseUrl()` ja tira a barra final de `VITE_API_BASE_URL`.
-
-### 2. Base URL
-
-Apontar `VITE_API_BASE_URL` para o Node (`http://localhost:3000` no dev), nao para a base `/wp-json` do WordPress.
-
-Se o app ainda misturar WP e Node, geo precisa da base **Node**. Nao concatenar `/wp-json` neste fetch.
-
-### 3. Simulacao local
+### Simulacao local
 
 Se `VITE_GEO_SIM_FORCE_ENABLED=true`, o `GeoProvider` usa `SimulatedGeoSource` e **nao chama** a rota. Estado vem de `localStorage['eden:geo-sim']`.
 
 Para exercitar o Node de verdade: desligar essa flag.
 
-### 4. Mock E2E
-
-Ajustar `eden-bowls/e2e/helpers/mockApi.ts` de `/custom/v1/geo/context` para `/api/v1/geo/context`, mantendo o payload `{ domain: 'com', country: 'US', ... }`.
-
-### 5. Normalizacao (permanece)
+### Normalizacao (permanece)
 
 `backendGeo.ts` ja faz:
 
@@ -192,7 +168,7 @@ Esses headers sao lidos por `parseRequestMarket` em snapshot, recommendation, et
 | Fallback / simulacao | `eden-bowls/src/config/geo.ts` |
 | Tela de plano | `eden-bowls/src/pages/plan/Plan.tsx` |
 | Mock E2E | `eden-bowls/e2e/helpers/mockApi.ts` |
-| Rota Node (a implementar) | `eden-bowls-backend/src/api/routes/geo.routes.js` |
+| Rota Node | `eden-bowls-backend/src/api/routes/geo.routes.js` |
 
 Documentacao da aplicacao no Express: [APLICACAO_GEO_CONTEXT.md](./APLICACAO_GEO_CONTEXT.md).
 Contrato da rota: [ROTA_GEO_CONTEXT.md](./ROTA_GEO_CONTEXT.md).

@@ -62,6 +62,79 @@ describe('parseEnv', () => {
     ]);
     expect(env.STRIPE_BR_ENABLED).toBe(true);
     expect(env.UPS_ENV).toBe('cie');
+    expect(env.STRIPE_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_US_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_BR_SHIPPING_PRODUCT_ID).toBeUndefined();
+  });
+
+  test('ignores leftover shipping product ids', () => {
+    const env = parseEnv(productionEnv({
+      STRIPE_SHIPPING_PRODUCT_ID: 'prod_legacy',
+      STRIPE_US_SHIPPING_PRODUCT_ID: 'prod_us',
+      STRIPE_BR_SHIPPING_PRODUCT_ID: 'prod_br'
+    }));
+
+    expect(env.STRIPE_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_US_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_BR_SHIPPING_PRODUCT_ID).toBeUndefined();
+  });
+
+  test('ignores legacy Stripe credentials when the regional keys are absent', () => {
+    const env = parseEnv({
+      NODE_ENV: 'development',
+      STRIPE_SECRET_KEY: 'sk_legacy',
+      STRIPE_WEBHOOK_SECRET: 'whsec_legacy'
+    });
+
+    expect(env.STRIPE_US_SECRET_KEY).toBe('');
+    expect(env.STRIPE_US_WEBHOOK_SECRET).toBe('');
+    expect(env.STRIPE_SECRET_KEY).toBeUndefined();
+    expect(env.STRIPE_WEBHOOK_SECRET).toBeUndefined();
+  });
+
+  test('ignores legacy Stripe credentials when the regional keys are set', () => {
+    const env = parseEnv({
+      NODE_ENV: 'development',
+      STRIPE_SECRET_KEY: 'sk_legacy',
+      STRIPE_WEBHOOK_SECRET: 'whsec_legacy',
+      STRIPE_US_SECRET_KEY: 'sk_us',
+      STRIPE_US_WEBHOOK_SECRET: 'whsec_us'
+    });
+
+    expect(env.STRIPE_US_SECRET_KEY).toBe('sk_us');
+    expect(env.STRIPE_US_WEBHOOK_SECRET).toBe('whsec_us');
+    expect(env.STRIPE_SECRET_KEY).toBeUndefined();
+    expect(env.STRIPE_WEBHOOK_SECRET).toBeUndefined();
+  });
+
+  test('defaults the shared Stripe API version and retries', () => {
+    const env = parseEnv({ NODE_ENV: 'development' });
+
+    expect(env.STRIPE_API_VERSION).toBe('2025-09-30.clover');
+    expect(env.STRIPE_MAX_RETRIES).toBe(2);
+  });
+
+  test('rejects production that only sets the legacy Stripe credentials', () => {
+    expect(() => parseEnv(productionEnv({
+      STRIPE_US_SECRET_KEY: '',
+      STRIPE_SECRET_KEY: 'sk_legacy'
+    }))).toThrow(/STRIPE_US_SECRET_KEY/);
+    expect(() => parseEnv(productionEnv({
+      STRIPE_US_WEBHOOK_SECRET: '',
+      STRIPE_WEBHOOK_SECRET: 'whsec_legacy'
+    }))).toThrow(/STRIPE_US_WEBHOOK_SECRET/);
+  });
+
+  test('parses production when the regional Stripe credentials are set', () => {
+    const env = parseEnv(productionEnv({ STRIPE_BR_ENABLED: 'false' }));
+
+    expect(env.STRIPE_US_SECRET_KEY).toBe('sk_us');
+    expect(env.STRIPE_US_WEBHOOK_SECRET).toBe('whsec_us');
+    expect(env.STRIPE_BR_SECRET_KEY).toBe('sk_br');
+    expect(env.STRIPE_BR_WEBHOOK_SECRET).toBe('whsec_br');
+    expect(env.STRIPE_BR_ENABLED).toBe(false);
+    expect(env.STRIPE_SECRET_KEY).toBeUndefined();
+    expect(env.STRIPE_WEBHOOK_SECRET).toBeUndefined();
   });
 
   test('accepts STRIPE_BR_ENABLED false', () => {

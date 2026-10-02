@@ -39,7 +39,7 @@ Publica. **Sem JWT**. Auth = header `Stripe-Signature` + o secret da **mesma** c
 
 | Path | Secret |
 |------|--------|
-| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET` (fallback `STRIPE_WEBHOOK_SECRET`) |
+| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET`. `STRIPE_WEBHOOK_SECRET` is not read |
 | `/stripe/v1/webhook/br` | `STRIPE_BR_WEBHOOK_SECRET` |
 
 Path **fora** de `/api/v1` para o `bearer-token.middleware` nao exigir Bearer. Igual `/shipping/v1/*`.
@@ -78,7 +78,7 @@ WP: injeta frete com `invoiceItems.create` usando metadata de shipping gravada n
 
 O checkout Node so coloca frete na **1a** invoice (`add_invoice_items`). Ciclos seguintes **somem o frete** se este handler nao existir.
 
-Alvo: se a invoice e `subscription_cycle` (nao a primeira) e ha shipping persistido, adicionar o product de frete da **mesma** conta (`STRIPE_US_SHIPPING_PRODUCT_ID` / `STRIPE_BR_SHIPPING_PRODUCT_ID`; US herda `STRIPE_SHIPPING_PRODUCT_ID`) **antes** da invoice fechar. So em `draft`.
+Alvo: se a invoice e `subscription_cycle` (nao a primeira) e ha shipping persistido, adicionar o frete com o `shipping_product_id` da metadata da assinatura, na mesma conta, **antes** da invoice fechar. So em `draft`. Sem esse `prod_`, o handler não adiciona frete e registra um aviso.
 
 ### 3) `payment_intent.succeeded` / `processing`
 
@@ -187,7 +187,7 @@ Nao gravar `client_secret` no ledger. Customer meta: `_hsr_stripe_customer_id_us
 
 | Variavel | Conta | Fallback |
 |----------|--------|----------|
-| `STRIPE_US_WEBHOOK_SECRET` | US | `STRIPE_WEBHOOK_SECRET` |
+| `STRIPE_US_WEBHOOK_SECRET` | US | nenhum. `STRIPE_WEBHOOK_SECRET` is not read |
 | `STRIPE_BR_WEBHOOK_SECRET` | BR | nenhum |
 
 Sem secret da conta do path → 503 neste path, nao derrubar o resto da API.

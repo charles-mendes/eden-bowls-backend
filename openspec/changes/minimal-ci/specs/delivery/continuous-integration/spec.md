@@ -21,35 +21,39 @@ The repository MUST run continuous integration on every pull request, on every p
 - **WHEN** a person dispatches the workflow
 - **THEN** the same required checks run
 
-### Requirement: Unit tests run without a database
-The workflow MUST run the existing Jest suite as a required check without setting `RUN_DB_INTEGRATION_TESTS`. Integration files MUST remain skipped on that check. The unit check MUST NOT require MySQL, Stripe, SMTP, or a GeoIP license.
+### Requirement: The unit check runs without a database
+The check named `unit` MUST run the existing Jest suite without setting `RUN_DB_INTEGRATION_TESTS`. Integration files MUST remain skipped on that check. `unit` MUST NOT require MySQL, Stripe, SMTP, or a GeoIP license.
 
 #### Scenario: Unit check does not open MySQL
-- **WHEN** the unit check runs
+- **WHEN** the `unit` check runs
 - **THEN** Jest executes and the MySQL integration cases are skipped
 
 #### Scenario: Unit failure stops the database check
-- **WHEN** the unit check fails
-- **THEN** the workflow result is failure and the MySQL integration check does not start
+- **WHEN** the `unit` check fails
+- **THEN** the workflow result is failure and the `integration` check does not start
 
-### Requirement: Integration tests use an ephemeral MySQL
-After the unit check succeeds, the workflow MUST run the existing integration script with `RUN_DB_INTEGRATION_TESTS=true` against a new MySQL 8.4 database created for that run. Credentials MUST be throwaway values supplied by the workflow, not production secrets. The workflow MUST NOT run database migrations. The workflow MUST NOT connect to a shared or production database.
+### Requirement: The integration check uses an ephemeral MySQL and executes its cases
+After `unit` succeeds, the check named `integration` MUST run the existing integration script against a new MySQL 8.4 database created for that run. That script sets `RUN_DB_INTEGRATION_TESTS`; the workflow MUST NOT set it a second time. Credentials MUST be throwaway values supplied by the workflow, not production secrets. The workflow MUST NOT run database migrations and MUST NOT connect to a shared or production database. `integration` MUST fail when Jest skips the integration cases or reports zero passed tests.
 
 #### Scenario: Integration runs only after unit success
-- **WHEN** the unit check succeeds
-- **THEN** the integration check starts against the ephemeral MySQL and is required for workflow success
+- **WHEN** the `unit` check succeeds
+- **THEN** `integration` starts against the ephemeral MySQL, the integration cases execute instead of being skipped, and the check is required for workflow success
+
+#### Scenario: Skipped integration cases fail the check
+- **WHEN** the integration script finishes with every integration case skipped, or with zero passed tests
+- **THEN** the `integration` check fails
 
 #### Scenario: Migrations stay out of CI
-- **WHEN** either check runs
+- **WHEN** any check runs
 - **THEN** `npm run migrate` is not executed
 
-### Requirement: Configuration is parsed without exposing secrets
-The workflow MUST load the environment parser with placeholder values and MUST succeed only when that parse succeeds. The check MUST NOT print the parsed configuration or the process environment, and MUST NOT read production secrets.
+### Requirement: The config check parses production rules without exposing secrets
+The check named `config` MUST install dependencies, then load the environment parser with `NODE_ENV=production` and synthetic non-placeholder values. It MUST succeed only when that parse succeeds. The check MUST NOT print the parsed configuration or the process environment, MUST NOT enable shell tracing, and MUST NOT read production secrets. A production parse that the parser rejects MUST fail the check.
 
-#### Scenario: Placeholder config parses
-- **WHEN** the config check runs with CI placeholder values
+#### Scenario: Production placeholder config parses
+- **WHEN** `config` runs with synthetic production values the parser accepts
 - **THEN** the parser accepts them and the log does not contain those values
 
-#### Scenario: Invalid placeholder config fails the check
-- **WHEN** the placeholder set is rejected by the parser
+#### Scenario: Rejected production placeholder fails the check
+- **WHEN** the production placeholder set is one the parser rejects
 - **THEN** the workflow result is failure

@@ -38,6 +38,24 @@ describe('StripeAccounts registry', () => {
     expectHttpError(() => accounts.getForCreation('br'), 'stripe_br_not_configured');
   });
 
+  test('names STRIPE_US_SECRET_KEY when the US secret is missing', () => {
+    const accounts = new StripeAccounts({
+      us: { account: 'us', missingReason: 'secret' },
+      br: client('br'),
+      brEnabled: true
+    });
+
+    try {
+      accounts.get('us');
+      throw new Error('expected stripe_secret_missing');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpError);
+      expect(error.statusCode).toBe(503);
+      expect(error.details.code).toBe('stripe_secret_missing');
+      expect(error.message).toContain('STRIPE_US_SECRET_KEY');
+    }
+  });
+
   test('keeps US creation available while BR is disabled', () => {
     const accounts = new StripeAccounts({
       us: client('us'),

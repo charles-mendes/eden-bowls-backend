@@ -1,3 +1,4 @@
+require('./instrument');
 require('reflect-metadata');
 
 const path = require('path');
@@ -213,8 +214,7 @@ async function bootstrap() {
         secretKey: env.STRIPE_US_SECRET_KEY,
         apiVersion: env.STRIPE_API_VERSION,
         maxNetworkRetries: env.STRIPE_MAX_RETRIES,
-        automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
-        shippingProductId: env.STRIPE_US_SHIPPING_PRODUCT_ID
+        automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX
       });
     }
   })();
@@ -321,7 +321,6 @@ async function bootstrap() {
     eventsRepository: stripeWebhookEventsRepository,
     ledgerRepository: subscriptionLedgerRepository,
     customerStore: stripeCustomerStore,
-    shippingProductId: env.STRIPE_US_SHIPPING_PRODUCT_ID,
     transactionalMailer,
     logger
   });
