@@ -51,6 +51,7 @@ jobs:
       METRICS_TOKEN: ci-synthetic-metrics
       DB_PASSWORD: ci-db-password
       CORS_ORIGINS: https://ci.edenbowls.com
+      EDEN_RUNTIME: qa
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

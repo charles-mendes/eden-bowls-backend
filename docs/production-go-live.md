@@ -54,7 +54,7 @@ Register webhooks at:
 
 `api.edenbowls.com` is not a host in `infra/caddy/Caddyfile`. A live signed-event check is blocked until DNS, TLS, and a reverse proxy outside this repo route `POST /stripe/v1/webhook/br` and `POST /stripe/v1/webhook/us` to the production API. Do not add that hostname to the Caddyfile. The two live webhook endpoints stay disabled until that host routes both paths and the live signing secrets are loaded. Live secrets are written only after the ledger count and the customer-meta count are each zero, including when a ledger price id is a seed placeholder.
 
-QA API deploy follows a successful CI run on `main` and reads the host `.env`. `EDEN_RUNTIME` must already be set before a build that requires it is merged. This repo has no production deploy workflow.
+`main` does not deploy QA. `deploy.yml` exists on `ci/minimal-ci` and publishes QA only after that branch is merged and CI on `main` succeeds. The QA host `.env` is what compose reads. `EDEN_RUNTIME` must already be set before a process that requires it is started. This repo has no production deploy workflow.
 
 Production Stripe rollback stops the production store, because `STRIPE_BR_ENABLED=false` only stops Brazil. QA Stripe rollback restores the dump taken before the retire script. Repeating the cutover deletes `background_job_cursors` where `job_name` is `stripe_ledger_retire`. Schema-migration rollback stays a database dump restore.
 

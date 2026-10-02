@@ -45,6 +45,20 @@ function buildService(overrides = {}) {
 }
 
 describe('StripeWebhookService', () => {
+  const previousRuntime = process.env.EDEN_RUNTIME;
+
+  beforeAll(() => {
+    process.env.EDEN_RUNTIME = 'qa';
+  });
+
+  afterAll(() => {
+    if (previousRuntime === undefined) {
+      delete process.env.EDEN_RUNTIME;
+    } else {
+      process.env.EDEN_RUNTIME = previousRuntime;
+    }
+  });
+
   test('returns 503 when the webhook secret is not configured', async () => {
     const { service, stripeBilling } = buildService({ webhookSecret: '' });
 
@@ -129,7 +143,7 @@ describe('StripeWebhookService', () => {
       current_period_start: 1700000000,
       current_period_end: 1702592000,
       items: { data: [{ price: { id: 'price_abc' }, quantity: 1 }] },
-      metadata: { wp_user_id: '7' }
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
     });
     ledgerRepository.findUserStateBySubscriptionId.mockResolvedValue({
       userId: 7,
@@ -449,7 +463,7 @@ describe('StripeWebhookService', () => {
       id: 'sub_123',
       status: 'active',
       customer: 'cus_1',
-      metadata: { wp_user_id: '7' }
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
     });
     ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
       userId: 7,
@@ -491,7 +505,7 @@ describe('StripeWebhookService', () => {
       id: 'sub_123',
       status: 'active',
       customer: 'cus_1',
-      metadata: { wp_user_id: '7' }
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
     });
     ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
       userId: 7,
@@ -545,6 +559,12 @@ describe('StripeWebhookService', () => {
       id: 'evt_fail',
       type: 'invoice.paid',
       data: { object: { id: 'in_1', subscription: 'sub_123' } }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      customer: 'cus_1',
+      metadata: { eden_env: 'qa', wp_user_id: '7' },
+      items: { data: [{ price: { id: 'price_abc' } }] }
     });
     ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
       userId: 7,
@@ -676,5 +696,72 @@ describe('StripeWebhookService', () => {
 
     expect(withTimeout).toHaveBeenCalledWith(expect.any(Promise), 30000);
     expect(eventsRepository.scheduleRetry).toHaveBeenCalled();
+  });
+
+  test('does not apply a local invoice.paid on the QA runtime', async () => {
+    const warn = jest.fn();
+    const { service, stripeBilling, ledgerRepository } = buildService({
+      logger: { error() {}, warn, info() {} }
+    });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_local',
+      type: 'invoice.paid',
+      data: { object: { id: 'in_local', customer: 'cus_1', subscription: 'sub_local' } }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_local',
+      metadata: { eden_env: 'local', wp_user_id: '7' }
+    });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+    expect(ledgerRepository.upsert).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'evt_local',
+      reason: 'marker_mismatch'
+    }), 'Stripe webhook ignored.');
+  });
+
+  test('does not apply an invoice.paid that has no marker', async () => {
+    const warn = jest.fn();
+    const { service, stripeBilling, ledgerRepository } = buildService({
+      logger: { error() {}, warn, info() {} }
+    });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_bare',
+      type: 'invoice.paid',
+      data: { object: { id: 'in_bare', customer: 'cus_1', subscription: 'sub_bare' } }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_bare',
+      metadata: { wp_user_id: '7' }
+    });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+    expect(ledgerRepository.upsert).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'marker_missing'
+    }), 'Stripe webhook ignored.');
+  });
+
+  test('does not attach a user from a mismatched payment intent', async () => {
+    const { service, stripeBilling, ledgerRepository } = buildService();
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_pi',
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_foreign',
+          status: 'succeeded',
+          metadata: { eden_env: 'local', wp_user_id: '42' }
+        }
+      }
+    });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+    expect(ledgerRepository.findUserStateByPaymentIntentId).not.toHaveBeenCalled();
+    expect(ledgerRepository.upsert).not.toHaveBeenCalled();
   });
 });

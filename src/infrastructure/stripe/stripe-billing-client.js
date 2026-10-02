@@ -82,6 +82,14 @@ function couponIdFromPromotion(promo = {}) {
   return '';
 }
 
+function edenRuntime() {
+  const value = String(process.env.EDEN_RUNTIME || '').trim();
+  if (value !== 'local' && value !== 'qa' && value !== 'production') {
+    throw new Error('EDEN_RUNTIME must be local, qa, or production.');
+  }
+  return value;
+}
+
 function extractInvoicePayment(invoice = {}) {
   const confirmation = invoice.confirmation_secret && typeof invoice.confirmation_secret === 'object'
     ? invoice.confirmation_secret
@@ -462,7 +470,8 @@ class StripeBillingClient {
         metadata: {
           wp_user_id: String(userId || ''),
           user_id: String(userId || ''),
-          billing_currency: wantedCurrency || ''
+          billing_currency: wantedCurrency || '',
+          eden_env: edenRuntime()
         }
       });
       if (!created || !String(created.id || '').startsWith('cus_')) {
@@ -605,6 +614,29 @@ class StripeBillingClient {
       return String(metadata.user_id || metadata.wp_user_id || '') === userValue;
     });
     return byUser.length === 1 ? byUser[0] : null;
+  }
+
+  async stampPaymentIntentEnv(paymentIntentId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const id = String(paymentIntentId || '').trim();
+    if (!id.startsWith('pi_') || !stripe.paymentIntents || typeof stripe.paymentIntents.update !== 'function') {
+      throw this.httpError(502, 'Unable to label the PaymentIntent.', {
+        code: 'stripe_payment_intent_env_failed'
+      });
+    }
+    try {
+      await stripe.paymentIntents.update(id, {
+        metadata: { eden_env: edenRuntime() }
+      });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to label the PaymentIntent.'), {
+        code: 'stripe_payment_intent_env_failed'
+      });
+    }
   }
 
   async loadInvoicePayment(subscription) {
@@ -803,10 +835,13 @@ class StripeBillingClient {
     });
     if (reusable && reusable.id) {
       if (stripe.subscriptions.update) {
+        const reusableMetadata = reusable.metadata || {};
+        const update = { default_payment_method: paymentMethodId };
+        if (!String(reusableMetadata.eden_env || '').trim()) {
+          update.metadata = { ...reusableMetadata, eden_env: edenRuntime() };
+        }
         try {
-          await stripe.subscriptions.update(reusable.id, {
-            default_payment_method: paymentMethodId
-          });
+          await stripe.subscriptions.update(reusable.id, update);
         } catch (_error) {
           // Keep the existing incomplete subscription even if the PM update fails.
         }
@@ -824,7 +859,8 @@ class StripeBillingClient {
     const metadata = {
       wp_user_id: String(input.userId || ''),
       user_id: String(input.userId || ''),
-      source: 'eden_bowls_node'
+      source: 'eden_bowls_node',
+      eden_env: edenRuntime()
     };
     if (input.subscriptionTermMonths) {
       metadata.subscription_term_months = String(input.subscriptionTermMonths);
@@ -948,6 +984,9 @@ class StripeBillingClient {
     }
 
     const clientSecret = payment.clientSecret;
+    if (payment.paymentIntentId) {
+      await this.stampPaymentIntentEnv(payment.paymentIntentId);
+    }
     if (!subscription.id || !clientSecret) {
       throw this.httpError(502, 'Unable to create Stripe subscription.', {
         code: 'stripe_client_secret_missing'

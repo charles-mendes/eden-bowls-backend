@@ -1,5 +1,19 @@
 const { StripeBillingClient } = require('../src/infrastructure/stripe/stripe-billing-client');
 
+const previousRuntime = process.env.EDEN_RUNTIME;
+
+beforeAll(() => {
+  process.env.EDEN_RUNTIME = 'qa';
+});
+
+afterAll(() => {
+  if (previousRuntime === undefined) {
+    delete process.env.EDEN_RUNTIME;
+  } else {
+    process.env.EDEN_RUNTIME = previousRuntime;
+  }
+});
+
 function buildClient(overrides = {}) {
   const stripe = {
     customers: {
@@ -40,6 +54,9 @@ function buildClient(overrides = {}) {
         active: true,
         promotion: { type: 'coupon', coupon: 'eden_fp_1m' }
       })
+    },
+    paymentIntents: {
+      update: jest.fn().mockResolvedValue({ id: 'pi_123' })
     },
     subscriptions: {
       create: jest.fn().mockResolvedValue({
@@ -665,6 +682,33 @@ describe('StripeBillingClient.archiveCatalogProduct', () => {
 
     await expect(client.archiveCatalogProduct('prod_seed_br_beef_300g')).resolves.toBeNull();
     expect(stripe.products.update).not.toHaveBeenCalled();
+  });
+
+  test('returns the client secret only after the PaymentIntent is labeled', async () => {
+    let labeled = false;
+    const { stripe, client } = buildClient();
+    stripe.paymentIntents.update.mockImplementation(async () => {
+      labeled = true;
+      return { id: 'pi_123' };
+    });
+
+    const result = await client.createOnboardingSubscription(validInput);
+
+    expect(labeled).toBe(true);
+    expect(stripe.paymentIntents.update).toHaveBeenCalledWith('pi_123', {
+      metadata: { eden_env: 'qa' }
+    });
+    expect(result.checkout.stripe_client_secret).toBe('pi_123_secret');
+  });
+
+  test('does not return a client secret when the PaymentIntent label fails', async () => {
+    const { stripe, client } = buildClient();
+    stripe.paymentIntents.update.mockRejectedValue(new Error('stripe down'));
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      details: { code: 'stripe_payment_intent_env_failed' }
+    });
   });
 });
 

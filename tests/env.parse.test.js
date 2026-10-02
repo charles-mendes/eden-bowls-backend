@@ -22,13 +22,20 @@ function productionEnv(overrides = {}) {
     METRICS_TOKEN: 'metrics-token',
     DB_PASSWORD: 'db-password',
     CORS_ORIGINS: 'https://qa.edenbowls.com,https://qa-admin.edenbowls.com',
+    EDEN_RUNTIME: 'qa',
     ...overrides
   };
 }
 
 describe('parseEnv', () => {
+  test('rejects a missing runtime label', () => {
+    expect(() => parseEnv({ NODE_ENV: 'development' })).toThrow(/EDEN_RUNTIME/);
+    expect(() => parseEnv(productionEnv({ EDEN_RUNTIME: '' }))).toThrow(/EDEN_RUNTIME/);
+    expect(() => parseEnv(productionEnv({ EDEN_RUNTIME: 'staging' }))).toThrow(/EDEN_RUNTIME/);
+  });
+
   test('keeps development defaults when production keys are absent', () => {
-    const env = parseEnv({ NODE_ENV: 'development' });
+    const env = parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local' });
 
     expect(env.UPS_ENV).toBe('cie');
     expect(env.UPS_CLIENT_ID).toBe('');
@@ -43,6 +50,7 @@ describe('parseEnv', () => {
   test('keeps an explicit UPS production client id outside production', () => {
     const env = parseEnv({
       NODE_ENV: 'development',
+      EDEN_RUNTIME: 'local',
       UPS_ENV: 'production',
       UPS_CLIENT_ID: 'abc'
     });
@@ -82,6 +90,7 @@ describe('parseEnv', () => {
   test('ignores legacy Stripe credentials when the regional keys are absent', () => {
     const env = parseEnv({
       NODE_ENV: 'development',
+      EDEN_RUNTIME: 'local',
       STRIPE_SECRET_KEY: 'sk_legacy',
       STRIPE_WEBHOOK_SECRET: 'whsec_legacy'
     });
@@ -95,6 +104,7 @@ describe('parseEnv', () => {
   test('ignores legacy Stripe credentials when the regional keys are set', () => {
     const env = parseEnv({
       NODE_ENV: 'development',
+      EDEN_RUNTIME: 'local',
       STRIPE_SECRET_KEY: 'sk_legacy',
       STRIPE_WEBHOOK_SECRET: 'whsec_legacy',
       STRIPE_US_SECRET_KEY: 'sk_us',
@@ -108,7 +118,7 @@ describe('parseEnv', () => {
   });
 
   test('defaults the shared Stripe API version and retries', () => {
-    const env = parseEnv({ NODE_ENV: 'development' });
+    const env = parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local' });
 
     expect(env.STRIPE_API_VERSION).toBe('2025-09-30.clover');
     expect(env.STRIPE_MAX_RETRIES).toBe(2);

@@ -2,6 +2,20 @@ const { SubscriptionsEditCommitRepository } = require('../src/infrastructure/rep
 const { buildCurrentHash } = require('../src/core/subscription-edit-hash');
 
 describe('SubscriptionsEditCommitRepository', () => {
+  const previousRuntime = process.env.EDEN_RUNTIME;
+
+  beforeAll(() => {
+    process.env.EDEN_RUNTIME = 'qa';
+  });
+
+  afterAll(() => {
+    if (previousRuntime === undefined) {
+      delete process.env.EDEN_RUNTIME;
+    } else {
+      process.env.EDEN_RUNTIME = previousRuntime;
+    }
+  });
+
   const currentItems = [{ id: 'si_1', price: 'price_abc', quantity: 1 }];
   const hash = buildCurrentHash({
     items: [{ price: 'price_abc', quantity: 1 }],
