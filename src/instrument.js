@@ -3,13 +3,13 @@ require('dotenv').config();
 const Sentry = require('@sentry/node');
 
 const dsn = String(process.env.SENTRY_DSN || '').trim();
+const nodeEnv = process.env.NODE_ENV || 'development';
+const isLocalDevelopment = nodeEnv === 'development' || nodeEnv === 'test';
 
-if (dsn) {
-  const fallbackSampleRate = process.env.NODE_ENV === 'development' ? 1 : 0.1;
-
+if (dsn && !isLocalDevelopment) {
   Sentry.init({
     dsn,
-    environment: process.env.NODE_ENV || 'development',
+    environment: nodeEnv,
     includeLocalVariables: true,
     tracesSampler({ name, inheritOrSampleWith }) {
       if (
@@ -20,7 +20,7 @@ if (dsn) {
         return 0;
       }
 
-      return inheritOrSampleWith(fallbackSampleRate);
+      return inheritOrSampleWith(0.1);
     }
   });
 }
