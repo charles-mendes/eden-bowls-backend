@@ -507,7 +507,7 @@ describe('StripeBillingClient.ensureClient', () => {
     const client = new StripeBillingClient({});
     expect(() => client.ensureClient()).toThrow(expect.objectContaining({
       statusCode: 503,
-      details: { code: 'stripe_secret_missing' }
+      details: expect.objectContaining({ code: 'stripe_secret_missing', stripe_account: 'us' })
     }));
   });
 });

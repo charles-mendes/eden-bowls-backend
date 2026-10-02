@@ -27,11 +27,11 @@ describe('StripeFirstPurchasePromosRepository', () => {
     expect(dataSource.query).toHaveBeenCalledTimes(2);
     expect(dataSource.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO `stripe_first_purchase_promos`'),
-      [1, 'promo_1m', 'coupon_1']
+      ['us', 1, 'promo_1m', 'coupon_1']
     );
     expect(dataSource.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO `stripe_first_purchase_promos`'),
-      [6, 'promo_6m', null]
+      ['us', 6, 'promo_6m', null]
     );
   });
 
