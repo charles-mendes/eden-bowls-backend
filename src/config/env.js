@@ -6,6 +6,7 @@ dotenv.config();
 
 const rawEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  SENTRY_DSN: z.string().optional(),
   PORT: z.string().default('3000'),
   MODE: z.enum(['all', 'http', 'cron', 'worker']).default('http'),
   ENABLE_BACKGROUND_JOBS: z.string().optional(),
@@ -236,6 +237,7 @@ function parseEnv(source = process.env) {
 
   const resolved = {
     NODE_ENV: rawEnv.NODE_ENV,
+    SENTRY_DSN: String(rawEnv.SENTRY_DSN || '').trim(),
     PORT: Number(rawEnv.PORT),
     MODE: rawEnv.MODE,
     ENABLE_BACKGROUND_JOBS: toBoolean(rawEnv.ENABLE_BACKGROUND_JOBS),

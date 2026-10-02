@@ -1,3 +1,4 @@
+require('./instrument');
 require('reflect-metadata');
 
 const path = require('path');
