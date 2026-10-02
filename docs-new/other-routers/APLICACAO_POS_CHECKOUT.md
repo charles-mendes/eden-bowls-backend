@@ -170,7 +170,7 @@ Alem de `STRIPE_US_SECRET_KEY` em `src/config/env.js` e `.env.example` (`STRIPE_
 
 O schema le `STRIPE_US_WEBHOOK_SECRET`, nao `STRIPE_WEBHOOK_SECRET` (not read).
 
-Dashboard Stripe: endpoint `{API}/stripe/v1/webhook`. Eventos minimos: `invoice.paid`, `invoice.created`, `payment_intent.succeeded`, `payment_intent.payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`.
+Dashboard Stripe: endpoint US `{API}/stripe/v1/webhook/us` e BR `{API}/stripe/v1/webhook/br`. Sempre que configurar o endpoint, assine os 28 eventos de `src/infrastructure/stripe/stripe-webhook-events.js`.
 
 ## 7. Arquivos a criar e a alterar
 

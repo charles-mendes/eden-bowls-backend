@@ -624,4 +624,36 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     });
     expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
   });
+
+  test('rejects a Brazil checkout that has no catalog currency', async () => {
+    const brContext = {
+      ...validContext,
+      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      planSelection: {
+        ...validContext.planSelection,
+        catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: '' }
+      }
+    };
+    const brBilling = { createOnboardingSubscription: jest.fn() };
+    const { service } = buildService({
+      stripeBrEnabled: true,
+      stripeAccounts: {
+        getForCreation: jest.fn(() => brBilling),
+        get: jest.fn(() => brBilling)
+      },
+      repository: {
+        checkout: jest.fn(),
+        getPlanSelection: jest.fn().mockResolvedValue(brContext.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue(brContext),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+
+    await expect(service.checkout({ userId: 7, payload })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'catalog_currency_missing' }
+    });
+    expect(brBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+  });
 });

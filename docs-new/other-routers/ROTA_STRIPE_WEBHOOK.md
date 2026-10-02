@@ -219,7 +219,7 @@ Resolver user no ACK repository ja le `checkout_reference` por `user_id`. O webh
 
 Sem secret da conta do path → 503 neste path, nao derrubar o resto da API.
 
-Dashboard: endpoint US → `{API}/stripe/v1/webhook/us`; BR → `{API}/stripe/v1/webhook/br`. Eventos minimos: `invoice.paid`, `invoice.created`, `payment_intent.succeeded`, `payment_intent.processing`, `payment_intent.payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`. Test + live × br + us = 4 endpoints.
+Dashboard: endpoint US → `{API}/stripe/v1/webhook/us`; BR → `{API}/stripe/v1/webhook/br`. Sempre que configurar o endpoint, assine os 28 eventos de `src/infrastructure/stripe/stripe-webhook-events.js` (não “all events”). Test + live × br + us = 4 endpoints.
 
 ## O que mudou em relacao ao WordPress
 

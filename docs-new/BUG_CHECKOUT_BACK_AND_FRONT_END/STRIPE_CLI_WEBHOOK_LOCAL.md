@@ -38,7 +38,7 @@ Programa **fora** do `node_modules`. Nao substitui `StripeWebhookService`.
 
 No dashboard, o Stripe POSTA para uma URL publica HTTPS. No PC isso nao existe. O CLI:
 
-1. Abre um tunel autenticado com a conta **test** (a mesma do `STRIPE_US_SECRET_KEY` `sk_test_...`; `STRIPE_SECRET_KEY` is not read)
+1. Abre um tunel autenticado com a conta **test** (a mesma do `STRIPE_US_SECRET_KEY`; `STRIPE_SECRET_KEY` is not read)
 2. Recebe os eventos
 3. Encaminha `POST` para o Express com header `Stripe-Signature`
 
@@ -53,6 +53,14 @@ POST /stripe/v1/webhook
 - Auth = `Stripe-Signature` + `STRIPE_US_WEBHOOK_SECRET`. `STRIPE_WEBHOOK_SECRET` is not read
 
 Nao instale o CLI como dependencia npm. O script `npm run stripe:listen` so chama o binario ja instalado no SO.
+
+## Contas de QA no localhost
+
+O `stripe listen` local entra nas contas de teste de QA, não numa conta só da máquina. Os secrets da API local são os secrets de teste de QA. O secret de webhook local é o valor que o CLI imprime. Não copie o signing secret do dashboard de QA nem o de produção para o `.env` local, e não use chaves live.
+
+O banco local copia o post meta de preço e de produto do export do operador, casando slug do produto pai, sabor e peso. Rode o script de retire. Não rode o sync de catálogo localmente: cada execução criaria produtos de novo na conta de QA compartilhada.
+
+`EDEN_RUNTIME=local` é obrigatório, inclusive quando `NODE_ENV=production`. Um `invoice.paid` de um checkout feito no QA, encaminhado pelo CLI, não é aplicado no usuário local.
 
 ## Setup neste repo
 
@@ -88,25 +96,28 @@ npm run stripe:listen
 Equivalente:
 
 ```bash
-stripe listen --forward-to localhost:3000/stripe/v1/webhook
+npm run stripe:listen
+# stripe listen --forward-to localhost:3000/stripe/v1/webhook/us --events <28 eventos>
 ```
+
+Os 28 eventos saem de `src/infrastructure/stripe/stripe-webhook-events.js`. Conta BR: `npm run stripe:listen:br`.
 
 O CLI imprime um secret **desta sessao**:
 
 ```text
-Ready! Your webhook signing secret is whsec_...
+Ready! Your webhook signing secret is signing secret ...
 ```
 
 ### 4) Colocar o secret no `.env` e reiniciar o Node
 
 ```bash
-STRIPE_US_WEBHOOK_SECRET=whsec_...
+STRIPE_US_WEBHOOK_SECRET=
 # STRIPE_WEBHOOK_SECRET is not read
 ```
 
 Reinicie `npm run dev`. O Node so le o `.env` na subida.
 
-O `whsec_` do CLI **nao** e o `whsec_` do endpoint do dashboard. Sao dois destinos. Local = secret que o `listen` imprimiu.
+O `signing secret ` do CLI **nao** e o `signing secret ` do endpoint do dashboard. Sao dois destinos. Local = secret que o `listen` imprimiu.
 
 ### 5) Pagar de novo no front
 
@@ -134,8 +145,8 @@ Confirma que a rota aceita o POST assinado. O payload de fixture **nao** tem o `
 
 | Ambiente | Como o Stripe chega | Qual secret (`STRIPE_WEBHOOK_SECRET` is not read) |
 |---|---|---|
-| Local | `npm run stripe:listen` | `whsec_` impresso pelo CLI |
-| Staging / prod | endpoint no dashboard → `{API}/stripe/v1/webhook` | `whsec_` **daquele** endpoint |
+| Local | `npm run stripe:listen` | `signing secret ` impresso pelo CLI |
+| Staging / prod | endpoint no dashboard → `{API}/stripe/v1/webhook` | `signing secret ` **daquele** endpoint |
 
 Em producao o CLI nao entra. URL publica HTTPS + secret do dashboard.
 

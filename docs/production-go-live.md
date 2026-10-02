@@ -47,6 +47,18 @@ Register webhooks at:
 
 - `POST /stripe/v1/webhook/us`
 - `POST /stripe/v1/webhook/br`
+- `https://qa-api.edenbowls.com/stripe/v1/webhook/br`
+- `https://qa-api.edenbowls.com/stripe/v1/webhook/us`
+- `https://api.edenbowls.com/stripe/v1/webhook/br`
+- `https://api.edenbowls.com/stripe/v1/webhook/us`
+
+`api.edenbowls.com` is not a host in `infra/caddy/Caddyfile`. A live signed-event check is blocked until DNS, TLS, and a reverse proxy outside this repo route `POST /stripe/v1/webhook/br` and `POST /stripe/v1/webhook/us` to the production API. Do not add that hostname to the Caddyfile. The two live webhook endpoints stay disabled until that host routes both paths and the live signing secrets are loaded. Live secrets are written only after the ledger count and the customer-meta count are each zero, including when a ledger price id is a seed placeholder.
+
+QA API deploy follows a successful CI run on `main` and reads the host `.env`. `EDEN_RUNTIME` must already be set before a build that requires it is merged. This repo has no production deploy workflow.
+
+Production Stripe rollback stops the production store, because `STRIPE_BR_ENABLED=false` only stops Brazil. QA Stripe rollback restores the dump taken before the retire script. Repeating the cutover deletes `background_job_cursors` where `job_name` is `stripe_ledger_retire`. Schema-migration rollback stays a database dump restore.
+
+Each endpoint (US and BR, test and live) must subscribe to the 28 events in `src/infrastructure/stripe/stripe-webhook-events.js`. Do not select “all events” and do not register a shorter list. The same list is what `npm run stripe:listen` and `npm run stripe:listen:br` forward locally.
 
 The legacy `POST /stripe/v1/webhook` is the US endpoint. Put each signing secret in `STRIPE_US_WEBHOOK_SECRET` and `STRIPE_BR_WEBHOOK_SECRET`. Production accepts only `STRIPE_US_SECRET_KEY` and `STRIPE_US_WEBHOOK_SECRET` for the US account. A host env outside this repo must copy any live legacy secret onto those names before deploy. `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read.
 

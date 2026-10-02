@@ -23,6 +23,18 @@ const {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CHECKOUT_MODE = 'subscription_first';
+
+function checkoutCurrency(stripeAccount, catalogPricing) {
+  const currency = catalogPricing && catalogPricing.currency
+    ? String(catalogPricing.currency).trim().toLowerCase()
+    : '';
+  if (stripeAccount === 'br' && !currency) {
+    throw new HttpError(422, 'Brazil checkout requires a catalog currency.', {
+      code: 'catalog_currency_missing'
+    });
+  }
+  return currency || 'usd';
+}
 const SUBSCRIBED_PET_STATUSES = new Set(['active', 'trialing', 'incomplete', 'past_due', 'paused', 'unpaid']);
 
 function pushPetIdentity(ids, pet) {
@@ -290,7 +302,7 @@ class OnboardingSubscriptionCheckoutService {
         items,
         address,
         shipping: context.shipping || {},
-        currency: catalogPricing && catalogPricing.currency ? catalogPricing.currency : 'usd',
+        currency: checkoutCurrency(stripeAccount, catalogPricing),
         promotionCodeId,
         subscriptionTermMonths: termMonths,
         attemptId,
