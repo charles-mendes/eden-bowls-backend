@@ -68,7 +68,9 @@ describe('SubscriptionsEditCommitRepository', () => {
       ledgerRepository,
       stripeBilling,
       planPreviewRepository,
-      resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }])
+      resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+      transactionalMailer: overrides.transactionalMailer || null,
+      logger: overrides.logger || { error: jest.fn(), warn() {}, info() {} }
     });
   }
 
@@ -134,5 +136,77 @@ describe('SubscriptionsEditCommitRepository', () => {
     expect(result.edit_payment_pending).toBe(true);
     expect(result.payment_state).toBe('requires_confirmation');
     expect(result.stripe_client_secret).toBe('pi_1_secret');
+  });
+
+  test('sends plan changed after an immediate commit and still succeeds when mail throws', async () => {
+    const notifyPlanChanged = jest.fn().mockResolvedValue({ claimed: true });
+    const repository = buildRepo({
+      transactionalMailer: { notifyPlanChanged }
+    });
+    const payload = {
+      subscription_term_months: 1,
+      expected_current_hash: hash,
+      pets: [{ pet_name: 'Milo', enabled: true, selected_flavors: ['chicken'], flavor_weights: [100] }],
+      address: { country: 'US' },
+      shipping: { cost: 12.9 }
+    };
+
+    const result = await repository.commit(7, 'sub_123', payload);
+
+    expect(result.edit_payment_pending).toBe(false);
+    expect(notifyPlanChanged).toHaveBeenCalledTimes(1);
+    expect(notifyPlanChanged).toHaveBeenCalledWith(expect.objectContaining({
+      subscriptionId: 'sub_123',
+      referenceId: expect.stringMatching(/^plan:/)
+    }));
+
+    notifyPlanChanged.mockRejectedValueOnce(Object.assign(new Error('smtp down'), { code: 'EENVELOPE' }));
+    await expect(repository.commit(7, 'sub_123', payload)).resolves.toMatchObject({
+      subscription_id: 'sub_123',
+      edit_payment_pending: false
+    });
+  });
+
+  test('does not send plan changed when the edit is waiting for payment', async () => {
+    const notifyPlanChanged = jest.fn();
+    const repository = buildRepo({
+      transactionalMailer: { notifyPlanChanged },
+      stripeBilling: {
+        retrieveSubscription: jest.fn().mockResolvedValue({
+          id: 'sub_123',
+          status: 'active',
+          customer: 'cus_1',
+          default_payment_method: { id: 'pm_123' },
+          items: { data: currentItems.map((item) => ({ id: item.id, price: { id: item.price }, quantity: item.quantity })) },
+          metadata: {}
+        }),
+        previewProration: jest.fn().mockResolvedValue({ amount_due: 1250, total: 1250, currency: 'usd' }),
+        updateSubscriptionItems: jest.fn().mockResolvedValue({
+          latest_invoice: {
+            id: 'in_prorate',
+            payment_intent: {
+              id: 'pi_1',
+              status: 'requires_confirmation',
+              client_secret: 'pi_1_secret'
+            }
+          },
+          default_payment_method: { id: 'pm_123' }
+        }),
+        resolvePaymentState: jest.fn().mockReturnValue('requires_confirmation'),
+        shippingProductId: 'prod_ship'
+      }
+    });
+
+    const result = await repository.commit(7, 'sub_123', {
+      subscription_term_months: 1,
+      expected_current_hash: hash,
+      pets: [{ pet_name: 'Milo', enabled: true, selected_flavors: ['chicken'], flavor_weights: [100] }],
+      address: { country: 'US' },
+      shipping: { cost: 12.9 },
+      payment_method_id: 'pm_123'
+    });
+
+    expect(result.edit_payment_pending).toBe(true);
+    expect(notifyPlanChanged).not.toHaveBeenCalled();
   });
 });

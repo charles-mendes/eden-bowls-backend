@@ -61,6 +61,32 @@ describe('AdminProductionService', () => {
     expect(productionRepository.upsert).toHaveBeenCalled();
   });
 
+  test('does not send a shipped letter when production status changes', async () => {
+    const notifyShipped = jest.fn();
+    const service = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository: {
+        findById: jest.fn().mockResolvedValue(ledgerRow()),
+        findQueueRowById: jest.fn().mockResolvedValue(queueItem({ productionStatus: 'ready' }))
+      },
+      productionRepository: {
+        findBySubscriptionAndPeriodEnd: jest.fn().mockResolvedValue({ status: 'in_production' }),
+        upsert: jest.fn().mockResolvedValue({ status: 'ready' })
+      },
+      auditService: { record: jest.fn() }
+    });
+    service.transactionalMailer = { notifyShipped };
+
+    const result = await service.updateStatus(42, {
+      status: 'ready',
+      periodEnd: '2026-09-20T08:00:00.000Z'
+    }, { userId: 7 });
+
+    expect(result.productionStatus).toBe('ready');
+    expect(notifyShipped).not.toHaveBeenCalled();
+    expect(service.notifyShippedMail).toBeUndefined();
+  });
+
   test('lists a paginated envelope with metrics', async () => {
     const service = new AdminProductionService({
       now: () => new Date('2026-09-20T15:00:00.000Z'),

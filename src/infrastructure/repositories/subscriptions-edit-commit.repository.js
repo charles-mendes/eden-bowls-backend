@@ -18,6 +18,8 @@ class SubscriptionsEditCommitRepository {
     this.stripeBilling = options.stripeBilling || null;
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.resolveSubscriptionItems = options.resolveSubscriptionItems || null;
+    this.transactionalMailer = options.transactionalMailer || null;
+    this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
 
   async commit(userId, subscriptionId, payload = {}, ledgerRow = null) {
@@ -163,6 +165,17 @@ class SubscriptionsEditCommitRepository {
         editPaymentPending: false,
         editPending: null
       });
+      await this.notifyPlanChangedMail({
+        row,
+        subscriptionId,
+        invoice,
+        nextPlanSelection,
+        nextPets,
+        shipping,
+        address: payload.address || row.address,
+        proposedTerm,
+        proposed
+      });
     }
 
     return {
@@ -178,6 +191,54 @@ class SubscriptionsEditCommitRepository {
       stripe_payment_intent_status: paymentIntentStatus || undefined,
       edit_payment_pending: editPaymentPending
     };
+  }
+
+  async notifyPlanChangedMail({
+    row,
+    subscriptionId,
+    invoice,
+    nextPlanSelection,
+    nextPets,
+    shipping,
+    address,
+    proposedTerm,
+    proposed
+  }) {
+    if (!this.transactionalMailer || typeof this.transactionalMailer.notifyPlanChanged !== 'function') {
+      return;
+    }
+
+    const referenceId = invoice.id
+      ? `plan:${invoice.id}`
+      : `plan:${buildCurrentHash({
+        items: proposed.items || [],
+        termMonths: proposedTerm,
+        address: address || {},
+        shipping: shipping || {}
+      })}`;
+
+    try {
+      await this.transactionalMailer.notifyPlanChanged({
+        ledger: {
+          ...row,
+          planSelection: nextPlanSelection,
+          petsSnapshot: nextPets,
+          shipping,
+          address,
+          subscriptionTermMonths: proposedTerm,
+          stripeAccount: ledgerStripeAccount(row)
+        },
+        subscriptionId,
+        referenceId,
+        invoice
+      });
+    } catch (error) {
+      this.logger.error({
+        template: 'plan_changed',
+        subscriptionId,
+        code: error && error.code ? error.code : 'smtp_failed'
+      }, 'Transactional email failed.');
+    }
   }
 }
 

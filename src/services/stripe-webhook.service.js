@@ -226,8 +226,12 @@ class StripeWebhookService {
       await this.handlePaymentIntentUpdate(object);
       return;
     }
-    if (event.type === 'payment_intent.payment_failed' || event.type === 'invoice.payment_failed') {
-      await this.handlePaymentFailed(object, event.type);
+    if (event.type === 'payment_intent.payment_failed') {
+      await this.handlePaymentFailed(object, event.type, { sendMail: false });
+      return;
+    }
+    if (event.type === 'invoice.payment_failed') {
+      await this.handlePaymentFailed(object, event.type, { sendMail: true });
       return;
     }
     if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
@@ -238,7 +242,7 @@ class StripeWebhookService {
         });
         return;
       }
-      await this.handleSubscriptionChanged(object, runtime);
+      await this.handleSubscriptionChanged(object, runtime, event);
     }
   }
 
@@ -390,17 +394,33 @@ class StripeWebhookService {
     if (!this.transactionalMailer) {
       return;
     }
-    if (promotedPending) {
-      return;
-    }
-    if (String(invoice.billing_reason || '') !== 'subscription_create') {
-      return;
-    }
 
     try {
       const ledger = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId) || {};
-      await this.transactionalMailer.notifyOrderConfirmed({ invoice, ledger, subscriptionId });
-      await this.transactionalMailer.notifyAdminNewSubscription({ invoice, ledger, subscriptionId });
+      if (promotedPending) {
+        await this.transactionalMailer.notifyPlanChanged({
+          invoice,
+          ledger,
+          subscriptionId,
+          referenceId: String(invoice.id || '')
+        });
+        return;
+      }
+
+      const reason = String(invoice.billing_reason || '');
+      if (reason === 'subscription_create') {
+        await this.transactionalMailer.notifyOrderConfirmed({ invoice, ledger, subscriptionId });
+        await this.transactionalMailer.notifyAdminNewSubscription({ invoice, ledger, subscriptionId });
+        return;
+      }
+      if (reason === 'subscription_cycle') {
+        await this.transactionalMailer.notifyRenewal({
+          invoice,
+          ledger,
+          subscriptionId,
+          referenceId: String(invoice.id || '')
+        });
+      }
     } catch (error) {
       this.logger.error({
         invoiceId: invoice && invoice.id,
@@ -478,7 +498,7 @@ class StripeWebhookService {
     });
   }
 
-  async handlePaymentFailed(object, type) {
+  async handlePaymentFailed(object, type, options = {}) {
     const paymentIntentId = type === 'invoice.payment_failed'
       ? String(object.payment_intent && object.payment_intent.id ? object.payment_intent.id : object.payment_intent || '')
       : String(object.id || '');
@@ -507,7 +527,9 @@ class StripeWebhookService {
       ? await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId)
       : null;
 
-    await this.notifyPaymentFailedMail({ object, ledger, subscriptionId });
+    if (options.sendMail !== false) {
+      await this.notifyPaymentFailedMail({ object, ledger, subscriptionId });
+    }
 
     if (ledger && ['active', 'trialing'].includes(ledger.status)) {
       return;
@@ -540,7 +562,7 @@ class StripeWebhookService {
     }
   }
 
-  async handleSubscriptionChanged(subscription, runtime = {}) {
+  async handleSubscriptionChanged(subscription, runtime = {}, event = {}) {
     const subscriptionId = String(subscription.id || '');
     if (!subscriptionId.startsWith('sub_')) {
       return;
@@ -575,6 +597,90 @@ class StripeWebhookService {
       paymentMethodLast4: card.last4 || undefined,
       paymentMethodBrand: card.brand || undefined
     });
+
+    await this.notifySubscriptionTransition({
+      subscription,
+      subscriptionId,
+      event
+    });
+  }
+
+  attributeChanged(previous, key) {
+    return Boolean(previous) && Object.prototype.hasOwnProperty.call(previous, key);
+  }
+
+  async notifySubscriptionTransition({ subscription, subscriptionId, event }) {
+    if (!this.transactionalMailer) {
+      return;
+    }
+
+    try {
+      const ledger = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId) || {};
+      if (event.type === 'customer.subscription.deleted') {
+        const alreadySent = typeof this.transactionalMailer.hasSentClaim === 'function'
+          ? await this.transactionalMailer.hasSentClaim({
+            subscriptionId,
+            template: 'cancelled'
+          })
+          : false;
+        if (alreadySent) {
+          return;
+        }
+        await this.transactionalMailer.notifyCancelled({
+          ledger,
+          subscriptionId,
+          referenceId: 'deleted',
+          endsAt: subscription.current_period_end || ledger.currentPeriodEnd
+        });
+        return;
+      }
+
+      if (event.type !== 'customer.subscription.updated') {
+        return;
+      }
+
+      const previous = event.data && event.data.previous_attributes;
+      const eventId = String(event.id || '').trim();
+      if (this.attributeChanged(previous, 'pause_collection') && eventId) {
+        const wasPaused = Boolean(previous.pause_collection);
+        const isPaused = Boolean(subscription.pause_collection);
+        if (!wasPaused && isPaused) {
+          const resumesAt = subscription.pause_collection && subscription.pause_collection.resumes_at;
+          await this.transactionalMailer.notifyPaused({
+            ledger,
+            subscriptionId,
+            referenceId: `paused:${eventId}`,
+            resumeAt: resumesAt || null
+          });
+        } else if (wasPaused && !isPaused) {
+          await this.transactionalMailer.notifyResumed({
+            ledger,
+            subscriptionId,
+            referenceId: `resumed:${eventId}`
+          });
+        }
+      }
+
+      if (this.attributeChanged(previous, 'cancel_at_period_end')) {
+        const wasCancelling = Boolean(previous.cancel_at_period_end);
+        const isCancelling = Boolean(subscription.cancel_at_period_end);
+        if (!wasCancelling && isCancelling) {
+          const periodEnd = subscription.current_period_end || ledger.currentPeriodEnd || '';
+          await this.transactionalMailer.notifyCancelled({
+            ledger,
+            subscriptionId,
+            referenceId: `cancel_scheduled:${periodEnd}`,
+            endsAt: periodEnd
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error({
+        template: event && event.type,
+        subscriptionId,
+        code: error && error.code
+      }, 'Transactional email failed.');
+    }
   }
 }
 

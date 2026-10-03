@@ -371,7 +371,9 @@ async function bootstrap() {
     stripeAccounts,
     stripeBilling,
     planPreviewRepository: onboardingPlanPreviewRepository,
-    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection)
+    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection),
+    transactionalMailer,
+    logger
   });
   const subscriptionsEditCommitService = new SubscriptionsEditCommitService(subscriptionsEditCommitRepository, {
     authService,

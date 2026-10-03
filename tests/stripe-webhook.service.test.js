@@ -441,7 +441,9 @@ describe('StripeWebhookService', () => {
   test('sends order-confirmed and admin mail on subscription_create invoice.paid', async () => {
     const transactionalMailer = {
       notifyOrderConfirmed: jest.fn().mockResolvedValue({ claimed: true }),
-      notifyAdminNewSubscription: jest.fn().mockResolvedValue({ claimed: true })
+      notifyAdminNewSubscription: jest.fn().mockResolvedValue({ claimed: true }),
+      notifyRenewal: jest.fn(),
+      notifyPlanChanged: jest.fn()
     };
     const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
     stripeBilling.constructEvent.mockReturnValue({
@@ -481,12 +483,16 @@ describe('StripeWebhookService', () => {
       subscriptionId: 'sub_123',
       invoice: expect.objectContaining({ id: 'in_1', billing_reason: 'subscription_create' })
     }));
+    expect(transactionalMailer.notifyRenewal).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyPlanChanged).not.toHaveBeenCalled();
   });
 
   test('does not send P0 mail on subscription_cycle invoice.paid', async () => {
     const transactionalMailer = {
       notifyOrderConfirmed: jest.fn(),
-      notifyAdminNewSubscription: jest.fn()
+      notifyAdminNewSubscription: jest.fn(),
+      notifyRenewal: jest.fn().mockResolvedValue({ claimed: true }),
+      notifyPlanChanged: jest.fn()
     };
     const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
     stripeBilling.constructEvent.mockReturnValue({
@@ -518,6 +524,12 @@ describe('StripeWebhookService', () => {
 
     expect(transactionalMailer.notifyOrderConfirmed).not.toHaveBeenCalled();
     expect(transactionalMailer.notifyAdminNewSubscription).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyPlanChanged).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyRenewal).toHaveBeenCalledTimes(1);
+    expect(transactionalMailer.notifyRenewal).toHaveBeenCalledWith(expect.objectContaining({
+      subscriptionId: 'sub_123',
+      referenceId: 'in_cycle'
+    }));
   });
 
   test('sends payment-failed mail when ledger is already active', async () => {
@@ -551,6 +563,250 @@ describe('StripeWebhookService', () => {
 
     expect(transactionalMailer.notifyPaymentFailed).toHaveBeenCalledTimes(1);
     expect(ledgerRepository.updateCheckoutReference).not.toHaveBeenCalled();
+  });
+
+  test('sends plan changed only when invoice.paid promotes a pending edit', async () => {
+    const transactionalMailer = {
+      notifyOrderConfirmed: jest.fn(),
+      notifyAdminNewSubscription: jest.fn(),
+      notifyRenewal: jest.fn(),
+      notifyPlanChanged: jest.fn().mockResolvedValue({ claimed: true })
+    };
+    const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_plan',
+      type: 'invoice.paid',
+      data: {
+        object: {
+          id: 'in_plan',
+          customer: 'cus_1',
+          subscription: 'sub_123',
+          billing_reason: 'subscription_cycle',
+          amount_paid: 4200,
+          currency: 'usd'
+        }
+      }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      customerEmail: 'ana@example.com',
+      editPaymentPending: true,
+      editPending: { invoice_id: 'in_plan' }
+    });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(transactionalMailer.notifyPlanChanged).toHaveBeenCalledTimes(1);
+    expect(transactionalMailer.notifyPlanChanged).toHaveBeenCalledWith(expect.objectContaining({
+      subscriptionId: 'sub_123',
+      referenceId: 'in_plan'
+    }));
+    expect(transactionalMailer.notifyOrderConfirmed).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyRenewal).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyAdminNewSubscription).not.toHaveBeenCalled();
+  });
+
+  test('does not mail when payment_intent.payment_failed updates checkout', async () => {
+    const transactionalMailer = {
+      notifyPaymentFailed: jest.fn()
+    };
+    const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_pi_fail',
+      type: 'payment_intent.payment_failed',
+      data: {
+        object: {
+          id: 'pi_fail',
+          status: 'requires_payment_method',
+          customer: 'cus_1'
+        }
+      }
+    });
+    ledgerRepository.findUserStateByPaymentIntentId.mockResolvedValue({ userId: 7 });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(transactionalMailer.notifyPaymentFailed).not.toHaveBeenCalled();
+    expect(ledgerRepository.updateCheckoutReference).toHaveBeenCalledWith(7, expect.objectContaining({
+      payment_state: 'failed',
+      stripe_payment_intent_id: 'pi_fail'
+    }));
+  });
+
+  test('does not mail when payment_intent.succeeded updates checkout', async () => {
+    const transactionalMailer = {
+      notifyOrderConfirmed: jest.fn(),
+      notifyRenewal: jest.fn(),
+      notifyPaymentFailed: jest.fn()
+    };
+    const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_pi_ok',
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_ok',
+          status: 'succeeded',
+          metadata: { eden_env: 'qa' }
+        }
+      }
+    });
+    ledgerRepository.findUserStateByPaymentIntentId.mockResolvedValue({ userId: 7 });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(transactionalMailer.notifyOrderConfirmed).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyRenewal).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyPaymentFailed).not.toHaveBeenCalled();
+    expect(ledgerRepository.updateCheckoutReference).toHaveBeenCalledWith(7, expect.objectContaining({
+      stripe_payment_intent_id: 'pi_ok',
+      stripe_payment_intent_status: 'succeeded'
+    }));
+  });
+
+  function subscriptionEvent(type, subscription, previous) {
+    return {
+      id: `evt_${type}`,
+      type,
+      data: {
+        object: subscription,
+        previous_attributes: previous
+      }
+    };
+  }
+
+  function subscriptionFixture(overrides = {}) {
+    return {
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      metadata: { eden_env: 'qa', wp_user_id: '7' },
+      cancel_at_period_end: false,
+      current_period_end: 1790000000,
+      ...overrides
+    };
+  }
+
+  test('mails pause, resume, and scheduled cancel only when previous attributes cross that edge', async () => {
+    const transactionalMailer = {
+      notifyPaused: jest.fn().mockResolvedValue({ claimed: true }),
+      notifyResumed: jest.fn().mockResolvedValue({ claimed: true }),
+      notifyCancelled: jest.fn().mockResolvedValue({ claimed: true }),
+      notifyOrderConfirmed: jest.fn(),
+      notifyRenewal: jest.fn(),
+      hasSentClaim: jest.fn().mockResolvedValue(false)
+    };
+    const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      customerEmail: 'ana@example.com',
+      status: 'active'
+    });
+
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.updated',
+      subscriptionFixture({ pause_collection: { behavior: 'void' } }),
+      { pause_collection: null }
+    ));
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+    expect(transactionalMailer.notifyPaused).toHaveBeenCalledWith(expect.objectContaining({
+      referenceId: 'paused:evt_customer.subscription.updated'
+    }));
+
+    transactionalMailer.notifyPaused.mockClear();
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.updated',
+      subscriptionFixture({ pause_collection: null }),
+      { pause_collection: { behavior: 'void' } }
+    ));
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+    expect(transactionalMailer.notifyResumed).toHaveBeenCalledTimes(1);
+    expect(transactionalMailer.notifyOrderConfirmed).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyRenewal).not.toHaveBeenCalled();
+
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.updated',
+      subscriptionFixture({ cancel_at_period_end: true, current_period_end: 1790000000 }),
+      { cancel_at_period_end: false }
+    ));
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+    expect(transactionalMailer.notifyCancelled).toHaveBeenCalledWith(expect.objectContaining({
+      referenceId: 'cancel_scheduled:1790000000'
+    }));
+
+    transactionalMailer.notifyResumed.mockClear();
+    transactionalMailer.notifyCancelled.mockClear();
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.updated',
+      subscriptionFixture({ cancel_at_period_end: false, pause_collection: null }),
+      { cancel_at_period_end: true }
+    ));
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+    expect(transactionalMailer.notifyResumed).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyCancelled).not.toHaveBeenCalled();
+  });
+
+  test('skips a second cancelled letter when a sent claim already exists', async () => {
+    const transactionalMailer = {
+      notifyCancelled: jest.fn(),
+      hasSentClaim: jest.fn().mockResolvedValue(true)
+    };
+    const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      customerEmail: 'ana@example.com'
+    });
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.deleted',
+      subscriptionFixture({ status: 'canceled' }),
+      { status: 'active' }
+    ));
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(transactionalMailer.hasSentClaim).toHaveBeenCalledWith({
+      subscriptionId: 'sub_123',
+      template: 'cancelled'
+    });
+    expect(transactionalMailer.notifyCancelled).not.toHaveBeenCalled();
+  });
+
+  test('mails cancel once when a subscription is deleted without a sent cancelled claim', async () => {
+    const transactionalMailer = {
+      notifyCancelled: jest.fn().mockResolvedValue({ claimed: true }),
+      hasSentClaim: jest.fn().mockResolvedValue(false)
+    };
+    const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      customerEmail: 'ana@example.com'
+    });
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.deleted',
+      subscriptionFixture({ status: 'canceled' }),
+      {}
+    ));
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(transactionalMailer.notifyCancelled).toHaveBeenCalledWith(expect.objectContaining({
+      subscriptionId: 'sub_123',
+      referenceId: 'deleted'
+    }));
   });
 
   test('returns 200 and keeps the event pending when dispatch throws', async () => {
