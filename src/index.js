@@ -77,7 +77,8 @@ const { OnboardingSubscriptionCheckoutService } = require('./services/onboarding
 const { OnboardingSubscriptionPreviewService } = require('./services/onboarding-subscription-preview.service');
 const { OnboardingZipcodeLookupService } = require('./services/onboarding-zipcode-lookup.service');
 const { OnboardingZipcodeService } = require('./services/onboarding-zipcode.service');
-const { ShippingService } = require('./services/shipping.service');
+const { createShippingQuoteServices } = require('./config/shipping-quote-services');
+const { DeliveryClosedDaysRepository } = require('./infrastructure/repositories/delivery-closed-days.repository');
 const { UpsClient } = require('./infrastructure/shipping/ups-client');
 const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shipment.repository');
 const { UpsShipmentService } = require('./services/ups-shipment.service');
@@ -195,16 +196,24 @@ async function bootstrap() {
     timeoutMs: env.UPS_HTTP_TIMEOUT_MS,
     transactionSrc: env.UPS_TRANSACTION_SRC
   });
-  const shippingService = new ShippingService({
-    settings: await shippingSettingsRepository.get(),
-    viaCepClient,
-    nominatimClient,
-    osrmClient,
-    upsClient
-  });
   const upsLabelStorage = new LocalUpsLabelStorage({ directory: env.UPS_LABEL_DIR });
   const upsShipmentRepository = new UpsShipmentRepository(dataSource);
   const stripeAccounts = createStripeAccountsFromEnv(env);
+  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
+  const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
+  const { shippingQuoteSigner, shippingService, customerDeliveriesService } = createShippingQuoteServices({
+    env,
+    logger,
+    shippingSettings: await shippingSettingsRepository.get(),
+    viaCepClient,
+    nominatimClient,
+    osrmClient,
+    upsClient,
+    deliveryCalendar: new DeliveryClosedDaysRepository(dataSource),
+    stripeAccounts,
+    ledgerRepository: subscriptionLedgerRepository,
+    productionRepository: subscriptionProductionRepository
+  });
   const stripeBilling = (() => {
     try {
       return stripeAccounts.get('us');
@@ -296,8 +305,6 @@ async function bootstrap() {
   const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository(dataSource);
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
   const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
-  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
-  const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository, {
     planSelectionRepository: onboardingPlanSelectionRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -334,7 +341,8 @@ async function bootstrap() {
     customerStore: stripeCustomerStore,
     ledgerRepository: subscriptionLedgerRepository,
     planPreviewRepository: onboardingPlanPreviewRepository,
-    petsSyncRepository: onboardingPetCreateRepository
+    petsSyncRepository: onboardingPetCreateRepository,
+    shippingQuoteSigner
   });
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository({
     viaCepClient,
@@ -361,7 +369,8 @@ async function bootstrap() {
     stripeAccounts,
     stripeBilling,
     planPreviewRepository: onboardingPlanPreviewRepository,
-    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection)
+    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection),
+    shippingQuoteSigner
   });
   const subscriptionsEditPreviewService = new SubscriptionsEditPreviewService(subscriptionsEditPreviewRepository, {
     ledgerRepository: subscriptionLedgerRepository
@@ -372,6 +381,7 @@ async function bootstrap() {
     stripeBilling,
     planPreviewRepository: onboardingPlanPreviewRepository,
     resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection),
+    shippingQuoteSigner,
     transactionalMailer,
     logger
   });
@@ -540,6 +550,7 @@ async function bootstrap() {
   });
   const app = createApp({
     authService,
+    customerDeliveriesService,
     authCookie: {
       name: env.AUTH_REFRESH_COOKIE_NAME,
       path: env.AUTH_REFRESH_COOKIE_PATH,

@@ -5,6 +5,7 @@ const {
   validateCheckoutState
 } = require('../core/checkout-state');
 const { resolveMarket } = require('../core/market');
+const { assertVerifiedDeliveryArea } = require('../core/shipping-quote-token');
 const { resolveStripeAccountFromCountry } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
@@ -124,6 +125,7 @@ class OnboardingSubscriptionCheckoutService {
     this.lockStore = options.lockStore || defaultCheckoutLockStore;
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.petsSyncRepository = options.petsSyncRepository || null;
+    this.shippingQuoteSigner = options.shippingQuoteSigner || null;
   }
 
   async checkout({ userId, payload = {} }) {
@@ -162,6 +164,11 @@ class OnboardingSubscriptionCheckoutService {
     const pricedContext = await this.ensurePricedPlanSelection(userId, rawContext);
     const context = await this.ensurePersistedPets(userId, pricedContext);
     validateCheckoutState(context);
+    const deliveryAddress = context.address || {};
+    const deliveryMarket = resolveMarket({ country: deliveryAddress.country }).country;
+    assertVerifiedDeliveryArea(this.shippingQuoteSigner, deliveryMarket, context.shipping || {}, {
+      zipcode: deliveryAddress.zipcode
+    });
 
     const eligibility = await this.discountEligibilityRepository.getEligibility(userId);
     const planSelection = context.planSelection || (

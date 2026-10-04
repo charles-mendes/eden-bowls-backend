@@ -74,6 +74,9 @@ class SubscriptionLedgerRepository {
       subscriptionTermMonths: row.subscription_term_months == null ? null : Number(row.subscription_term_months),
       editPaymentPending: Boolean(Number(row.edit_payment_pending)),
       editPending: parseJsonColumn(row.edit_pending),
+      chargedDeliveries: row.charged_deliveries == null ? null : Number(row.charged_deliveries),
+      lastChargedInvoiceId: row.last_charged_invoice_id ? String(row.last_charged_invoice_id) : null,
+      autoRenew: row.auto_renew == null ? null : Boolean(Number(row.auto_renew)),
       createdAt: row.created_at || null,
       updatedAt: row.updated_at || null,
       profileMarket: row.profile_market ? String(row.profile_market).trim().toUpperCase() : ''
@@ -390,6 +393,38 @@ class SubscriptionLedgerRepository {
       params
     );
 
+    return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
+  // First count for a row that predates the column; a row that already has a count is left alone.
+  async seedChargedDeliveries(subscriptionId, count, invoiceId) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`charged_deliveries\` = ?, \`last_charged_invoice_id\` = ?
+        WHERE \`stripe_subscription_id\` = ? AND \`charged_deliveries\` IS NULL`,
+      [Math.max(0, Number(count) || 0), invoiceId || null, subscriptionId]
+    );
+    return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
+  // A retried invoice.paid for the invoice already counted does not count twice.
+  async incrementChargedDeliveries(subscriptionId, invoiceId) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`charged_deliveries\` = \`charged_deliveries\` + 1, \`last_charged_invoice_id\` = ?
+        WHERE \`stripe_subscription_id\` = ? AND \`charged_deliveries\` IS NOT NULL
+          AND (\`last_charged_invoice_id\` IS NULL OR \`last_charged_invoice_id\` <> ?)`,
+      [invoiceId, subscriptionId, invoiceId]
+    );
+    return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
+  async setAutoRenew(subscriptionId, enabled) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`auto_renew\` = ? WHERE \`stripe_subscription_id\` = ?`,
+      [enabled ? 1 : 0, subscriptionId]
+    );
     return this.findByStripeSubscriptionId(subscriptionId);
   }
 

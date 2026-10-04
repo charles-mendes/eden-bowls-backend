@@ -1303,6 +1303,21 @@ class StripeBillingClient {
     }
   }
 
+  async setTrialEnd({ subscriptionId, trial_end, proration_behavior = 'none' }) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    try {
+      return await stripe.subscriptions.update(subscriptionId, {
+        trial_end,
+        proration_behavior
+      });
+    } catch (error) {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to update the subscription charge date.'), {
+        code: 'stripe_trial_end_failed'
+      });
+    }
+  }
+
   async listInvoicesForSubscription(subscriptionId) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
@@ -1312,6 +1327,30 @@ class StripeBillingClient {
         limit: 12
       });
       return listed && Array.isArray(listed.data) ? listed.data : [];
+    } catch (error) {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to list Stripe invoices.'), {
+        code: 'stripe_invoices_list_failed'
+      });
+    }
+  }
+
+  async listPaidInvoicesForSubscription(subscriptionId) {
+    const stripe = this.ensureClient();
+    const invoices = [];
+    let startingAfter;
+    try {
+      for (;;) {
+        const listed = await stripe.invoices.list({
+          subscription: subscriptionId,
+          status: 'paid',
+          limit: 100,
+          ...(startingAfter ? { starting_after: startingAfter } : {})
+        });
+        const page = listed && Array.isArray(listed.data) ? listed.data : [];
+        invoices.push(...page);
+        if (!listed || !listed.has_more || page.length === 0) return invoices;
+        startingAfter = page[page.length - 1].id;
+      }
     } catch (error) {
       throw this.httpError(502, this.stripeMessage(error, 'Unable to list Stripe invoices.'), {
         code: 'stripe_invoices_list_failed'

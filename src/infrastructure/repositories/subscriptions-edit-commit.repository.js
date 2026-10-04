@@ -10,6 +10,24 @@ const {
 } = require('../../core/subscription-edit-plan');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
+const { verifiedEditShipping } = require('../../core/shipping-quote-token');
+const { resolveMarket } = require('../../core/market');
+
+function itemsUnchanged(currentItems, itemUpdates) {
+  if (itemUpdates.length !== currentItems.length) return false;
+  return itemUpdates.every((update) => {
+    if (update.deleted || !update.id) return false;
+    const current = currentItems.find((item) => item.id === update.id);
+    return Boolean(current) && Number(current.quantity) === Number(update.quantity);
+  });
+}
+
+function addressWithTransit(address, shipping) {
+  if (!address || resolveMarket({ country: address.country }).country !== 'US') return address;
+  if (!shipping || shipping.delivery_days == null || shipping.delivery_days === '') return address;
+  const days = Number(shipping.delivery_days);
+  return Number.isFinite(days) ? { ...address, business_days_in_transit: days } : address;
+}
 
 class SubscriptionsEditCommitRepository {
   constructor(options = {}) {
@@ -18,6 +36,7 @@ class SubscriptionsEditCommitRepository {
     this.stripeBilling = options.stripeBilling || null;
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.resolveSubscriptionItems = options.resolveSubscriptionItems || null;
+    this.shippingQuoteSigner = options.shippingQuoteSigner || null;
     this.transactionalMailer = options.transactionalMailer || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
@@ -31,6 +50,7 @@ class SubscriptionsEditCommitRepository {
     if (!row) {
       throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
     }
+    const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
 
     const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
     const subscription = await stripeBilling.retrieveSubscription(subscriptionId);
@@ -59,16 +79,20 @@ class SubscriptionsEditCommitRepository {
     const currentTerm = Number(row.subscriptionTermMonths || 1);
     const proposedTerm = Number(payload.subscription_term_months || currentTerm);
     const termChange = currentTerm !== proposedTerm;
+    // An address or shipping change alone must not invoice now or move the renewal.
+    const deliveryOnly = !termChange && itemsUnchanged(currentItems, itemUpdates);
 
     let proration = { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency };
-    try {
-      const previewInvoice = await stripeBilling.previewProration({
-        subscriptionId,
-        items: itemUpdates
-      });
-      proration = mapProrationFromInvoice(previewInvoice, proposed.currency);
-    } catch (_error) {
-      proration = { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency };
+    if (!deliveryOnly) {
+      try {
+        const previewInvoice = await stripeBilling.previewProration({
+          subscriptionId,
+          items: itemUpdates
+        });
+        proration = mapProrationFromInvoice(previewInvoice, proposed.currency);
+      } catch (_error) {
+        proration = { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency };
+      }
     }
 
     if (proration.direction === 'charge') {
@@ -85,7 +109,6 @@ class SubscriptionsEditCommitRepository {
       }
     }
 
-    const shipping = payload.shipping || row.shipping || {};
     const shippingCost = shippingCostFrom(shipping);
     const metadata = {
       ...(subscription.metadata || {}),
@@ -110,7 +133,9 @@ class SubscriptionsEditCommitRepository {
       subscriptionId,
       items: itemUpdates,
       metadata,
-      prorationBehavior: proration.direction === 'charge' ? 'always_invoice' : 'create_prorations'
+      prorationBehavior: deliveryOnly
+        ? 'none'
+        : (proration.direction === 'charge' ? 'always_invoice' : 'create_prorations')
     });
 
     const invoice = updated.latest_invoice && typeof updated.latest_invoice === 'object'
@@ -133,6 +158,7 @@ class SubscriptionsEditCommitRepository {
       subscription_term_months: proposedTerm
     };
     const nextPets = buildPetsSnapshot(nextPlanSelection);
+    const savedAddress = payload.address ? addressWithTransit(payload.address, shipping) : row.address;
 
     if (editPaymentPending) {
       await this.ledgerRepository.upsert({
@@ -160,7 +186,7 @@ class SubscriptionsEditCommitRepository {
         planSelection: nextPlanSelection,
         petsSnapshot: nextPets,
         shipping,
-        address: payload.address || row.address,
+        address: savedAddress,
         subscriptionTermMonths: proposedTerm,
         editPaymentPending: false,
         editPending: null
@@ -172,7 +198,7 @@ class SubscriptionsEditCommitRepository {
         nextPlanSelection,
         nextPets,
         shipping,
-        address: payload.address || row.address,
+        address: savedAddress,
         proposedTerm,
         proposed
       });

@@ -175,6 +175,7 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
   const address = parseJsonColumn(row.address) || {};
   const term = Number(row.subscriptionTermMonths || row.subscription_term_months || plan.subscription_term_months || 0) || null;
   const cancelAtPeriodEnd = Boolean(Number(row.cancelAtPeriodEnd == null ? row.cancel_at_period_end : row.cancelAtPeriodEnd));
+  const storedAutoRenew = row.autoRenew == null ? row.auto_renew : row.autoRenew;
   const editPending = Boolean(Number(row.editPaymentPending == null ? row.edit_payment_pending : row.editPaymentPending));
 
   return {
@@ -189,7 +190,7 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
     payment_method_brand: extras.paymentMethodBrand || row.paymentMethodBrand || row.payment_method_brand || null,
     payment_method_last4: extras.paymentMethodLast4 || row.paymentMethodLast4 || row.payment_method_last4 || null,
     delivery_address: formatDeliveryAddress(address),
-    auto_renew: !cancelAtPeriodEnd,
+    auto_renew: storedAutoRenew == null ? !cancelAtPeriodEnd : Boolean(Number(storedAutoRenew)),
     current_cycle: extras.currentCycle == null ? 1 : extras.currentCycle,
     total_cycles: term,
     billing_history: Array.isArray(extras.billingHistory) ? extras.billingHistory : [],

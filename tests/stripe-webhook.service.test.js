@@ -1021,3 +1021,247 @@ describe('StripeWebhookService', () => {
     expect(ledgerRepository.upsert).not.toHaveBeenCalled();
   });
 });
+
+describe('StripeWebhookService charged deliveries', () => {
+  const previousRuntime = process.env.EDEN_RUNTIME;
+
+  beforeAll(() => {
+    process.env.EDEN_RUNTIME = 'qa';
+  });
+
+  afterAll(() => {
+    if (previousRuntime === undefined) {
+      delete process.env.EDEN_RUNTIME;
+    } else {
+      process.env.EDEN_RUNTIME = previousRuntime;
+    }
+  });
+
+  function ledgerWith(initial) {
+    let row = { userId: 7, stripeSubscriptionId: 'sub_123', status: 'active', subscriptionTermMonths: 3, ...initial };
+    return {
+      current: () => row,
+      repository: {
+        findByStripeSubscriptionId: jest.fn(async () => row),
+        findUserStateBySubscriptionId: jest.fn().mockResolvedValue(null),
+        findUserStateByPaymentIntentId: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn(async (input) => {
+          row = { ...row, ...(input.status ? { status: input.status } : {}) };
+          return row;
+        }),
+        updateCheckoutReference: jest.fn().mockResolvedValue({}),
+        seedChargedDeliveries: jest.fn(async (_id, count, invoiceId) => {
+          row = { ...row, chargedDeliveries: count, lastChargedInvoiceId: invoiceId };
+          return row;
+        }),
+        incrementChargedDeliveries: jest.fn(async (_id, invoiceId) => {
+          if (row.lastChargedInvoiceId !== invoiceId) {
+            row = { ...row, chargedDeliveries: row.chargedDeliveries + 1, lastChargedInvoiceId: invoiceId };
+          }
+          return row;
+        })
+      }
+    };
+  }
+
+  function billingStub(paid = []) {
+    return {
+      constructEvent: jest.fn(),
+      retrieveSubscription: jest.fn().mockResolvedValue({
+        id: 'sub_123',
+        status: 'active',
+        customer: 'cus_1',
+        cancel_at_period_end: false,
+        metadata: { eden_env: 'qa', wp_user_id: '7' }
+      }),
+      addShippingInvoiceItem: jest.fn(),
+      listPaidInvoicesForSubscription: jest.fn().mockResolvedValue(paid),
+      setCancelAtPeriodEnd: jest.fn().mockResolvedValue({})
+    };
+  }
+
+  function paidEvent(invoice) {
+    return {
+      id: `evt_${invoice.id}`,
+      type: 'invoice.paid',
+      data: { object: { customer: 'cus_1', subscription: 'sub_123', status: 'paid', ...invoice } }
+    };
+  }
+
+  async function deliver(service, stripeBilling, invoice) {
+    stripeBilling.constructEvent.mockReturnValue(paidEvent(invoice));
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+  }
+
+  test('seeds the charged count from the paid cycle invoices the first time', async () => {
+    const ledger = ledgerWith({ chargedDeliveries: null });
+    const stripeBilling = billingStub([
+      { id: 'in_1', status: 'paid', billing_reason: 'subscription_create', subtotal: 9600, amount_paid: 9600 },
+      { id: 'in_2', status: 'paid', billing_reason: 'subscription_update', subtotal: 3200, amount_paid: 3200 },
+      { id: 'in_3', status: 'paid', billing_reason: 'subscription_update', subtotal: 0, amount_paid: 0 }
+    ]);
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository });
+
+    await deliver(service, stripeBilling, { id: 'in_4', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 });
+
+    expect(ledger.repository.seedChargedDeliveries).toHaveBeenCalledWith('sub_123', 2, 'in_4');
+    expect(ledger.repository.incrementChargedDeliveries).not.toHaveBeenCalled();
+  });
+
+  test('adds one charged delivery per paid cycle invoice and repeats safely', async () => {
+    const ledger = ledgerWith({ chargedDeliveries: 1, lastChargedInvoiceId: 'in_1' });
+    const stripeBilling = billingStub();
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository });
+
+    await deliver(service, stripeBilling, { id: 'in_2', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 });
+    await service.handleInvoicePaid(paidEvent({ id: 'in_2', billing_reason: 'subscription_cycle', subtotal: 9600 }).data.object, { stripeBilling, account: 'us' });
+
+    expect(ledger.repository.incrementChargedDeliveries).toHaveBeenCalledWith('sub_123', 'in_2');
+    expect(ledger.current().chargedDeliveries).toBe(2);
+    expect(stripeBilling.listPaidInvoicesForSubscription).not.toHaveBeenCalled();
+  });
+
+  test('a paid proration invoice and the $0 invoice of a skip do not raise the charged count', async () => {
+    const ledger = ledgerWith({ chargedDeliveries: 1, lastChargedInvoiceId: 'in_1' });
+    const stripeBilling = billingStub();
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository });
+
+    await deliver(service, stripeBilling, { id: 'in_prorate', billing_reason: 'subscription_update', subtotal: 3200, amount_paid: 3200 });
+    await deliver(service, stripeBilling, { id: 'in_skip', billing_reason: 'subscription_update', subtotal: 0, amount_paid: 0 });
+    await deliver(service, stripeBilling, { id: 'in_trial', billing_reason: 'subscription_cycle', subtotal: 0, amount_paid: 0 });
+
+    expect(ledger.repository.incrementChargedDeliveries).not.toHaveBeenCalled();
+    expect(ledger.current().chargedDeliveries).toBe(1);
+  });
+
+  test('the $0 invoice paid by a skip keeps the ledger trialing and sends no letter', async () => {
+    const transactionalMailer = { notifyRenewal: jest.fn(), notifyOrderConfirmed: jest.fn(), notifyAdminNewSubscription: jest.fn() };
+    const ledger = ledgerWith({ chargedDeliveries: 1, lastChargedInvoiceId: 'in_1' });
+    const stripeBilling = billingStub();
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      status: 'trialing',
+      customer: 'cus_1',
+      cancel_at_period_end: false,
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    });
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository, transactionalMailer });
+
+    await deliver(service, stripeBilling, { id: 'in_skip', billing_reason: 'subscription_update', subtotal: 0, amount_paid: 0 });
+
+    expect(ledger.repository.upsert).toHaveBeenCalledWith(expect.objectContaining({ status: 'trialing' }));
+    expect(ledger.current().chargedDeliveries).toBe(1);
+    for (const name of Object.keys(transactionalMailer)) {
+      expect(transactionalMailer[name]).not.toHaveBeenCalled();
+    }
+  });
+
+  test('with renewal off, cancel_at_period_end stays off until the last contracted delivery is charged', async () => {
+    const ledger = ledgerWith({ chargedDeliveries: 1, lastChargedInvoiceId: 'in_1', autoRenew: false, cancelAtPeriodEnd: false });
+    const stripeBilling = billingStub();
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository });
+
+    await deliver(service, stripeBilling, { id: 'in_2', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 });
+    expect(stripeBilling.setCancelAtPeriodEnd).not.toHaveBeenCalled();
+
+    await deliver(service, stripeBilling, { id: 'in_3', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 });
+    expect(ledger.current().chargedDeliveries).toBe(3);
+    expect(stripeBilling.setCancelAtPeriodEnd).toHaveBeenCalledTimes(1);
+    expect(stripeBilling.setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_123', true);
+  });
+
+  test('with renewal on, the last contracted delivery does not schedule a cancel', async () => {
+    const ledger = ledgerWith({ chargedDeliveries: 2, lastChargedInvoiceId: 'in_2', autoRenew: true });
+    const stripeBilling = billingStub();
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository });
+
+    await deliver(service, stripeBilling, { id: 'in_3', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 });
+
+    expect(ledger.current().chargedDeliveries).toBe(3);
+    expect(stripeBilling.setCancelAtPeriodEnd).not.toHaveBeenCalled();
+  });
+
+  test('the paid invoice after a deferred charge sets the ledger active with only the renewal letter', async () => {
+    const transactionalMailer = {
+      notifyOrderConfirmed: jest.fn(),
+      notifyAdminNewSubscription: jest.fn(),
+      notifyRenewal: jest.fn().mockResolvedValue({ claimed: true }),
+      notifyPlanChanged: jest.fn(),
+      notifyCancelled: jest.fn(),
+      notifyPaused: jest.fn(),
+      notifyResumed: jest.fn()
+    };
+    const ledger = ledgerWith({ status: 'trialing', chargedDeliveries: 1, lastChargedInvoiceId: 'in_1', autoRenew: true });
+    const stripeBilling = billingStub();
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository, transactionalMailer });
+
+    await deliver(service, stripeBilling, { id: 'in_deferred', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 });
+
+    expect(ledger.repository.upsert).toHaveBeenCalledTimes(1);
+    expect(ledger.repository.upsert).toHaveBeenCalledWith(expect.objectContaining({ stripeSubscriptionId: 'sub_123', status: 'active' }));
+    expect(ledger.current().status).toBe('active');
+    expect(transactionalMailer.notifyRenewal).toHaveBeenCalledTimes(1);
+    for (const name of ['notifyOrderConfirmed', 'notifyAdminNewSubscription', 'notifyPlanChanged', 'notifyCancelled', 'notifyPaused', 'notifyResumed']) {
+      expect(transactionalMailer[name]).not.toHaveBeenCalled();
+    }
+    expect(stripeBilling.addShippingInvoiceItem).not.toHaveBeenCalled();
+    expect(stripeBilling.setCancelAtPeriodEnd).not.toHaveBeenCalled();
+  });
+
+  test('customer.subscription.trial_will_end is stored as processed with no handler and no letter', async () => {
+    const transactionalMailer = { notifyRenewal: jest.fn(), notifyCancelled: jest.fn() };
+    const ledger = ledgerWith({});
+    const stripeBilling = billingStub();
+    const { service, eventsRepository } = buildService({ stripeBilling, ledgerRepository: ledger.repository, transactionalMailer });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_trial_will_end',
+      type: 'customer.subscription.trial_will_end',
+      data: { object: { id: 'sub_123', status: 'trialing', customer: 'cus_1' } }
+    });
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+      .resolves.toEqual({ received: true });
+
+    expect(eventsRepository.markProcessed).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'evt_trial_will_end' }));
+    expect(stripeBilling.retrieveSubscription).not.toHaveBeenCalled();
+    expect(ledger.repository.upsert).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyRenewal).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyCancelled).not.toHaveBeenCalled();
+  });
+
+  test('a skip that turns the subscription trialing stores trialing and sends no letter', async () => {
+    const transactionalMailer = {
+      notifyPaused: jest.fn(),
+      notifyResumed: jest.fn(),
+      notifyCancelled: jest.fn(),
+      notifyRenewal: jest.fn()
+    };
+    const ledger = ledgerWith({});
+    const stripeBilling = billingStub();
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository, transactionalMailer });
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_skip',
+      type: 'customer.subscription.updated',
+      data: {
+        object: {
+          id: 'sub_123',
+          status: 'trialing',
+          customer: 'cus_1',
+          cancel_at_period_end: false,
+          trial_end: 1790000000,
+          metadata: { eden_env: 'qa', wp_user_id: '7' },
+          items: { data: [{ current_period_start: 1789000000, current_period_end: 1790000000 }] }
+        },
+        previous_attributes: { status: 'active', trial_end: null }
+      }
+    });
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(ledger.repository.upsert).toHaveBeenCalledWith(expect.objectContaining({ status: 'trialing', currentPeriodEnd: 1790000000 }));
+    for (const name of Object.keys(transactionalMailer)) {
+      expect(transactionalMailer[name]).not.toHaveBeenCalled();
+    }
+  });
+});

@@ -8,6 +8,10 @@ const {
   mapStripeStatus,
   extractCardFromPaymentMethod
 } = require('../core/stripe-subscription-map');
+const {
+  isChargedDeliveryInvoice,
+  lastContractedDeliveryCharged
+} = require('../core/contract-deliveries');
 
 const WEBHOOK_EVENT_TIMEOUT_MS = 30 * 1000;
 const WEBHOOK_RETRY_BATCH = 20;
@@ -361,7 +365,8 @@ class StripeWebhookService {
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(invoice.customer || (subscription && subscription.customer) || existing && existing.stripeCustomerId || ''),
       stripeAccount: runtime.account || (existing && existing.stripeAccount) || 'us',
-      status: 'active',
+      // A skip or a postponement pays a $0 invoice while the charge waits in trial.
+      status: subscription && subscription.status === 'trialing' ? 'trialing' : 'active',
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
       currentPeriodStart: period.start,
       currentPeriodEnd: period.end,
@@ -388,6 +393,55 @@ class StripeWebhookService {
       subscriptionId,
       promotedPending
     });
+
+    await this.recordChargedDelivery({
+      invoice,
+      subscriptionId,
+      subscription,
+      billing: runtime.stripeBilling || this.stripeBilling
+    });
+  }
+
+  // Throws so the event is retried; the seed and the increment are both safe to repeat.
+  async recordChargedDelivery({ invoice, subscriptionId, subscription, billing }) {
+    const ledger = this.ledgerRepository;
+    if (!invoice.id || !isChargedDeliveryInvoice(invoice)
+      || !ledger || typeof ledger.incrementChargedDeliveries !== 'function') {
+      return;
+    }
+    let row = await ledger.findByStripeSubscriptionId(subscriptionId);
+    if (!row) {
+      return;
+    }
+    if (row.chargedDeliveries == null) {
+      if (!billing || typeof billing.listPaidInvoicesForSubscription !== 'function') {
+        throw new Error('Stripe billing cannot list paid invoices to seed the charged deliveries.');
+      }
+      const paid = await billing.listPaidInvoicesForSubscription(subscriptionId);
+      const invoices = paid.some((item) => item.id === invoice.id) ? paid : [...paid, invoice];
+      row = await ledger.seedChargedDeliveries(subscriptionId, invoices.filter(isChargedDeliveryInvoice).length, invoice.id);
+    } else {
+      row = await ledger.incrementChargedDeliveries(subscriptionId, invoice.id);
+    }
+    await this.endContractAfterLastDelivery(row, subscription, billing);
+  }
+
+  async endContractAfterLastDelivery(row, subscription, billing) {
+    if (!row || row.autoRenew !== false || row.cancelAtPeriodEnd) {
+      return;
+    }
+    if (subscription && subscription.cancel_at_period_end) {
+      return;
+    }
+    const plan = row.planSelection || {};
+    const term = Number(row.subscriptionTermMonths || plan.subscription_term_months || 1) || 1;
+    if (!lastContractedDeliveryCharged(row.chargedDeliveries, term)) {
+      return;
+    }
+    if (!billing || typeof billing.setCancelAtPeriodEnd !== 'function') {
+      throw new Error('Stripe billing cannot end the contract after its last delivery.');
+    }
+    await billing.setCancelAtPeriodEnd(row.stripeSubscriptionId, true);
   }
 
   async notifyFirstCycleMail({ invoice, subscriptionId, promotedPending }) {

@@ -143,4 +143,56 @@ describe('SubscriptionLedgerRepository', () => {
     expect(query.mock.calls[0][0]).toContain('`stripe_account` = ?');
     expect(query.mock.calls[0][1]).toEqual(expect.arrayContaining(['br']));
   });
+
+  function chargedRow(overrides = {}) {
+    return {
+      id: 1,
+      user_id: 7,
+      stripe_subscription_id: 'sub_123',
+      status: 'active',
+      cancel_at_period_end: 0,
+      edit_payment_pending: 0,
+      charged_deliveries: 2,
+      last_charged_invoice_id: 'in_2',
+      auto_renew: 0,
+      ...overrides
+    };
+  }
+
+  test('maps the charged count, the last charged invoice, and the renewal preference', async () => {
+    const query = jest.fn().mockResolvedValue([chargedRow()]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+    const row = await repository.findByStripeSubscriptionId('sub_123');
+    expect(row).toMatchObject({ chargedDeliveries: 2, lastChargedInvoiceId: 'in_2', autoRenew: false });
+
+    query.mockResolvedValue([chargedRow({ charged_deliveries: null, last_charged_invoice_id: null, auto_renew: null })]);
+    expect(await repository.findByStripeSubscriptionId('sub_123'))
+      .toMatchObject({ chargedDeliveries: null, lastChargedInvoiceId: null, autoRenew: null });
+  });
+
+  test('seeds the charged count only while it is still empty', async () => {
+    const query = jest.fn().mockResolvedValueOnce({ affectedRows: 1 }).mockResolvedValueOnce([chargedRow()]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+    await repository.seedChargedDeliveries('sub_123', 2, 'in_2');
+    expect(query.mock.calls[0][0]).toContain('`charged_deliveries` IS NULL');
+    expect(query.mock.calls[0][1]).toEqual([2, 'in_2', 'sub_123']);
+  });
+
+  test('adds one charged delivery unless that invoice was the last one counted', async () => {
+    const query = jest.fn().mockResolvedValueOnce({ affectedRows: 1 }).mockResolvedValueOnce([chargedRow({ charged_deliveries: 3 })]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+    const row = await repository.incrementChargedDeliveries('sub_123', 'in_3');
+    expect(query.mock.calls[0][0]).toContain('`charged_deliveries` = `charged_deliveries` + 1');
+    expect(query.mock.calls[0][0]).toContain('`last_charged_invoice_id` <> ?');
+    expect(query.mock.calls[0][1]).toEqual(['in_3', 'sub_123', 'in_3']);
+    expect(row.chargedDeliveries).toBe(3);
+  });
+
+  test('stores the renewal preference', async () => {
+    const query = jest.fn().mockResolvedValueOnce({ affectedRows: 1 }).mockResolvedValueOnce([chargedRow({ auto_renew: 1 })]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+    const row = await repository.setAutoRenew('sub_123', true);
+    expect(query.mock.calls[0][1]).toEqual([1, 'sub_123']);
+    expect(row.autoRenew).toBe(true);
+  });
 });

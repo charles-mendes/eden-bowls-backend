@@ -11,6 +11,7 @@ const {
 const { roundMoney } = require('../../core/plan-catalog-pricing');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
+const { verifiedEditShipping } = require('../../core/shipping-quote-token');
 
 class SubscriptionsEditPreviewRepository {
   constructor(options = {}) {
@@ -19,6 +20,7 @@ class SubscriptionsEditPreviewRepository {
     this.stripeBilling = options.stripeBilling || null;
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.resolveSubscriptionItems = options.resolveSubscriptionItems || null;
+    this.shippingQuoteSigner = options.shippingQuoteSigner || null;
   }
 
   async preview(userId, subscriptionId, payload = {}, ledgerRow = null) {
@@ -30,6 +32,7 @@ class SubscriptionsEditPreviewRepository {
     if (!row) {
       throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
     }
+    const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
 
     const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
     const subscription = await stripeBilling.retrieveSubscription(subscriptionId);
@@ -61,7 +64,7 @@ class SubscriptionsEditPreviewRepository {
     }
 
     const currency = proposed.currency || 'USD';
-    const shippingCost = shippingCostFrom(payload.shipping || row.shipping || {});
+    const shippingCost = shippingCostFrom(shipping);
     const nextCycle = await this.buildNextCycle({
       payload,
       proposed,

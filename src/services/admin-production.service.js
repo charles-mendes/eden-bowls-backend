@@ -81,6 +81,7 @@ class AdminProductionService {
     this.ledgerRepository = options.ledgerRepository;
     this.productionRepository = options.productionRepository;
     this.auditService = options.auditService || null;
+    this.deliverySchedule = options.deliverySchedule || null;
     this.now = options.now || (() => new Date());
   }
 
@@ -185,6 +186,22 @@ class AdminProductionService {
       note: body.status === 'blocked' ? body.note : (body.note || null),
       updatedByUserId: actor.userId || (actor.adminIdentity && actor.adminIdentity.userId) || null
     });
+
+    if (this.deliverySchedule && typeof this.deliverySchedule.onProductionStatus === 'function') {
+      const account = ledgerStripeAccount(row);
+      await this.deliverySchedule.onProductionStatus({
+        subscription: {
+          market: account === 'br' ? 'BR' : 'US',
+          chargeAt: new Date(row.currentPeriodEnd),
+          transitDays: row.transitDays,
+          stripeSubscriptionId: row.stripeSubscriptionId,
+          originalPreparationDay: row.originalPreparationDay || null
+        },
+        toStatus: body.status,
+        fromStatus,
+        alreadyCharged: Boolean(row.alreadyCharged)
+      });
+    }
 
     if (this.auditService && typeof this.auditService.record === 'function') {
       await this.auditService.record({

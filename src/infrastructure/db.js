@@ -39,7 +39,10 @@ const { CreateSubscriptionMailClaims1700000000017 } = require('./migrations/1700
 const { CreateSubscriptionProductionCycles1700000000018 } = require('./migrations/1700000000018-create-subscription-production-cycles');
 const { AddOnboardingUserStateMarket1700000000019 } = require('./migrations/1700000000019-add-onboarding-user-state-market');
 const { AddBackgroundJobSchema1700000000020 } = require('./migrations/1700000000020-add-background-job-schema');
+const { CreateDeliveryClosedDays1700000000021 } = require('./migrations/1700000000021-create-delivery-closed-days');
+const { AddLedgerChargedDeliveries1700000000022 } = require('./migrations/1700000000022-add-ledger-charged-deliveries');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
+const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
 const { buildPrivacyRequestEntitySchema } = require('./entities/privacy-request.entity');
 const { buildAdminAuditEventEntitySchema } = require('./entities/admin-audit-event.entity');
@@ -75,7 +78,8 @@ function buildDataSourceOptions(env) {
       buildAdminAuditEventEntitySchema(),
       buildSubscriptionMailClaimEntitySchema(),
       buildSubscriptionProductionCycleEntitySchema(),
-      buildBackgroundJobCursorEntitySchema()
+      buildBackgroundJobCursorEntitySchema(),
+      buildDeliveryClosedDayEntitySchema()
     ],
     migrations: [
       CreateBreedsTable1700000000000,
@@ -98,7 +102,9 @@ function buildDataSourceOptions(env) {
       CreateSubscriptionMailClaims1700000000017,
       CreateSubscriptionProductionCycles1700000000018,
       AddOnboardingUserStateMarket1700000000019,
-      AddBackgroundJobSchema1700000000020
+      AddBackgroundJobSchema1700000000020,
+      CreateDeliveryClosedDays1700000000021,
+      AddLedgerChargedDeliveries1700000000022
     ],
     synchronize: false,
     logging: false,

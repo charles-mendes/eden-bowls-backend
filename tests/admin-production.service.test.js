@@ -61,6 +61,36 @@ describe('AdminProductionService', () => {
     expect(productionRepository.upsert).toHaveBeenCalled();
   });
 
+  test('a trialing subscription after a skip advances in the queue like an active one, a canceled one does not', async () => {
+    const build = (status) => {
+      const productionRepository = {
+        findBySubscriptionAndPeriodEnd: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({ status: 'in_production' })
+      };
+      const service = new AdminProductionService({
+        now: () => new Date('2026-09-20T15:00:00.000Z'),
+        ledgerRepository: {
+          findById: jest.fn().mockResolvedValue(ledgerRow({ status })),
+          findQueueRowById: jest.fn().mockResolvedValue(queueItem({ status, productionStatus: 'in_production' }))
+        },
+        productionRepository,
+        auditService: { record: jest.fn() }
+      });
+      return { service, productionRepository };
+    };
+    const body = { status: 'in_production', periodEnd: '2026-09-20T08:00:00.000Z' };
+
+    const trialing = build('trialing');
+    await expect(trialing.service.updateStatus(42, body, { userId: 7 }))
+      .resolves.toMatchObject({ productionStatus: 'in_production' });
+    expect(trialing.productionRepository.upsert).toHaveBeenCalled();
+
+    const canceled = build('canceled');
+    await expect(canceled.service.updateStatus(42, body, { userId: 7 }))
+      .rejects.toMatchObject({ statusCode: 409, details: { code: 'production_not_eligible' } });
+    expect(canceled.productionRepository.upsert).not.toHaveBeenCalled();
+  });
+
   test('does not send a shipped letter when production status changes', async () => {
     const notifyShipped = jest.fn();
     const service = new AdminProductionService({

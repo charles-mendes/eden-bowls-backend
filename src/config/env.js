@@ -92,6 +92,8 @@ const rawEnvSchema = z.object({
   UPS_HTTP_TIMEOUT_MS: z.string().optional(),
   UPS_TRANSACTION_SRC: z.string().optional(),
   UPS_LABEL_DIR: z.string().optional(),
+  SHIPPING_QUOTE_SECRET: z.string().optional(),
+  SHIPPING_US_FIXED_TRANSIT_DAYS: z.string().optional(),
   METRICS_TOKEN: z.string().optional()
 });
 
@@ -217,6 +219,21 @@ function assertProductionEnv(rawEnv, resolved) {
   }
 }
 
+const LOCAL_SHIPPING_QUOTE_SECRET = 'eden-local-shipping-quote';
+
+function assertShippingQuoteSecret(rawEnv, resolved) {
+  if (String(rawEnv.EDEN_RUNTIME || '').trim() !== 'production') {
+    return;
+  }
+  const secret = resolved.SHIPPING_QUOTE_SECRET;
+  if (isRejectedSecret(secret) || secret === LOCAL_SHIPPING_QUOTE_SECRET) {
+    throw new Error('SHIPPING_QUOTE_SECRET must be set to a non-placeholder value in production.');
+  }
+  if (secret === resolved.JWT_AUTH_SECRET_KEY) {
+    throw new Error('SHIPPING_QUOTE_SECRET must differ from JWT_AUTH_SECRET_KEY in production.');
+  }
+}
+
 const EDEN_RUNTIMES = new Set(['local', 'qa', 'production']);
 
 function assertEdenRuntime(rawEnv) {
@@ -333,9 +350,13 @@ function parseEnv(source = process.env) {
     UPS_HTTP_TIMEOUT_MS: Number(firstNonEmpty(rawEnv.UPS_HTTP_TIMEOUT_MS, '5000')),
     UPS_TRANSACTION_SRC: firstNonEmpty(rawEnv.UPS_TRANSACTION_SRC, 'eden-bowls'),
     UPS_LABEL_DIR: firstNonEmpty(rawEnv.UPS_LABEL_DIR) || './data/ups-labels',
+    SHIPPING_QUOTE_SECRET: firstNonEmpty(rawEnv.SHIPPING_QUOTE_SECRET)
+      || (String(rawEnv.EDEN_RUNTIME || '').trim() === 'production' ? '' : LOCAL_SHIPPING_QUOTE_SECRET),
+    SHIPPING_US_FIXED_TRANSIT_DAYS: Number(firstNonEmpty(rawEnv.SHIPPING_US_FIXED_TRANSIT_DAYS, '1')),
     METRICS_TOKEN: firstNonEmpty(rawEnv.METRICS_TOKEN)
   };
 
+  assertShippingQuoteSecret(rawEnv, resolved);
   assertProductionEnv(rawEnv, resolved);
   return resolved;
 }

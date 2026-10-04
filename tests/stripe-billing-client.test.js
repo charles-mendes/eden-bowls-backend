@@ -712,6 +712,30 @@ describe('StripeBillingClient.archiveCatalogProduct', () => {
   });
 });
 
+describe('listPaidInvoicesForSubscription', () => {
+  test('reads every page of paid invoices, past the first 100', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: `in_${index}`, status: 'paid' }));
+    const list = jest.fn()
+      .mockResolvedValueOnce({ data: firstPage, has_more: true })
+      .mockResolvedValueOnce({ data: [{ id: 'in_100', status: 'paid' }], has_more: false });
+    const client = new StripeBillingClient({ client: { invoices: { list } } });
+
+    const invoices = await client.listPaidInvoicesForSubscription('sub_123');
+
+    expect(invoices).toHaveLength(101);
+    expect(list).toHaveBeenNthCalledWith(1, { subscription: 'sub_123', status: 'paid', limit: 100 });
+    expect(list).toHaveBeenNthCalledWith(2, { subscription: 'sub_123', status: 'paid', limit: 100, starting_after: 'in_99' });
+  });
+
+  test('turns a Stripe error into stripe_invoices_list_failed', async () => {
+    const client = new StripeBillingClient({ client: { invoices: { list: jest.fn().mockRejectedValue(new Error('down')) } } });
+    await expect(client.listPaidInvoicesForSubscription('sub_123')).rejects.toMatchObject({
+      statusCode: 502,
+      details: expect.objectContaining({ code: 'stripe_invoices_list_failed' })
+    });
+  });
+});
+
 describe('extractInvoicePayment', () => {
   const { couponIdFromPromotion, extractInvoicePayment } = require('../src/infrastructure/stripe/stripe-billing-client');
 

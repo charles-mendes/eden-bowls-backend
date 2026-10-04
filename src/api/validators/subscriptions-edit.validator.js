@@ -30,7 +30,8 @@ const editShippingSchema = z.object({
   label: z.string().trim().max(255).optional(),
   cost: z.number().finite().nonnegative().optional(),
   tax_total: z.number().finite().nonnegative().optional(),
-  total: z.number().finite().nonnegative().optional()
+  total: z.number().finite().nonnegative().optional(),
+  quote_token: z.string().trim().max(1024).optional()
 }).passthrough();
 
 const subscriptionsEditPayloadSchema = z.object({

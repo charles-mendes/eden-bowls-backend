@@ -73,3 +73,16 @@ describe('subscription dashboard flavor labels', () => {
     }
   });
 });
+
+describe('subscription dashboard automatic renewal', () => {
+  test('renewal off stays off mid contract while cancel_at_period_end is still off', () => {
+    const detail = mapLedgerToDashboardDetail({ ...ledgerRow('us', ['turkey']), autoRenew: false, cancelAtPeriodEnd: false });
+    expect(detail.auto_renew).toBe(false);
+  });
+
+  test('without a saved preference renewal follows cancel_at_period_end', () => {
+    expect(mapLedgerToDashboardDetail({ ...ledgerRow('us', ['turkey']), autoRenew: null, cancelAtPeriodEnd: true }).auto_renew).toBe(false);
+    expect(mapLedgerToDashboardDetail({ ...ledgerRow('us', ['turkey']), cancelAtPeriodEnd: false }).auto_renew).toBe(true);
+    expect(mapLedgerToDashboardDetail({ ...ledgerRow('us', ['turkey']), auto_renew: 1, cancel_at_period_end: 1 }).auto_renew).toBe(true);
+  });
+});

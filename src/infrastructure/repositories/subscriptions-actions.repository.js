@@ -3,6 +3,11 @@ const { extractCardFromPaymentMethod } = require('../../core/stripe-subscription
 const { mapLedgerToActionSummary } = require('../../core/subscription-dashboard');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
+const {
+  lastContractedDeliveryCharged,
+  resolveAutoRenew,
+  stripeChargedInvoiceCount
+} = require('../../core/contract-deliveries');
 
 class SubscriptionsActionsRepository {
   constructor(options = {}) {
@@ -34,8 +39,13 @@ class SubscriptionsActionsRepository {
     } else if (action === 'toggle_auto_renew') {
       const enabled = typeof payload.enabled === 'boolean'
         ? payload.enabled
-        : row.cancelAtPeriodEnd;
-      await stripeBilling.setCancelAtPeriodEnd(subscriptionId, !enabled);
+        : !resolveAutoRenew(row);
+      // With renewal off, the contract ends after its last contracted delivery, not at this period's end.
+      const endNow = enabled ? false : await this.lastDeliveryCharged(row, stripeBilling);
+      await stripeBilling.setCancelAtPeriodEnd(subscriptionId, endNow);
+      if (typeof this.ledgerRepository.setAutoRenew === 'function') {
+        await this.ledgerRepository.setAutoRenew(subscriptionId, enabled);
+      }
     } else if (action === 'update_payment_method') {
       await stripeBilling.updateDefaultPaymentMethod(
         row.stripeCustomerId,
@@ -52,6 +62,17 @@ class SubscriptionsActionsRepository {
       command_result: [{ status: 'queued' }],
       subscription: mapLedgerToActionSummary(latest || row)
     };
+  }
+
+  async lastDeliveryCharged(row, stripeBilling) {
+    let paid = row.chargedDeliveries;
+    if (paid == null) {
+      const invoices = await stripeBilling.listPaidInvoicesForSubscription(row.stripeSubscriptionId);
+      paid = stripeChargedInvoiceCount(invoices);
+    }
+    const plan = row.planSelection || {};
+    const term = Number(row.subscriptionTermMonths || plan.subscription_term_months || 1) || 1;
+    return lastContractedDeliveryCharged(paid, term);
   }
 
   async updateCardSnapshot(row, paymentMethodId, stripeBilling) {
