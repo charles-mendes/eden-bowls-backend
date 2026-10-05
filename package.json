@@ -14,6 +14,7 @@
     "test:related": "jest --findRelatedTests",
     "test:changed": "jest --changedSince=HEAD",
     "email:previews": "node src/scripts/render-email-previews.js",
+    "invoice:previews": "node src/scripts/render-invoice-previews.js",
     "stripe:listen": "stripe listen --forward-to localhost:3000/stripe/v1/webhook/us",
     "stripe:listen:br": "stripe listen --forward-to localhost:3000/stripe/v1/webhook/br"
   },
@@ -27,6 +28,7 @@
     "maxmind": "^4.3.28",
     "mysql2": "^3.11.3",
     "nodemailer": "^9.0.5",
+    "pdfkit": "^0.17.2",
     "pino": "^9.4.0",
     "prom-client": "^15.1.3",
     "reflect-metadata": "^0.2.2",
