@@ -90,6 +90,16 @@ function formatDeliveryDay(isoDate, locale) {
     : date.setLocale('en-US').toFormat('cccc, MMMM d');
 }
 
+// The Eden Bowls invoice PDF rides along with the order confirmation and the renewal letter.
+function attachmentList(invoiceAttachment) {
+  if (!invoiceAttachment || !invoiceAttachment.content) return undefined;
+  return [{
+    filename: invoiceAttachment.filename,
+    content: invoiceAttachment.content,
+    contentType: invoiceAttachment.contentType || 'application/pdf'
+  }];
+}
+
 function createTransactionalMailer(options = {}) {
   const logger = options.logger || { error() {}, warn() {}, info() {} };
   const otpMailer = options.otpMailer || null;
@@ -150,7 +160,8 @@ function createTransactionalMailer(options = {}) {
     throw lastError;
   }
 
-  async function sendClaimed({ subscriptionId, template, referenceId, to, content }) {
+  // `attachments` go out with this send only; a resend of the remembered payload carries none.
+  async function sendClaimed({ subscriptionId, template, referenceId, to, content, attachments }) {
     if (!canSend()) {
       return { skipped: true, reason: 'mailer_unavailable' };
     }
@@ -190,12 +201,13 @@ function createTransactionalMailer(options = {}) {
         to: recipient,
         subject: content.subject,
         text: content.text,
-        html: content.html
+        html: content.html,
+        ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {})
       });
       if (!result || result.skipped !== true) {
         await claimsRepository.markSent(claim.id);
       }
-      return { skipped: Boolean(result && result.skipped), claimed: true };
+      return { skipped: Boolean(result && result.skipped), claimed: true, to: recipient };
     } catch (error) {
       await releaseClaim(claim.id);
       logSmtpFailure(template, subscriptionId, error);
@@ -203,7 +215,7 @@ function createTransactionalMailer(options = {}) {
     }
   }
 
-  async function notifyOrderConfirmed({ invoice = {}, ledger = {}, subscriptionId, firstDeliveryDate = null }) {
+  async function notifyOrderConfirmed({ invoice = {}, ledger = {}, subscriptionId, firstDeliveryDate = null, invoiceAttachment = null }) {
     const id = String(subscriptionId || ledger.stripeSubscriptionId || '').trim();
     const invoiceId = String(invoice.id || '').trim();
     const to = String(ledger.customerEmail || invoice.customer_email || '').trim();
@@ -224,6 +236,7 @@ function createTransactionalMailer(options = {}) {
         : '',
       totalLabel: formatMoney(invoice.amount_paid || invoice.total, invoice.currency),
       firstDeliveryLabel: formatDeliveryDay(firstDeliveryDate, locale),
+      invoiceNumber: invoiceAttachment ? invoiceAttachment.invoiceNumber : '',
       dashboardUrl: dashboardPlansUrl(storeAppUrl),
       locale,
       assetBaseUrl: emailAssetBaseUrl
@@ -234,7 +247,8 @@ function createTransactionalMailer(options = {}) {
       template: TEMPLATES.orderConfirmed,
       referenceId: invoiceId,
       to,
-      content
+      content,
+      attachments: attachmentList(invoiceAttachment)
     });
   }
 
@@ -402,7 +416,7 @@ function createTransactionalMailer(options = {}) {
     };
   }
 
-  async function notifyRenewal({ invoice = {}, ledger = {}, subscriptionId, referenceId }) {
+  async function notifyRenewal({ invoice = {}, ledger = {}, subscriptionId, referenceId, invoiceAttachment = null }) {
     const target = customerTarget({
       ledger,
       subscriptionId,
@@ -419,6 +433,7 @@ function createTransactionalMailer(options = {}) {
       flavors: flavorsFrom(ledger),
       totalLabel: formatMoney(invoice.amount_paid || invoice.total, invoice.currency),
       nextDeliveryLabel: formatLetterDate(ledger.currentPeriodEnd, locale),
+      invoiceNumber: invoiceAttachment ? invoiceAttachment.invoiceNumber : '',
       dashboardUrl: dashboardPlansUrl(storeAppUrl),
       locale,
       assetBaseUrl: emailAssetBaseUrl
@@ -428,7 +443,8 @@ function createTransactionalMailer(options = {}) {
       template: TEMPLATES.renewal,
       referenceId: target.reference,
       to: target.to,
-      content
+      content,
+      attachments: attachmentList(invoiceAttachment)
     });
   }
 

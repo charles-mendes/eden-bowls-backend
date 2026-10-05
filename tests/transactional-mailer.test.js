@@ -53,6 +53,33 @@ describe('createTransactionalMailer', () => {
     expect(markSent).toHaveBeenCalledWith(8);
   });
 
+  test('the renewal and the order confirmation carry the invoice PDF; the remembered payload does not', async () => {
+    const { mailer, sendMail, savePayload } = buildMailer();
+    const invoice = { id: 'in_1', amount_paid: 14450, currency: 'brl', customer_email: 'ana@example.com' };
+    const invoiceAttachment = { invoiceNumber: 'EB-2026-000418', filename: 'EB-2026-000418.pdf', content: Buffer.from('%PDF') };
+
+    const renewal = await mailer.notifyRenewal({ invoice, ledger, subscriptionId: 'sub_123', referenceId: 'in_1', invoiceAttachment });
+    await mailer.notifyOrderConfirmed({ invoice, ledger, subscriptionId: 'sub_123', invoiceAttachment });
+
+    expect(renewal).toMatchObject({ claimed: true, skipped: false, to: 'ana@example.com' });
+    for (const call of sendMail.mock.calls) {
+      expect(call[0].attachments).toEqual([{ filename: 'EB-2026-000418.pdf', content: Buffer.from('%PDF'), contentType: 'application/pdf' }]);
+      expect(call[0].text).toContain('Fatura: EB-2026-000418 (PDF em anexo)');
+    }
+    for (const call of savePayload.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('attachments');
+    }
+  });
+
+  test('without an invoice the letters have no attachment and no invoice row', async () => {
+    const { mailer, sendMail } = buildMailer();
+
+    await mailer.notifyRenewal({ invoice: { id: 'in_1', amount_paid: 14450, currency: 'brl' }, ledger, subscriptionId: 'sub_123', referenceId: 'in_1' });
+
+    expect(sendMail.mock.calls[0][0].attachments).toBeUndefined();
+    expect(sendMail.mock.calls[0][0].text).not.toContain('Fatura');
+  });
+
   test('tries SMTP three times, then releases the unsent claim', async () => {
     const sendMail = jest.fn().mockRejectedValue({ code: 'EENVELOPE' });
     const { mailer, markSent, releaseUnsent, logger } = buildMailer({ sendMail });

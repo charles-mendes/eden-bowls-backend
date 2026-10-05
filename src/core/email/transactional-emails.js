@@ -25,6 +25,13 @@ function petLabel(pt, petName) {
   return String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
 }
 
+// "EB-2026-000418 (PDF em anexo)" when the letter carries the invoice PDF; empty otherwise.
+function attachedInvoiceLabel(pt, invoiceNumber) {
+  const number = String(invoiceNumber || '').trim();
+  if (!number) return '';
+  return pt ? `${number} (PDF em anexo)` : `${number} (PDF attached)`;
+}
+
 function renderLetter(fields) {
   return wrapEmailHtml(fields);
 }
@@ -78,6 +85,7 @@ function buildOrderConfirmedEmail({
   cycleLabel,
   totalLabel,
   firstDeliveryLabel,
+  invoiceNumber,
   dashboardUrl,
   locale,
   assetBaseUrl,
@@ -88,6 +96,7 @@ function buildOrderConfirmedEmail({
   const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
   const flavorList = joinList(flavors);
+  const invoiceLabel = attachedInvoiceLabel(pt, invoiceNumber);
   // The first delivery date comes from the same estimate the production queue stores for this payment.
   const firstDelivery = String(firstDeliveryLabel || '').trim();
   const opening = pt
@@ -108,6 +117,7 @@ function buildOrderConfirmedEmail({
     planName ? `${pt ? 'Plano' : 'Plan'}: ${planName}` : '',
     cycleLabel ? `${pt ? 'Frequência' : 'Frequency'}: ${cycleLabel}` : '',
     totalLabel ? `${pt ? 'Total' : 'Total'}: ${totalLabel}` : '',
+    invoiceLabel ? `${pt ? 'Fatura' : 'Invoice'}: ${invoiceLabel}` : '',
     url
   ].filter(Boolean).join('\n');
 
@@ -121,7 +131,8 @@ function buildOrderConfirmedEmail({
       { label: pt ? 'Primeira entrega' : 'First delivery', value: firstDelivery },
       { label: pt ? 'Plano' : 'Plan', value: planName },
       { label: pt ? 'Frequência' : 'Frequency', value: cycleLabel },
-      { label: 'Total', value: totalLabel }
+      { label: 'Total', value: totalLabel },
+      { label: pt ? 'Fatura' : 'Invoice', value: invoiceLabel }
     ]),
     url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'View my plan' }) : ''
   ].join('');
@@ -320,6 +331,7 @@ function buildRenewalEmail({
   flavors,
   totalLabel,
   nextDeliveryLabel,
+  invoiceNumber,
   dashboardUrl,
   locale,
   assetBaseUrl,
@@ -330,6 +342,7 @@ function buildRenewalEmail({
   const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
   const flavorList = joinList(flavors);
+  const invoiceLabel = attachedInvoiceLabel(pt, invoiceNumber);
   const subject = pt
     ? `Mais um ciclo na cozinha: recibo da ${pet}`
     : `Another cycle in the kitchen: ${pet}'s receipt`;
@@ -341,6 +354,7 @@ function buildRenewalEmail({
     `Pet: ${pet}`,
     totalLabel ? `${pt ? 'Valor cobrado' : 'Amount charged'}: ${totalLabel}` : '',
     nextDeliveryLabel ? `${pt ? 'Próxima entrega' : 'Next delivery'}: ${nextDeliveryLabel}` : '',
+    invoiceLabel ? `${pt ? 'Fatura' : 'Invoice'}: ${invoiceLabel}` : '',
     url
   ].filter(Boolean).join('\n');
 
@@ -352,7 +366,8 @@ function buildRenewalEmail({
     detailsTableHtml([
       { label: 'Pet', value: pet },
       { label: pt ? 'Valor cobrado' : 'Amount charged', value: totalLabel },
-      { label: pt ? 'Próxima entrega' : 'Next delivery', value: nextDeliveryLabel }
+      { label: pt ? 'Próxima entrega' : 'Next delivery', value: nextDeliveryLabel },
+      { label: pt ? 'Fatura' : 'Invoice', value: invoiceLabel }
     ]),
     url ? buttonHtml({ href: url, label: pt ? 'Ver detalhes do ciclo' : 'View cycle details' }) : ''
   ].join('');
