@@ -1,6 +1,9 @@
 const { DataSource } = require('typeorm');
 const { SubscriptionLedgerRepository } = require('../../src/infrastructure/repositories/subscription-ledger.repository');
+const { SubscriptionProductionRepository } = require('../../src/infrastructure/repositories/subscription-production.repository');
 const { StripeWebhookService } = require('../../src/services/stripe-webhook.service');
+const { PaidCyclesService } = require('../../src/services/paid-cycles.service');
+const { buildSeedRows } = require('../../src/core/delivery-closed-days');
 
 const runIntegration = process.env.RUN_DB_INTEGRATION_TESTS === 'true';
 const describeIntegration = runIntegration ? describe : describe.skip;
@@ -63,7 +66,6 @@ describeIntegration('the last contracted delivery stays in the production queue 
     });
     // The webhook must not touch a real onboarding checkout record.
     repository.updateCheckoutReference = async () => ({});
-    repository.queueJoinSql = repository.queueJoinSql.bind(repository);
   });
 
   afterAll(async () => {
@@ -105,7 +107,15 @@ describeIntegration('the last contracted delivery stays in the production queue 
         await dataSource.query(`UPDATE \`${ledgerTable}\` SET cancel_at_period_end = 1 WHERE stripe_subscription_id = 'sub_last'`);
       })
     };
-    const webhook = new StripeWebhookService({ ledgerRepository: repository, stripeBilling });
+    // Wired like index.js: the paid cycle enters production on its invoice.paid.
+    const webhook = new StripeWebhookService({
+      ledgerRepository: repository,
+      stripeBilling,
+      paidCycles: new PaidCyclesService({
+        productionRepository: new SubscriptionProductionRepository(dataSource, { tableName: cycleTable }),
+        calendar: { listActive: async () => buildSeedRows() }
+      })
+    });
     await webhook.handleInvoicePaid({
       id: 'in_last',
       customer: 'cus_1',
@@ -113,7 +123,8 @@ describeIntegration('the last contracted delivery stays in the production queue 
       billing_reason: 'subscription_cycle',
       subtotal: 18990,
       amount_paid: 18990,
-      status: 'paid'
+      status: 'paid',
+      status_transitions: { paid_at: CHARGE + 60 }
     }, { stripeBilling, account: 'br' });
 
     const row = await repository.findByStripeSubscriptionId('sub_last');
@@ -124,6 +135,40 @@ describeIntegration('the last contracted delivery stays in the production queue 
     const after = await repository.listQueue(TODAY);
     const item = after.items.find((entry) => entry.stripeSubscriptionId === 'sub_last');
     expect(item).toBeTruthy();
-    expect(new Date(item.cyclePeriodEnd || item.currentPeriodEnd).toISOString()).toBe('2026-09-20T17:00:00.000Z');
+    expect(new Date(item.cyclePeriodEnd).toISOString()).toBe('2026-09-20T17:00:00.000Z');
+    expect(item.paymentState).toBe('paid');
+    // Charged Sunday 20 September at 14:00: Monday 21 is the first valid preparation day in Brazil.
+    expect(item.preparationDay).toBe('2026-09-21');
+    // No renewal follows the last contracted delivery, so only the paid cycle is listed.
+    expect(after.items.filter((entry) => entry.stripeSubscriptionId === 'sub_last')).toHaveLength(1);
+  });
+
+  test('the paid cycle leaves the queue once it is marked ready and its day has passed', async () => {
+    const later = await repository.listQueue({ ...TODAY, startOfToday: '2026-09-23 03:00:00', windowEndExclusive: '2026-09-30 03:00:00', overdueFloor: '2026-09-16 03:00:00' });
+    expect(later.items.map((entry) => entry.stripeSubscriptionId)).toEqual(['sub_last']);
+    await dataSource.query(`UPDATE \`${cycleTable}\` SET status = 'ready'`);
+    const done = await repository.listQueue({ ...TODAY, startOfToday: '2026-09-23 03:00:00', windowEndExclusive: '2026-09-30 03:00:00', overdueFloor: '2026-09-16 03:00:00' });
+    expect(done.items).toHaveLength(0);
+  });
+
+  test('a repeated payment keeps the first one, and the open paid cycle lasts through its delivery day', async () => {
+    const production = new SubscriptionProductionRepository(dataSource, { tableName: cycleTable });
+    const [row] = await dataSource.query(`SELECT id FROM \`${ledgerTable}\` WHERE stripe_subscription_id = 'sub_last'`);
+    const first = await production.findBySubscriptionAndPeriodEnd(row.id, new Date(CHARGE * 1000));
+    const again = await production.markPaid({
+      subscriptionId: row.id,
+      periodEnd: new Date(CHARGE * 1000),
+      paidAt: new Date((CHARGE + 86400) * 1000),
+      invoiceId: 'in_replayed',
+      preparationDay: '2026-09-22',
+      deliveryDate: '2026-09-22'
+    });
+    expect(new Date(again.paidAt).toISOString()).toBe(new Date(first.paidAt).toISOString());
+    expect(again.paidInvoiceId).toBe('in_last');
+    expect(again.preparationDay).toBe('2026-09-21');
+    expect(again.status).toBe('ready');
+
+    expect((await production.findOpenPaidCycle(row.id, '2026-09-21')).deliveryDate).toBe('2026-09-21');
+    expect(await production.findOpenPaidCycle(row.id, '2026-09-22')).toBeNull();
   });
 });
