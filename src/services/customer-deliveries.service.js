@@ -156,7 +156,57 @@ function targetPlans({ market, rows, transitDays, timeZone, chargeAt, projected,
   };
 }
 
+// The paid delivery still on its way is the current one: locked, with the date its payment produced. The next
+// renewal becomes the following delivery and carries the actions; Stripe can move it at once.
+function withPaidCycle(base, input) {
+  const paid = input.paidCycle;
+  const termMonths = Number(input.termMonths) || 0;
+  const contractOver = input.chargedCount !== null && termMonths - (Number(input.chargedCount) || 0) <= 0;
+  const status = paid.status || 'to_prepare';
+  const delivery = {
+    id: 'current',
+    date: paid.deliveryDate,
+    preparationDay: paid.preparationDay,
+    packs: input.packsPerMonth,
+    locked: true,
+    actions: false,
+    paid: true,
+    status,
+    statusLabel: STATUS_LABELS[status] || null
+  };
+  if (base.delivery.price != null) delivery.price = base.delivery.price;
+  if (base.delivery.unavailable) {
+    delivery.unavailable = true;
+    delivery.message = base.delivery.message;
+  }
+  if (contractOver) {
+    return { ...base, delivery, actionTarget: null, later: [], contractEnd: paid.deliveryDate,
+      contractEndIfSkip: null, nextDeliveryIfSkip: null, offeredDates: [], targetChargeAt: null };
+  }
+  const next = base.delivery.date ? [{
+    chargeAt: input.chargeAt,
+    preparationDay: base.delivery.preparationDay,
+    deliveryDate: base.delivery.date,
+    packs: base.delivery.packs,
+    ...(base.delivery.price != null ? { price: base.delivery.price } : {})
+  }] : [];
+  const targetsNext = Boolean(base.actionTarget && base.actionTarget.id === base.delivery.id);
+  return {
+    ...base,
+    delivery,
+    later: [...next, ...base.later],
+    actionTarget: targetsNext ? { ...base.actionTarget, id: 'following' } : null,
+    contractEndIfSkip: targetsNext ? base.contractEndIfSkip : null,
+    nextDeliveryIfSkip: targetsNext ? base.nextDeliveryIfSkip : null,
+    offeredDates: targetsNext ? base.offeredDates : [],
+    targetChargeAt: targetsNext ? input.chargeAt : null
+  };
+}
+
 function buildDeliveryRead(input) {
+  if (input.paidCycle && input.paidCycle.deliveryDate) {
+    return withPaidCycle(buildDeliveryRead({ ...input, paidCycle: null }), input);
+  }
   const market = input.market;
   const timeZone = timeZoneFor(market);
   const termMonths = Number(input.termMonths) || 0;
@@ -572,5 +622,6 @@ module.exports = {
   buildDeliveryRead,
   keepLaterPreparation,
   offerDates,
-  planBlockTrialEnd
+  planBlockTrialEnd,
+  projectOne
 };

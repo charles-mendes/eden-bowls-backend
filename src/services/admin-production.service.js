@@ -61,6 +61,7 @@ function bucketMetrics(rows, { timezone, now, includeOverdue }) {
   const metrics = emptyMetrics();
   for (const row of rows) {
     const item = presentProductionQueueItem({
+      dueAt: row.due_at || row.dueAt,
       currentPeriodEnd: row.current_period_end || row.currentPeriodEnd,
       productionStatus: row.production_status || row.productionStatus
     }, { timezone, now });
@@ -156,21 +157,27 @@ class AdminProductionService {
     if (shouldEnforceMarketScope(actor)) {
       assertStripeAccountMarket(actor, ledgerStripeAccount(row));
     }
-    if (!isQueueEligible(row)) {
-      throw new HttpError(409, 'Subscription is not eligible for the production queue.', {
-        code: 'production_not_eligible'
-      });
-    }
-    if (!periodEndsMatch(body.periodEnd, row.currentPeriodEnd)) {
-      throw new HttpError(409, 'Production cycle period end is stale.', {
-        code: 'production_period_stale'
-      });
+
+    // A paid cycle stays workable whatever happens to the renewals after it. An unpaid cycle is the next
+    // renewal (for past_due, the renewal that failed) and must still be in the queue.
+    const requested = await this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, body.periodEnd);
+    const paid = Boolean(requested && requested.paidAt);
+    const unpaidKey = row.status === 'past_due' ? row.currentPeriodStart : row.currentPeriodEnd;
+    if (!paid) {
+      if (!isQueueEligible(row)) {
+        throw new HttpError(409, 'Subscription is not eligible for the production queue.', {
+          code: 'production_not_eligible'
+        });
+      }
+      if (!periodEndsMatch(body.periodEnd, unpaidKey)) {
+        throw new HttpError(409, 'Production cycle period end is stale.', {
+          code: 'production_period_stale'
+        });
+      }
     }
 
-    const currentCycle = await this.productionRepository.findBySubscriptionAndPeriodEnd(
-      row.id,
-      row.currentPeriodEnd
-    );
+    const periodEnd = paid ? requested.periodEnd : unpaidKey;
+    const currentCycle = paid ? requested : await this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, periodEnd);
     const fromStatus = currentCycle && currentCycle.status ? currentCycle.status : 'to_prepare';
     const allowed = ALLOWED_TRANSITIONS[fromStatus] || new Set();
     if (!allowed.has(body.status)) {
@@ -178,36 +185,42 @@ class AdminProductionService {
         code: 'invalid_production_transition'
       });
     }
-
-    await this.productionRepository.upsert({
-      subscriptionId: row.id,
-      periodEnd: row.currentPeriodEnd,
-      status: body.status,
-      note: body.status === 'blocked' ? body.note : (body.note || null),
-      updatedByUserId: actor.userId || (actor.adminIdentity && actor.adminIdentity.userId) || null
-    });
+    // Nothing is produced before its invoice is paid; a past_due cycle waits for the late payment.
+    if (body.status === 'in_production' && !paid) {
+      throw new HttpError(409, 'This cycle is awaiting payment.', {
+        code: 'production_awaiting_payment'
+      });
+    }
 
     // A block moves the current charge, so a following-delivery charge move computed from the old one is dropped.
     const pending = row.pendingDeliveryChanges;
-    if (body.status === 'blocked' && pending && pending.charge_move
+    if (body.status === 'blocked' && !paid && pending && pending.charge_move
       && typeof this.ledgerRepository.setPendingDeliveryChanges === 'function') {
       const { charge_move: _dropped, ...rest } = pending;
       await this.ledgerRepository.setPendingDeliveryChanges(row.stripeSubscriptionId, rest.packs ? rest : null);
     }
+
+    await this.productionRepository.upsert({
+      subscriptionId: row.id,
+      periodEnd,
+      status: body.status,
+      note: body.status === 'blocked' ? body.note : (body.note || null),
+      updatedByUserId: actor.userId || (actor.adminIdentity && actor.adminIdentity.userId) || null
+    });
 
     if (this.deliverySchedule && typeof this.deliverySchedule.onProductionStatus === 'function') {
       const account = ledgerStripeAccount(row);
       await this.deliverySchedule.onProductionStatus({
         subscription: {
           market: account === 'br' ? 'BR' : 'US',
-          chargeAt: new Date(row.currentPeriodEnd),
+          chargeAt: new Date(periodEnd),
           transitDays: row.transitDays,
           stripeSubscriptionId: row.stripeSubscriptionId,
           originalPreparationDay: row.originalPreparationDay || null
         },
         toStatus: body.status,
         fromStatus,
-        alreadyCharged: Boolean(row.alreadyCharged)
+        alreadyCharged: paid
       });
     }
 
@@ -222,12 +235,12 @@ class AdminProductionService {
           stripeSubscriptionId: row.stripeSubscriptionId,
           fromStatus,
           toStatus: body.status,
-          periodEnd: toMysqlDateTime(row.currentPeriodEnd)
+          periodEnd: toMysqlDateTime(periodEnd)
         }
       });
     }
 
-    const updated = await this.ledgerRepository.findQueueRowById(row.id);
+    const updated = await this.ledgerRepository.findQueueRowById(row.id, periodEnd);
     return this.present(updated || { ...row, productionStatus: body.status, note: body.note }, timezone, actor);
   }
 }

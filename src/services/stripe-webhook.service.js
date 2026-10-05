@@ -41,6 +41,7 @@ class StripeWebhookService {
     this.shippingProductId = options.shippingProductId || '';
     this.transactionalMailer = options.transactionalMailer || null;
     this.pendingDeliveryChanges = options.pendingDeliveryChanges || null;
+    this.paidCycles = options.paidCycles || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.withTimeout = options.withTimeout || withTimeout;
   }
@@ -426,6 +427,10 @@ class StripeWebhookService {
     }
     row = await ledger.incrementChargedDeliveries(subscriptionId, invoice.id);
     await this.endContractAfterLastDelivery(row, subscription, billing);
+    // The cycle this invoice paid enters production; until now it was awaiting payment.
+    if (this.paidCycles) {
+      await this.paidCycles.recordPaid({ ledgerRow: row, subscription, invoice });
+    }
     if (this.pendingDeliveryChanges) {
       await this.pendingDeliveryChanges.applyAfterCharge({ subscriptionId, subscription, billing });
     }

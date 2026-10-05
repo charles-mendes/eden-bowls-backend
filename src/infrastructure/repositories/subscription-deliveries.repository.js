@@ -7,6 +7,7 @@ const {
 const { catalogFrom, packsPerMonth } = require('../../core/subscription-dashboard');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
+const { dateKey, timeZoneFor, zonedParts } = require('../../core/delivery-closed-days');
 const {
   contractChargedCount,
   resolveAutoRenew,
@@ -25,7 +26,7 @@ function numberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function mapDeliverySubscription(row, { cycle = null, paidDeliveries = 1 } = {}) {
+function mapDeliverySubscription(row, { cycle = null, paidDeliveries = 1, paidCycle = null } = {}) {
   const plan = parseJsonColumn(row.planSelection) || {};
   const shipping = parseJsonColumn(row.shipping) || {};
   const address = parseJsonColumn(row.address) || {};
@@ -55,7 +56,14 @@ function mapDeliverySubscription(row, { cycle = null, paidDeliveries = 1 } = {})
     nextShipmentDate: plan.next_shipment_date || shipping.next_shipment_date || null,
     packsPerMonth: packsPerMonth(catalog, plan),
     subtotal,
-    pendingDeliveryChanges: pendingFor(row)
+    pendingDeliveryChanges: pendingFor(row),
+    // The paid delivery still on its way. While it exists, the next renewal is the following delivery.
+    paidCycle: paidCycle && paidCycle.deliveryDate ? {
+      status: paidCycle.status,
+      preparationDay: paidCycle.preparationDay,
+      deliveryDate: paidCycle.deliveryDate
+    } : null,
+    currentPaid: Boolean(paidCycle && paidCycle.deliveryDate)
   };
 }
 
@@ -75,6 +83,7 @@ class SubscriptionDeliveriesRepository {
     this.stripeAccounts = options.stripeAccounts || null;
     this.shippingService = options.shippingService || null;
     this.logger = options.logger || { warn() {}, error() {} };
+    this.now = options.now || (() => new Date());
   }
 
   async findForUser(subscriptionId, userId) {
@@ -85,13 +94,22 @@ class SubscriptionDeliveriesRepository {
     if (!row) return null;
 
     const chargeAt = toDate(row.currentPeriodEnd);
-    const [cycle, paidDeliveries] = await Promise.all([
+    const market = ledgerStripeAccount(row) === 'br' ? 'BR' : 'US';
+    const timeZone = timeZoneFor(market);
+    const today = timeZone ? (() => {
+      const parts = zonedParts(this.now(), timeZone);
+      return dateKey(parts.year, parts.month, parts.day);
+    })() : null;
+    const [cycle, paidDeliveries, paidCycle] = await Promise.all([
       chargeAt && this.productionRepository
         ? this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, chargeAt)
         : null,
-      row.chargedDeliveries != null ? row.chargedDeliveries : this.countPaidDeliveries(row)
+      row.chargedDeliveries != null ? row.chargedDeliveries : this.countPaidDeliveries(row),
+      today && this.productionRepository && typeof this.productionRepository.findOpenPaidCycle === 'function'
+        ? this.productionRepository.findOpenPaidCycle(row.id, today)
+        : null
     ]);
-    return mapDeliverySubscription(row, { cycle, paidDeliveries });
+    return mapDeliverySubscription(row, { cycle, paidDeliveries, paidCycle });
   }
 
   // Fallback for a ledger row with no charged count yet. Adjustment invoices (subscription_update,

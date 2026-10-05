@@ -94,8 +94,11 @@ describe('SubscriptionLedgerRepository', () => {
     expect(result.items[0].productionStatus).toBe('to_prepare');
     const sql = query.mock.calls[1][0];
     expect(sql).toContain("s.status IN ('active','trialing','past_due')");
-    expect(sql).toContain('s.cancel_at_period_end = 0');
-    expect(sql).toContain('ORDER BY s.current_period_end ASC, s.id ASC');
+    // The unpaid cycle excludes cancel_at_period_end; a paid cycle (second branch) does not look at it.
+    expect(sql).toContain("(s.status = 'past_due' OR s.cancel_at_period_end = 0)");
+    expect(sql).toContain('UNION ALL');
+    expect(sql).toContain('WHERE c.paid_at IS NOT NULL');
+    expect(sql).toContain('ORDER BY q.due_at ASC, q.id ASC');
     expect(sql).toContain('LEFT JOIN `subscription_production_cycles`');
     expect(sql).toContain('hsr_market_country');
     expect(sql).not.toContain('LEFT JOIN `wp_users`');
@@ -118,10 +121,10 @@ describe('SubscriptionLedgerRepository', () => {
     });
 
     const sql = query.mock.calls[0][0];
-    expect(sql).toContain('s.current_period_end');
+    expect(sql).toContain('q.due_at');
     expect(sql).toContain("s.status IN ('active','trialing','past_due')");
     expect(sql).not.toContain('customer_email LIKE');
-    expect(sql).not.toContain("COALESCE(c.status,'to_prepare') = ?");
+    expect(sql).not.toContain('q.production_status = ?');
   });
 
   test('metrics count in SQL and filter by stripe account', async () => {

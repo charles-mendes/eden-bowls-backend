@@ -5,6 +5,7 @@ const {
   fromStripeUnix
 } = require('../../core/stripe-subscription-map');
 const { PROFILE_MARKET_META_KEY, appendInFilter } = require('../../core/admin-market-scope');
+const { dateOnly } = require('./subscription-production.repository');
 
 function isMissingTableError(error) {
   const message = String(error && error.message ? error.message : '');
@@ -40,6 +41,7 @@ class SubscriptionLedgerRepository {
     this.userStateTableName = options.userStateTableName || 'onboarding_user_state';
     this.usermetaTableName = options.usermetaTableName || 'wp_usermeta';
     this.chargedInvoicesTableName = options.chargedInvoicesTableName || 'subscription_charged_invoices';
+    this.productionCyclesTableName = options.productionCyclesTableName || 'subscription_production_cycles';
   }
 
   ensureDataSource() {
@@ -640,24 +642,55 @@ class SubscriptionLedgerRepository {
     return { linked };
   }
 
+  // A queue row is one production cycle. An unpaid cycle is the next renewal (for past_due, the renewal that
+  // failed) and waits for payment. A paid cycle stays until it is marked ready, whatever happens to renewals
+  // after it, so cancel_at_period_end only removes the renewals that would follow.
+  queueSourceSql() {
+    const ledger = `\`${this.tableName}\``;
+    const cycles = `\`${this.productionCyclesTableName}\``;
+    const columns = [
+      's.id', 's.user_id', 's.customer_email', 's.stripe_subscription_id', 's.stripe_customer_id', 's.stripe_account',
+      's.status', 's.plan_label', 's.stripe_price_id', 's.current_period_start', 's.current_period_end',
+      's.cancel_at_period_end', 's.pets_snapshot', 's.plan_selection', 's.shipping', 's.address',
+      's.subscription_term_months', 's.edit_payment_pending', 's.edit_pending', 's.created_at', 's.updated_at'
+    ].join(', ');
+    const unpaidKey = "CASE WHEN s.status = 'past_due' THEN s.current_period_start ELSE s.current_period_end END";
+    return `(
+      SELECT ${columns}, ${unpaidKey} AS cycle_period_end, ${unpaidKey} AS due_at,
+        COALESCE(c.status, 'to_prepare') AS production_status, c.note AS production_note,
+        CASE WHEN s.status = 'past_due' THEN 'past_due' ELSE 'awaiting_payment' END AS payment_state,
+        NULL AS paid_at, NULL AS preparation_day, NULL AS delivery_date
+      FROM ${ledger} s
+      LEFT JOIN ${cycles} c ON c.subscription_id = s.id AND c.period_end = ${unpaidKey}
+      WHERE s.status IN ('active','trialing','past_due')
+        AND ${unpaidKey} IS NOT NULL
+        AND c.paid_at IS NULL
+        AND (s.status = 'past_due' OR s.cancel_at_period_end = 0)
+      UNION ALL
+      SELECT ${columns}, c.period_end AS cycle_period_end,
+        COALESCE(TIMESTAMP(c.preparation_day, '12:00:00'), c.period_end) AS due_at,
+        c.status AS production_status, c.note AS production_note, 'paid' AS payment_state,
+        c.paid_at AS paid_at, c.preparation_day AS preparation_day, c.delivery_date AS delivery_date
+      FROM ${cycles} c
+      JOIN ${ledger} s ON s.id = c.subscription_id
+      WHERE c.paid_at IS NOT NULL
+    ) q`;
+  }
+
   queueJoinSql() {
     return [
-      `FROM \`${this.tableName}\` s`,
-      'LEFT JOIN `subscription_production_cycles` c ON c.subscription_id = s.id AND c.period_end = s.current_period_end',
-      this.profileMarketJoinSql()
+      `FROM ${this.queueSourceSql()}`,
+      `LEFT JOIN \`${this.usermetaTableName}\` pm ON pm.user_id = q.user_id AND pm.meta_key = '${PROFILE_MARKET_META_KEY}'`
     ].join(' ');
   }
 
   queueMembership({ startOfToday, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, q }) {
     const where = [
-      "s.status IN ('active','trialing','past_due')",
-      's.cancel_at_period_end = 0',
-      's.current_period_end IS NOT NULL',
       `(
-        (s.current_period_end >= ? AND s.current_period_end < ?)
+        (q.due_at >= ? AND q.due_at < ?)
         OR (
-          ? AND s.current_period_end >= ? AND s.current_period_end < ?
-          AND COALESCE(c.status,'to_prepare') <> 'ready'
+          ? AND q.due_at >= ? AND q.due_at < ?
+          AND q.production_status <> 'ready'
         )
       )`
     ];
@@ -673,17 +706,17 @@ class SubscriptionLedgerRepository {
       ? stripeAccounts.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
       : (account ? [String(account).trim().toLowerCase()] : []);
     if (accounts.length) {
-      appendInFilter(where, params, 's.stripe_account', accounts);
+      appendInFilter(where, params, 'q.stripe_account', accounts);
     }
 
     if (productionStatus) {
-      where.push("COALESCE(c.status,'to_prepare') = ?");
+      where.push('q.production_status = ?');
       params.push(String(productionStatus));
     }
 
     if (q) {
       const needle = `%${String(q).trim()}%`;
-      where.push('(s.customer_email LIKE ? OR s.stripe_subscription_id LIKE ? OR s.stripe_customer_id LIKE ? OR CAST(s.user_id AS CHAR) LIKE ?)');
+      where.push('(q.customer_email LIKE ? OR q.stripe_subscription_id LIKE ? OR q.stripe_customer_id LIKE ? OR CAST(q.user_id AS CHAR) LIKE ?)');
       params.push(needle, needle, needle, needle);
     }
 
@@ -703,6 +736,12 @@ class SubscriptionLedgerRepository {
       ...mapped,
       productionStatus: String(row.production_status || mapped.productionStatus || 'to_prepare'),
       note: row.production_note == null ? (mapped.note || null) : String(row.production_note),
+      cyclePeriodEnd: row.cycle_period_end || mapped.currentPeriodEnd,
+      dueAt: row.due_at || row.cycle_period_end || mapped.currentPeriodEnd,
+      paymentState: String(row.payment_state || 'awaiting_payment'),
+      paidAt: row.paid_at || null,
+      preparationDay: dateOnly(row.preparation_day),
+      deliveryDate: dateOnly(row.delivery_date),
       displayName: null,
       profileMarket: row.profile_market ? String(row.profile_market).trim().toUpperCase() : mapped.profileMarket,
       paymentMethodLast4: null,
@@ -711,13 +750,7 @@ class SubscriptionLedgerRepository {
   }
 
   queueSelectSql() {
-    return [
-      'SELECT s.id, s.user_id, s.customer_email, s.stripe_subscription_id, s.stripe_customer_id,',
-      's.stripe_account, s.status, s.plan_label, s.stripe_price_id, s.current_period_start, s.current_period_end,',
-      's.cancel_at_period_end, s.pets_snapshot, s.plan_selection, s.shipping, s.address, s.subscription_term_months,',
-      's.edit_payment_pending, s.edit_pending, s.created_at, s.updated_at,',
-      "COALESCE(c.status, 'to_prepare') AS production_status, c.note AS production_note, pm.meta_value AS profile_market"
-    ].join(' ');
+    return 'SELECT q.*, pm.meta_value AS profile_market';
   }
 
   async listQueue(input = {}) {
@@ -736,7 +769,7 @@ class SubscriptionLedgerRepository {
           this.queueSelectSql(),
           joinSql,
           whereSql,
-          'ORDER BY s.current_period_end ASC, s.id ASC',
+          'ORDER BY q.due_at ASC, q.id ASC',
           'LIMIT ? OFFSET ?'
         ].join(' '),
         [...params, input.perPage, input.offset]
@@ -768,7 +801,7 @@ class SubscriptionLedgerRepository {
 
     try {
       const rows = await this.dataSource.query(
-        `SELECT s.current_period_end, COALESCE(c.status,'to_prepare') AS production_status ${joinSql} ${whereSql}`,
+        `SELECT q.due_at, q.production_status ${joinSql} ${whereSql}`,
         params
       );
       return Array.isArray(rows) ? rows : [];
@@ -780,21 +813,24 @@ class SubscriptionLedgerRepository {
     }
   }
 
-  async findQueueRowById(id) {
+  // One cycle of one subscription; without a period end, the earliest open cycle.
+  async findQueueRowById(id, periodEnd) {
     this.ensureDataSource();
     const numericId = Number(id);
     if (!Number.isSafeInteger(numericId) || numericId < 1) {
       return null;
     }
+    const period = periodEnd ? toMysqlDateTime(periodEnd) : null;
 
     try {
       const rows = await this.dataSource.query(
         [
           this.queueSelectSql(),
           this.queueJoinSql(),
-          'WHERE s.id = ? LIMIT 1'
+          period ? 'WHERE q.id = ? AND q.cycle_period_end = ?' : 'WHERE q.id = ?',
+          'ORDER BY q.due_at ASC LIMIT 1'
         ].join(' '),
-        [numericId]
+        period ? [numericId, period] : [numericId]
       );
       return this.mapQueueRow(Array.isArray(rows) ? rows[0] : null);
     } catch (error) {

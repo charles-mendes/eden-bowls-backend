@@ -88,6 +88,7 @@ const { SubscriptionsDetailService } = require('./services/subscriptions-detail.
 const { SubscriptionsEditCommitService } = require('./services/subscriptions-edit-commit.service');
 const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
 const { PendingDeliveryChangesService } = require('./services/pending-delivery-changes.service');
+const { PaidCyclesService } = require('./services/paid-cycles.service');
 const { SubscriptionsService } = require('./services/subscriptions.service');
 const { StripeWebhookService } = require('./services/stripe-webhook.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
@@ -202,6 +203,7 @@ async function bootstrap() {
   const stripeAccounts = createStripeAccountsFromEnv(env);
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
+  const deliveryCalendar = new DeliveryClosedDaysRepository(dataSource);
   const { shippingQuoteSigner, shippingService, customerDeliveriesService } = createShippingQuoteServices({
     env,
     logger,
@@ -210,7 +212,7 @@ async function bootstrap() {
     nominatimClient,
     osrmClient,
     upsClient,
-    deliveryCalendar: new DeliveryClosedDaysRepository(dataSource),
+    deliveryCalendar,
     stripeAccounts,
     ledgerRepository: subscriptionLedgerRepository,
     productionRepository: subscriptionProductionRepository
@@ -388,6 +390,11 @@ async function bootstrap() {
     shippingQuoteSigner,
     transactionalMailer,
     logger
+  });
+  // A cycle enters the production queue when its invoice is paid.
+  stripeWebhookService.paidCycles = new PaidCyclesService({
+    productionRepository: subscriptionProductionRepository,
+    calendar: deliveryCalendar
   });
   // The following delivery's changes recorded before the current delivery was paid run on its invoice.paid.
   stripeWebhookService.pendingDeliveryChanges = new PendingDeliveryChangesService({

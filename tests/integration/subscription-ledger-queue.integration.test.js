@@ -72,21 +72,18 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
       period_end datetime NOT NULL,
       status varchar(32) NOT NULL,
       note varchar(255) NULL,
+      paid_at datetime NULL,
+      paid_invoice_id varchar(64) NULL,
+      preparation_day date NULL,
+      delivery_date date NULL,
       PRIMARY KEY (id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
     repository = new SubscriptionLedgerRepository(dataSource, {
       tableName: ledgerTable,
-      usermetaTableName: usermetaTable
+      usermetaTableName: usermetaTable,
+      productionCyclesTableName: cycleTable
     });
-    repository.queueJoinSql = function queueJoinSql() {
-      return [
-        `FROM \`${ledgerTable}\` s`,
-        `LEFT JOIN \`${cycleTable}\` c ON c.subscription_id = s.id AND c.period_end = s.current_period_end`,
-        `LEFT JOIN \`${usersTable}\` u ON u.ID = s.user_id`,
-        this.profileMarketJoinSql()
-      ].join(' ');
-    };
   });
 
   afterAll(async () => {
@@ -105,12 +102,12 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     );
     await dataSource.query(
       `INSERT INTO \`${ledgerTable}\`
-        (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_end, cancel_at_period_end)
+        (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end, cancel_at_period_end)
        VALUES
-        (7, 'ana@edenbowls.com', 'sub_today', 'cus_1', 'br', 'active', '2026-09-20 08:00:00', 0),
-        (7, 'ana@edenbowls.com', 'sub_overdue', 'cus_2', 'br', 'past_due', '2026-09-17 08:00:00', 0),
-        (7, 'ana@edenbowls.com', 'sub_old', 'cus_3', 'br', 'active', '2026-09-01 08:00:00', 0),
-        (7, 'ana@edenbowls.com', 'sub_cape', 'cus_4', 'br', 'active', '2026-09-21 08:00:00', 1)`
+        (7, 'ana@edenbowls.com', 'sub_today', 'cus_1', 'br', 'active', '2026-08-20 08:00:00', '2026-09-20 08:00:00', 0),
+        (7, 'ana@edenbowls.com', 'sub_overdue', 'cus_2', 'br', 'past_due', '2026-09-17 08:00:00', '2026-10-17 08:00:00', 0),
+        (7, 'ana@edenbowls.com', 'sub_old', 'cus_3', 'br', 'active', '2026-08-01 08:00:00', '2026-09-01 08:00:00', 0),
+        (7, 'ana@edenbowls.com', 'sub_cape', 'cus_4', 'br', 'active', '2026-08-21 08:00:00', '2026-09-21 08:00:00', 1)`
     );
 
     const result = await repository.listQueue({
@@ -124,5 +121,10 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
 
     const ids = result.items.map((item) => item.stripeSubscriptionId).sort();
     expect(ids).toEqual(['sub_overdue', 'sub_today']);
+    // A past_due cycle is the renewal that failed (the period start) and waits for payment.
+    const overdue = result.items.find((item) => item.stripeSubscriptionId === 'sub_overdue');
+    expect(overdue.paymentState).toBe('past_due');
+    expect(new Date(overdue.cyclePeriodEnd).toISOString()).toBe('2026-09-17T08:00:00.000Z');
+    expect(result.items.find((item) => item.stripeSubscriptionId === 'sub_today').paymentState).toBe('awaiting_payment');
   });
 });

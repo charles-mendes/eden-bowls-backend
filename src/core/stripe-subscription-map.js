@@ -25,7 +25,11 @@ function toIsoDate(value) {
     return Number.isNaN(fromUnix.getTime()) ? null : fromUnix.toISOString();
   }
 
-  const date = value instanceof Date ? value : new Date(value);
+  // A MySQL DATETIME string is UTC (the connection uses timezone 'Z'); without a zone, Date would read it as local time.
+  const text = typeof value === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value.trim())
+    ? `${value.trim().replace(' ', 'T')}Z`
+    : value;
+  const date = value instanceof Date ? value : new Date(text);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
