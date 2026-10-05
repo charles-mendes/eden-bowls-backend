@@ -63,7 +63,7 @@ describe('transactional email catalog', () => {
 
   test('lists every preview fixture with subject, text and html', () => {
     const previews = listEmailPreviews();
-    expect(previews).toHaveLength(13);
+    expect(previews).toHaveLength(14);
     for (const item of previews) {
       expect(item.content.subject).toBeTruthy();
       expect(item.content.text).toBeTruthy();

@@ -531,6 +531,68 @@ function buildCancelledEmail({
   };
 }
 
+// Sent when the customer turns automatic renewal off. The date is the last contracted delivery.
+function autoRenewOffSentence(pt, endsOnLabel) {
+  if (pt) {
+    return endsOnLabel
+      ? `Renovação automática desligada. Seu plano termina depois da última entrega, em ${endsOnLabel}.`
+      : 'Renovação automática desligada. Seu plano termina depois da última entrega contratada.';
+  }
+  return endsOnLabel
+    ? `Automatic renewal is off. Your plan ends after your last delivery, on ${endsOnLabel}.`
+    : 'Automatic renewal is off. Your plan ends after your last contracted delivery.';
+}
+
+function buildAutoRenewOffEmail({
+  firstName,
+  petName,
+  endsOnLabel,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  const url = String(dashboardUrl || '').trim();
+  const sentence = autoRenewOffSentence(pt, endsOnLabel);
+  const subject = pt ? 'Renovação automática desligada' : 'Automatic renewal is off';
+  const text = [
+    `${hello} ${sentence}`,
+    `Pet: ${pet}`,
+    endsOnLabel ? `${pt ? 'Última entrega' : 'Last delivery'}: ${endsOnLabel}` : '',
+    url
+  ].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(`${hello} ${sentence}`),
+    detailsTableHtml([
+      { label: 'Pet', value: pet },
+      { label: pt ? 'Última entrega' : 'Last delivery', value: endsOnLabel }
+    ]),
+    url ? buttonHtml({ href: url, label: pt ? 'Religar renovação' : 'Turn renewal back on' }) : '',
+    mutedHtml(pt
+      ? 'Se mudar de ideia antes da última entrega, é só religar a renovação no Meu Plano.'
+      : 'If you change your mind before the last delivery, just turn renewal back on in My Plan.')
+  ].join('');
+
+  return {
+    id: 'auto-renew-off',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: sentence,
+      kicker: pt ? 'Renovação' : 'Renewal',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
 function buildPlanChangedEmail({
   firstName,
   petName,
@@ -592,6 +654,7 @@ function buildPlanChangedEmail({
 
 module.exports = {
   buildAdminNewSubscriptionEmail,
+  buildAutoRenewOffEmail,
   buildCancelledEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,

@@ -2,6 +2,7 @@ const { DateTime } = require('luxon');
 const { withTimeout } = require('../../core/with-timeout');
 const {
   buildAdminNewSubscriptionEmail,
+  buildAutoRenewOffEmail,
   buildCancelledEmail,
   buildOrderConfirmedEmail,
   buildPausedEmail,
@@ -30,6 +31,7 @@ const TEMPLATES = {
   paused: 'paused',
   resumed: 'resumed',
   cancelled: 'cancelled',
+  autoRenewOff: 'auto_renew_off',
   planChanged: 'plan_changed'
 };
 
@@ -489,6 +491,30 @@ function createTransactionalMailer(options = {}) {
     });
   }
 
+  // `endsOn` is the last contracted delivery date (YYYY-MM-DD) from the deliveries read.
+  async function notifyAutoRenewOff({ ledger = {}, subscriptionId, referenceId, endsOn }) {
+    const target = customerTarget({ ledger, subscriptionId, referenceId });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.autoRenewOff);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildAutoRenewOffEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      endsOnLabel: formatLetterDate(endsOn, locale),
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.autoRenewOff,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
   async function notifyPlanChanged({ invoice = {}, ledger = {}, subscriptionId, referenceId }) {
     const target = customerTarget({
       ledger,
@@ -613,6 +639,7 @@ function createTransactionalMailer(options = {}) {
     notifyPaused,
     notifyResumed,
     notifyCancelled,
+    notifyAutoRenewOff,
     notifyPlanChanged,
     hasSentClaim,
     sendClaimed,

@@ -660,15 +660,21 @@ class StripeWebhookService {
     await this.notifySubscriptionTransition({
       subscription,
       subscriptionId,
-      event
+      event,
+      stripeBilling: runtime.stripeBilling
     });
+  }
+
+  async stillCancelling(subscriptionId, stripeBilling) {
+    const fresh = await this.retrieveSubscriptionSafe(subscriptionId, stripeBilling);
+    return fresh ? Boolean(fresh.cancel_at_period_end) : true;
   }
 
   attributeChanged(previous, key) {
     return Boolean(previous) && Object.prototype.hasOwnProperty.call(previous, key);
   }
 
-  async notifySubscriptionTransition({ subscription, subscriptionId, event }) {
+  async notifySubscriptionTransition({ subscription, subscriptionId, event, stripeBilling }) {
     if (!this.transactionalMailer) {
       return;
     }
@@ -723,7 +729,12 @@ class StripeWebhookService {
       if (this.attributeChanged(previous, 'cancel_at_period_end')) {
         const wasCancelling = Boolean(previous.cancel_at_period_end);
         const isCancelling = Boolean(subscription.cancel_at_period_end);
-        if (!wasCancelling && isCancelling) {
+        // The customer may have turned renewal back on before this event was processed; then the
+        // scheduled end no longer holds and its letter is not sent.
+        const stillCancelling = !wasCancelling && isCancelling
+          ? await this.stillCancelling(subscriptionId, stripeBilling)
+          : false;
+        if (stillCancelling) {
           const periodEnd = subscription.current_period_end || ledger.currentPeriodEnd || '';
           await this.transactionalMailer.notifyCancelled({
             ledger,

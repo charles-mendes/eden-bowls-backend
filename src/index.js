@@ -354,7 +354,10 @@ async function bootstrap() {
   const subscriptionsActionsRepository = new SubscriptionsActionsRepository({
     ledgerRepository: subscriptionLedgerRepository,
     stripeAccounts,
-    stripeBilling
+    stripeBilling,
+    deliveries: customerDeliveriesService,
+    transactionalMailer,
+    logger
   });
   const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository, { authService });
   const subscriptionsDetailRepository = new SubscriptionsDetailRepository({
