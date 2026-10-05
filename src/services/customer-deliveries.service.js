@@ -67,6 +67,11 @@ function contractEndFrom(market, chargeAt, rows, transitDays, remaining, timeZon
   return planned.length ? planned[planned.length - 1].deliveryDate : null;
 }
 
+function partsOf(isoDate) {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  return { year, month, day };
+}
+
 function prepMidnight(preparationDay, timeZone) {
   const [year, month, day] = preparationDay.split('-').map(Number);
   return wallTimeToUtc(year, month, day, 0, 0, 0, timeZone);
@@ -161,6 +166,10 @@ function buildDeliveryRead(input) {
   const contractEndIfSkip = contractKnown && skipChargeAt && remaining > 0
     ? contractEndFrom(market, skipChargeAt, rows, transitDays || 0, remaining, timeZone)
     : null;
+  // The delivery a skip lands on, so the confirmation can name it before the customer commits.
+  const nextDeliveryIfSkip = skipPlan && skipPlan.preparationDay
+    ? presentDate(deliveryForPrep(market, partsOf(skipPlan.preparationDay), transitDays || 0))
+    : null;
   const following = timeZone && input.chargeAt && !unavailable
     ? projectOne(market, addMonths(input.chargeAt, 1, timeZone), rows, transitDays || 0)
     : null;
@@ -234,6 +243,7 @@ function buildDeliveryRead(input) {
     later,
     contractEnd,
     contractEndIfSkip,
+    nextDeliveryIfSkip,
     offeredDates: offered
   };
 }

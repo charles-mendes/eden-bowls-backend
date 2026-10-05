@@ -1,6 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const { parseSubscriptionsEditPreviewInput } = require('../api/validators/subscriptions-edit.validator');
 const { validatePreviewPayload, validateSubscriptionTerm } = require('./onboarding-plan-preview.service');
+const { assertSomePacks } = require('../core/pack-adjustment');
 
 class SubscriptionsEditPreviewService {
   constructor(repository, options = {}) {
@@ -23,6 +24,9 @@ class SubscriptionsEditPreviewService {
 
     const parsed = parseSubscriptionsEditPreviewInput(payload);
     validateSubscriptionTerm(parsed);
+    if (parsed.delivery_id) {
+      assertSomePacks(parsed);
+    }
     try {
       validatePreviewPayload(parsed);
     } catch (error) {

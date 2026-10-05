@@ -12,6 +12,7 @@ const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 const { verifiedEditShipping } = require('../../core/shipping-quote-token');
 const { resolveMarket } = require('../../core/market');
+const { assertPackOnlyChange, withStoredPets } = require('../../core/pack-adjustment');
 
 function itemsUnchanged(currentItems, itemUpdates) {
   if (itemUpdates.length !== currentItems.length) return false;
@@ -41,7 +42,7 @@ class SubscriptionsEditCommitRepository {
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
 
-  async commit(userId, subscriptionId, payload = {}, ledgerRow = null) {
+  async commit(userId, subscriptionId, requestPayload = {}, ledgerRow = null) {
     if (!this.ledgerRepository) {
       throw new HttpError(503, 'Subscription edit commit dependencies are not available.');
     }
@@ -50,6 +51,10 @@ class SubscriptionsEditCommitRepository {
     if (!row) {
       throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
     }
+    // A pack save applies from the editable delivery forward: the next monthly invoice carries it, nothing is charged now.
+    const packMode = Boolean(requestPayload.delivery_id);
+    if (packMode) assertPackOnlyChange(requestPayload, row);
+    const payload = packMode ? withStoredPets(requestPayload, row.planSelection) : requestPayload;
     const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
 
     const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
@@ -80,7 +85,7 @@ class SubscriptionsEditCommitRepository {
     const proposedTerm = Number(payload.subscription_term_months || currentTerm);
     const termChange = currentTerm !== proposedTerm;
     // An address or shipping change alone must not invoice now or move the renewal.
-    const deliveryOnly = !termChange && itemsUnchanged(currentItems, itemUpdates);
+    const deliveryOnly = packMode || (!termChange && itemsUnchanged(currentItems, itemUpdates));
 
     let proration = { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency };
     if (!deliveryOnly) {

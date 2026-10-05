@@ -387,7 +387,8 @@ async function bootstrap() {
   });
   const subscriptionsEditCommitService = new SubscriptionsEditCommitService(subscriptionsEditCommitRepository, {
     authService,
-    ledgerRepository: subscriptionLedgerRepository
+    ledgerRepository: subscriptionLedgerRepository,
+    deliveryGuard: customerDeliveriesService
   });
   const subscriptionsRepository = new SubscriptionsRepository({
     ledgerRepository: subscriptionLedgerRepository

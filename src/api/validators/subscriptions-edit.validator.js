@@ -40,6 +40,8 @@ const subscriptionsEditPayloadSchema = z.object({
   address: editAddressSchema.optional(),
   shipping: editShippingSchema.optional(),
   payment_method_id: z.string().trim().max(128).optional(),
+  // Present when the customer adjusts packs for one delivery: no proration, nothing charged now.
+  delivery_id: z.string().trim().min(1).max(64).optional(),
   expected_current_hash: z.string().trim().max(128).optional()
 });
 

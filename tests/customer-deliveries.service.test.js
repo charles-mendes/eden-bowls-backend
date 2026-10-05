@@ -493,9 +493,11 @@ describe('skip', () => {
     const before = await service.read(saturdayPlan(), 7);
     expect(before.contractEnd).toBe('2026-03-09');
     expect(before.contractEndIfSkip).toBe('2026-04-09');
+    expect(before.nextDeliveryIfSkip).toBe('2026-03-09');
     const after = await service.skip(saturdayPlan(), 7, { deliveryId: 'current' });
     expect([after.delivery.date, ...after.later.map((item) => item.deliveryDate)]).toEqual(['2026-03-09', '2026-04-09']);
     expect(after.contractEnd).toBe(before.contractEndIfSkip);
+    expect(after.delivery.date).toBe(before.nextDeliveryIfSkip);
   });
 
   test('a United States skip whose preparation would be a Thursday moves to the next valid Monday', async () => {

@@ -12,6 +12,15 @@ const { roundMoney } = require('../../core/plan-catalog-pricing');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 const { verifiedEditShipping } = require('../../core/shipping-quote-token');
+const { resolveMarket } = require('../../core/market');
+const { assertPackOnlyChange, buildPackAdjustment, withStoredPets } = require('../../core/pack-adjustment');
+
+const NO_PRORATION = (currency) => ({
+  direction: 'none',
+  amount_due_now: 0,
+  credit_applied: 0,
+  currency: String(currency || 'USD').toUpperCase()
+});
 
 class SubscriptionsEditPreviewRepository {
   constructor(options = {}) {
@@ -23,7 +32,7 @@ class SubscriptionsEditPreviewRepository {
     this.shippingQuoteSigner = options.shippingQuoteSigner || null;
   }
 
-  async preview(userId, subscriptionId, payload = {}, ledgerRow = null) {
+  async preview(userId, subscriptionId, requestPayload = {}, ledgerRow = null) {
     if (!this.ledgerRepository) {
       throw new HttpError(503, 'Subscription edit preview dependencies are not available.');
     }
@@ -32,6 +41,10 @@ class SubscriptionsEditPreviewRepository {
     if (!row) {
       throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
     }
+    const packMode = Boolean(requestPayload.delivery_id);
+    if (packMode) assertPackOnlyChange(requestPayload, row);
+    const payload = packMode ? withStoredPets(requestPayload, row.planSelection) : requestPayload;
+    const currentTerm = Number(row.subscriptionTermMonths || 1);
     const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
 
     const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
@@ -57,7 +70,8 @@ class SubscriptionsEditPreviewRepository {
     try {
       prorationInvoice = await stripeBilling.previewProration({
         subscriptionId,
-        items: itemUpdates
+        items: itemUpdates,
+        ...(packMode ? { prorationBehavior: 'none' } : {})
       });
     } catch (_error) {
       prorationInvoice = {};
@@ -65,15 +79,22 @@ class SubscriptionsEditPreviewRepository {
 
     const currency = proposed.currency || 'USD';
     const shippingCost = shippingCostFrom(shipping);
-    const nextCycle = await this.buildNextCycle({
-      payload,
-      proposed,
-      shippingCost,
-      currency,
-      stripeBilling
-    });
+    // A pack change prices merchandise from the catalog lines, so a zero line is never rounded up to one pack.
+    const nextCycle = packMode
+      ? {
+        subtotal: proposed.catalogSubtotal,
+        tax: 0,
+        total: roundMoney(proposed.catalogSubtotal + shippingCost),
+        currency: String(currency).toUpperCase()
+      }
+      : await this.buildNextCycle({
+        payload,
+        proposed,
+        shippingCost,
+        currency,
+        stripeBilling
+      });
 
-    const currentTerm = Number(row.subscriptionTermMonths || 1);
     const proposedTerm = Number(payload.subscription_term_months || currentTerm);
 
     return {
@@ -93,14 +114,34 @@ class SubscriptionsEditPreviewRepository {
         address: payload.address || row.address || {},
         plan_selection: proposed.planSelection
       },
-      proration: mapProrationFromInvoice(prorationInvoice, currency),
+      proration: packMode ? NO_PRORATION(currency) : mapProrationFromInvoice(prorationInvoice, currency),
       next_cycle: nextCycle,
+      ...(packMode
+        ? {
+          packs: buildPackAdjustment({
+            deliveryId: payload.delivery_id,
+            payload,
+            resolved: proposed.resolved,
+            currentSelection: row.planSelection,
+            catalogItems: await this.loadCatalogItems(proposed.country),
+            language: ledgerStripeAccount(row) === 'br' ? 'pt' : 'en',
+            currency
+          })
+        }
+        : {}),
       discount: {
         eligible: false,
         reason: 'edit_no_first_purchase_promo',
         percent: 0
       }
     };
+  }
+
+  async loadCatalogItems(country) {
+    if (!this.planPreviewRepository || typeof this.planPreviewRepository.loadCatalogItems !== 'function') {
+      return [];
+    }
+    return this.planPreviewRepository.loadCatalogItems(resolveMarket({ country }));
   }
 
   async buildNextCycle({ payload, proposed, shippingCost, currency, stripeBilling }) {
