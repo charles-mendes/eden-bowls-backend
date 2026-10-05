@@ -112,6 +112,36 @@ class SubscriptionDeliveriesRepository {
     return mapDeliverySubscription(row, { cycle, paidDeliveries, paidCycle });
   }
 
+  // Every deliverable subscription of a market, shaped like findForUser. A row with no charged count stays
+  // unknown (null) instead of asking Stripe, so only its next delivery is projected.
+  async listForMarket(market) {
+    if (!this.ledgerRepository || typeof this.ledgerRepository.listDeliverableByAccount !== 'function') {
+      throw new HttpError(503, 'Deliveries service is not available.');
+    }
+    const timeZone = timeZoneFor(market);
+    const parts = zonedParts(this.now(), timeZone);
+    const today = dateKey(parts.year, parts.month, parts.day);
+    const rows = await this.ledgerRepository.listDeliverableByAccount(market === 'BR' ? 'br' : 'us');
+    const subscriptions = [];
+    for (const row of rows) {
+      const chargeAt = toDate(row.currentPeriodEnd);
+      const [cycle, paidCycle] = await Promise.all([
+        chargeAt && this.productionRepository
+          ? this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, chargeAt)
+          : null,
+        this.productionRepository && typeof this.productionRepository.findOpenPaidCycle === 'function'
+          ? this.productionRepository.findOpenPaidCycle(row.id, today)
+          : null
+      ]);
+      subscriptions.push(mapDeliverySubscription(row, {
+        cycle,
+        paidDeliveries: row.chargedDeliveries,
+        paidCycle
+      }));
+    }
+    return subscriptions;
+  }
+
   // Fallback for a ledger row with no charged count yet. Adjustment invoices (subscription_update,
   // prorations) are not deliveries. Returns null when Stripe cannot be read.
   async countPaidDeliveries(row) {

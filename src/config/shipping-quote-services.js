@@ -45,7 +45,7 @@ function createShippingQuoteServices({
     shippingQuoteSigner
   });
 
-  return { shippingQuoteSigner, shippingService, customerDeliveriesService };
+  return { shippingQuoteSigner, shippingService, customerDeliveriesService, subscriptionDeliveries };
 }
 
 module.exports = {

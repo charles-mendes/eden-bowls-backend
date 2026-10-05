@@ -452,6 +452,31 @@ class SubscriptionLedgerRepository {
     return this.findByStripeSubscriptionId(subscriptionId);
   }
 
+  // Inside a calendar closure's transaction: moves a pending charge move only while it still points where the
+  // preview saw it, so a change the customer made meanwhile refuses the closure instead of being overwritten.
+  async rewritePendingChargeMove(executor, subscriptionId, { previous, next }) {
+    const db = executor || this.dataSource;
+    const rows = await db.query(
+      `SELECT \`pending_delivery_changes\` AS pending FROM \`${this.tableName}\`
+        WHERE \`stripe_subscription_id\` = ? FOR UPDATE`,
+      [subscriptionId]
+    );
+    const pending = rows.length > 0 ? parseJsonColumn(rows[0].pending) : null;
+    const move = pending && pending.charge_move;
+    if (!move || Number(move.trial_end) !== Number(previous)) {
+      throw new HttpError(409, 'A entrega mudou desde a prévia. Revise o fechamento.', {
+        code: 'pending_change_moved',
+        subscriptionId
+      });
+    }
+    const changes = { ...pending, charge_move: { ...move, trial_end: Number(next) } };
+    await db.query(
+      `UPDATE \`${this.tableName}\` SET \`pending_delivery_changes\` = ? WHERE \`stripe_subscription_id\` = ?`,
+      [JSON.stringify(changes), subscriptionId]
+    );
+    return changes;
+  }
+
   // Reads and clears in one step, so two deliveries of the same webhook do not both apply the change.
   async takePendingDeliveryChanges(subscriptionId) {
     this.ensureDataSource();
@@ -901,6 +926,27 @@ class SubscriptionLedgerRepository {
     } catch (error) {
       if (isMissingTableError(error)) {
         return { variationIds: [], priceIds: [] };
+      }
+      throw error;
+    }
+  }
+
+  // Subscriptions that still have a delivery to make: the same statuses the production queue keeps.
+  async listDeliverableByAccount(stripeAccount) {
+    this.ensureDataSource();
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT * FROM \`${this.tableName}\`
+          WHERE \`stripe_account\` = ?
+            AND \`status\` IN ('active', 'trialing', 'past_due')
+            AND \`cancel_at_period_end\` = 0
+          ORDER BY \`id\``,
+        [String(stripeAccount || '').toLowerCase()]
+      );
+      return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row));
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return [];
       }
       throw error;
     }

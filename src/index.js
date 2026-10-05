@@ -80,6 +80,8 @@ const { OnboardingZipcodeService } = require('./services/onboarding-zipcode.serv
 const { createShippingQuoteServices } = require('./config/shipping-quote-services');
 const { DeliveryClosedDaysRepository } = require('./infrastructure/repositories/delivery-closed-days.repository');
 const { AdminDeliveryCalendarService } = require('./services/admin-delivery-calendar.service');
+const { DeliveryCalendarImpactService } = require('./services/delivery-calendar-impact.service');
+const { DeliveryCalendarStripeSyncsRepository } = require('./infrastructure/repositories/delivery-calendar-stripe-syncs.repository');
 const { UpsClient } = require('./infrastructure/shipping/ups-client');
 const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shipment.repository');
 const { UpsShipmentService } = require('./services/ups-shipment.service');
@@ -206,10 +208,9 @@ async function bootstrap() {
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const deliveryCalendar = new DeliveryClosedDaysRepository(dataSource);
-  const adminDeliveryCalendarService = new AdminDeliveryCalendarService({ calendarRepository: deliveryCalendar });
   // One delivery rule for the checkout estimate, the order confirmation email, and the production queue.
   const deliveryEstimator = new DeliveryEstimator({ calendar: deliveryCalendar });
-  const { shippingQuoteSigner, shippingService, customerDeliveriesService } = createShippingQuoteServices({
+  const { shippingQuoteSigner, shippingService, customerDeliveriesService, subscriptionDeliveries } = createShippingQuoteServices({
     env,
     logger,
     shippingSettings: await shippingSettingsRepository.get(),
@@ -221,6 +222,13 @@ async function bootstrap() {
     stripeAccounts,
     ledgerRepository: subscriptionLedgerRepository,
     productionRepository: subscriptionProductionRepository
+  });
+  const adminDeliveryCalendarService = new AdminDeliveryCalendarService({
+    calendarRepository: deliveryCalendar,
+    impactService: new DeliveryCalendarImpactService({ subscriptions: subscriptionDeliveries }),
+    syncsRepository: new DeliveryCalendarStripeSyncsRepository(dataSource),
+    ledgerRepository: subscriptionLedgerRepository,
+    dataSource
   });
   const stripeBilling = (() => {
     try {

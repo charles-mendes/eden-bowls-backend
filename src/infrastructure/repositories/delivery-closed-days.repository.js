@@ -10,6 +10,7 @@ function bit(value) {
 
 function mapRow(row) {
   return {
+    ...(row.id == null ? {} : { id: Number(row.id) }),
     market: row.market,
     closedOn: String(row.closedOn).slice(0, 10),
     label: row.label,
@@ -27,9 +28,10 @@ class DeliveryClosedDaysRepository {
     this.dataSource = dataSource;
   }
 
-  async listActive() {
-    const rows = await this.dataSource.query(
-      `SELECT market,
+  async listActive(executor) {
+    const rows = await (executor || this.dataSource).query(
+      `SELECT id,
+              market,
               DATE_FORMAT(closed_on, '%Y-%m-%d') AS closedOn,
               label,
               origin,
@@ -45,8 +47,8 @@ class DeliveryClosedDaysRepository {
   }
 
   // Every row of one market and year, inactive ones included, for the panel.
-  async listYear(market, year) {
-    const rows = await this.dataSource.query(
+  async listYear(market, year, executor) {
+    const rows = await (executor || this.dataSource).query(
       `SELECT id,
               market,
               DATE_FORMAT(closed_on, '%Y-%m-%d') AS closedOn,
@@ -62,7 +64,61 @@ class DeliveryClosedDaysRepository {
         ORDER BY closed_on, type`,
       [market, `${year}-01-01`, `${Number(year) + 1}-01-01`]
     );
-    return rows.map((row) => ({ id: Number(row.id), ...mapRow(row) }));
+    return rows.map(mapRow);
+  }
+
+  async findById(id, executor) {
+    const db = executor || this.dataSource;
+    const rows = await db.query(
+      `SELECT id,
+              market,
+              DATE_FORMAT(closed_on, '%Y-%m-%d') AS closedOn,
+              label,
+              origin,
+              type,
+              active,
+              closes_preparation AS closesPreparation,
+              closes_pickup AS closesPickup,
+              closes_delivery AS closesDelivery
+         FROM delivery_closed_days
+        WHERE id = ?`,
+      [id]
+    );
+    return rows.length > 0 ? mapRow(rows[0]) : null;
+  }
+
+  async insertRow(executor, row) {
+    const result = await executor.query(
+      `INSERT INTO delivery_closed_days
+        (market, closed_on, label, origin, type, active, closes_preparation, closes_pickup, closes_delivery)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.market,
+        row.closedOn,
+        row.label,
+        row.origin,
+        row.type,
+        bit(row.active),
+        bit(row.closesPreparation),
+        bit(row.closesPickup),
+        bit(row.closesDelivery)
+      ]
+    );
+    return { ...row, id: Number(result.insertId) };
+  }
+
+  async updateRow(executor, row) {
+    await executor.query(
+      `UPDATE delivery_closed_days
+          SET active = ?, closes_preparation = ?, closes_pickup = ?, closes_delivery = ?
+        WHERE id = ?`,
+      [bit(row.active), bit(row.closesPreparation), bit(row.closesPickup), bit(row.closesDelivery), row.id]
+    );
+    return row;
+  }
+
+  async deleteRow(executor, id) {
+    await executor.query('DELETE FROM delivery_closed_days WHERE id = ?', [id]);
   }
 
   async insertIgnore(item) {

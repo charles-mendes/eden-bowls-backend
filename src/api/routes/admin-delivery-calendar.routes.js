@@ -14,6 +14,13 @@ function registerAdminDeliveryCalendarRoutes(app, dependencies, { requirePermiss
       year: (request.query || {}).year
     }));
   });
+
+  app.post('/api/v1/admin/delivery-calendar/preview', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCalendarService(dependencies).preview({
+      marketQuery: request.marketQuery,
+      body: request.body || {}
+    }));
+  });
 }
 
 module.exports = {
