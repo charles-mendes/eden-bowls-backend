@@ -426,7 +426,35 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
-  app.get('/api/v1/admin/billing/invoices/:id/pdf', requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
+  function requireCustomerInvoices() {
+    if (!dependencies.customerInvoicesService) {
+      throw new HttpError(503, 'Invoice service is not available.');
+    }
+    return dependencies.customerInvoicesService;
+  }
+
+  // Eden Bowls invoices (EB-YYYY-NNNNNN): the PDF stored by the API and when it was emailed to the customer.
+  app.get('/api/v1/admin/billing/subscriptions/:id/customer-invoices', requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCustomerInvoices().listForSubscription(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/billing/subscriptions/:id/customer-invoices', requirePermission('billing.subscribers.sync', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCustomerInvoices().issueFromAdmin(
+      request.params.id,
+      request.body && request.body.stripe_invoice_id,
+      request.adminIdentity
+    ));
+  });
+
+  app.get('/api/v1/admin/billing/customer-invoices/:id/pdf', requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCustomerInvoices().downloadPdf(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/billing/customer-invoices/:id/send', requirePermission('billing.subscribers.sync', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCustomerInvoices().resendEmail(request.params.id, request.adminIdentity));
+  });
+
+  app.get('/api/v1/admin/billing/invoices/:id/pdf',requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminBillingService) {
         throw new HttpError(503, 'Billing service is not available.');
