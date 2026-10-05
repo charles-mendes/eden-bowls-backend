@@ -248,6 +248,22 @@ class CustomerInvoicesService {
     }
   }
 
+  // The PDF as a letter attachment (order confirmation, renewal).
+  async letterAttachment(row) {
+    const content = await this.readPdf(row);
+    return {
+      invoiceNumber: row.invoiceNumber,
+      filename: `${row.invoiceNumber}.pdf`,
+      content,
+      contentType: 'application/pdf'
+    };
+  }
+
+  // The letter that carried the PDF went out: that is the send to the customer.
+  async recordSentWithLetter(row, { to }) {
+    return this.repository.markEmailSent(row.id, { to: String(to || row.emailTo || '').trim(), sentAt: this.now() });
+  }
+
   // Background job: sends what the webhook could not, with backoff.
   async sendDueEmails() {
     if (!this.repository) return { scanned: 0, sent: 0 };

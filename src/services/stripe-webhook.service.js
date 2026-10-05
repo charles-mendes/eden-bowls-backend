@@ -394,11 +394,15 @@ class StripeWebhookService {
     // One delivery estimate for this payment: the confirmation email and the production cycle use the same one.
     const delivery = await this.estimateDelivery(invoice, subscriptionId);
 
-    await this.notifyFirstCycleMail({
+    // The invoice PDF is issued before the letters so the order confirmation and the renewal can carry it.
+    const issued = await this.prepareCustomerInvoice(invoice, runtime);
+
+    const letter = await this.notifyFirstCycleMail({
       invoice,
       subscriptionId,
       promotedPending,
-      delivery
+      delivery,
+      invoiceAttachment: issued && issued.attachment
     });
 
     await this.recordChargedDelivery({
@@ -409,20 +413,51 @@ class StripeWebhookService {
       delivery
     });
 
-    await this.issueCustomerInvoice(invoice, runtime);
+    await this.finishCustomerInvoice(invoice, runtime, issued, letter);
   }
 
-  // The Eden Bowls invoice PDF of every paid invoice above zero, emailed to the customer. Runs last and throws on a
-  // Stripe or disk failure, so the event is retried; the steps above are safe to repeat and the number is kept.
-  async issueCustomerInvoice(invoice, runtime = {}) {
+  // Issues the Eden Bowls invoice PDF of a paid invoice above zero without emailing it. A failure here does not stop
+  // the letters or the production cycle; finishCustomerInvoice tries again and throws.
+  async prepareCustomerInvoice(invoice, runtime = {}) {
+    if (!this.customerInvoices || !(Number(invoice.total) > 0)) {
+      return null;
+    }
+    try {
+      const result = await this.customerInvoices.issueForInvoice({
+        invoice,
+        account: runtime.account || 'us',
+        send: false
+      });
+      if (!result || !result.row) {
+        return null;
+      }
+      return { row: result.row, attachment: await this.customerInvoices.letterAttachment(result.row) };
+    } catch (error) {
+      this.logger.error({ invoiceId: invoice && invoice.id, code: error && error.code }, 'Invoice PDF failed before the letter.');
+      return { failed: true };
+    }
+  }
+
+  // The renewal and the order confirmation carry the PDF; a plan change, or a letter that did not go out, gets the
+  // invoice in its own email. Throws when the PDF still cannot be issued, so the event is retried; the steps above
+  // are safe to repeat and the number is kept.
+  async finishCustomerInvoice(invoice, runtime, issued, letter) {
     if (!this.customerInvoices || !(Number(invoice.total) > 0)) {
       return;
     }
-    await this.customerInvoices.issueForInvoice({
-      invoice,
-      account: runtime.account || 'us',
-      send: true
-    });
+    if (!issued || issued.failed) {
+      await this.customerInvoices.issueForInvoice({ invoice, account: runtime.account || 'us', send: true });
+      return;
+    }
+    if (issued.row.emailStatus !== 'pending') {
+      return;
+    }
+    const sent = letter && letter.attached && letter.result && letter.result.claimed && !letter.result.skipped;
+    if (sent) {
+      await this.customerInvoices.recordSentWithLetter(issued.row, { to: letter.result.to });
+      return;
+    }
+    await this.customerInvoices.sendEmail(issued.row, {});
   }
 
   async estimateDelivery(invoice, subscriptionId) {
@@ -483,9 +518,10 @@ class StripeWebhookService {
     await billing.setCancelAtPeriodEnd(row.stripeSubscriptionId, true);
   }
 
-  async notifyFirstCycleMail({ invoice, subscriptionId, promotedPending, delivery = null }) {
+  // Returns `{ attached, result }`: whether the letter carried the invoice PDF and what the mailer did.
+  async notifyFirstCycleMail({ invoice, subscriptionId, promotedPending, delivery = null, invoiceAttachment = null }) {
     if (!this.transactionalMailer) {
-      return;
+      return null;
     }
 
     try {
@@ -497,28 +533,32 @@ class StripeWebhookService {
           subscriptionId,
           referenceId: String(invoice.id || '')
         });
-        return;
+        return { attached: false };
       }
 
       const reason = String(invoice.billing_reason || '');
       if (reason === 'subscription_create') {
-        await this.transactionalMailer.notifyOrderConfirmed({
+        const result = await this.transactionalMailer.notifyOrderConfirmed({
           invoice,
           ledger,
           subscriptionId,
-          firstDeliveryDate: delivery ? delivery.deliveryDate : null
+          firstDeliveryDate: delivery ? delivery.deliveryDate : null,
+          invoiceAttachment
         });
         await this.transactionalMailer.notifyAdminNewSubscription({ invoice, ledger, subscriptionId });
-        return;
+        return { attached: Boolean(invoiceAttachment), result };
       }
       if (reason === 'subscription_cycle') {
-        await this.transactionalMailer.notifyRenewal({
+        const result = await this.transactionalMailer.notifyRenewal({
           invoice,
           ledger,
           subscriptionId,
-          referenceId: String(invoice.id || '')
+          referenceId: String(invoice.id || ''),
+          invoiceAttachment
         });
+        return { attached: Boolean(invoiceAttachment), result };
       }
+      return { attached: false };
     } catch (error) {
       this.logger.error({
         invoiceId: invoice && invoice.id,

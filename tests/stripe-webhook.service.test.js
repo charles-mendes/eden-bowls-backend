@@ -165,17 +165,35 @@ describe('StripeWebhookService', () => {
   });
 
   describe('Eden Bowls invoice PDF', () => {
-    function paidEvent(total) {
+    const row = { id: 1, invoiceNumber: 'EB-2026-000418', emailStatus: 'pending', emailTo: 'ana@example.com' };
+    const attachment = { invoiceNumber: 'EB-2026-000418', filename: 'EB-2026-000418.pdf', content: Buffer.from('%PDF') };
+
+    function invoicesMock(overrides = {}) {
       return {
-        id: 'evt_inv',
-        type: 'invoice.paid',
-        data: { object: { id: 'in_1', customer: 'cus_1', subscription: 'sub_123', total } }
+        issueForInvoice: jest.fn().mockResolvedValue({ row }),
+        letterAttachment: jest.fn().mockResolvedValue(attachment),
+        recordSentWithLetter: jest.fn().mockResolvedValue({}),
+        sendEmail: jest.fn().mockResolvedValue({}),
+        ...overrides
       };
     }
 
-    function arrange(customerInvoices, total) {
-      const built = buildService({ customerInvoices });
-      built.stripeBilling.constructEvent.mockReturnValue(paidEvent(total));
+    function mailerMock(result = { claimed: true, skipped: false, to: 'ana@example.com' }) {
+      return {
+        notifyOrderConfirmed: jest.fn().mockResolvedValue(result),
+        notifyAdminNewSubscription: jest.fn().mockResolvedValue({ claimed: true }),
+        notifyRenewal: jest.fn().mockResolvedValue(result),
+        notifyPlanChanged: jest.fn().mockResolvedValue({ claimed: true })
+      };
+    }
+
+    function arrange({ customerInvoices, transactionalMailer = null, total = 14450, reason = 'subscription_cycle' }) {
+      const built = buildService({ customerInvoices, transactionalMailer });
+      built.stripeBilling.constructEvent.mockReturnValue({
+        id: 'evt_inv',
+        type: 'invoice.paid',
+        data: { object: { id: 'in_1', customer: 'cus_1', subscription: 'sub_123', total, billing_reason: reason } }
+      });
       built.stripeBilling.retrieveSubscription.mockResolvedValue({
         id: 'sub_123',
         status: 'active',
@@ -184,36 +202,87 @@ describe('StripeWebhookService', () => {
         metadata: { eden_env: 'qa', wp_user_id: '7' }
       });
       built.ledgerRepository.findUserStateBySubscriptionId.mockResolvedValue({ userId: 7, checkoutReference: {} });
+      built.ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ userId: 7, stripeSubscriptionId: 'sub_123', customerEmail: 'ana@example.com' });
       return built;
     }
 
-    test('issues and emails the invoice of a paid invoice above zero', async () => {
-      const customerInvoices = { issueForInvoice: jest.fn().mockResolvedValue({ row: { id: 1 } }) };
-      const { service } = arrange(customerInvoices, 14450);
+    const handle = (service) => service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
 
-      await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' })).resolves.toEqual({ received: true });
+    test.each([
+      ['renewal', 'subscription_cycle', 'notifyRenewal'],
+      ['order confirmation', 'subscription_create', 'notifyOrderConfirmed']
+    ])('the %s carries the PDF and counts as the invoice send', async (_label, reason, letter) => {
+      const customerInvoices = invoicesMock();
+      const transactionalMailer = mailerMock();
+      const { service } = arrange({ customerInvoices, transactionalMailer, reason });
 
-      expect(customerInvoices.issueForInvoice).toHaveBeenCalledWith({
-        invoice: expect.objectContaining({ id: 'in_1' }),
-        account: 'us',
-        send: true
-      });
+      await expect(handle(service)).resolves.toEqual({ received: true });
+
+      expect(customerInvoices.issueForInvoice).toHaveBeenCalledWith({ invoice: expect.objectContaining({ id: 'in_1' }), account: 'us', send: false });
+      expect(transactionalMailer[letter]).toHaveBeenCalledWith(expect.objectContaining({ invoiceAttachment: attachment }));
+      expect(customerInvoices.recordSentWithLetter).toHaveBeenCalledWith(row, { to: 'ana@example.com' });
+      expect(customerInvoices.sendEmail).not.toHaveBeenCalled();
+    });
+
+    test('a charged plan change gets the invoice in its own email', async () => {
+      const customerInvoices = invoicesMock();
+      const transactionalMailer = mailerMock();
+      const { service } = arrange({ customerInvoices, transactionalMailer, reason: 'subscription_update' });
+
+      await handle(service);
+
+      expect(customerInvoices.sendEmail).toHaveBeenCalledWith(row, {});
+      expect(customerInvoices.recordSentWithLetter).not.toHaveBeenCalled();
+    });
+
+    test('a renewal letter that failed leaves the invoice to its own email', async () => {
+      const customerInvoices = invoicesMock();
+      const transactionalMailer = mailerMock({ failed: true, claimed: false });
+      const { service } = arrange({ customerInvoices, transactionalMailer });
+
+      await handle(service);
+
+      expect(customerInvoices.sendEmail).toHaveBeenCalledWith(row, {});
+    });
+
+    test('an invoice already sent on an earlier attempt is not sent again', async () => {
+      const customerInvoices = invoicesMock({ issueForInvoice: jest.fn().mockResolvedValue({ row: { ...row, emailStatus: 'sent' } }) });
+      const { service } = arrange({ customerInvoices, transactionalMailer: mailerMock({ skipped: true, reason: 'duplicate' }) });
+
+      await handle(service);
+
+      expect(customerInvoices.sendEmail).not.toHaveBeenCalled();
+      expect(customerInvoices.recordSentWithLetter).not.toHaveBeenCalled();
+    });
+
+    test('when the PDF fails before the letter, the letter still goes out and the PDF is retried with its own email', async () => {
+      const issueForInvoice = jest.fn()
+        .mockRejectedValueOnce(new Error('stripe timeout'))
+        .mockResolvedValueOnce({ row });
+      const customerInvoices = invoicesMock({ issueForInvoice });
+      const transactionalMailer = mailerMock();
+      const { service } = arrange({ customerInvoices, transactionalMailer });
+
+      await expect(handle(service)).resolves.toEqual({ received: true });
+
+      expect(transactionalMailer.notifyRenewal).toHaveBeenCalledWith(expect.objectContaining({ invoiceAttachment: null }));
+      expect(issueForInvoice).toHaveBeenLastCalledWith({ invoice: expect.objectContaining({ id: 'in_1' }), account: 'us', send: true });
     });
 
     test('a $0 invoice (skip or postponement) gets no invoice PDF', async () => {
-      const customerInvoices = { issueForInvoice: jest.fn() };
-      const { service } = arrange(customerInvoices, 0);
+      const customerInvoices = invoicesMock();
+      const { service } = arrange({ customerInvoices, total: 0 });
 
-      await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+      await handle(service);
 
       expect(customerInvoices.issueForInvoice).not.toHaveBeenCalled();
     });
 
-    test('a failure to issue the PDF schedules the event for a retry', async () => {
-      const customerInvoices = { issueForInvoice: jest.fn().mockRejectedValue(new Error('disk full')) };
-      const { service, eventsRepository } = arrange(customerInvoices, 14450);
+    test('a PDF that still fails at the end schedules the event for a retry', async () => {
+      const customerInvoices = invoicesMock({ issueForInvoice: jest.fn().mockRejectedValue(new Error('disk full')) });
+      const { service, eventsRepository } = arrange({ customerInvoices });
 
-      await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }).catch(() => {});
+      await handle(service).catch(() => {});
 
       expect(eventsRepository.markProcessed).not.toHaveBeenCalled();
       expect(eventsRepository.scheduleRetry).toHaveBeenCalled();

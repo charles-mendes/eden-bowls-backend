@@ -202,6 +202,25 @@ describe('CustomerInvoicesService email', () => {
   });
 });
 
+describe('CustomerInvoicesService letters', () => {
+  test('hands the PDF to a letter and records the letter as the send', async () => {
+    const { service, mailer } = buildService();
+    const { row } = await service.issueForInvoice({ invoice: { id: 'in_preview_us' }, account: 'us', send: false });
+
+    const attachment = await service.letterAttachment(row);
+    const sent = await service.recordSentWithLetter(row, { to: 'ana@example.com' });
+
+    expect(attachment).toEqual({
+      invoiceNumber: 'EB-2026-000418',
+      filename: 'EB-2026-000418.pdf',
+      content: expect.any(Buffer),
+      contentType: 'application/pdf'
+    });
+    expect(sent).toMatchObject({ emailStatus: 'sent', emailTo: 'ana@example.com', emailSentAt: NOW.toISOString() });
+    expect(mailer.sendMail).not.toHaveBeenCalled();
+  });
+});
+
 describe('CustomerInvoicesService admin', () => {
   const brOperator = { roles: ['operator'], markets: ['BR'], permissions: ['market.br'] };
 
