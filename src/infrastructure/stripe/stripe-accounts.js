@@ -85,7 +85,7 @@ function resolveStripeBilling(owner, account, { forCreation = false } = {}) {
   return owner.stripeBilling;
 }
 
-function createStripeAccountsFromEnv(env = {}) {
+function createStripeAccountsFromEnv(env = {}, { logger } = {}) {
   const apiVersion = env.STRIPE_API_VERSION || DEFAULT_STRIPE_API_VERSION;
   const maxNetworkRetries = env.STRIPE_MAX_RETRIES;
   const us = new StripeBillingClient({
@@ -93,14 +93,16 @@ function createStripeAccountsFromEnv(env = {}) {
     secretKey: env.STRIPE_US_SECRET_KEY,
     apiVersion,
     maxNetworkRetries,
-    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX
+    automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
+    logger
   });
   const br = new StripeBillingClient({
     account: STRIPE_ACCOUNTS.BR,
     secretKey: env.STRIPE_BR_SECRET_KEY,
     apiVersion,
     maxNetworkRetries,
-    automaticTaxEnabled: false
+    automaticTaxEnabled: false,
+    logger
   });
 
   return new StripeAccounts({

@@ -84,6 +84,7 @@ function buildClient(overrides = {}) {
     client: new StripeBillingClient({
       client: stripe,
       account: overrides.account,
+      logger: overrides.logger,
       automaticTaxEnabled: overrides.automaticTaxEnabled !== false,
       shippingProductId: Object.prototype.hasOwnProperty.call(overrides, 'shippingProductId')
         ? overrides.shippingProductId
@@ -770,3 +771,49 @@ describe('setTrialEnd', () => {
     expect(update.mock.calls[1]).toEqual(['sub_9', { trial_end: 1830000000, proration_behavior: 'none' }]);
   });
 });
+
+describe('customer update failure', () => {
+  test('logs the original Stripe error without the request payload, and keeps the generic response', async () => {
+    const stripeError = Object.assign(new Error('Invalid US state: Nova York'), {
+      type: 'StripeInvalidRequestError',
+      code: 'parameter_invalid',
+      param: 'address[state]',
+      raw: { message: 'Invalid US state: Nova York' }
+    });
+    const logger = { warn: jest.fn() };
+    const { client } = buildClient({
+      logger,
+      stripe: {
+        customers: {
+          retrieve: jest.fn().mockResolvedValue({ id: 'cus_stored', deleted: false, currency: 'usd' }),
+          list: jest.fn().mockResolvedValue({ data: [] }),
+          create: jest.fn().mockResolvedValue({ id: 'cus_new' }),
+          update: jest.fn().mockRejectedValue(stripeError)
+        }
+      }
+    });
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      message: 'Unable to update Stripe customer.',
+      details: { code: 'stripe_customer_failed' }
+    });
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const [fields, message] = logger.warn.mock.calls[0];
+    expect(message).toBe('Stripe customer update failed.');
+    expect(fields).toEqual({
+      stripe_account: 'us',
+      customerId: 'cus_stored',
+      type: 'StripeInvalidRequestError',
+      code: 'parameter_invalid',
+      param: 'address[state]',
+      message: 'Invalid US state: Nova York'
+    });
+    const logged = JSON.stringify(fields);
+    for (const sensitive of ['pm_123', 'jane@example.com', 'Jane Doe', '94105', 'San Francisco']) {
+      expect(logged).not.toContain(sensitive);
+    }
+  });
+});
+

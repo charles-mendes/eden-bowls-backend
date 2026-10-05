@@ -141,6 +141,7 @@ class StripeBillingClient {
     this.secretKey = options.secretKey || '';
     this.automaticTaxEnabled = Boolean(options.automaticTaxEnabled);
     this.shippingProductId = options.shippingProductId || '';
+    this.logger = options.logger || { warn() {} };
     this.missingReason = null;
 
     if (options.client) {
@@ -822,6 +823,15 @@ class StripeBillingClient {
     try {
       await stripe.customers.update(customerId, customerUpdate);
     } catch (error) {
+      // The response keeps a generic message; the log keeps Stripe's own, without the request payload.
+      this.logger.warn({
+        stripe_account: this.account,
+        customerId,
+        type: error && error.type ? String(error.type) : null,
+        code: error && error.code ? String(error.code) : null,
+        param: error && error.param ? String(error.param) : null,
+        message: stripeRawMessage(error) || null
+      }, 'Stripe customer update failed.');
       throw this.httpError(502, this.stripeMessage(error, 'Unable to update Stripe customer.'), {
         code: 'stripe_customer_failed'
       });

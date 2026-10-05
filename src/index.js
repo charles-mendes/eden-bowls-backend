@@ -204,7 +204,7 @@ async function bootstrap() {
   });
   const upsLabelStorage = new LocalUpsLabelStorage({ directory: env.UPS_LABEL_DIR });
   const upsShipmentRepository = new UpsShipmentRepository(dataSource);
-  const stripeAccounts = createStripeAccountsFromEnv(env);
+  const stripeAccounts = createStripeAccountsFromEnv(env, { logger });
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const deliveryCalendar = new DeliveryClosedDaysRepository(dataSource);
