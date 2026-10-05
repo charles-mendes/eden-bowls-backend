@@ -23,8 +23,8 @@ The approved layout is `docs-new/FEATURE_CUSTOMIZED_INVOICE/Eden Bowls - Invoice
 | SQL (numbering, rows, price → recipe lookup) | `src/infrastructure/repositories/customer-invoices.repository.js` |
 | PDF files on disk (`INVOICE_PDF_DIR`) | `src/infrastructure/storage/local-invoice-storage.js` |
 | Tables `customer_invoices`, `customer_invoice_sequences` | `src/infrastructure/migrations/1700000000029-create-customer-invoices.js` |
-| Trigger on `invoice.paid` | `StripeWebhookService.issueCustomerInvoice` in `src/services/stripe-webhook.service.js` |
-| Email with the PDF attached | `buildInvoiceEmail` in `src/core/email/transactional-emails.js` |
+| Trigger on `invoice.paid` | `prepareCustomerInvoice` / `finishCustomerInvoice` of `StripeWebhookService` in `src/services/stripe-webhook.service.js` |
+| Emails with the PDF attached | renewal and order confirmation (`invoiceAttachment` in `src/infrastructure/mailers/transactional-mailer.js`); separate `buildInvoiceEmail` in `src/core/email/transactional-emails.js` |
 | Admin routes | `/api/v1/admin/billing/subscriptions/:id/customer-invoices` (GET list, POST issue), `/api/v1/admin/billing/customer-invoices/:id/pdf`, `/:id/send` in `src/api/routes/admin.routes.js` |
 | Admin screen | `eden-bowls-admin/src/pages/SubscriptionDetailPage.tsx` (section "Invoices Eden Bowls"), `eden-bowls-admin/src/lib/customerInvoices.ts` |
 
@@ -39,9 +39,10 @@ The store (`eden-bowls`) shows no invoice to the customer. No screen there asks 
 5. **Only real charges get an invoice.** Status `paid` (or `open` when an operator issues it) and total above zero. A `$0` invoice from a skip or a postponement gets none.
 6. **Stripe is the source of the money.** Subtotal = non-shipping lines; Shipping = lines whose product is the shipping product (`shipping_product_id` in the subscription metadata); Discount, Credit applied, Tax come from `total_discount_amounts`, `total - amount_due`, `total_taxes`. Discount and Credit rows appear only when not zero; Shipping and Tax rows always appear, as in the approved layout.
 7. **Recipe names follow what the store sells.** `Fresh Bowl · <recipe> <pack size>`: the `turkey` flavor key is sold as Chicken / Frango (see `src/core/market.js`), so it prints "Chicken Recipe" / "Receita de Frango", even though the approved sample says Turkey/Peru. US pack sizes print in oz (`10.6 oz`), Brazilian ones in grams (`300 g`), like the store. A price not found in the catalog falls back to Stripe's line description.
-8. **Sending is recorded, never assumed.** `email_status` is `pending`, `sent` (with `email_sent_at` and `email_to`), `failed` (with `email_last_error` and `email_next_attempt_at`, retried by the `invoice_email` job with backoff up to 8 attempts) or `skipped` (no SMTP, outside production). Only `sent` means the customer got it.
-9. **The webhook retries on failure.** `issueCustomerInvoice` runs last in `invoice.paid` and throws on a Stripe or disk error, so the event is retried; every earlier step is safe to repeat.
-10. **The PDF lives on the API disk and in MySQL.** File `INVOICE_PDF_DIR/<number>.pdf` (Docker volume `eden-bowls-invoices` at `/app/invoices`, shared by `api` and `cron`) plus its SHA-256 in `customer_invoices`. If the file is gone, reading it writes it again from Stripe under the same number.
+8. **Which email carries the PDF.** The order confirmation (`subscription_create`) and the renewal (`subscription_cycle`) carry the PDF as an attachment, with an "Invoice / Fatura: EB-… (PDF attached / em anexo)" row; that letter going out is the invoice send. A charged plan change, a letter that failed, and "Reenviar" in the admin use the separate invoice email (`buildInvoiceEmail`). The webhook issues the PDF before the letters; if that fails, the letter goes without it and the invoice goes in its own email at the end.
+9. **Sending is recorded, never assumed.** `email_status` is `pending`, `sent` (with `email_sent_at` and `email_to`), `failed` (with `email_last_error` and `email_next_attempt_at`, retried by the `invoice_email` job with backoff up to 8 attempts) or `skipped` (no SMTP, outside production). Only `sent` means the customer got it.
+10. **The webhook retries on failure.** `finishCustomerInvoice` runs last in `invoice.paid` and throws on a Stripe or disk error, so the event is retried; every earlier step is safe to repeat.
+11. **The PDF lives on the API disk and in MySQL.** File `INVOICE_PDF_DIR/<number>.pdf` (Docker volume `eden-bowls-invoices` at `/app/invoices`, shared by `api` and `cron`) plus its SHA-256 in `customer_invoices`. If the file is gone, reading it writes it again from Stripe under the same number.
 
 ## Visual tokens (from the approved PDF)
 
