@@ -187,6 +187,14 @@ class AdminProductionService {
       updatedByUserId: actor.userId || (actor.adminIdentity && actor.adminIdentity.userId) || null
     });
 
+    // A block moves the current charge, so a following-delivery charge move computed from the old one is dropped.
+    const pending = row.pendingDeliveryChanges;
+    if (body.status === 'blocked' && pending && pending.charge_move
+      && typeof this.ledgerRepository.setPendingDeliveryChanges === 'function') {
+      const { charge_move: _dropped, ...rest } = pending;
+      await this.ledgerRepository.setPendingDeliveryChanges(row.stripeSubscriptionId, rest.packs ? rest : null);
+    }
+
     if (this.deliverySchedule && typeof this.deliverySchedule.onProductionStatus === 'function') {
       const account = ledgerStripeAccount(row);
       await this.deliverySchedule.onProductionStatus({

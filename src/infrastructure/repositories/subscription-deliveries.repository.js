@@ -54,8 +54,18 @@ function mapDeliverySubscription(row, { cycle = null, paidDeliveries = 1 } = {})
     productionStatus: cycle ? cycle.status : undefined,
     nextShipmentDate: plan.next_shipment_date || shipping.next_shipment_date || null,
     packsPerMonth: packsPerMonth(catalog, plan),
-    subtotal
+    subtotal,
+    pendingDeliveryChanges: pendingFor(row)
   };
+}
+
+// A pending change belongs to the unpaid charge it was recorded against; once that charge moved, it is stale.
+function pendingFor(row) {
+  const pending = parseJsonColumn(row.pendingDeliveryChanges);
+  const chargeAt = toDate(row.currentPeriodEnd);
+  const after = pending ? toDate(pending.after_charge_at) : null;
+  if (!pending || !chargeAt || !after || after.getTime() !== chargeAt.getTime()) return null;
+  return pending;
 }
 
 class SubscriptionDeliveriesRepository {
@@ -114,6 +124,13 @@ class SubscriptionDeliveriesRepository {
       currentPeriodStart: period.start || undefined,
       currentPeriodEnd: period.end || stripeSubscription.trial_end || undefined
     });
+  }
+
+  async recordPendingChanges(subscription, changes) {
+    if (!this.ledgerRepository || typeof this.ledgerRepository.setPendingDeliveryChanges !== 'function') {
+      throw new HttpError(503, 'Deliveries service is not available.');
+    }
+    await this.ledgerRepository.setPendingDeliveryChanges(subscription.stripeSubscriptionId, changes);
   }
 
   async quoteTransitDays(subscription) {

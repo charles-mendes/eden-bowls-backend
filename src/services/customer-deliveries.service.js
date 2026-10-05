@@ -125,6 +125,37 @@ function planSkip({ market, rows, transitDays, chargeAt, now }) {
   });
 }
 
+// What skip and postpone would do to the delivery charged at `chargeAt`, with `remaining` contracted
+// deliveries from that one on. Postpone dates run after that delivery and not past the one after it.
+function targetPlans({ market, rows, transitDays, timeZone, chargeAt, projected, remaining, now }) {
+  const skipPlan = planSkip({ market, rows, transitDays, chargeAt, now });
+  const skipChargeAt = skipPlan.stripeUpdate ? new Date(skipPlan.stripeUpdate.trial_end * 1000) : null;
+  const after = projectOne(market, addMonths(chargeAt, 1, timeZone), rows, transitDays);
+  return {
+    skipPlan,
+    contractEndIfSkip: remaining != null && remaining > 0 && skipChargeAt
+      ? contractEndFrom(market, skipChargeAt, rows, transitDays, remaining, timeZone)
+      : null,
+    // The delivery a skip lands on, so the confirmation can name it before the customer commits.
+    nextDeliveryIfSkip: skipPlan.preparationDay
+      ? presentDate(deliveryForPrep(market, partsOf(skipPlan.preparationDay), transitDays))
+      : null,
+    offeredDates: projected && after
+      ? offerDates({
+        market,
+        rows,
+        transitDays,
+        timeZone,
+        fromPreparationDay: projected.preparationDay,
+        afterDate: projected.deliveryDate,
+        throughDate: after.deliveryDate,
+        now,
+        remaining
+      })
+      : []
+  };
+}
+
 function buildDeliveryRead(input) {
   const market = input.market;
   const timeZone = timeZoneFor(market);
@@ -134,13 +165,22 @@ function buildDeliveryRead(input) {
   const chargedCount = Number(input.chargedCount) || 0;
   const remaining = contractKnown ? Math.max(0, termMonths - chargedCount) : 1;
   const transitDays = Number(input.transitDays);
+  const transit = transitDays || 0;
   const unavailable = addressUnavailable(market, {
     distanceKm: input.distanceKm,
     transitDays
   });
   const rows = input.rows || [];
-  const planned = timeZone && input.chargeAt && !unavailable && remaining > 0
-    ? series(market, input.chargeAt, rows, transitDays || 0, remaining, timeZone)
+  const projectable = Boolean(timeZone && input.chargeAt && !unavailable);
+  const pending = input.pendingDeliveryChanges || null;
+  const pendingMove = pending && pending.charge_move && Number(pending.charge_move.trial_end) > 0
+    ? new Date(Number(pending.charge_move.trial_end) * 1000)
+    : null;
+  const pendingPacks = pending && pending.packs ? pending.packs : null;
+  // The charge after the current one: the next renewal, or the one a pending change already moved.
+  const followingChargeAt = projectable ? (pendingMove || addMonths(input.chargeAt, 1, timeZone)) : null;
+  const planned = projectable && remaining > 0
+    ? series(market, input.chargeAt, rows, transit, remaining, timeZone)
     : [];
   const next = planned[0] || null;
   const productionDate = input.productionDate || null;
@@ -152,40 +192,18 @@ function buildDeliveryRead(input) {
   const locked = !timeZone || unavailable || pastDeadline || statusLocked || !nextDeliveryDate;
   const actions = Boolean(timeZone) && !unavailable && !pastDeadline && !statusLocked && Boolean(nextDeliveryDate);
   const hasPrice = input.subtotal != null && input.subtotal !== '';
-  const later = planned.slice(1).map((projected) => ({
+  const laterPacks = pendingPacks && pendingPacks.packs_per_month != null ? pendingPacks.packs_per_month : input.packsPerMonth;
+  const laterPrice = pendingPacks && pendingPacks.subtotal != null ? pendingPacks.subtotal : (hasPrice ? input.subtotal : null);
+  const laterProjected = pendingMove && remaining > 1
+    ? series(market, pendingMove, rows, transit, remaining - 1, timeZone)
+    : planned.slice(1);
+  const later = laterProjected.map((projected) => ({
     ...projected,
-    packs: input.packsPerMonth,
-    ...(hasPrice ? { price: input.subtotal } : {})
+    packs: laterPacks,
+    ...(laterPrice != null ? { price: laterPrice } : {})
   }));
-  const contractEnd = contractKnown && planned.length ? planned[planned.length - 1].deliveryDate : null;
-  // A skip moves the charge to 00:00 of the following delivery's preparation day; renewals follow from there.
-  const skipPlan = timeZone && input.chargeAt && !unavailable
-    ? planSkip({ market, rows, transitDays: transitDays || 0, chargeAt: input.chargeAt, now: input.now })
-    : null;
-  const skipChargeAt = skipPlan && skipPlan.stripeUpdate ? new Date(skipPlan.stripeUpdate.trial_end * 1000) : null;
-  const contractEndIfSkip = contractKnown && skipChargeAt && remaining > 0
-    ? contractEndFrom(market, skipChargeAt, rows, transitDays || 0, remaining, timeZone)
-    : null;
-  // The delivery a skip lands on, so the confirmation can name it before the customer commits.
-  const nextDeliveryIfSkip = skipPlan && skipPlan.preparationDay
-    ? presentDate(deliveryForPrep(market, partsOf(skipPlan.preparationDay), transitDays || 0))
-    : null;
-  const following = timeZone && input.chargeAt && !unavailable
-    ? projectOne(market, addMonths(input.chargeAt, 1, timeZone), rows, transitDays || 0)
-    : null;
-  const offered = actions && next && following
-    ? offerDates({
-      market,
-      rows,
-      transitDays: transitDays || 0,
-      timeZone,
-      fromPreparationDay: next.preparationDay,
-      afterDate: nextDeliveryDate,
-      throughDate: following.deliveryDate,
-      now: input.now,
-      remaining: contractKnown ? remaining : null
-    })
-    : [];
+  const lastPlanned = later.length ? later[later.length - 1] : next;
+  const contractEnd = contractKnown && lastPlanned ? lastPlanned.deliveryDate : null;
 
   const delivery = {
     id: input.deliveryId || 'current',
@@ -209,7 +227,10 @@ function buildDeliveryRead(input) {
     delivery.message = 'O endereço está fora da área de entrega.';
   }
 
+  // Skip, postpone, and packs act on one delivery: the current one while it is editable, otherwise the
+  // following one while that one is still before its own deadline.
   let actionTarget = null;
+  let plans = { contractEndIfSkip: null, nextDeliveryIfSkip: null, offeredDates: [] };
   if (actions) {
     actionTarget = {
       id: delivery.id,
@@ -219,8 +240,18 @@ function buildDeliveryRead(input) {
       timezone: delivery.timezone,
       ...(hasPrice ? { price: input.subtotal } : {})
     };
+    plans = targetPlans({
+      market,
+      rows,
+      transitDays: transit,
+      timeZone,
+      chargeAt: input.chargeAt,
+      projected: next ? { preparationDay: next.preparationDay, deliveryDate: nextDeliveryDate } : null,
+      remaining: contractKnown ? remaining : null,
+      now: input.now
+    });
   } else if (timeZone && !unavailable && (statusLocked || pastDeadline) && later[0]) {
-    const followingDeadline = editableUntil(later[0].chargeAt, timeZone);
+    const followingDeadline = editableUntil(followingChargeAt, timeZone);
     if (!input.now || input.now.getTime() <= followingDeadline.getTime()) {
       actionTarget = {
         id: 'following',
@@ -228,8 +259,19 @@ function buildDeliveryRead(input) {
         packs: later[0].packs,
         editableUntil: followingDeadline.toISOString(),
         timezone: timeZone,
-        ...(hasPrice ? { price: input.subtotal } : {})
+        ...(later[0].price != null ? { price: later[0].price } : {})
       };
+      // The current delivery stays; the contracted count from the following one on is one less.
+      plans = targetPlans({
+        market,
+        rows,
+        transitDays: transit,
+        timeZone,
+        chargeAt: followingChargeAt,
+        projected: later[0],
+        remaining: contractKnown ? remaining - 1 : null,
+        now: input.now
+      });
     }
   }
 
@@ -242,9 +284,15 @@ function buildDeliveryRead(input) {
     actionTarget,
     later,
     contractEnd,
-    contractEndIfSkip,
-    nextDeliveryIfSkip,
-    offeredDates: offered
+    contractEndIfSkip: plans.contractEndIfSkip,
+    nextDeliveryIfSkip: plans.nextDeliveryIfSkip,
+    offeredDates: plans.offeredDates,
+    pendingChange: pending ? {
+      ...(pending.charge_move ? { kind: pending.charge_move.kind } : {}),
+      ...(pendingPacks ? { packs: true } : {})
+    } : null,
+    // Internal: the charge the target delivery is billed at, and whether Stripe can move it now.
+    targetChargeAt: actionTarget ? (actionTarget.id === delivery.id ? input.chargeAt : followingChargeAt) : null
   };
 }
 
@@ -330,6 +378,7 @@ class CustomerDeliveriesService {
 
   async read(subscription, userId) {
     const { body } = await this.readContext(subscription, userId);
+    delete body.targetChargeAt;
     return body;
   }
 
@@ -367,53 +416,80 @@ class CustomerDeliveriesService {
     }
   }
 
+  // Only the delivery the read names in actionTarget can change: the current one while it is editable,
+  // otherwise the following one while it is before its own deadline. Any other delivery is locked.
   assertEditable(read, deliveryId) {
-    if (!read.delivery || !read.delivery.actions) {
+    const target = read.actionTarget;
+    if (!target || !deliveryId || deliveryId !== target.id) {
       throw new HttpError(409, 'This delivery can no longer be changed.', { code: 'delivery_locked' });
     }
-    // Only the current delivery can move its own charge; the following one waits until it is current.
-    if (deliveryId && deliveryId !== read.delivery.id) {
-      throw new HttpError(409, 'This delivery can no longer be changed.', { code: 'delivery_locked' });
-    }
+    return target;
   }
 
   async guardMutation(subscription, userId, deliveryId) {
     const context = await this.readContext(subscription, userId);
-    this.assertEditable(context.body, deliveryId);
+    const target = this.assertEditable(context.body, deliveryId);
     if (!EDITABLE_SUBSCRIPTION_STATUSES.has(String(subscription.status || ''))) {
       throw new HttpError(409, 'This subscription is not active.', { code: 'subscription_not_active' });
     }
-    return context;
+    // Stripe can move a charge only when it is the subscription's next renewal. The following delivery's
+    // charge comes after the current one, so while the current one is unpaid the change waits for its invoice.
+    const deferred = target.id !== context.body.delivery.id && !subscription.currentPaid;
+    return { ...context, target, deferred };
   }
 
   async skip(subscription, userId, { deliveryId } = {}) {
-    const { rows, transitDays } = await this.guardMutation(subscription, userId, deliveryId);
+    const context = await this.guardMutation(subscription, userId, deliveryId);
     const plan = planSkip({
       market: subscription.market,
-      rows,
-      transitDays,
-      chargeAt: subscription.chargeAt,
+      rows: context.rows,
+      transitDays: context.transitDays,
+      chargeAt: context.body.targetChargeAt,
       now: this.now()
     });
     if (!plan.stripeUpdate) {
       throw new HttpError(409, 'No preparation day is available for the following delivery.', { code: 'no_preparation_day' });
     }
-    return this.moveCharge(subscription, userId, plan.stripeUpdate);
+    return this.applyChargeMove(subscription, userId, context, plan.stripeUpdate, 'skip');
   }
 
   async reschedule(subscription, userId, { deliveryId, date } = {}) {
-    const { body } = await this.guardMutation(subscription, userId, deliveryId);
+    const context = await this.guardMutation(subscription, userId, deliveryId);
     const chosen = typeof date === 'string'
-      ? body.offeredDates.find((offer) => offer.deliveryDate === date)
+      ? context.body.offeredDates.find((offer) => offer.deliveryDate === date)
       : null;
     if (!chosen) {
       throw new HttpError(422, 'This date is not available for this delivery.', { code: 'date_not_allowed' });
     }
     const midnight = prepMidnight(chosen.preparationDay, timeZoneFor(subscription.market));
-    return this.moveCharge(subscription, userId, {
+    return this.applyChargeMove(subscription, userId, context, {
       trial_end: Math.floor(midnight.getTime() / 1000),
       proration_behavior: 'none'
+    }, 'reschedule');
+  }
+
+  async applyChargeMove(subscription, userId, context, stripeUpdate, kind) {
+    if (!context.deferred) {
+      return this.moveCharge(subscription, userId, stripeUpdate);
+    }
+    return this.recordPending(subscription, userId, {
+      charge_move: { kind, trial_end: stripeUpdate.trial_end }
     });
+  }
+
+  async recordPending(subscription, userId, change) {
+    if (!this.subscriptions || typeof this.subscriptions.recordPendingChanges !== 'function') {
+      throw new HttpError(503, 'Deliveries service is not available.');
+    }
+    const current = subscription.pendingDeliveryChanges || {};
+    await this.subscriptions.recordPendingChanges(subscription, {
+      ...current,
+      ...change,
+      after_charge_at: new Date(subscription.chargeAt).toISOString(),
+      recorded_at: this.now().toISOString()
+    });
+    const fresh = await this.loadSubscription(subscription.id || subscription.stripeSubscriptionId, userId);
+    return this.read(fresh, userId);
   }
 
   async moveCharge(subscription, userId, stripeUpdate) {
@@ -434,9 +510,15 @@ class CustomerDeliveriesService {
     return body;
   }
 
+  // Guard for a pack save. `deferred` means the save waits for the current delivery's invoice.
   async commitPacks(subscription, userId, { deliveryId } = {}) {
-    const { body } = await this.guardMutation(subscription, userId, deliveryId);
-    return body;
+    const { body, deferred } = await this.guardMutation(subscription, userId, deliveryId);
+    delete body.targetChargeAt;
+    return { ...body, deferred };
+  }
+
+  async recordPendingPacks(subscription, userId, packs) {
+    return this.recordPending(subscription, userId, { packs });
   }
 
   async applyAddressChange(subscription, next = {}) {

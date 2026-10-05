@@ -77,6 +77,9 @@ class SubscriptionLedgerRepository {
       chargedDeliveries: row.charged_deliveries == null ? null : Number(row.charged_deliveries),
       lastChargedInvoiceId: row.last_charged_invoice_id ? String(row.last_charged_invoice_id) : null,
       autoRenew: row.auto_renew == null ? null : Boolean(Number(row.auto_renew)),
+      pendingDeliveryChanges: row.pending_delivery_changes === undefined
+        ? undefined
+        : parseJsonColumn(row.pending_delivery_changes),
       createdAt: row.created_at || null,
       updatedAt: row.updated_at || null,
       profileMarket: row.profile_market ? String(row.profile_market).trim().toUpperCase() : ''
@@ -417,6 +420,30 @@ class SubscriptionLedgerRepository {
       [invoiceId, subscriptionId, invoiceId]
     );
     return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
+  async setPendingDeliveryChanges(subscriptionId, changes) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`pending_delivery_changes\` = ? WHERE \`stripe_subscription_id\` = ?`,
+      [changes ? JSON.stringify(changes) : null, subscriptionId]
+    );
+    return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
+  // Reads and clears in one step, so two deliveries of the same webhook do not both apply the change.
+  async takePendingDeliveryChanges(subscriptionId) {
+    this.ensureDataSource();
+    const row = await this.findByStripeSubscriptionId(subscriptionId);
+    const changes = row && row.pendingDeliveryChanges;
+    if (!changes) return null;
+    const result = await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`pending_delivery_changes\` = NULL
+        WHERE \`stripe_subscription_id\` = ? AND \`pending_delivery_changes\` IS NOT NULL`,
+      [subscriptionId]
+    );
+    const affected = result && typeof result.affectedRows === 'number' ? result.affectedRows : 0;
+    return affected > 0 ? changes : null;
   }
 
   async setAutoRenew(subscriptionId, enabled) {

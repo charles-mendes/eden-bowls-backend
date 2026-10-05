@@ -135,6 +135,11 @@ function buildStripeSubscriptionEntitySchema(tableName = 'stripe_subscriptions')
         width: 1,
         nullable: true
       },
+      pendingDeliveryChanges: {
+        name: 'pending_delivery_changes',
+        type: 'json',
+        nullable: true
+      },
       createdAt: {
         name: 'created_at',
         type: 'datetime',

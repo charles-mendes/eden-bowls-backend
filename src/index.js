@@ -87,6 +87,7 @@ const { SubscriptionsActionsService } = require('./services/subscriptions-action
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
 const { SubscriptionsEditCommitService } = require('./services/subscriptions-edit-commit.service');
 const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
+const { PendingDeliveryChangesService } = require('./services/pending-delivery-changes.service');
 const { SubscriptionsService } = require('./services/subscriptions.service');
 const { StripeWebhookService } = require('./services/stripe-webhook.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
@@ -383,6 +384,12 @@ async function bootstrap() {
     resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection),
     shippingQuoteSigner,
     transactionalMailer,
+    logger
+  });
+  // The following delivery's changes recorded before the current delivery was paid run on its invoice.paid.
+  stripeWebhookService.pendingDeliveryChanges = new PendingDeliveryChangesService({
+    ledgerRepository: subscriptionLedgerRepository,
+    editCommitRepository: subscriptionsEditCommitRepository,
     logger
   });
   const subscriptionsEditCommitService = new SubscriptionsEditCommitService(subscriptionsEditCommitRepository, {

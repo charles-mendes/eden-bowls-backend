@@ -42,7 +42,8 @@ class SubscriptionsEditCommitRepository {
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
 
-  async commit(userId, subscriptionId, requestPayload = {}, ledgerRow = null) {
+  // With `defer`, validates the save (hash, plan, prices) and returns it without touching Stripe or the ledger.
+  async commit(userId, subscriptionId, requestPayload = {}, ledgerRow = null, options = {}) {
     if (!this.ledgerRepository) {
       throw new HttpError(503, 'Subscription edit commit dependencies are not available.');
     }
@@ -81,6 +82,19 @@ class SubscriptionsEditCommitRepository {
       payload
     });
     const itemUpdates = diffSubscriptionItems(currentItems, proposed.items);
+    if (options.defer) {
+      const lines = proposed.resolved && proposed.resolved.catalog_pricing
+        ? proposed.resolved.catalog_pricing.line_items || []
+        : [];
+      return {
+        subscription_id: subscriptionId,
+        stripe_account: ledgerStripeAccount(row),
+        proration: { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency },
+        packs_per_month: lines.reduce((sum, line) => sum + Math.max(0, Number(line.quantity) || 0), 0),
+        subtotal: proposed.catalogSubtotal,
+        edit_payment_pending: false
+      };
+    }
     const currentTerm = Number(row.subscriptionTermMonths || 1);
     const proposedTerm = Number(payload.subscription_term_months || currentTerm);
     const termChange = currentTerm !== proposedTerm;

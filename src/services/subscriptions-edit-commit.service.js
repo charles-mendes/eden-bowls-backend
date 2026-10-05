@@ -65,8 +65,23 @@ class SubscriptionsEditCommitService {
     }
 
     await this.assertPetsNotBlocked(userId, subscriptionId, parsed.pets);
+    let guard = null;
     if (parsed.delivery_id) {
-      await this.assertDeliveryEditable(userId, subscriptionId, parsed.delivery_id);
+      guard = await this.assertDeliveryEditable(userId, subscriptionId, parsed.delivery_id);
+    }
+
+    // The following delivery's packs wait for the current delivery's invoice, so that charge keeps its packs.
+    if (guard && guard.deferred) {
+      const prepared = await this.repository.commit(userId, subscriptionId, parsed, row, { defer: true });
+      await this.deliveryGuard.recordPendingPacks(guard.subscription, userId, {
+        payload: parsed,
+        packs_per_month: prepared.packs_per_month,
+        subtotal: prepared.subtotal
+      });
+      return {
+        success: true,
+        data: { ...prepared, pending_until_current_charge: true }
+      };
     }
 
     const data = await this.repository.commit(userId, subscriptionId, parsed, row);
@@ -83,7 +98,8 @@ class SubscriptionsEditCommitService {
       throw new HttpError(503, 'Deliveries service is not available.');
     }
     const subscription = await this.deliveryGuard.loadSubscription(subscriptionId, userId);
-    await this.deliveryGuard.commitPacks(subscription, userId, { deliveryId });
+    const guard = await this.deliveryGuard.commitPacks(subscription, userId, { deliveryId });
+    return { subscription, deferred: Boolean(guard && guard.deferred) };
   }
 
   async assertPetsNotBlocked(userId, subscriptionId, pets) {

@@ -40,6 +40,7 @@ class StripeWebhookService {
     this.customerStore = options.customerStore || null;
     this.shippingProductId = options.shippingProductId || '';
     this.transactionalMailer = options.transactionalMailer || null;
+    this.pendingDeliveryChanges = options.pendingDeliveryChanges || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.withTimeout = options.withTimeout || withTimeout;
   }
@@ -424,6 +425,9 @@ class StripeWebhookService {
       row = await ledger.incrementChargedDeliveries(subscriptionId, invoice.id);
     }
     await this.endContractAfterLastDelivery(row, subscription, billing);
+    if (this.pendingDeliveryChanges) {
+      await this.pendingDeliveryChanges.applyAfterCharge({ subscriptionId, subscription, billing });
+    }
   }
 
   async endContractAfterLastDelivery(row, subscription, billing) {
