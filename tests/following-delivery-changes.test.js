@@ -360,3 +360,71 @@ describe('following delivery over HTTP (3.9)', () => {
     expect(other.status).toBe(404);
   });
 });
+
+describe('pending change when the current charge fails (3.9)', () => {
+  const recordedAgainst = at(2026, 1, 3, 14);
+  const pending = {
+    after_charge_at: recordedAgainst.toISOString(),
+    charge_move: { kind: 'skip', trial_end: unix(2026, 3, 4) },
+    packs: { payload: { delivery_id: 'following' }, packs_per_month: 6, subtotal: 75 }
+  };
+
+  function webhookWith(status) {
+    let row = { userId: 7, stripeSubscriptionId: 'sub_123', status: 'past_due', pendingDeliveryChanges: pending };
+    const ledgerRepository = {
+      findByStripeSubscriptionId: jest.fn(async () => row),
+      findUserStateBySubscriptionId: jest.fn().mockResolvedValue(null),
+      upsert: jest.fn(async () => row),
+      setPendingDeliveryChanges: jest.fn(async (_id, value) => { row = { ...row, pendingDeliveryChanges: value }; })
+    };
+    const logger = { info() {}, warn: jest.fn(), error() {} };
+    const webhook = new StripeWebhookService({ ledgerRepository, logger });
+    const subscription = {
+      id: 'sub_123',
+      status,
+      customer: 'cus_1',
+      metadata: { wp_user_id: '7' },
+      current_period_start: Math.floor(recordedAgainst.getTime() / 1000),
+      current_period_end: unix(2026, 2, 3)
+    };
+    return { webhook, ledgerRepository, logger, subscription, current: () => row };
+  }
+
+  test.each(['unpaid', 'canceled'])('Stripe giving up on the charge (%s) drops the change and logs it', async (status) => {
+    const { webhook, ledgerRepository, logger, subscription, current } = webhookWith(status);
+    await webhook.handleSubscriptionChanged(subscription, { account: 'br' }, { id: 'evt_1', type: 'customer.subscription.updated' });
+
+    expect(ledgerRepository.setPendingDeliveryChanges).toHaveBeenCalledWith('sub_123', null);
+    expect(current().pendingDeliveryChanges).toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionId: 'sub_123', stripeStatus: status, chargeMove: 'skip', packs: true }),
+      'Pending delivery change dropped: the current charge failed for good.'
+    );
+  });
+
+  test('past_due keeps the change, and a late payment applies it on invoice.paid', async () => {
+    const { webhook, ledgerRepository, subscription, current } = webhookWith('past_due');
+    await webhook.handleSubscriptionChanged(subscription, { account: 'br' }, { id: 'evt_2', type: 'customer.subscription.updated' });
+    expect(ledgerRepository.setPendingDeliveryChanges).not.toHaveBeenCalled();
+    expect(current().pendingDeliveryChanges).toBe(pending);
+
+    // Paid five days late: Stripe opened the period at the failed renewal, which the change was recorded against.
+    let stored = current().pendingDeliveryChanges;
+    const commit = jest.fn().mockResolvedValue({});
+    const changes = new PendingDeliveryChangesService({
+      ledgerRepository: {
+        findByStripeSubscriptionId: jest.fn(async () => ({ userId: 7, pendingDeliveryChanges: stored })),
+        takePendingDeliveryChanges: jest.fn(async () => { const taken = stored; stored = null; return taken; }),
+        setPendingDeliveryChanges: jest.fn()
+      },
+      editCommitRepository: { commit },
+      now: () => at(2026, 1, 8, 10)
+    });
+    const billing = { setTrialEnd: jest.fn().mockResolvedValue({}) };
+    await changes.applyAfterCharge({ subscriptionId: 'sub_123', subscription, billing });
+
+    expect(commit).toHaveBeenCalledWith(7, 'sub_123', pending.packs.payload);
+    expect(billing.setTrialEnd).toHaveBeenCalledWith({ subscriptionId: 'sub_123', trial_end: unix(2026, 3, 4), proration_behavior: 'none' });
+    expect(stored).toBeNull();
+  });
+});

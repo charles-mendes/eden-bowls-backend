@@ -662,12 +662,32 @@ class StripeWebhookService {
       paymentMethodBrand: card.brand || undefined
     });
 
+    await this.discardPendingAfterFailedCharge(subscription, subscriptionId);
+
     await this.notifySubscriptionTransition({
       subscription,
       subscriptionId,
       event,
       stripeBilling: runtime.stripeBilling
     });
+  }
+
+  // A change to the following delivery waits for the current charge. When Stripe gives up on that charge
+  // (the subscription is unpaid or canceled), the change is dropped. past_due keeps it: a late payment applies it.
+  async discardPendingAfterFailedCharge(subscription, subscriptionId) {
+    const status = String(subscription.status || '');
+    if (status !== 'unpaid' && status !== 'canceled' && status !== 'incomplete_expired') return;
+    const row = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
+    const pending = row && row.pendingDeliveryChanges;
+    if (!pending || typeof this.ledgerRepository.setPendingDeliveryChanges !== 'function') return;
+    await this.ledgerRepository.setPendingDeliveryChanges(subscriptionId, null);
+    this.logger.warn({
+      subscriptionId,
+      stripeStatus: status,
+      chargeMove: pending.charge_move ? pending.charge_move.kind : null,
+      packs: Boolean(pending.packs),
+      recordedAgainst: pending.after_charge_at || null
+    }, 'Pending delivery change dropped: the current charge failed for good.');
   }
 
   async stillCancelling(subscriptionId, stripeBilling) {
