@@ -419,11 +419,12 @@ class StripeWebhookService {
         throw new Error('Stripe billing cannot list paid invoices to seed the charged deliveries.');
       }
       const paid = await billing.listPaidInvoicesForSubscription(subscriptionId);
-      const invoices = paid.some((item) => item.id === invoice.id) ? paid : [...paid, invoice];
-      row = await ledger.seedChargedDeliveries(subscriptionId, invoices.filter(isChargedDeliveryInvoice).length, invoice.id);
-    } else {
-      row = await ledger.incrementChargedDeliveries(subscriptionId, invoice.id);
+      const earlier = paid
+        .filter((item) => item.id && item.id !== invoice.id && isChargedDeliveryInvoice(item))
+        .map((item) => item.id);
+      await ledger.seedChargedDeliveries(subscriptionId, earlier);
     }
+    row = await ledger.incrementChargedDeliveries(subscriptionId, invoice.id);
     await this.endContractAfterLastDelivery(row, subscription, billing);
     if (this.pendingDeliveryChanges) {
       await this.pendingDeliveryChanges.applyAfterCharge({ subscriptionId, subscription, billing });

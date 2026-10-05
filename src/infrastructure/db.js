@@ -42,6 +42,7 @@ const { AddBackgroundJobSchema1700000000020 } = require('./migrations/1700000000
 const { CreateDeliveryClosedDays1700000000021 } = require('./migrations/1700000000021-create-delivery-closed-days');
 const { AddLedgerChargedDeliveries1700000000022 } = require('./migrations/1700000000022-add-ledger-charged-deliveries');
 const { AddLedgerPendingDeliveryChanges1700000000023 } = require('./migrations/1700000000023-add-ledger-pending-delivery-changes');
+const { CreateSubscriptionChargedInvoices1700000000024 } = require('./migrations/1700000000024-create-subscription-charged-invoices');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
@@ -106,7 +107,8 @@ function buildDataSourceOptions(env) {
       AddBackgroundJobSchema1700000000020,
       CreateDeliveryClosedDays1700000000021,
       AddLedgerChargedDeliveries1700000000022,
-      AddLedgerPendingDeliveryChanges1700000000023
+      AddLedgerPendingDeliveryChanges1700000000023,
+      CreateSubscriptionChargedInvoices1700000000024
     ],
     synchronize: false,
     logging: false,

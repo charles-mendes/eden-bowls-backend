@@ -39,6 +39,7 @@ class SubscriptionLedgerRepository {
     this.tableName = options.tableName || 'stripe_subscriptions';
     this.userStateTableName = options.userStateTableName || 'onboarding_user_state';
     this.usermetaTableName = options.usermetaTableName || 'wp_usermeta';
+    this.chargedInvoicesTableName = options.chargedInvoicesTableName || 'subscription_charged_invoices';
   }
 
   ensureDataSource() {
@@ -399,26 +400,44 @@ class SubscriptionLedgerRepository {
     return this.findByStripeSubscriptionId(subscriptionId);
   }
 
-  // First count for a row that predates the column; a row that already has a count is left alone.
-  async seedChargedDeliveries(subscriptionId, count, invoiceId) {
+  // Records one counted cycle invoice. True only when the row is new, so a repeat, late or concurrent, is a no-op.
+  async recordChargedInvoice(subscriptionId, invoiceId) {
     this.ensureDataSource();
+    const result = await this.dataSource.query(
+      `INSERT IGNORE INTO \`${this.chargedInvoicesTableName}\` (\`stripe_subscription_id\`, \`invoice_id\`) VALUES (?, ?)`,
+      [subscriptionId, invoiceId]
+    );
+    return Boolean(result && typeof result.affectedRows === 'number' && result.affectedRows === 1);
+  }
+
+  // First count for a row that predates the column: the earlier paid cycle invoices are recorded and counted
+  // from the table; the invoice being processed then goes through the same insert as any later one.
+  async seedChargedDeliveries(subscriptionId, earlierInvoiceIds = []) {
+    this.ensureDataSource();
+    for (const invoiceId of earlierInvoiceIds) {
+      await this.recordChargedInvoice(subscriptionId, invoiceId);
+    }
     await this.dataSource.query(
-      `UPDATE \`${this.tableName}\` SET \`charged_deliveries\` = ?, \`last_charged_invoice_id\` = ?
+      `UPDATE \`${this.tableName}\` SET \`charged_deliveries\` = (
+          SELECT COUNT(*) FROM \`${this.chargedInvoicesTableName}\` WHERE \`stripe_subscription_id\` = ?
+        )
         WHERE \`stripe_subscription_id\` = ? AND \`charged_deliveries\` IS NULL`,
-      [Math.max(0, Number(count) || 0), invoiceId || null, subscriptionId]
+      [subscriptionId, subscriptionId]
     );
     return this.findByStripeSubscriptionId(subscriptionId);
   }
 
-  // A retried invoice.paid for the invoice already counted does not count twice.
+  // Adds one charged delivery only when this invoice was not recorded before.
   async incrementChargedDeliveries(subscriptionId, invoiceId) {
     this.ensureDataSource();
-    await this.dataSource.query(
-      `UPDATE \`${this.tableName}\` SET \`charged_deliveries\` = \`charged_deliveries\` + 1, \`last_charged_invoice_id\` = ?
-        WHERE \`stripe_subscription_id\` = ? AND \`charged_deliveries\` IS NOT NULL
-          AND (\`last_charged_invoice_id\` IS NULL OR \`last_charged_invoice_id\` <> ?)`,
-      [invoiceId, subscriptionId, invoiceId]
-    );
+    const counted = await this.recordChargedInvoice(subscriptionId, invoiceId);
+    if (counted) {
+      await this.dataSource.query(
+        `UPDATE \`${this.tableName}\` SET \`charged_deliveries\` = \`charged_deliveries\` + 1, \`last_charged_invoice_id\` = ?
+          WHERE \`stripe_subscription_id\` = ? AND \`charged_deliveries\` IS NOT NULL`,
+        [invoiceId, subscriptionId]
+      );
+    }
     return this.findByStripeSubscriptionId(subscriptionId);
   }
 

@@ -1037,9 +1037,12 @@ describe('StripeWebhookService charged deliveries', () => {
     }
   });
 
+  // Mirrors subscription_charged_invoices: an invoice id is recorded once, and only a new row counts.
   function ledgerWith(initial) {
     let row = { userId: 7, stripeSubscriptionId: 'sub_123', status: 'active', subscriptionTermMonths: 3, ...initial };
+    const recorded = new Set(initial.recordedInvoices || (initial.lastChargedInvoiceId ? [initial.lastChargedInvoiceId] : []));
     return {
+      recorded,
       current: () => row,
       repository: {
         findByStripeSubscriptionId: jest.fn(async () => row),
@@ -1050,12 +1053,14 @@ describe('StripeWebhookService charged deliveries', () => {
           return row;
         }),
         updateCheckoutReference: jest.fn().mockResolvedValue({}),
-        seedChargedDeliveries: jest.fn(async (_id, count, invoiceId) => {
-          row = { ...row, chargedDeliveries: count, lastChargedInvoiceId: invoiceId };
+        seedChargedDeliveries: jest.fn(async (_id, earlier) => {
+          earlier.forEach((id) => recorded.add(id));
+          if (row.chargedDeliveries == null) row = { ...row, chargedDeliveries: recorded.size };
           return row;
         }),
         incrementChargedDeliveries: jest.fn(async (_id, invoiceId) => {
-          if (row.lastChargedInvoiceId !== invoiceId) {
+          if (!recorded.has(invoiceId)) {
+            recorded.add(invoiceId);
             row = { ...row, chargedDeliveries: row.chargedDeliveries + 1, lastChargedInvoiceId: invoiceId };
           }
           return row;
@@ -1105,8 +1110,24 @@ describe('StripeWebhookService charged deliveries', () => {
 
     await deliver(service, stripeBilling, { id: 'in_4', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 });
 
-    expect(ledger.repository.seedChargedDeliveries).toHaveBeenCalledWith('sub_123', 2, 'in_4');
-    expect(ledger.repository.incrementChargedDeliveries).not.toHaveBeenCalled();
+    // The earlier cycle invoices are recorded; the current one goes through the same insert as a later one.
+    expect(ledger.repository.seedChargedDeliveries).toHaveBeenCalledWith('sub_123', ['in_1']);
+    expect(ledger.repository.incrementChargedDeliveries).toHaveBeenCalledWith('sub_123', 'in_4');
+    expect(ledger.current().chargedDeliveries).toBe(2);
+  });
+
+  test('a late repeat of an older invoice does not count again (3.10)', async () => {
+    const ledger = ledgerWith({ chargedDeliveries: 1, lastChargedInvoiceId: 'in_1' });
+    const stripeBilling = billingStub();
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository });
+
+    await deliver(service, stripeBilling, { id: 'in_2', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 });
+    await deliver(service, stripeBilling, { id: 'in_3', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 });
+    // Replayed with a new event id, so the event dedupe does not stop it; the invoice table does.
+    stripeBilling.constructEvent.mockReturnValue({ ...paidEvent({ id: 'in_2', billing_reason: 'subscription_cycle', subtotal: 9600, amount_paid: 9600 }), id: 'evt_replay_in_2' });
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(ledger.current().chargedDeliveries).toBe(3);
   });
 
   test('adds one charged delivery per paid cycle invoice and repeats safely', async () => {

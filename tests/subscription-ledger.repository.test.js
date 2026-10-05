@@ -170,22 +170,35 @@ describe('SubscriptionLedgerRepository', () => {
       .toMatchObject({ chargedDeliveries: null, lastChargedInvoiceId: null, autoRenew: null });
   });
 
-  test('seeds the charged count only while it is still empty', async () => {
-    const query = jest.fn().mockResolvedValueOnce({ affectedRows: 1 }).mockResolvedValueOnce([chargedRow()]);
+  test('seeds the charged count from the recorded earlier invoices only while it is still empty', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce([chargedRow()]);
     const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
-    await repository.seedChargedDeliveries('sub_123', 2, 'in_2');
-    expect(query.mock.calls[0][0]).toContain('`charged_deliveries` IS NULL');
-    expect(query.mock.calls[0][1]).toEqual([2, 'in_2', 'sub_123']);
+    await repository.seedChargedDeliveries('sub_123', ['in_1', 'in_2']);
+    expect(query.mock.calls[0][0]).toContain('INSERT IGNORE INTO `subscription_charged_invoices`');
+    expect(query.mock.calls[1][1]).toEqual(['sub_123', 'in_2']);
+    expect(query.mock.calls[2][0]).toContain('SELECT COUNT(*) FROM `subscription_charged_invoices`');
+    expect(query.mock.calls[2][0]).toContain('`charged_deliveries` IS NULL');
   });
 
-  test('adds one charged delivery unless that invoice was the last one counted', async () => {
-    const query = jest.fn().mockResolvedValueOnce({ affectedRows: 1 }).mockResolvedValueOnce([chargedRow({ charged_deliveries: 3 })]);
+  test('adds one charged delivery only when the invoice row is new (3.10)', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce({ affectedRows: 1 })
+      .mockResolvedValueOnce([chargedRow({ charged_deliveries: 3 })]);
     const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
     const row = await repository.incrementChargedDeliveries('sub_123', 'in_3');
-    expect(query.mock.calls[0][0]).toContain('`charged_deliveries` = `charged_deliveries` + 1');
-    expect(query.mock.calls[0][0]).toContain('`last_charged_invoice_id` <> ?');
-    expect(query.mock.calls[0][1]).toEqual(['in_3', 'sub_123', 'in_3']);
+    expect(query.mock.calls[0][1]).toEqual(['sub_123', 'in_3']);
+    expect(query.mock.calls[1][0]).toContain('`charged_deliveries` = `charged_deliveries` + 1');
     expect(row.chargedDeliveries).toBe(3);
+
+    const repeat = jest.fn().mockResolvedValueOnce({ affectedRows: 0 }).mockResolvedValueOnce([chargedRow({ charged_deliveries: 3 })]);
+    await new SubscriptionLedgerRepository({ isInitialized: true, query: repeat }).incrementChargedDeliveries('sub_123', 'in_1');
+    expect(repeat).toHaveBeenCalledTimes(2);
+    expect(repeat.mock.calls[1][0]).not.toContain('+ 1');
   });
 
   test('stores the renewal preference', async () => {
