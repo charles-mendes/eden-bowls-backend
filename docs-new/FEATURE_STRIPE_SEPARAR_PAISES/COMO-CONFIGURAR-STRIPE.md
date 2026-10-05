@@ -374,35 +374,34 @@ refund.updated
 
 ## 9. Local (Stripe CLI)
 
-O Dashboard não alcança `localhost`. Encaminhe com o CLI, **dois terminais**, cada um logado na conta correspondente.
+O Dashboard não alcança `localhost`. O CLI encaminha os eventos. Um comando sobe tudo:
 
 ```bash
 cd eden-bowls-backend
 npm run dev
 ```
 
-Outro terminal, conta US:
+- API em `node --watch` com `NODE_ENV=development`.
+- Listener US → `localhost:${PORT}/stripe/v1/webhook/us`, autenticado com `STRIPE_US_SECRET_KEY` (via `STRIPE_API_KEY`, sem `stripe login`).
+- Listener BR → `localhost:${PORT}/stripe/v1/webhook/br`, com `STRIPE_BR_SECRET_KEY`. Se essa chave estiver vazia, o listener BR não sobe.
+- Os `whsec_` impressos pelos listeners vão para `.local/stripe-webhook-secrets.json` (gitignored). A API lê esse arquivo a cada webhook em `development`, com prioridade sobre o `.env`. O `npm run dev` apaga o arquivo ao encerrar (Ctrl+C, SIGTERM ou saída da API), e o `npm run dev:api` volta a usar o `.env`. Se o script for morto com `kill -9`, apague o arquivo à mão.
+
+O `.env` local pode deixar `STRIPE_US_WEBHOOK_SECRET` e `STRIPE_BR_WEBHOOK_SECRET` vazios. Trocar o secret do listener não exige reiniciar a API.
+
+Fluxo manual (continua valendo):
 
 ```bash
-npm run stripe:listen
-# → localhost:3000/stripe/v1/webhook/us
-# --events = os 28 de stripe-webhook-events.js
+npm run dev:api          # só a API
+npm run stripe:listen    # conta US (stripe login nessa conta)
+npm run stripe:listen:br # conta BR (stripe login nessa conta)
 ```
 
-Outro terminal, conta BR (`stripe login` nessa conta):
-
-```bash
-npm run stripe:listen:br
-# → localhost:3000/stripe/v1/webhook/br
-# --events = os 28 de stripe-webhook-events.js
-```
-
-O CLI imprime um `signing secret `. Cole no `.env` da API:
+No fluxo manual cole o `signing secret` impresso pelo CLI no `.env` e reinicie a API:
 
 - US listen → `STRIPE_US_WEBHOOK_SECRET`
 - BR listen → `STRIPE_BR_WEBHOOK_SECRET`
 
-Não use o `signing secret ` do Dashboard enquanto o CLI estiver encaminhando (a assinatura não bate → 400).
+Não use o `signing secret` do Dashboard enquanto o CLI estiver encaminhando (a assinatura não bate → 400). Produção e QA continuam lendo só as variáveis de ambiente.
 
 Detalhe: [STRIPE_CLI_WEBHOOK_LOCAL.md](../BUG_CHECKOUT_BACK_AND_FRONT_END/STRIPE_CLI_WEBHOOK_LOCAL.md).
 

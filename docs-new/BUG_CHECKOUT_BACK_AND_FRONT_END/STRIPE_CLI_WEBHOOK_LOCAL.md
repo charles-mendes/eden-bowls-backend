@@ -64,7 +64,7 @@ O banco local copia o post meta de preço e de produto do export do operador, ca
 
 ## Setup neste repo
 
-### 1) Instalar e logar (uma vez)
+### 1) Instalar o CLI (uma vez)
 
 Docs oficiais: [https://docs.stripe.com/stripe-cli](https://docs.stripe.com/stripe-cli)
 
@@ -72,54 +72,60 @@ No WSL:
 
 ```bash
 stripe --version
-stripe login
 ```
 
-O login abre o browser e liga o CLI a conta test.
+Não precisa de `stripe login` para o `npm run dev`: cada listener recebe a chave da conta pela variável `STRIPE_API_KEY` do processo filho.
 
-### 2) Subir o backend
+### 2) Subir API e listeners juntos
+
+Na raiz de `eden-bowls-backend`:
 
 ```bash
 npm run dev
 ```
 
-Porta padrao: `3000` (`.env` / `PORT`).
+O script `scripts/dev-with-stripe-listen.js`:
 
-### 3) Encaminhar eventos (outro terminal)
+- sobe a API com `node --watch src/index.js` e `NODE_ENV=development`;
+- sobe `stripe listen --forward-to localhost:${PORT}/stripe/v1/webhook/us` com `STRIPE_API_KEY=$STRIPE_US_SECRET_KEY`;
+- sobe o listener BR (`/webhook/br`, `STRIPE_BR_SECRET_KEY`) só se `STRIPE_BR_SECRET_KEY` estiver preenchida;
+- lê o `whsec_` que cada CLI imprime e grava em `.local/stripe-webhook-secrets.json` (`{ "us": "whsec_...", "br": "whsec_..." }`, gitignored);
+- prefixa a saída com `[api]`, `[stripe-us]`, `[stripe-br]` e mostra o secret mascarado;
+- reinicia um listener que caia (o novo secret vai para o arquivo);
+- no Ctrl+C ou SIGTERM encerra API e listeners juntos. Se a API sair, encerra os listeners. Em qualquer desses encerramentos apaga `.local/stripe-webhook-secrets.json`, porque o secret morre com a sessão do listener.
 
-Na raiz de `eden-bowls-backend`:
+Sem o binário `stripe` no PATH, a API sobe mesmo assim e o script avisa como instalar.
+
+Em `development`, `StripeAccounts.webhookSecret()` lê esse arquivo **a cada POST** de webhook. O valor do arquivo vence o `.env`. Por isso:
+
+- o `.env` local pode ficar com `STRIPE_US_WEBHOOK_SECRET` / `STRIPE_BR_WEBHOOK_SECRET` vazios;
+- um secret novo do listener vale no próximo evento, sem reiniciar o Node.
+
+Arquivo ausente, JSON inválido ou conta sem secret: a API usa o `.env` e loga um warn. Sem secret em nenhuma fonte, o webhook responde 503 dizendo que o secret do listener ainda não está disponível.
+
+Em `production` e `test` o arquivo é ignorado. `npm start` não muda.
+
+### 3) Fluxo manual (alternativa)
 
 ```bash
-npm run stripe:listen
+npm run dev:api          # só a API, node --watch
+npm run stripe:listen    # outro terminal, conta US (exige stripe login nessa conta)
+npm run stripe:listen:br # outro terminal, conta BR
 ```
 
-Equivalente:
-
-```bash
-npm run stripe:listen
-# stripe listen --forward-to localhost:3000/stripe/v1/webhook/us --events <28 eventos>
-```
-
-Os 28 eventos saem de `src/infrastructure/stripe/stripe-webhook-events.js`. Conta BR: `npm run stripe:listen:br`.
-
-O CLI imprime um secret **desta sessao**:
-
-```text
-Ready! Your webhook signing secret is signing secret ...
-```
-
-### 4) Colocar o secret no `.env` e reiniciar o Node
+Nesse fluxo o arquivo `.local/` não é atualizado. Cole o secret que o CLI imprimiu no `.env` e reinicie a API:
 
 ```bash
 STRIPE_US_WEBHOOK_SECRET=
+STRIPE_BR_WEBHOOK_SECRET=
 # STRIPE_WEBHOOK_SECRET is not read
 ```
 
-Reinicie `npm run dev`. O Node so le o `.env` na subida.
+Ao encerrar, o `npm run dev` apaga `.local/stripe-webhook-secrets.json`, então o `dev:api` volta a usar o `.env`. Exceção: se o script morrer sem chance de limpar (`kill -9`, terminal fechado à força, queda da máquina), o arquivo fica e continua vencendo o `.env` em `development`. Nesse caso apague o arquivo à mão.
 
-O `signing secret ` do CLI **nao** e o `signing secret ` do endpoint do dashboard. Sao dois destinos. Local = secret que o `listen` imprimiu.
+O `signing secret` do CLI **nao** e o `signing secret` do endpoint do dashboard. Sao dois destinos. Local = secret que o `listen` imprimiu.
 
-### 5) Pagar de novo no front
+### 4) Pagar de novo no front
 
 No terminal do `listen` devem aparecer linhas como `invoice.created`, `invoice.paid`, `payment_intent.succeeded`, encaminhadas com 200.
 
@@ -145,7 +151,7 @@ Confirma que a rota aceita o POST assinado. O payload de fixture **nao** tem o `
 
 | Ambiente | Como o Stripe chega | Qual secret (`STRIPE_WEBHOOK_SECRET` is not read) |
 |---|---|---|
-| Local | `npm run stripe:listen` | `signing secret ` impresso pelo CLI |
+| Local | `npm run dev` (ou `npm run stripe:listen`) | `signing secret ` impresso pelo CLI |
 | Staging / prod | endpoint no dashboard → `{API}/stripe/v1/webhook` | `signing secret ` **daquele** endpoint |
 
 Em producao o CLI nao entra. URL publica HTTPS + secret do dashboard.

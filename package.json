@@ -6,7 +6,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
+    "dev": "node scripts/dev-with-stripe-listen.js",
+    "dev:api": "node --watch src/index.js",
     "migrate": "node src/scripts/run-migrations.js",
     "test": "jest --runInBand",
     "test:unit": "jest --runInBand",

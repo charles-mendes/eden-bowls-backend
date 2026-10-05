@@ -56,7 +56,10 @@ class StripeWebhookService {
 
     if (!webhookSecret) {
       const webhookName = stripeAccount === 'br' ? 'STRIPE_BR_WEBHOOK_SECRET' : 'STRIPE_US_WEBHOOK_SECRET';
-      throw new HttpError(503, `${webhookName} is not configured.`, {
+      const message = this.stripeAccounts && this.stripeAccounts.usesListenerSecrets && this.stripeAccounts.usesListenerSecrets()
+        ? `The Stripe CLI listener secret for ${stripeAccount.toUpperCase()} is not available yet (start npm run dev or set ${webhookName}).`
+        : `${webhookName} is not configured.`;
+      throw new HttpError(503, message, {
         code: 'stripe_webhook_secret_missing',
         stripe_account: stripeAccount
       });
