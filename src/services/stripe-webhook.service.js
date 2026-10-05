@@ -42,6 +42,7 @@ class StripeWebhookService {
     this.transactionalMailer = options.transactionalMailer || null;
     this.pendingDeliveryChanges = options.pendingDeliveryChanges || null;
     this.paidCycles = options.paidCycles || null;
+    this.customerInvoices = options.customerInvoices || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.withTimeout = options.withTimeout || withTimeout;
   }
@@ -406,6 +407,21 @@ class StripeWebhookService {
       subscription,
       billing: runtime.stripeBilling || this.stripeBilling,
       delivery
+    });
+
+    await this.issueCustomerInvoice(invoice, runtime);
+  }
+
+  // The Eden Bowls invoice PDF of every paid invoice above zero, emailed to the customer. Runs last and throws on a
+  // Stripe or disk failure, so the event is retried; the steps above are safe to repeat and the number is kept.
+  async issueCustomerInvoice(invoice, runtime = {}) {
+    if (!this.customerInvoices || !(Number(invoice.total) > 0)) {
+      return;
+    }
+    await this.customerInvoices.issueForInvoice({
+      invoice,
+      account: runtime.account || 'us',
+      send: true
     });
   }
 

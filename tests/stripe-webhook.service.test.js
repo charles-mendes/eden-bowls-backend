@@ -35,6 +35,7 @@ function buildService(overrides = {}) {
       shippingProductId: overrides.shippingProductId === undefined ? 'prod_ship' : overrides.shippingProductId,
       logger: overrides.logger || { error() {}, warn() {}, info() {} },
       transactionalMailer: overrides.transactionalMailer || null,
+      customerInvoices: overrides.customerInvoices || null,
       withTimeout: overrides.withTimeout
     }),
     stripeBilling,
@@ -161,6 +162,62 @@ describe('StripeWebhookService', () => {
     expect(ledgerRepository.updateCheckoutReference).toHaveBeenCalledWith(7, expect.objectContaining({
       payment_state: 'paid'
     }));
+  });
+
+  describe('Eden Bowls invoice PDF', () => {
+    function paidEvent(total) {
+      return {
+        id: 'evt_inv',
+        type: 'invoice.paid',
+        data: { object: { id: 'in_1', customer: 'cus_1', subscription: 'sub_123', total } }
+      };
+    }
+
+    function arrange(customerInvoices, total) {
+      const built = buildService({ customerInvoices });
+      built.stripeBilling.constructEvent.mockReturnValue(paidEvent(total));
+      built.stripeBilling.retrieveSubscription.mockResolvedValue({
+        id: 'sub_123',
+        status: 'active',
+        customer: 'cus_1',
+        items: { data: [] },
+        metadata: { eden_env: 'qa', wp_user_id: '7' }
+      });
+      built.ledgerRepository.findUserStateBySubscriptionId.mockResolvedValue({ userId: 7, checkoutReference: {} });
+      return built;
+    }
+
+    test('issues and emails the invoice of a paid invoice above zero', async () => {
+      const customerInvoices = { issueForInvoice: jest.fn().mockResolvedValue({ row: { id: 1 } }) };
+      const { service } = arrange(customerInvoices, 14450);
+
+      await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' })).resolves.toEqual({ received: true });
+
+      expect(customerInvoices.issueForInvoice).toHaveBeenCalledWith({
+        invoice: expect.objectContaining({ id: 'in_1' }),
+        account: 'us',
+        send: true
+      });
+    });
+
+    test('a $0 invoice (skip or postponement) gets no invoice PDF', async () => {
+      const customerInvoices = { issueForInvoice: jest.fn() };
+      const { service } = arrange(customerInvoices, 0);
+
+      await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+      expect(customerInvoices.issueForInvoice).not.toHaveBeenCalled();
+    });
+
+    test('a failure to issue the PDF schedules the event for a retry', async () => {
+      const customerInvoices = { issueForInvoice: jest.fn().mockRejectedValue(new Error('disk full')) };
+      const { service, eventsRepository } = arrange(customerInvoices, 14450);
+
+      await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }).catch(() => {});
+
+      expect(eventsRepository.markProcessed).not.toHaveBeenCalled();
+      expect(eventsRepository.scheduleRetry).toHaveBeenCalled();
+    });
   });
 
   test('does not reprocess a duplicate event id', async () => {
