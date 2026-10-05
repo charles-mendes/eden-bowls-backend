@@ -10,6 +10,7 @@ function buildDeliveryClosedDayEntitySchema(tableName = 'delivery_closed_days') 
       closedOn: { name: 'closed_on', type: 'date' },
       label: { type: String, length: 191 },
       origin: { type: String, length: 16 },
+      type: { type: String, length: 16 },
       active: { type: Boolean, default: true },
       closesPreparation: { name: 'closes_preparation', type: Boolean, default: false },
       closesPickup: { name: 'closes_pickup', type: Boolean, default: false },

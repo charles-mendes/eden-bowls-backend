@@ -1303,14 +1303,15 @@ class StripeBillingClient {
     }
   }
 
-  async setTrialEnd({ subscriptionId, trial_end, proration_behavior = 'none' }) {
+  async setTrialEnd({ subscriptionId, trial_end, proration_behavior = 'none', idempotencyKey }) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     try {
-      return await stripe.subscriptions.update(subscriptionId, {
-        trial_end,
-        proration_behavior
-      });
+      const params = { trial_end, proration_behavior };
+      if (idempotencyKey) {
+        return await stripe.subscriptions.update(subscriptionId, params, { idempotencyKey: String(idempotencyKey) });
+      }
+      return await stripe.subscriptions.update(subscriptionId, params);
     } catch (error) {
       throw this.httpError(502, this.stripeMessage(error, 'Unable to update the subscription charge date.'), {
         code: 'stripe_trial_end_failed'

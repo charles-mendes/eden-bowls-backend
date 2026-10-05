@@ -755,3 +755,18 @@ describe('extractInvoicePayment', () => {
     })).toBe('nVJYDOag');
   });
 });
+
+describe('setTrialEnd', () => {
+  test('passes the idempotency key as a request option only when given', async () => {
+    const update = jest.fn().mockResolvedValue({ id: 'sub_9' });
+    const { client } = buildClient({ stripe: { subscriptions: { update } } });
+    await client.setTrialEnd({ subscriptionId: 'sub_9', trial_end: 1830000000, idempotencyKey: 'delivery-calendar-sync:3' });
+    await client.setTrialEnd({ subscriptionId: 'sub_9', trial_end: 1830000000 });
+    expect(update.mock.calls[0]).toEqual([
+      'sub_9',
+      { trial_end: 1830000000, proration_behavior: 'none' },
+      { idempotencyKey: 'delivery-calendar-sync:3' }
+    ]);
+    expect(update.mock.calls[1]).toEqual(['sub_9', { trial_end: 1830000000, proration_behavior: 'none' }]);
+  });
+});

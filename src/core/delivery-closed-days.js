@@ -69,12 +69,26 @@ function easterSunday(year) {
   return { year, month, day };
 }
 
+const TYPE_BY_ORIGIN = {
+  fixed: 'national',
+  movable: 'national',
+  ups: 'carrier',
+  regional: 'regional',
+  one_off: 'adhoc'
+};
+
+// A date holds one row per type; rows read before the type column existed fall back to their origin.
+function rowType(item) {
+  return item.type || TYPE_BY_ORIGIN[item.origin] || null;
+}
+
 function row(market, closedOn, label, origin, flags) {
   return {
     market,
     closedOn,
     label,
     origin,
+    type: TYPE_BY_ORIGIN[origin],
     active: true,
     closesPreparation: flags.prep,
     closesPickup: flags.pickup,
@@ -136,7 +150,7 @@ function flagOn(rows, market, closedOn, flag) {
 function yearHasBrazilNationalRows(rows, year) {
   return (rows || []).some((item) => item
     && item.market === 'BR'
-    && (item.origin === 'fixed' || item.origin === 'movable')
+    && rowType(item) === 'national'
     && String(item.closedOn).startsWith(`${year}-`));
 }
 
@@ -144,7 +158,7 @@ function usYearHasCalendar(rows, year) {
   const ups = (rows || []).filter((item) => item
     && item.active !== false
     && item.market === 'US'
-    && item.origin === 'ups'
+    && rowType(item) === 'carrier'
     && String(item.closedOn).startsWith(`${year}-`));
   if (ups.length === 0) {
     return false;
@@ -166,11 +180,15 @@ function assessUsCalendar(rows, year, logger) {
   return { covered };
 }
 
+function rowKey(item) {
+  return `${item.market}|${String(item.closedOn).slice(0, 10)}|${rowType(item)}`;
+}
+
 function insertIgnoringConflict(rows, incoming) {
   const next = rows.slice();
-  const seen = new Set(next.map((item) => `${item.market}|${String(item.closedOn).slice(0, 10)}`));
+  const seen = new Set(next.map(rowKey));
   for (const item of incoming) {
-    const key = `${item.market}|${String(item.closedOn).slice(0, 10)}`;
+    const key = rowKey(item);
     if (seen.has(key)) {
       continue;
     }
@@ -343,6 +361,8 @@ module.exports = {
   addCalendarDays,
   weekday,
   easterSunday,
+  TYPE_BY_ORIGIN,
+  rowType,
   buildBrazilHolidayRows,
   buildUs2026Rows,
   buildSeedRows,

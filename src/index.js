@@ -79,6 +79,7 @@ const { OnboardingZipcodeLookupService } = require('./services/onboarding-zipcod
 const { OnboardingZipcodeService } = require('./services/onboarding-zipcode.service');
 const { createShippingQuoteServices } = require('./config/shipping-quote-services');
 const { DeliveryClosedDaysRepository } = require('./infrastructure/repositories/delivery-closed-days.repository');
+const { AdminDeliveryCalendarService } = require('./services/admin-delivery-calendar.service');
 const { UpsClient } = require('./infrastructure/shipping/ups-client');
 const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shipment.repository');
 const { UpsShipmentService } = require('./services/ups-shipment.service');
@@ -205,6 +206,7 @@ async function bootstrap() {
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const deliveryCalendar = new DeliveryClosedDaysRepository(dataSource);
+  const adminDeliveryCalendarService = new AdminDeliveryCalendarService({ calendarRepository: deliveryCalendar });
   // One delivery rule for the checkout estimate, the order confirmation email, and the production queue.
   const deliveryEstimator = new DeliveryEstimator({ calendar: deliveryCalendar });
   const { shippingQuoteSigner, shippingService, customerDeliveriesService } = createShippingQuoteServices({
@@ -620,6 +622,7 @@ async function bootstrap() {
     adminOnboardingService,
     adminBillingService,
     adminProductionService,
+    adminDeliveryCalendarService,
     upsShipmentService,
     adminCatalogService,
     adminUsersService,
@@ -657,7 +660,8 @@ async function bootstrap() {
       upsShipmentRepository,
       upsClient,
       refreshTokenRepository: authRefreshTokenRepository,
-      eventsRepository: stripeWebhookEventsRepository
+      eventsRepository: stripeWebhookEventsRepository,
+      deliveryCalendarSyncMaxAttempts: env.DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS
     })
   });
 }

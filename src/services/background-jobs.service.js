@@ -2,6 +2,8 @@ const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accoun
 const { withTimeout } = require('../core/with-timeout');
 const { startScheduler } = require('../core/job-scheduler');
 const { BackgroundJobCursorRepository } = require('../infrastructure/repositories/background-job-cursor.repository');
+const { DeliveryCalendarStripeSyncsRepository } = require('../infrastructure/repositories/delivery-calendar-stripe-syncs.repository');
+const { DeliveryCalendarStripeSyncService } = require('./delivery-calendar-stripe-sync.service');
 
 const UPS_TRACK_CAP_MS = 10 * 1000;
 const UPS_TRACK_BATCH = 20;
@@ -16,7 +18,8 @@ const JOB_INTERVALS = {
   mail_resend: 5 * 60 * 1000,
   ups_tracking: 30 * 60 * 1000,
   refresh_cleanup: DAY_MS,
-  webhook_retention: DAY_MS
+  webhook_retention: DAY_MS,
+  delivery_calendar_stripe_sync: 60 * 1000
 };
 
 const LOCKS = {
@@ -25,7 +28,8 @@ const LOCKS = {
   mail_resend: 'eden_job_mail_resend',
   ups_tracking: 'eden_job_ups_tracking',
   refresh_cleanup: 'eden_job_refresh_cleanup',
-  webhook_retention: 'eden_job_webhook_retention'
+  webhook_retention: 'eden_job_webhook_retention',
+  delivery_calendar_stripe_sync: 'eden_job_delivery_calendar_stripe_sync'
 };
 
 function upsTrackTimeoutMs(clientTimeoutMs) {
@@ -123,6 +127,16 @@ async function runWebhookRetention(deps, now = new Date()) {
   return { deleted };
 }
 
+function deliveryCalendarSyncService(deps) {
+  if (deps.deliveryCalendarSyncService) return deps.deliveryCalendarSyncService;
+  return new DeliveryCalendarStripeSyncService({
+    repository: deps.deliveryCalendarSyncsRepository || new DeliveryCalendarStripeSyncsRepository(deps.dataSource),
+    billingFor: (market) => resolveStripeBilling(deps, String(market || 'us').toLowerCase()),
+    maxAttempts: deps.deliveryCalendarSyncMaxAttempts,
+    logger: deps.logger
+  });
+}
+
 function createJobDefinitions(deps) {
   return [
     {
@@ -160,6 +174,12 @@ function createJobDefinitions(deps) {
       lockName: LOCKS.webhook_retention,
       intervalMs: JOB_INTERVALS.webhook_retention,
       run: () => runWebhookRetention(deps)
+    },
+    {
+      name: 'delivery_calendar_stripe_sync',
+      lockName: LOCKS.delivery_calendar_stripe_sync,
+      intervalMs: JOB_INTERVALS.delivery_calendar_stripe_sync,
+      run: () => deliveryCalendarSyncService(deps).runDue()
     }
   ];
 }

@@ -24,6 +24,7 @@ const {
   parseUpdateFeedbackInput
 } = require('../validators/feedbacks.validator');
 const { registerAdminPrivacyRoutes } = require('./privacy.routes');
+const { registerAdminDeliveryCalendarRoutes } = require('./admin-delivery-calendar.routes');
 
 function couponAccountFor(request) {
   const query = { ...(request.query || {}), ...(request.body || {}) };
@@ -697,6 +698,7 @@ function registerAdminRoutes(app, dependencies = {}) {
   });
 
   registerAdminPrivacyRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminDeliveryCalendarRoutes(app, dependencies, { requirePermission, handle });
 }
 
 module.exports = {
