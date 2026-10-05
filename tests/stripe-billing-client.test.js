@@ -24,7 +24,8 @@ function buildClient(overrides = {}) {
     },
     paymentMethods: {
       retrieve: jest.fn().mockResolvedValue({ id: 'pm_123', customer: null }),
-      attach: jest.fn().mockResolvedValue({ id: 'pm_123' })
+      // Stripe answers with the attached payment method, whose id can differ from the one sent.
+      attach: jest.fn().mockResolvedValue({ id: 'pm_attached' })
     },
     invoices: {
       retrieve: jest.fn().mockResolvedValue({
@@ -125,7 +126,7 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     expect(stripe.subscriptions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         automatic_tax: { enabled: true },
-        default_payment_method: 'pm_123',
+        default_payment_method: 'pm_attached',
         payment_behavior: 'default_incomplete',
         payment_settings: { save_default_payment_method: 'on_subscription' },
         billing_mode: { type: 'flexible' },
@@ -134,6 +135,10 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
       { idempotencyKey: 'eb-sub-create-7-test' }
     );
     expect(stripe.subscriptions.create.mock.calls[0][0].expand).toBeUndefined();
+    expect(stripe.paymentMethods.attach).toHaveBeenCalledWith('pm_123', { customer: 'cus_stored' });
+    expect(stripe.customers.update).toHaveBeenCalledWith('cus_stored', expect.objectContaining({
+      invoice_settings: { default_payment_method: 'pm_attached' }
+    }));
   });
 
   test('creates a Shipping product and reuses it for the next checkout', async () => {
@@ -817,3 +822,17 @@ describe('customer update failure', () => {
   });
 });
 
+
+describe('attachPaymentMethod', () => {
+  test('returns the id Stripe answers with, and falls back to the sent id without one', async () => {
+    const attached = buildClient({
+      stripe: { paymentMethods: { retrieve: jest.fn().mockResolvedValue({ id: 'pm_card_visa', customer: null }), attach: jest.fn().mockResolvedValue({ id: 'pm_1Copy' }) } }
+    });
+    await expect(attached.client.attachPaymentMethod('cus_1', 'pm_card_visa')).resolves.toBe('pm_1Copy');
+
+    const silent = buildClient({
+      stripe: { paymentMethods: { retrieve: jest.fn().mockResolvedValue({ id: 'pm_9', customer: null }), attach: jest.fn().mockResolvedValue({}) } }
+    });
+    await expect(silent.client.attachPaymentMethod('cus_1', 'pm_9')).resolves.toBe('pm_9');
+  });
+});

@@ -531,12 +531,18 @@ class StripeBillingClient {
     }
 
     if (!attachedCustomer) {
+      let attached;
       try {
-        await stripe.paymentMethods.attach(pmId, { customer: customerId });
+        attached = await stripe.paymentMethods.attach(pmId, { customer: customerId });
       } catch (error) {
         throw this.httpError(502, this.stripeMessage(error, 'Unable to attach payment method.'), {
           code: 'stripe_payment_method_attach_failed'
         });
+      }
+      // Stripe may answer with another id (a test shortcut such as pm_card_visa is copied); use the attached one.
+      const attachedId = attached && String(attached.id || '');
+      if (attachedId.startsWith('pm_')) {
+        return attachedId;
       }
     }
 
