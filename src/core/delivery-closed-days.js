@@ -169,6 +169,15 @@ function usYearHasCalendar(rows, year) {
   return true;
 }
 
+// 31 December of the last United States year with a loaded UPS calendar, or null when no year is loaded.
+function usCalendarCoveredThrough(rows) {
+  const years = new Set((rows || [])
+    .filter((item) => item && item.market === 'US' && rowType(item) === 'carrier')
+    .map((item) => Number(String(item.closedOn).slice(0, 4))));
+  const covered = [...years].filter((year) => usYearHasCalendar(rows, year)).sort((left, right) => right - left);
+  return covered.length > 0 ? `${covered[0]}-12-31` : null;
+}
+
 function assessUsCalendar(rows, year, logger) {
   const covered = usYearHasCalendar(rows, year);
   if (!covered && logger && typeof logger.warn === 'function') {
@@ -368,6 +377,7 @@ module.exports = {
   buildSeedRows,
   yearHasBrazilNationalRows,
   usYearHasCalendar,
+  usCalendarCoveredThrough,
   assessUsCalendar,
   insertIgnoringConflict,
   ensureBrazilYear,

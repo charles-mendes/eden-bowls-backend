@@ -107,6 +107,45 @@ class DeliveryCalendarStripeSyncsRepository {
     );
   }
 
+  // What the panel shows: pending rows older than the delay, and every failed or conflict row of the market.
+  async listForPanel(market, { now, delayMinutes }) {
+    const cutoff = new Date(now.getTime() - delayMinutes * 60 * 1000);
+    const rows = await this.dataSource.query(
+      `SELECT * FROM ${TABLE}
+        WHERE market = ?
+          AND ((status = 'pending' AND created_at <= ?) OR status IN ('failed', 'conflict'))
+        ORDER BY created_at, id`,
+      [market, toMysqlDateTime(cutoff)]
+    );
+    return rows.map(mapRow);
+  }
+
+  // Back to pending for a resend. A conflict resend expects the value the operator saw in Stripe.
+  async reopen(executor, id, { fromStatus, expectedTrialEnd, now }) {
+    const db = executor || this.dataSource;
+    const params = [toMysqlDateTime(now)];
+    let expectedSql = '';
+    if (expectedTrialEnd !== undefined) {
+      expectedSql = ', expected_trial_end = ?';
+      params.push(expectedTrialEnd == null ? null : toMysqlDateTime(expectedTrialEnd));
+    }
+    params.push(id, fromStatus);
+    const result = await db.query(
+      `UPDATE ${TABLE}
+          SET status = 'pending', attempts = 0, last_error = NULL, next_attempt_at = ?${expectedSql}
+        WHERE id = ? AND status = ?`,
+      params
+    );
+    return Number(result && result.affectedRows) === 1;
+  }
+
+  async setFound(id, foundTrialEnd) {
+    await this.dataSource.query(
+      `UPDATE ${TABLE} SET found_trial_end = ? WHERE id = ? AND status = 'conflict'`,
+      [foundTrialEnd == null ? null : toMysqlDateTime(foundTrialEnd), id]
+    );
+  }
+
   // One more attempt; the row becomes failed once it reaches `maxAttempts`.
   async recordAttempt(id, { error, now, attempts, maxAttempts }) {
     const next = attempts + 1;

@@ -29,6 +29,23 @@ function registerAdminDeliveryCalendarRoutes(app, dependencies, { requirePermiss
     }));
   });
 
+  app.get('/api/v1/admin/delivery-calendar/syncs', requirePermission('production.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCalendarService(dependencies).syncs({ marketQuery: request.marketQuery }));
+  });
+
+  app.get('/api/v1/admin/delivery-calendar/alerts', requirePermission('production.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCalendarService(dependencies).alerts({ marketQuery: request.marketQuery }));
+  });
+
+  app.post('/api/v1/admin/delivery-calendar/syncs/:id/resend', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCalendarService(dependencies).resendSync({
+      marketQuery: request.marketQuery,
+      id: request.params.id,
+      body: request.body || {},
+      identity: request.adminIdentity
+    }));
+  });
+
   // Every write goes through the calendar service, which reschedules and audits in one transaction.
   app.post('/api/v1/admin/delivery-calendar', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => requireCalendarService(dependencies).write({

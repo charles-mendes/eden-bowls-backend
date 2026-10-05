@@ -1,5 +1,10 @@
 const { HttpError } = require('../core/http-error');
 const { MOVES } = require('./delivery-calendar-impact.service');
+const { dateKey, timeZoneFor, usCalendarCoveredThrough, zonedParts } = require('../core/delivery-closed-days');
+
+const UPS_WARNING_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RESENDABLE = ['failed', 'conflict'];
 const {
   assertNoTwin,
   changedRow,
@@ -55,6 +60,11 @@ function movedForAudit(affected) {
   }));
 }
 
+function sameMoment(left, right) {
+  if (left == null || right == null) return left == null && right == null;
+  return Date.parse(left) === Date.parse(right);
+}
+
 function parseId(value) {
   const id = Number(value);
   if (!Number.isInteger(id) || id <= 0) {
@@ -70,6 +80,8 @@ class AdminDeliveryCalendarService {
     this.syncsRepository = options.syncsRepository || null;
     this.ledgerRepository = options.ledgerRepository || null;
     this.auditRepository = options.auditRepository || null;
+    this.billingFor = options.billingFor || null;
+    this.syncDelayMinutes = Number(options.syncDelayMinutes) > 0 ? Number(options.syncDelayMinutes) : 15;
     this.dataSource = options.dataSource || null;
     this.now = options.now || (() => new Date());
   }
@@ -241,6 +253,122 @@ class AdminDeliveryCalendarService {
       await this.calendarRepository.deleteRow(manager, existing.id);
       return { market, removed: existing, auditEventId };
     });
+  }
+
+  async syncs({ marketQuery }) {
+    const market = singleMarket(marketQuery);
+    const rows = await this.syncsRepository.listForPanel(market, { now: this.now(), delayMinutes: this.syncDelayMinutes });
+    return {
+      market,
+      delayMinutes: this.syncDelayMinutes,
+      delayed: rows.filter((row) => row.status === 'pending'),
+      problems: rows.filter((row) => RESENDABLE.includes(row.status))
+    };
+  }
+
+  // The UPS calendar warning: the US covered end is 31 December of the last loaded UPS year.
+  async alerts({ marketQuery }) {
+    const market = singleMarket(marketQuery);
+    if (market !== 'US') {
+      return { market, upsCalendar: null };
+    }
+    const rows = await this.calendarRepository.listActive();
+    const coveredThrough = usCalendarCoveredThrough(rows);
+    const parts = zonedParts(this.now(), timeZoneFor('US'));
+    const today = dateKey(parts.year, parts.month, parts.day);
+    const daysLeft = coveredThrough
+      ? Math.round((Date.parse(`${coveredThrough}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / DAY_MS)
+      : null;
+    return {
+      market,
+      upsCalendar: {
+        coveredThrough,
+        missingYear: coveredThrough ? Number(coveredThrough.slice(0, 4)) + 1 : parts.year,
+        daysLeft,
+        warn: daysLeft == null || daysLeft < UPS_WARNING_DAYS
+      }
+    };
+  }
+
+  // Back to pending for the job. A conflict resends only while Stripe still has the value the operator saw.
+  async resendSync({ marketQuery, id, body = {}, identity }) {
+    const market = singleMarket(marketQuery);
+    const row = await this.syncsRepository.findById(parseId(id));
+    if (!row) {
+      throw new HttpError(404, 'Sincronização não encontrada.', { code: 'not_found' });
+    }
+    if (row.market !== market) {
+      throw new HttpError(403, 'Requested market is outside staff scope.', { code: 'market_forbidden' });
+    }
+    if (!RESENDABLE.includes(row.status)) {
+      throw new HttpError(409, 'Só é possível reenviar sincronizações com falha ou em conflito.', { code: 'sync_not_resendable' });
+    }
+    if (Date.parse(row.targetTrialEnd) <= this.now().getTime()) {
+      throw new HttpError(422, 'A data alvo já passou; a cobrança que ela movia já aconteceu.', { code: 'sync_target_past' });
+    }
+
+    let expectedTrialEnd;
+    if (row.status === 'conflict') {
+      const shown = body.foundTrialEnd === undefined ? undefined : body.foundTrialEnd;
+      if (shown === undefined || !sameMoment(shown, row.foundTrialEnd)) {
+        throw new HttpError(409, 'O valor no Stripe mudou. Revise antes de reenviar.', {
+          code: 'sync_conflict_changed',
+          foundTrialEnd: row.foundTrialEnd
+        });
+      }
+      const current = await this.currentTrialEnd(row);
+      if (!sameMoment(current, row.foundTrialEnd)) {
+        await this.syncsRepository.setFound(row.id, current);
+        throw new HttpError(409, 'O valor no Stripe mudou. Revise antes de reenviar.', {
+          code: 'sync_conflict_changed',
+          foundTrialEnd: current
+        });
+      }
+      expectedTrialEnd = row.foundTrialEnd;
+    }
+
+    const closedOn = await this.closedOnFor(row);
+    return this.transaction(async (manager) => {
+      const reopened = await this.syncsRepository.reopen(manager, row.id, {
+        fromStatus: row.status,
+        expectedTrialEnd,
+        now: this.now()
+      });
+      if (!reopened) {
+        throw new HttpError(409, 'A sincronização mudou. Atualize a página.', { code: 'sync_not_resendable' });
+      }
+      const auditEventId = await this.auditRepository.createIn(manager, {
+        actorUserId: identity && identity.userId,
+        actorEmail: identity && identity.email,
+        action: 'delivery_calendar.sync_resend',
+        metadata: {
+          market,
+          closedOn,
+          syncId: row.id,
+          stripeSubscriptionId: row.stripeSubscriptionId,
+          previousStatus: row.status,
+          expectedTrialEnd: row.expectedTrialEnd,
+          foundTrialEnd: row.foundTrialEnd,
+          targetTrialEnd: row.targetTrialEnd
+        }
+      });
+      return { market, syncId: row.id, status: 'pending', auditEventId };
+    });
+  }
+
+  async currentTrialEnd(row) {
+    if (!this.billingFor) {
+      throw new HttpError(503, 'Stripe is not available.');
+    }
+    const subscription = await this.billingFor(row.market).retrieveSubscription(row.stripeSubscriptionId, { expand: [] });
+    return subscription && subscription.trial_end != null ? new Date(Number(subscription.trial_end) * 1000).toISOString() : null;
+  }
+
+  // The closure date of the event that queued the sync, so the resend shows in that year's history.
+  async closedOnFor(row) {
+    if (!row.auditEventId || !this.auditRepository || typeof this.auditRepository.findById !== 'function') return null;
+    const event = await this.auditRepository.findById(row.auditEventId);
+    return event && event.metadata ? event.metadata.closedOn || null : null;
   }
 }
 

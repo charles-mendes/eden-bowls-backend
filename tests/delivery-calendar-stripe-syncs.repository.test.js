@@ -118,6 +118,41 @@ describeIntegration('DeliveryCalendarStripeSyncsRepository on MySQL', () => {
     }
   });
 
+  test('the panel lists pending rows older than the delay and every failed or conflict row', async () => {
+    const now = new Date('2027-12-10T15:00:00Z');
+    const at = (minutesAgo) => new Date(now.getTime() - minutesAgo * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    await dataSource.query(
+      `INSERT INTO delivery_calendar_stripe_syncs (stripe_subscription_id, market, target_trial_end, status, created_at) VALUES
+        ('sub_p20', 'BR', '2027-12-27 03:00:00', 'pending', ?),
+        ('sub_p10', 'BR', '2027-12-27 03:00:00', 'pending', ?),
+        ('sub_f', 'BR', '2027-12-27 03:00:00', 'failed', ?),
+        ('sub_c', 'BR', '2027-12-27 03:00:00', 'conflict', ?),
+        ('sub_s', 'BR', '2027-12-27 03:00:00', 'synced', ?),
+        ('sub_x', 'BR', '2027-12-27 03:00:00', 'superseded', ?),
+        ('sub_us', 'US', '2027-12-27 05:00:00', 'failed', ?)`,
+      [at(20), at(10), at(1), at(1), at(60), at(60), at(1)]
+    );
+    const rows = await repository.listForPanel('BR', { now, delayMinutes: 15 });
+    expect(rows.map((row) => row.stripeSubscriptionId)).toEqual(['sub_p20', 'sub_f', 'sub_c']);
+    await dataSource.query('DELETE FROM delivery_calendar_stripe_syncs');
+  });
+
+  test('reopen puts a conflict back to pending with the found value as expected, once', async () => {
+    await dataSource.query(
+      `INSERT INTO delivery_calendar_stripe_syncs
+        (stripe_subscription_id, market, expected_trial_end, target_trial_end, found_trial_end, status, attempts, last_error)
+       VALUES ('sub_r', 'US', '2027-12-21 05:00:00', '2027-12-22 05:00:00', '2028-01-24 05:00:00', 'conflict', 3, 'x')`
+    );
+    const [{ id }] = await dataSource.query("SELECT id FROM delivery_calendar_stripe_syncs WHERE stripe_subscription_id = 'sub_r'");
+    const now = new Date('2027-12-10T15:00:00Z');
+    expect(await repository.reopen(null, id, { fromStatus: 'conflict', expectedTrialEnd: '2028-01-24T05:00:00.000Z', now })).toBe(true);
+    expect(await repository.findById(id)).toMatchObject({
+      status: 'pending', attempts: 0, lastError: null, expectedTrialEnd: '2028-01-24T05:00:00.000Z', nextAttemptAt: '2027-12-10T15:00:00.000Z'
+    });
+    expect(await repository.reopen(null, id, { fromStatus: 'conflict', expectedTrialEnd: null, now })).toBe(false);
+    await dataSource.query('DELETE FROM delivery_calendar_stripe_syncs');
+  });
+
   test('supersede, claim, retry, and the final states', async () => {
     const first = await dataSource.transaction((manager) => repository.insertPending(manager, {
       stripeSubscriptionId: 'sub_9',

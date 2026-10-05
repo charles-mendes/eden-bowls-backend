@@ -38,7 +38,7 @@ const { NominatimClient } = require('./infrastructure/geo/nominatim-client');
 const { OsrmClient } = require('./infrastructure/geo/osrm-client');
 const { ShippingSettingsRepository } = require('./infrastructure/repositories/shipping-settings.repository');
 const { StripeBillingClient } = require('./infrastructure/stripe/stripe-billing-client');
-const { createStripeAccountsFromEnv } = require('./infrastructure/stripe/stripe-accounts');
+const { createStripeAccountsFromEnv, resolveStripeBilling } = require('./infrastructure/stripe/stripe-accounts');
 const { StripeCustomerStore } = require('./infrastructure/stripe/stripe-customer-store');
 const { SubscriptionsActionsRepository } = require('./infrastructure/repositories/subscriptions-actions.repository');
 const { SubscriptionsDetailRepository } = require('./infrastructure/repositories/subscriptions-detail.repository');
@@ -229,6 +229,8 @@ async function bootstrap() {
     syncsRepository: new DeliveryCalendarStripeSyncsRepository(dataSource),
     ledgerRepository: subscriptionLedgerRepository,
     auditRepository: new AdminAuditRepository(dataSource),
+    billingFor: (market) => resolveStripeBilling({ stripeAccounts }, String(market || 'us').toLowerCase()),
+    syncDelayMinutes: env.DELIVERY_CALENDAR_SYNC_DELAY_MINUTES,
     dataSource
   });
   const stripeBilling = (() => {

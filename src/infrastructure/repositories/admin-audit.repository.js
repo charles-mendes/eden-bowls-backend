@@ -52,6 +52,14 @@ class AdminAuditRepository {
     return Number(result.insertId);
   }
 
+  async findById(id) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(`SELECT id, action, metadata FROM \`${this.tableName}\` WHERE id = ?`, [id]);
+    if (!rows.length) return null;
+    const metadata = typeof rows[0].metadata === 'string' ? JSON.parse(rows[0].metadata) : (rows[0].metadata || {});
+    return { id: Number(rows[0].id), action: rows[0].action, metadata };
+  }
+
   // Calendar events of one market whose date falls in one year, newest first.
   async listDeliveryCalendar({ market, year, limit = 200 }) {
     this.ensureDataSource();
