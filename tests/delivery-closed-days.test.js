@@ -94,7 +94,8 @@ describeIntegration('delivery closed days read from MySQL', () => {
     const nye = rows.find((item) => item.closedOn === '2026-12-31');
     expect(eve).toMatchObject({ closesPreparation: false, closesPickup: true, closesDelivery: false });
     expect(nye).toMatchObject({ closesPreparation: false, closesPickup: true, closesDelivery: true });
-    expect(usYearHasCalendar(rows, 2027)).toBe(false);
+    expect(usYearHasCalendar(rows, 2027)).toBe(true);
+    expect(usYearHasCalendar(rows, 2028)).toBe(false);
     const { brazilPrepValid: prepValid } = require('../src/core/delivery-closed-days');
     expect(prepValid({ year: 2026, month: 2, day: 16 }, rows)).toBe(false);
     expect(prepValid({ year: 2026, month: 2, day: 17 }, rows)).toBe(false);
@@ -105,10 +106,13 @@ describeIntegration('delivery closed days read from MySQL', () => {
     expect(dateKey(nov23.year, nov23.month, nov23.day)).toBe('2026-11-25');
     const logger = { warn: jest.fn() };
     assessUsCalendar(rows, 2027, logger);
+    expect(logger.warn).not.toHaveBeenCalled();
+    assessUsCalendar(rows, 2028, logger);
     assessUsCalendar(rows, 2030, logger);
     expect(logger.warn).toHaveBeenCalledTimes(2);
     expect(rows.some((item) => item.closedOn === '2027-01-01' && item.closesDelivery)).toBe(true);
-    expect(usPrepValid({ year: 2027, month: 1, day: 18 }, rows, 1)).toBe(true);
+    expect(usPrepValid({ year: 2027, month: 1, day: 18 }, rows, 1)).toBe(false);
+    expect(usPrepValid({ year: 2027, month: 1, day: 19 }, rows, 1)).toBe(true);
     expect(weekday(2030, 1, 5)).toBe(6);
     expect(usPrepValid({ year: 2030, month: 1, day: 5 }, rows, 1)).toBe(false);
     expect(usPrepValid({ year: 2030, month: 1, day: 8 }, rows, 1)).toBe(true);
