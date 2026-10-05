@@ -81,6 +81,15 @@ function formatLetterDate(value, locale) {
   return date.setLocale(loc).toLocaleString(DateTime.DATE_MED);
 }
 
+// A delivery date (YYYY-MM-DD) as a weekday and day: "quinta-feira, 8 de outubro" / "Thursday, October 8".
+function formatDeliveryDay(isoDate, locale) {
+  const date = DateTime.fromISO(String(isoDate || ''), { zone: 'UTC' });
+  if (!isoDate || !date.isValid) return '';
+  return locale === 'pt-BR'
+    ? date.setLocale('pt-BR').toFormat("cccc, d 'de' MMMM")
+    : date.setLocale('en-US').toFormat('cccc, MMMM d');
+}
+
 function createTransactionalMailer(options = {}) {
   const logger = options.logger || { error() {}, warn() {}, info() {} };
   const otpMailer = options.otpMailer || null;
@@ -194,7 +203,7 @@ function createTransactionalMailer(options = {}) {
     }
   }
 
-  async function notifyOrderConfirmed({ invoice = {}, ledger = {}, subscriptionId }) {
+  async function notifyOrderConfirmed({ invoice = {}, ledger = {}, subscriptionId, firstDeliveryDate = null }) {
     const id = String(subscriptionId || ledger.stripeSubscriptionId || '').trim();
     const invoiceId = String(invoice.id || '').trim();
     const to = String(ledger.customerEmail || invoice.customer_email || '').trim();
@@ -214,6 +223,7 @@ function createTransactionalMailer(options = {}) {
           : `Every ${ledger.subscriptionTermMonths} months`)
         : '',
       totalLabel: formatMoney(invoice.amount_paid || invoice.total, invoice.currency),
+      firstDeliveryLabel: formatDeliveryDay(firstDeliveryDate, locale),
       dashboardUrl: dashboardPlansUrl(storeAppUrl),
       locale,
       assetBaseUrl: emailAssetBaseUrl
@@ -648,6 +658,7 @@ function createTransactionalMailer(options = {}) {
 }
 
 module.exports = {
+  formatDeliveryDay,
   TEMPLATES,
   RESEND_TEMPLATES,
   RESEND_BATCH,

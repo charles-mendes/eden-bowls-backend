@@ -89,6 +89,7 @@ const { SubscriptionsEditCommitService } = require('./services/subscriptions-edi
 const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
 const { PendingDeliveryChangesService } = require('./services/pending-delivery-changes.service');
 const { PaidCyclesService } = require('./services/paid-cycles.service');
+const { DeliveryEstimator } = require('./services/delivery-estimator.service');
 const { createAdminProductionService } = require('./config/production-services');
 const { SubscriptionsService } = require('./services/subscriptions.service');
 const { StripeWebhookService } = require('./services/stripe-webhook.service');
@@ -204,6 +205,8 @@ async function bootstrap() {
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const deliveryCalendar = new DeliveryClosedDaysRepository(dataSource);
+  // One delivery rule for the checkout estimate, the order confirmation email, and the production queue.
+  const deliveryEstimator = new DeliveryEstimator({ calendar: deliveryCalendar });
   const { shippingQuoteSigner, shippingService, customerDeliveriesService } = createShippingQuoteServices({
     env,
     logger,
@@ -394,7 +397,7 @@ async function bootstrap() {
   // A cycle enters the production queue when its invoice is paid.
   stripeWebhookService.paidCycles = new PaidCyclesService({
     productionRepository: subscriptionProductionRepository,
-    calendar: deliveryCalendar
+    estimator: deliveryEstimator
   });
   // The following delivery's changes recorded before the current delivery was paid run on its invoice.paid.
   stripeWebhookService.pendingDeliveryChanges = new PendingDeliveryChangesService({
@@ -606,6 +609,7 @@ async function bootstrap() {
     subscriptionsEditCommitService,
     subscriptionsService,
     stripeWebhookService,
+    deliveryEstimator,
     onboardingPetDeleteService,
     onboardingPetsSyncService,
     profileService,

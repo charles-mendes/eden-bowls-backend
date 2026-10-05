@@ -77,6 +77,7 @@ function buildOrderConfirmedEmail({
   planName,
   cycleLabel,
   totalLabel,
+  firstDeliveryLabel,
   dashboardUrl,
   locale,
   assetBaseUrl,
@@ -87,13 +88,21 @@ function buildOrderConfirmedEmail({
   const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
   const flavorList = joinList(flavors);
+  // The first delivery date comes from the same estimate the production queue stores for this payment.
+  const firstDelivery = String(firstDeliveryLabel || '').trim();
+  const opening = pt
+    ? (firstDelivery
+      ? `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. A primeira entrega está prevista para ${firstDelivery}.`
+      : `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. Nossa cozinha já começou a preparar a primeira entrega.`)
+    : (firstDelivery
+      ? `${hello} your payment was approved and ${pet}'s subscription is active. Your first delivery is planned for ${firstDelivery}.`
+      : `${hello} your payment was approved and ${pet}'s subscription is active. Our kitchen has already started preparing the first delivery.`);
   const subject = pt
     ? `A tigela da ${pet} entrou na cozinha`
     : `${pet}'s bowl is in the kitchen`;
   const text = [
-    pt
-      ? `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. Nossa cozinha já começou a preparar a primeira entrega.`
-      : `${hello} your payment was approved and ${pet}'s subscription is active. Our kitchen has already started preparing the first delivery.`,
+    opening,
+    firstDelivery ? `${pt ? 'Primeira entrega' : 'First delivery'}: ${firstDelivery}` : '',
     flavorList ? `${pt ? 'Sabores' : 'Flavors'}: ${flavorList}` : '',
     `${pt ? 'Pet' : 'Pet'}: ${pet}`,
     planName ? `${pt ? 'Plano' : 'Plan'}: ${planName}` : '',
@@ -104,11 +113,12 @@ function buildOrderConfirmedEmail({
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. Nossa cozinha já começou a preparar a primeira entrega. Daqui para a frente, você recebe um e-mail sempre que a tigela dela mudar de lugar: cobrada, enviada, pausada ou com o plano ajustado.`
-      : `${hello} your payment was approved and ${pet}'s subscription is active. Our kitchen has already started preparing the first delivery. From now on, you'll get an email whenever the bowl moves: charged, shipped, paused or updated.`),
+      ? `${opening} Daqui para a frente, você recebe um e-mail sempre que a tigela dela mudar de lugar: cobrada, enviada, pausada ou com o plano ajustado.`
+      : `${opening} From now on, you'll get an email whenever the bowl moves: charged, shipped, paused or updated.`),
     pillsHtml(flavors),
     detailsTableHtml([
       { label: 'Pet', value: pet },
+      { label: pt ? 'Primeira entrega' : 'First delivery', value: firstDelivery },
       { label: pt ? 'Plano' : 'Plan', value: planName },
       { label: pt ? 'Frequência' : 'Frequency', value: cycleLabel },
       { label: 'Total', value: totalLabel }
@@ -123,8 +133,8 @@ function buildOrderConfirmedEmail({
     html: renderLetter({
       locale: locale || 'pt-BR',
       preheader: pt
-        ? 'Assinatura confirmada. A primeira entrega já está sendo preparada.'
-        : 'Subscription confirmed. The first delivery is already being prepared.',
+        ? (firstDelivery ? `Assinatura confirmada. Primeira entrega prevista para ${firstDelivery}.` : 'Assinatura confirmada. A primeira entrega já está sendo preparada.')
+        : (firstDelivery ? `Subscription confirmed. First delivery planned for ${firstDelivery}.` : 'Subscription confirmed. The first delivery is already being prepared.'),
       kicker: pt ? 'Primeiro ciclo' : 'First cycle',
       title: subject,
       innerHtml,

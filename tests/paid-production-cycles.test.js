@@ -88,7 +88,7 @@ describe('a cycle enters production when its invoice is paid (3.12)', () => {
     });
     const subscription = { current_period_start: 1 };
     await webhook.recordChargedDelivery({ invoice: { id: 'in_2', billing_reason: 'subscription_cycle', subtotal: 100 }, subscriptionId: 'sub_123', subscription, billing: {} });
-    expect(recordPaid).toHaveBeenCalledWith({ ledgerRow: { ...row, chargedDeliveries: 2 }, subscription, invoice: expect.objectContaining({ id: 'in_2' }) });
+    expect(recordPaid).toHaveBeenCalledWith({ ledgerRow: { ...row, chargedDeliveries: 2 }, subscription, invoice: expect.objectContaining({ id: 'in_2' }), estimate: null });
 
     recordPaid.mockClear();
     await webhook.recordChargedDelivery({ invoice: { id: 'in_skip', billing_reason: 'subscription_update', subtotal: 0 }, subscriptionId: 'sub_123', subscription, billing: {} });

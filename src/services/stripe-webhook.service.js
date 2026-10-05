@@ -390,22 +390,35 @@ class StripeWebhookService {
       stripe_invoice_id: invoice.id || undefined
     });
 
+    // One delivery estimate for this payment: the confirmation email and the production cycle use the same one.
+    const delivery = await this.estimateDelivery(invoice, subscriptionId);
+
     await this.notifyFirstCycleMail({
       invoice,
       subscriptionId,
-      promotedPending
+      promotedPending,
+      delivery
     });
 
     await this.recordChargedDelivery({
       invoice,
       subscriptionId,
       subscription,
-      billing: runtime.stripeBilling || this.stripeBilling
+      billing: runtime.stripeBilling || this.stripeBilling,
+      delivery
     });
   }
 
+  async estimateDelivery(invoice, subscriptionId) {
+    if (!this.paidCycles || typeof this.paidCycles.estimateFor !== 'function' || !isChargedDeliveryInvoice(invoice)) {
+      return null;
+    }
+    const ledgerRow = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
+    return ledgerRow ? this.paidCycles.estimateFor({ ledgerRow, invoice }) : null;
+  }
+
   // Throws so the event is retried; the seed and the increment are both safe to repeat.
-  async recordChargedDelivery({ invoice, subscriptionId, subscription, billing }) {
+  async recordChargedDelivery({ invoice, subscriptionId, subscription, billing, delivery = null }) {
     const ledger = this.ledgerRepository;
     if (!invoice.id || !isChargedDeliveryInvoice(invoice)
       || !ledger || typeof ledger.incrementChargedDeliveries !== 'function') {
@@ -429,7 +442,7 @@ class StripeWebhookService {
     await this.endContractAfterLastDelivery(row, subscription, billing);
     // The cycle this invoice paid enters production; until now it was awaiting payment.
     if (this.paidCycles) {
-      await this.paidCycles.recordPaid({ ledgerRow: row, subscription, invoice });
+      await this.paidCycles.recordPaid({ ledgerRow: row, subscription, invoice, estimate: delivery });
     }
     if (this.pendingDeliveryChanges) {
       await this.pendingDeliveryChanges.applyAfterCharge({ subscriptionId, subscription, billing });
@@ -454,7 +467,7 @@ class StripeWebhookService {
     await billing.setCancelAtPeriodEnd(row.stripeSubscriptionId, true);
   }
 
-  async notifyFirstCycleMail({ invoice, subscriptionId, promotedPending }) {
+  async notifyFirstCycleMail({ invoice, subscriptionId, promotedPending, delivery = null }) {
     if (!this.transactionalMailer) {
       return;
     }
@@ -473,7 +486,12 @@ class StripeWebhookService {
 
       const reason = String(invoice.billing_reason || '');
       if (reason === 'subscription_create') {
-        await this.transactionalMailer.notifyOrderConfirmed({ invoice, ledger, subscriptionId });
+        await this.transactionalMailer.notifyOrderConfirmed({
+          invoice,
+          ledger,
+          subscriptionId,
+          firstDeliveryDate: delivery ? delivery.deliveryDate : null
+        });
         await this.transactionalMailer.notifyAdminNewSubscription({ invoice, ledger, subscriptionId });
         return;
       }
