@@ -3,6 +3,7 @@ const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { parseStripeAccountInput, ledgerStripeAccount } = require('../core/stripe-account');
 const { toMysqlDateTime } = require('../core/stripe-subscription-map');
+const { mapDeliverySubscription } = require('../infrastructure/repositories/subscription-deliveries.repository');
 const {
   DEFAULT_TIMEZONE,
   dueBucket,
@@ -176,7 +177,7 @@ class AdminProductionService {
       }
     }
 
-    const periodEnd = paid ? requested.periodEnd : unpaidKey;
+    let periodEnd = paid ? requested.periodEnd : unpaidKey;
     const currentCycle = paid ? requested : await this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, periodEnd);
     const fromStatus = currentCycle && currentCycle.status ? currentCycle.status : 'to_prepare';
     const allowed = ALLOWED_TRANSITIONS[fromStatus] || new Set();
@@ -209,19 +210,33 @@ class AdminProductionService {
     });
 
     if (this.deliverySchedule && typeof this.deliverySchedule.onProductionStatus === 'function') {
-      const account = ledgerStripeAccount(row);
-      await this.deliverySchedule.onProductionStatus({
+      const delivery = mapDeliverySubscription(row);
+      const plan = await this.deliverySchedule.onProductionStatus({
         subscription: {
-          market: account === 'br' ? 'BR' : 'US',
+          market: delivery.market,
           chargeAt: new Date(periodEnd),
-          transitDays: row.transitDays,
+          transitDays: delivery.transitDays,
           stripeSubscriptionId: row.stripeSubscriptionId,
-          originalPreparationDay: row.originalPreparationDay || null
+          // Stored on the cycle when it was blocked.
+          originalPreparationDay: currentCycle && currentCycle.preparationDay ? currentCycle.preparationDay : null
         },
         toStatus: body.status,
         fromStatus,
         alreadyCharged: paid
       });
+      // An unpaid cycle belongs to its charge. When the block or the return moves that charge, the cycle
+      // moves with it, so the queue keeps showing it and the operator can still return it.
+      const trialEnd = plan && plan.stripeUpdate ? Number(plan.stripeUpdate.trial_end) : NaN;
+      if (Number.isFinite(trialEnd) && trialEnd > 0 && typeof this.productionRepository.moveCycle === 'function') {
+        const movedTo = new Date(trialEnd * 1000);
+        await this.productionRepository.moveCycle({
+          subscriptionId: row.id,
+          from: periodEnd,
+          to: movedTo,
+          preparationDay: body.status === 'blocked' ? plan.originalPreparationDay || null : null
+        });
+        periodEnd = movedTo;
+      }
     }
 
     if (this.auditService && typeof this.auditService.record === 'function') {

@@ -604,11 +604,20 @@ class CustomerDeliveriesService {
       alreadyCharged,
       returning: fromStatus === 'blocked' && toStatus === 'to_prepare'
     });
+    // The preparation day the cycle had before the block, so a return can restore it.
+    if (toStatus === 'blocked') {
+      const original = projectOne(subscription.market, subscription.chargeAt, rows, Number(subscription.transitDays) || 0);
+      plan.originalPreparationDay = original ? original.preparationDay : null;
+    }
     if (plan.stripeUpdate && client && typeof client.setTrialEnd === 'function') {
-      await client.setTrialEnd({
+      const updated = await client.setTrialEnd({
         subscriptionId: subscription.stripeSubscriptionId,
         ...plan.stripeUpdate
       });
+      // The ledger follows the moved charge now; the webhook confirms the same period later.
+      if (this.subscriptions && typeof this.subscriptions.recordChargeMoved === 'function') {
+        await this.subscriptions.recordChargeMoved(subscription, updated);
+      }
     }
     return plan;
   }

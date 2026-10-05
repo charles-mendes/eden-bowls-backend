@@ -98,6 +98,23 @@ class SubscriptionProductionRepository {
     return this.findBySubscriptionAndPeriodEnd(numericId, period);
   }
 
+  // Re-keys an unpaid cycle to the charge it moved to. `preparationDay` keeps the day it had before a block.
+  async moveCycle({ subscriptionId, from, to, preparationDay = null }) {
+    this.ensureDataSource();
+    const numericId = Number(subscriptionId);
+    const fromKey = toMysqlDateTime(from);
+    const toKey = toMysqlDateTime(to);
+    if (!Number.isSafeInteger(numericId) || numericId < 1 || !fromKey || !toKey) {
+      throw new HttpError(422, 'Invalid production cycle identity.');
+    }
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`period_end\` = ?, \`preparation_day\` = ?
+        WHERE \`subscription_id\` = ? AND \`period_end\` = ? AND \`paid_at\` IS NULL`,
+      [toKey, preparationDay, numericId, fromKey]
+    );
+    return this.findBySubscriptionAndPeriodEnd(numericId, toKey);
+  }
+
   // The paid delivery the customer is still waiting for: delivered today or later.
   async findOpenPaidCycle(subscriptionId, today) {
     this.ensureDataSource();

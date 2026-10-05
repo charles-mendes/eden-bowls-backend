@@ -89,6 +89,7 @@ const { SubscriptionsEditCommitService } = require('./services/subscriptions-edi
 const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
 const { PendingDeliveryChangesService } = require('./services/pending-delivery-changes.service');
 const { PaidCyclesService } = require('./services/paid-cycles.service');
+const { createAdminProductionService } = require('./config/production-services');
 const { SubscriptionsService } = require('./services/subscriptions.service');
 const { StripeWebhookService } = require('./services/stripe-webhook.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
@@ -103,7 +104,6 @@ const { AdminNutritionService } = require('./services/admin-nutrition.service');
 const { AdminShippingService } = require('./services/admin-shipping.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
-const { AdminProductionService } = require('./services/admin-production.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
 const { AdminUsersService } = require('./services/admin-users.service');
 const { AdminAuditRepository } = require('./infrastructure/repositories/admin-audit.repository');
@@ -538,10 +538,11 @@ async function bootstrap() {
     repository: new AdminAuditRepository(dataSource),
     logger
   });
-  const adminProductionService = new AdminProductionService({
+  const adminProductionService = createAdminProductionService({
     ledgerRepository: subscriptionLedgerRepository,
     productionRepository: subscriptionProductionRepository,
-    auditService: adminAuditService
+    auditService: adminAuditService,
+    customerDeliveriesService
   });
   const adminUsersService = new AdminUsersService({
     usersRepository: adminUsersRepository,
