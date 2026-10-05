@@ -14,7 +14,7 @@ function subscription(overrides = {}) {
   };
 }
 
-function setup({ subscriptions = [subscription()], existing = [], insertError = null, syncError = null } = {}) {
+function setup({ subscriptions = [subscription()], existing = [], insertError = null, syncError = null, auditError = null } = {}) {
   const manager = { query: jest.fn() };
   const calendarRepository = {
     listActive: jest.fn().mockResolvedValue(existing.filter((row) => row.active)),
@@ -25,8 +25,10 @@ function setup({ subscriptions = [subscription()], existing = [], insertError = 
     deleteRow: jest.fn()
   };
   const syncsRepository = {
-    insertPending: syncError ? jest.fn().mockRejectedValue(syncError) : jest.fn().mockResolvedValueOnce(501).mockResolvedValueOnce(502)
+    insertPending: syncError ? jest.fn().mockRejectedValue(syncError) : jest.fn().mockResolvedValueOnce(501).mockResolvedValueOnce(502),
+    linkAuditEvent: jest.fn()
   };
+  const auditRepository = { createIn: auditError ? jest.fn().mockRejectedValue(auditError) : jest.fn().mockResolvedValue(9001) };
   const ledgerRepository = { rewritePendingChargeMove: jest.fn().mockResolvedValue({}) };
   const listForMarket = jest.fn().mockResolvedValue(subscriptions);
   const dataSource = { transaction: jest.fn((work) => work(manager)) };
@@ -35,10 +37,11 @@ function setup({ subscriptions = [subscription()], existing = [], insertError = 
     impactService: new DeliveryCalendarImpactService({ subscriptions: { listForMarket }, now: () => NOW }),
     syncsRepository,
     ledgerRepository,
+    auditRepository,
     dataSource,
     now: () => NOW
   });
-  return { service, manager, calendarRepository, syncsRepository, ledgerRepository, dataSource, listForMarket };
+  return { service, manager, calendarRepository, syncsRepository, ledgerRepository, auditRepository, dataSource, listForMarket };
 }
 
 const adhoc = (closedOn, flags = {}) => ({
@@ -197,6 +200,93 @@ describe('opening a day leaves scheduled deliveries alone', () => {
     await expect(context.service.write({ marketQuery: US, body: { id: 4, closesPickup: false } }))
       .rejects.toMatchObject({ details: { code: 'flag_required' } });
     expect(context.calendarRepository.updateRow).not.toHaveBeenCalled();
+  });
+});
+
+describe('every calendar change is audited in its transaction', () => {
+  const IDENTITY = { userId: '7', email: 'op@edenbowls.com' };
+  const row = { id: 4, market: 'US', closedOn: '2027-12-21', label: 'Manutenção', origin: 'one_off', type: 'adhoc', active: true, closesPreparation: true, closesPickup: true, closesDelivery: true };
+
+  test('create records the actor, no previous value, the new flags, and the moved subscriptions; syncs are linked', async () => {
+    const chargeAt = prepMidnight('2027-12-21', TZ);
+    const context = setup({ subscriptions: [subscription(), subscription({ stripeSubscriptionId: 'sub_2', status: 'trialing', chargeAt })] });
+    const result = await context.service.write({ marketQuery: US, body: adhoc('2027-12-21'), identity: IDENTITY });
+    expect(context.auditRepository.createIn).toHaveBeenCalledWith(context.manager, {
+      actorUserId: '7',
+      actorEmail: 'op@edenbowls.com',
+      action: 'delivery_calendar.create',
+      metadata: {
+        market: 'US',
+        closedOn: '2027-12-21',
+        type: 'adhoc',
+        label: 'Manutenção',
+        before: null,
+        after: { active: true, closesPreparation: true, closesPickup: true, closesDelivery: true },
+        moved: [
+          { stripeSubscriptionId: 'sub_1', deliveryId: 'current', previousPreparationDay: '2027-12-21', newPreparationDay: '2027-12-22', move: 'projection_only' },
+          { stripeSubscriptionId: 'sub_2', deliveryId: 'current', previousPreparationDay: '2027-12-21', newPreparationDay: '2027-12-22', move: 'stripe_sync' }
+        ],
+        syncIds: [501]
+      }
+    });
+    expect(context.syncsRepository.linkAuditEvent).toHaveBeenCalledWith(context.manager, [501], 9001);
+    expect(result.auditEventId).toBe(9001);
+  });
+
+  test('a pending change is audited with its previous and new trial_end', async () => {
+    const pendingAt = prepMidnight('2027-12-21', TZ);
+    const context = setup({
+      subscriptions: [subscription({
+        chargeAt: new Date('2027-12-10T20:00:00Z'), termMonths: 3, chargedCount: 1,
+        pendingDeliveryChanges: { charge_move: { kind: 'reschedule', trial_end: unix(pendingAt.toISOString()) } }
+      })]
+    });
+    await context.service.write({ marketQuery: US, body: adhoc('2027-12-21'), identity: IDENTITY });
+    const [, event] = context.auditRepository.createIn.mock.calls[0];
+    expect(event.metadata.moved).toEqual([expect.objectContaining({
+      move: 'pending_change',
+      pendingTrialEnd: { previous: pendingAt.toISOString(), next: prepMidnight('2027-12-22', TZ).toISOString() }
+    })]);
+  });
+
+  test.each([
+    [{ id: 4, active: false }, 'delivery_calendar.deactivate', { active: false }],
+    [{ id: 4, closesPickup: false }, 'delivery_calendar.update', { closesPickup: false }]
+  ])('%j is recorded as %s with before and after', async (body, action, changed) => {
+    const context = setup({ existing: [row] });
+    await context.service.write({ marketQuery: US, body, identity: IDENTITY });
+    const [, event] = context.auditRepository.createIn.mock.calls[0];
+    expect(event.action).toBe(action);
+    expect(event.metadata.before).toEqual({ active: true, closesPreparation: true, closesPickup: true, closesDelivery: true });
+    expect(event.metadata.after).toEqual({ ...event.metadata.before, ...changed });
+  });
+
+  test('activation is recorded as activate', async () => {
+    const context = setup({ existing: [{ ...row, active: false }], subscriptions: [] });
+    await context.service.write({ marketQuery: US, body: { id: 4, active: true }, identity: IDENTITY });
+    expect(context.auditRepository.createIn.mock.calls[0][1].action).toBe('delivery_calendar.activate');
+  });
+
+  test('removal keeps the date, type, label, and previous flags, and is written before the delete', async () => {
+    const context = setup({ existing: [{ ...row, type: 'regional', origin: 'regional' }] });
+    const order = [];
+    context.auditRepository.createIn.mockImplementation(async () => { order.push('audit'); return 9002; });
+    context.calendarRepository.deleteRow.mockImplementation(async () => { order.push('delete'); });
+    await context.service.remove({ marketQuery: US, id: 4, identity: IDENTITY });
+    const [, event] = context.auditRepository.createIn.mock.calls[0];
+    expect(event).toMatchObject({
+      action: 'delivery_calendar.remove',
+      metadata: { closedOn: '2027-12-21', type: 'regional', label: 'Manutenção', after: null, before: { closesPickup: true } }
+    });
+    expect(order).toEqual(['audit', 'delete']);
+  });
+
+  test('a refused change records no event, and a failed audit fails the change', async () => {
+    const locked = setup({ subscriptions: [subscription({ productionStatus: 'ready' })] });
+    await expect(locked.service.write({ marketQuery: US, body: adhoc('2027-12-21'), identity: IDENTITY })).rejects.toMatchObject({ statusCode: 409 });
+    expect(locked.auditRepository.createIn).not.toHaveBeenCalled();
+    const failing = setup({ auditError: new Error('audit down') });
+    await expect(failing.service.write({ marketQuery: US, body: adhoc('2027-12-21'), identity: IDENTITY })).rejects.toThrow('audit down');
   });
 });
 

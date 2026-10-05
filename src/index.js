@@ -228,6 +228,7 @@ async function bootstrap() {
     impactService: new DeliveryCalendarImpactService({ subscriptions: subscriptionDeliveries }),
     syncsRepository: new DeliveryCalendarStripeSyncsRepository(dataSource),
     ledgerRepository: subscriptionLedgerRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
     dataSource
   });
   const stripeBilling = (() => {

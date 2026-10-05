@@ -28,6 +28,33 @@ function singleMarket(marketQuery) {
   return market;
 }
 
+const AUDIT_FLAGS = ['active', 'closesPreparation', 'closesPickup', 'closesDelivery'];
+
+function auditValues(row) {
+  if (!row) return null;
+  return Object.fromEntries(AUDIT_FLAGS.map((flag) => [flag, Boolean(row[flag])]));
+}
+
+function auditAction(before, after) {
+  if (!before) return 'delivery_calendar.create';
+  if (!after) return 'delivery_calendar.remove';
+  if (Boolean(before.active) !== Boolean(after.active)) {
+    return after.active ? 'delivery_calendar.activate' : 'delivery_calendar.deactivate';
+  }
+  return 'delivery_calendar.update';
+}
+
+function movedForAudit(affected) {
+  return affected.map((item) => ({
+    stripeSubscriptionId: item.stripeSubscriptionId,
+    deliveryId: item.deliveryId,
+    previousPreparationDay: item.preparationDay,
+    newPreparationDay: item.newPreparationDay,
+    move: item.move,
+    ...(item.pendingTrialEnd ? { pendingTrialEnd: item.pendingTrialEnd } : {})
+  }));
+}
+
 function parseId(value) {
   const id = Number(value);
   if (!Number.isInteger(id) || id <= 0) {
@@ -42,6 +69,7 @@ class AdminDeliveryCalendarService {
     this.impactService = options.impactService || null;
     this.syncsRepository = options.syncsRepository || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.auditRepository = options.auditRepository || null;
     this.dataSource = options.dataSource || null;
     this.now = options.now || (() => new Date());
   }
@@ -93,6 +121,16 @@ class AdminDeliveryCalendarService {
     };
   }
 
+  async history({ marketQuery, year }) {
+    const market = singleMarket(marketQuery);
+    const parsedYear = parseYear(year);
+    if (!this.auditRepository || typeof this.auditRepository.listDeliveryCalendar !== 'function') {
+      throw new HttpError(503, 'Delivery calendar history is not available.');
+    }
+    const items = await this.auditRepository.listDeliveryCalendar({ market, year: parsedYear });
+    return { market, year: parsedYear, items };
+  }
+
   async listYear({ marketQuery, year }) {
     const market = singleMarket(marketQuery);
     const parsedYear = parseYear(year);
@@ -102,7 +140,33 @@ class AdminDeliveryCalendarService {
 
   // Create, flag change, activation, or deactivation. A write that closes a flag projects again inside the
   // transaction, refuses over a locked delivery, and queues what has to move; it never calls Stripe.
-  async write({ marketQuery, body }) {
+  async recordAudit(manager, identity, { before, after, affected = [], syncIds = [] }) {
+    if (!this.auditRepository || typeof this.auditRepository.createIn !== 'function') {
+      throw new HttpError(503, 'Delivery calendar audit is not available.');
+    }
+    const row = after || before;
+    const eventId = await this.auditRepository.createIn(manager, {
+      actorUserId: identity && identity.userId,
+      actorEmail: identity && identity.email,
+      action: auditAction(before, after),
+      metadata: {
+        market: row.market,
+        closedOn: row.closedOn,
+        type: row.type,
+        label: row.label,
+        before: auditValues(before),
+        after: auditValues(after),
+        moved: movedForAudit(affected),
+        syncIds
+      }
+    });
+    if (syncIds.length > 0) {
+      await this.syncsRepository.linkAuditEvent(manager, syncIds, eventId);
+    }
+    return eventId;
+  }
+
+  async write({ marketQuery, body, identity }) {
     const market = singleMarket(marketQuery);
     return this.transaction(async (manager) => {
       const { before, after } = await this.resolveChange(market, body, manager);
@@ -120,7 +184,8 @@ class AdminDeliveryCalendarService {
       }
       const row = await this.storeRow(manager, before, after);
       const syncIds = await this.queueMoves(manager, market, affected);
-      return { market, row, before, affected, syncIds };
+      const auditEventId = await this.recordAudit(manager, identity, { before, after: row, affected, syncIds });
+      return { market, row, before, affected, syncIds, auditEventId };
     });
   }
 
@@ -158,7 +223,7 @@ class AdminDeliveryCalendarService {
   }
 
   // Removal only opens the date: scheduled deliveries, stored trial_end values, and syncs stay as they are.
-  async remove({ marketQuery, id }) {
+  async remove({ marketQuery, id, identity }) {
     const market = singleMarket(marketQuery);
     return this.transaction(async (manager) => {
       const existing = await this.calendarRepository.findById(parseId(id), manager);
@@ -171,8 +236,10 @@ class AdminDeliveryCalendarService {
       if (existing.type === 'national') {
         throw new HttpError(422, 'Feriado nacional não pode ser removido. Desative-o.', { code: 'national_not_removable' });
       }
+      // The event goes first, so the removed date stays traceable once the row is gone.
+      const auditEventId = await this.recordAudit(manager, identity, { before: existing, after: null });
       await this.calendarRepository.deleteRow(manager, existing.id);
-      return { market, removed: existing };
+      return { market, removed: existing, auditEventId };
     });
   }
 }
