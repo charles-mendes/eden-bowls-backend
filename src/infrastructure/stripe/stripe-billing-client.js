@@ -1374,6 +1374,30 @@ class StripeBillingClient {
       });
     }
   }
+
+  // The invoice with every line: an event or a retrieve embeds only the first page of lines.
+  async retrieveInvoiceWithLines(invoiceId) {
+    const stripe = this.ensureClient();
+    try {
+      const invoice = await stripe.invoices.retrieve(invoiceId);
+      const lines = invoice && invoice.lines && Array.isArray(invoice.lines.data) ? [...invoice.lines.data] : [];
+      let hasMore = Boolean(invoice && invoice.lines && invoice.lines.has_more);
+      while (hasMore && lines.length > 0) {
+        const page = await stripe.invoices.listLineItems(invoiceId, {
+          limit: 100,
+          starting_after: lines[lines.length - 1].id
+        });
+        const data = page && Array.isArray(page.data) ? page.data : [];
+        lines.push(...data);
+        hasMore = Boolean(page && page.has_more && data.length > 0);
+      }
+      return { ...invoice, lines: { ...(invoice.lines || {}), data: lines, has_more: false } };
+    } catch (error) {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to retrieve the Stripe invoice.'), {
+        code: 'stripe_invoice_retrieve_failed'
+      });
+    }
+  }
 }
 
 module.exports = {

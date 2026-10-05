@@ -16,6 +16,7 @@ const JOB_INTERVALS = {
   webhook_retry: 60 * 1000,
   ledger_reconcile: 60 * 60 * 1000,
   mail_resend: 5 * 60 * 1000,
+  invoice_email: 5 * 60 * 1000,
   ups_tracking: 30 * 60 * 1000,
   refresh_cleanup: DAY_MS,
   webhook_retention: DAY_MS,
@@ -26,6 +27,7 @@ const LOCKS = {
   webhook_retry: 'eden_job_webhook_retry',
   ledger_reconcile: 'eden_job_ledger_reconcile',
   mail_resend: 'eden_job_mail_resend',
+  invoice_email: 'eden_job_invoice_email',
   ups_tracking: 'eden_job_ups_tracking',
   refresh_cleanup: 'eden_job_refresh_cleanup',
   webhook_retention: 'eden_job_webhook_retention',
@@ -156,6 +158,12 @@ function createJobDefinitions(deps) {
       lockName: LOCKS.mail_resend,
       intervalMs: JOB_INTERVALS.mail_resend,
       run: () => deps.transactionalMailer.resendUnsent()
+    },
+    {
+      name: 'invoice_email',
+      lockName: LOCKS.invoice_email,
+      intervalMs: JOB_INTERVALS.invoice_email,
+      run: () => (deps.customerInvoicesService ? deps.customerInvoicesService.sendDueEmails() : { skipped: true })
     },
     {
       name: 'ups_tracking',

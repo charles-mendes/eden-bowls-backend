@@ -662,8 +662,68 @@ function buildPlanChangedEmail({
   };
 }
 
+// Carries the invoice PDF as an attachment; the body only points to it.
+function buildInvoiceEmail({
+  firstName,
+  invoiceNumber,
+  totalLabel,
+  issuedLabel,
+  paid,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const url = String(dashboardUrl || '').trim();
+  const subject = pt ? `Sua fatura Eden Bowls ${invoiceNumber}` : `Your Eden Bowls invoice ${invoiceNumber}`;
+  const intro = pt
+    ? `${hello} A fatura ${invoiceNumber} está anexada a este e-mail em PDF.`
+    : `${hello} Invoice ${invoiceNumber} is attached to this email as a PDF.`;
+  const statusLabel = pt ? (paid ? 'Paga' : 'Pagamento pendente') : (paid ? 'Paid' : 'Payment due');
+  const text = [
+    intro,
+    `${pt ? 'Fatura' : 'Invoice'}: ${invoiceNumber}`,
+    issuedLabel ? `${pt ? 'Emissão' : 'Issued'}: ${issuedLabel}` : '',
+    totalLabel ? `Total: ${totalLabel}` : '',
+    `Status: ${statusLabel}`,
+    url
+  ].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(intro),
+    detailsTableHtml([
+      { label: pt ? 'Fatura' : 'Invoice', value: invoiceNumber },
+      { label: pt ? 'Emissão' : 'Issued', value: issuedLabel },
+      { label: 'Total', value: totalLabel },
+      { label: 'Status', value: statusLabel }
+    ]),
+    mutedHtml(pt
+      ? 'Guarde este e-mail: o PDF anexado é o seu comprovante.'
+      : 'Keep this email: the attached PDF is your record.'),
+    url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'View my plan' }) : ''
+  ].join('');
+
+  return {
+    id: 'invoice',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: pt ? `Fatura ${invoiceNumber} em anexo.` : `Invoice ${invoiceNumber} attached.`,
+      kicker: pt ? 'Fatura' : 'Invoice',
+      title: pt ? 'Sua fatura chegou' : 'Your invoice is here',
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
 module.exports = {
   buildAdminNewSubscriptionEmail,
+  buildInvoiceEmail,
   buildAutoRenewOffEmail,
   buildCancelledEmail,
   buildOrderConfirmedEmail,

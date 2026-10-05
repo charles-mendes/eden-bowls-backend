@@ -86,6 +86,10 @@ const { UpsClient } = require('./infrastructure/shipping/ups-client');
 const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shipment.repository');
 const { UpsShipmentService } = require('./services/ups-shipment.service');
 const { LocalUpsLabelStorage } = require('./infrastructure/storage/local-ups-label-storage');
+const { LocalInvoiceStorage } = require('./infrastructure/storage/local-invoice-storage');
+const { CustomerInvoicesRepository } = require('./infrastructure/repositories/customer-invoices.repository');
+const { CustomerInvoicesService } = require('./services/customer-invoices.service');
+const { renderInvoicePdf } = require('./infrastructure/invoices/invoice-pdf-renderer');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
 const { SubscriptionsEditCommitService } = require('./services/subscriptions-edit-commit.service');
@@ -340,9 +344,23 @@ async function bootstrap() {
     opsEmails: env.MAIL_OPS_TO,
     emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
   });
+  // Eden Bowls invoice PDFs (EB-YYYY-NNNNNN): issued on invoice.paid, kept in INVOICE_PDF_DIR, emailed to the customer.
+  const customerInvoicesService = new CustomerInvoicesService({
+    repository: new CustomerInvoicesRepository(dataSource, { postmetaTableName: env.WP_POSTMETA_TABLE_NAME }),
+    storage: new LocalInvoiceStorage({ directory: env.INVOICE_PDF_DIR }),
+    renderPdf: renderInvoicePdf,
+    mailer: otpMailer,
+    ledgerRepository: subscriptionLedgerRepository,
+    stripeAccounts,
+    stripeBilling,
+    storeAppUrl: env.STORE_APP_URL,
+    emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
+    logger
+  });
   const stripeWebhookService = new StripeWebhookService({
     stripeAccounts,
     stripeBilling,
+    customerInvoices: customerInvoicesService,
     webhookSecret: env.STRIPE_US_WEBHOOK_SECRET,
     eventsRepository: stripeWebhookEventsRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -635,6 +653,7 @@ async function bootstrap() {
     adminProductionService,
     adminDeliveryCalendarService,
     upsShipmentService,
+    customerInvoicesService,
     adminCatalogService,
     adminUsersService,
     stripeCouponService,
@@ -668,6 +687,7 @@ async function bootstrap() {
       stripeBilling,
       ledgerRepository: subscriptionLedgerRepository,
       transactionalMailer,
+      customerInvoicesService,
       upsShipmentRepository,
       upsClient,
       refreshTokenRepository: authRefreshTokenRepository,

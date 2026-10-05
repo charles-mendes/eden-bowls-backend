@@ -94,6 +94,7 @@ const rawEnvSchema = z.object({
   UPS_HTTP_TIMEOUT_MS: z.string().optional(),
   UPS_TRANSACTION_SRC: z.string().optional(),
   UPS_LABEL_DIR: z.string().optional(),
+  INVOICE_PDF_DIR: z.string().optional(),
   SHIPPING_QUOTE_SECRET: z.string().optional(),
   SHIPPING_US_FIXED_TRANSIT_DAYS: z.string().optional(),
   METRICS_TOKEN: z.string().optional()
@@ -354,6 +355,7 @@ function parseEnv(source = process.env) {
     UPS_HTTP_TIMEOUT_MS: Number(firstNonEmpty(rawEnv.UPS_HTTP_TIMEOUT_MS, '5000')),
     UPS_TRANSACTION_SRC: firstNonEmpty(rawEnv.UPS_TRANSACTION_SRC, 'eden-bowls'),
     UPS_LABEL_DIR: firstNonEmpty(rawEnv.UPS_LABEL_DIR) || './data/ups-labels',
+    INVOICE_PDF_DIR: firstNonEmpty(rawEnv.INVOICE_PDF_DIR) || './data/invoices',
     SHIPPING_QUOTE_SECRET: firstNonEmpty(rawEnv.SHIPPING_QUOTE_SECRET)
       || (String(rawEnv.EDEN_RUNTIME || '').trim() === 'production' ? '' : LOCAL_SHIPPING_QUOTE_SECRET),
     SHIPPING_US_FIXED_TRANSIT_DAYS: Number(firstNonEmpty(rawEnv.SHIPPING_US_FIXED_TRANSIT_DAYS, '1')),
