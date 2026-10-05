@@ -70,6 +70,9 @@ describe('DeliveryCalendarStripeSyncsRepository', () => {
     const repository = new DeliveryCalendarStripeSyncsRepository(db);
     await repository.markSynced(3, new Date('2027-12-22T12:00:00Z'));
     await repository.markConflict(3, '2027-12-29T05:00:00.000Z');
+    await repository.markError(3, 'x'.repeat(600));
+    expect(db.calls[2].sql).toContain("status = 'failed'");
+    expect(db.calls[2].params[0]).toHaveLength(500);
     expect(db.calls[0].sql).toContain("status = 'synced'");
     expect(db.calls[1].sql).toContain("status = 'conflict'");
     expect(db.calls[1].params).toEqual(['2027-12-29 05:00:00', 3]);

@@ -6,6 +6,13 @@ function toUnix(iso) {
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
 }
 
+// One key per attempt: a retry or a resend changes `attempts` or `next_attempt_at`, so Stripe never replays a
+// stored failure. The same row state gives the same key, so a crash between Stripe and MySQL stays safe.
+function idempotencyKey(row) {
+  const due = row.nextAttemptAt ? Date.parse(row.nextAttemptAt) : 0;
+  return `delivery-calendar-sync:${row.id}:${Number(row.attempts) || 0}:${Number.isFinite(due) ? due : 0}`;
+}
+
 function stripeTrialEnd(subscription) {
   const value = subscription && subscription.trial_end;
   return value == null ? null : Number(value);
@@ -43,27 +50,43 @@ class DeliveryCalendarStripeSyncService {
         subscriptionId: row.stripeSubscriptionId,
         trial_end: target,
         proration_behavior: 'none',
-        idempotencyKey: `delivery-calendar-sync:${row.id}`
+        idempotencyKey: idempotencyKey(row)
       });
       await this.repository.markSynced(row.id, this.now());
       return 'synced';
     } catch (error) {
+      this.logger.error({ syncId: row.id, subscriptionId: row.stripeSubscriptionId, err: error && error.message }, 'Calendar sync attempt failed.');
       const result = await this.repository.recordAttempt(row.id, {
         error,
         now: this.now(),
         attempts: row.attempts,
         maxAttempts: this.maxAttempts
       });
-      this.logger.error({ syncId: row.id, subscriptionId: row.stripeSubscriptionId, err: error && error.message }, 'Calendar sync attempt failed.');
       return result.status === 'failed' ? 'failed' : 'retry';
     }
   }
 
+  // A row that cannot even record its outcome is marked as an error and the tick goes on with the next row.
+  async syncIsolated(row) {
+    try {
+      return await this.syncOne(row);
+    } catch (error) {
+      const message = String((error && error.message) || error || 'unknown error');
+      this.logger.error({ syncId: row.id, subscriptionId: row.stripeSubscriptionId, err: message }, 'Calendar sync row could not be processed.');
+      try {
+        await this.repository.markError(row.id, message);
+      } catch (markError) {
+        this.logger.error({ syncId: row.id, err: markError && markError.message }, 'Calendar sync row could not be marked as an error.');
+      }
+      return 'error';
+    }
+  }
+
   async runDue() {
-    const counts = { synced: 0, failed: 0, conflict: 0, retry: 0 };
+    const counts = { synced: 0, failed: 0, conflict: 0, retry: 0, error: 0 };
     const rows = await this.repository.claimDue(this.now());
     for (const row of rows) {
-      const outcome = await this.syncOne(row);
+      const outcome = await this.syncIsolated(row);
       counts[outcome] += 1;
     }
     return counts;
@@ -72,5 +95,6 @@ class DeliveryCalendarStripeSyncService {
 
 module.exports = {
   DeliveryCalendarStripeSyncService,
+  idempotencyKey,
   DEFAULT_MAX_ATTEMPTS
 };

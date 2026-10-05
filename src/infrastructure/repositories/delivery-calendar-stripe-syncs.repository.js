@@ -99,6 +99,15 @@ class DeliveryCalendarStripeSyncsRepository {
     );
   }
 
+  // A row whose outcome could not be stored: failed, with the message, so the panel lists it for a resend.
+  async markError(id, message) {
+    await this.dataSource.query(
+      `UPDATE ${TABLE} SET status = 'failed', last_error = ?, next_attempt_at = NULL
+        WHERE id = ? AND status = 'pending'`,
+      [String(message || 'unknown error').slice(0, 500), id]
+    );
+  }
+
   async markConflict(id, foundTrialEnd) {
     await this.dataSource.query(
       `UPDATE ${TABLE} SET status = 'conflict', found_trial_end = ?, next_attempt_at = NULL

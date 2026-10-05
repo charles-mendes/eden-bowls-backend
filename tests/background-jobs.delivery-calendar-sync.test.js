@@ -72,7 +72,7 @@ describe('delivery calendar Stripe sync job', () => {
     });
 
     expect(query.mock.calls[0][1]).toEqual([LOCKS.delivery_calendar_stripe_sync]);
-    expect(result.counts).toEqual({ synced: 2, failed: 0, conflict: 0, retry: 0 });
+    expect(result.counts).toEqual({ synced: 2, failed: 0, conflict: 0, retry: 0, error: 0 });
     expect(us.setTrialEnd).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: 'sub_us' }));
     expect(br.setTrialEnd).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: 'sub_br' }));
     expect(repository.markSynced).toHaveBeenCalledTimes(2);
