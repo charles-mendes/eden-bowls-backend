@@ -143,7 +143,7 @@ Dois endpoints. Cada Dashboard aponta só para o path daquela conta. Assinatura 
 
 URL pública (QA): `https://qa-api.edenbowls.com/stripe/v1/webhook/us` e `.../webhook/br`.
 
-Eventos a assinar nas duas contas, em Test e em Live: os **28** de `src/infrastructure/stripe/stripe-webhook-events.js` (lista na seção 8 de [COMO-CONFIGURAR-STRIPE.md](./COMO-CONFIGURAR-STRIPE.md)). Não use “all events” e não cadastre só o subconjunto que o Node trata hoje.
+Eventos a assinar nas duas contas, em Test e em Live: os **29** de `src/infrastructure/stripe/stripe-webhook-events.js` (lista na seção 8 de [COMO-CONFIGURAR-STRIPE.md](./COMO-CONFIGURAR-STRIPE.md)). Não use “all events” e não cadastre só o subconjunto que o Node trata hoje.
 
 São 4 endpoints no total se houver test + live × br + us.
 

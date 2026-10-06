@@ -2,6 +2,7 @@ const { HttpError } = require('../core/http-error');
 const { withTimeout } = require('../core/with-timeout');
 const { parseStripeAccountInput } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
+const { isSubscribedStripeEvent } = require('../infrastructure/stripe/stripe-webhook-events');
 const {
   extractSubscriptionIdFromInvoice,
   extractSubscriptionPeriod,
@@ -75,6 +76,14 @@ class StripeWebhookService {
       eventId: event.id,
       type: event.type
     }, 'Stripe webhook received.');
+    if (!isSubscribedStripeEvent(event.type)) {
+      // The dashboard endpoint sends more than stripe-webhook-events.js lists. Keep the 200; fix the endpoint.
+      this.logger.warn({
+        stripe_account: stripeAccount,
+        eventId: event.id,
+        type: event.type
+      }, 'Stripe webhook event is not in the subscribed list.');
+    }
 
     const inserted = await this.eventsRepository.insertIfNew({
       eventId: event.id,

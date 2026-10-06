@@ -89,7 +89,7 @@ O script `scripts/dev-with-stripe-listen.js`:
 - sobe a API com `node --watch src/index.js` e `NODE_ENV=development`;
 - sobe `stripe listen --forward-to localhost:${PORT}/stripe/v1/webhook/us` com `STRIPE_API_KEY=$STRIPE_US_SECRET_KEY`;
 - sobe o listener BR (`/webhook/br`, `STRIPE_BR_SECRET_KEY`) só se `STRIPE_BR_SECRET_KEY` estiver preenchida;
-- lê o `whsec_` que cada CLI imprime e grava em `.local/stripe-webhook-secrets.json` (`{ "us": "whsec_...", "br": "whsec_..." }`, gitignored);
+- lê o signing secret que cada CLI imprime e grava em `.local/stripe-webhook-secrets.json` (`{ "us": "<signing secret US>", "br": "<signing secret BR>" }`, gitignored);
 - prefixa a saída com `[api]`, `[stripe-us]`, `[stripe-br]` e mostra o secret mascarado;
 - reinicia um listener que caia (o novo secret vai para o arquivo);
 - no Ctrl+C ou SIGTERM encerra API e listeners juntos. Se a API sair, encerra os listeners. Em qualquer desses encerramentos apaga `.local/stripe-webhook-secrets.json`, porque o secret morre com a sessão do listener.
@@ -147,12 +147,12 @@ stripe trigger invoice.paid
 
 Confirma que a rota aceita o POST assinado. O payload de fixture **nao** tem o `sub_` / `user_id` do checkout que voce acabou de fazer. Ledger e Meu Plano so fecham no pagamento real (ou num evento cujo objeto exista no seu banco).
 
-## Local vs staging/prod
+## Local vs QA/prod
 
 | Ambiente | Como o Stripe chega | Qual secret (`STRIPE_WEBHOOK_SECRET` is not read) |
 |---|---|---|
 | Local | `npm run dev` (ou `npm run stripe:listen`) | `signing secret ` impresso pelo CLI |
-| Staging / prod | endpoint no dashboard → `{API}/stripe/v1/webhook` | `signing secret ` **daquele** endpoint |
+| QA / prod | endpoint no dashboard da conta do país → `{API}/stripe/v1/webhook/br` (conta Brasil) e `{API}/stripe/v1/webhook/us` (conta Estados Unidos) | `signing secret ` **daquele** endpoint (`STRIPE_BR_WEBHOOK_SECRET` / `STRIPE_US_WEBHOOK_SECRET`) |
 
 Em producao o CLI nao entra. URL publica HTTPS + secret do dashboard.
 

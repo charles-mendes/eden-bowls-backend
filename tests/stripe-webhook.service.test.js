@@ -110,6 +110,96 @@ describe('StripeWebhookService', () => {
     expect(brBilling.constructEvent).not.toHaveBeenCalled();
   });
 
+  describe('signature from the other account', () => {
+    const Stripe = require('stripe');
+    const { StripeAccounts } = require('../src/infrastructure/stripe/stripe-accounts');
+    const { StripeBillingClient } = require('../src/infrastructure/stripe/stripe-billing-client');
+    const secrets = { us: 'whsec_us_test', br: 'whsec_br_test' };
+    const payload = JSON.stringify({ id: 'evt_cross', type: 'customer.created', data: { object: {} } });
+
+    function buildAccountService() {
+      const billing = (account) => new StripeBillingClient({ account, client: { webhooks: Stripe.webhooks } });
+      const eventsRepository = {
+        insertIfNew: jest.fn().mockResolvedValue({ inserted: true }),
+        markProcessed: jest.fn().mockResolvedValue(undefined)
+      };
+      const ledgerRepository = { upsert: jest.fn() };
+      const service = new StripeWebhookService({
+        stripeAccounts: new StripeAccounts({
+          us: billing('us'),
+          br: billing('br'),
+          brEnabled: true,
+          usWebhookSecret: secrets.us,
+          brWebhookSecret: secrets.br,
+          nodeEnv: 'test'
+        }),
+        eventsRepository,
+        ledgerRepository,
+        logger: { error() {}, warn() {}, info() {} }
+      });
+      return { service, eventsRepository, ledgerRepository };
+    }
+
+    test.each([
+      ['br', 'us'],
+      ['us', 'br']
+    ])('rejects a payload signed by %s on the %s path with 400', async (signer, path) => {
+      const { service, eventsRepository, ledgerRepository } = buildAccountService();
+      const signature = Stripe.webhooks.generateTestHeaderString({ payload, secret: secrets[signer] });
+
+      await expect(service.handle({
+        account: path,
+        rawBody: Buffer.from(payload),
+        signature
+      })).rejects.toMatchObject({
+        statusCode: 400,
+        details: { code: 'stripe_webhook_signature_invalid', stripe_account: path }
+      });
+      expect(eventsRepository.insertIfNew).not.toHaveBeenCalled();
+      expect(ledgerRepository.upsert).not.toHaveBeenCalled();
+    });
+
+    test('warns about an event outside the subscribed list and still acknowledges it', async () => {
+      const { service, eventsRepository } = buildAccountService();
+      const warn = jest.fn();
+      service.logger = { error() {}, warn, info() {} };
+      const outside = JSON.stringify({ id: 'evt_outside', type: 'balance.available', data: { object: {} } });
+      const signature = Stripe.webhooks.generateTestHeaderString({ payload: outside, secret: secrets.us });
+
+      await expect(service.handle({ account: 'us', rawBody: Buffer.from(outside), signature }))
+        .resolves.toEqual({ received: true });
+
+      expect(warn).toHaveBeenCalledWith(
+        { stripe_account: 'us', eventId: 'evt_outside', type: 'balance.available' },
+        'Stripe webhook event is not in the subscribed list.'
+      );
+      expect(eventsRepository.markProcessed).toHaveBeenCalledWith({ eventId: 'evt_outside', stripeAccount: 'us' });
+    });
+
+    test('does not warn about a subscribed event', async () => {
+      const { service } = buildAccountService();
+      const warn = jest.fn();
+      service.logger = { error() {}, warn, info() {} };
+      const signature = Stripe.webhooks.generateTestHeaderString({ payload, secret: secrets.us });
+
+      await service.handle({ account: 'us', rawBody: Buffer.from(payload), signature });
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    test('accepts the same payload on the path of the account that signed it', async () => {
+      const { service, eventsRepository } = buildAccountService();
+      const signature = Stripe.webhooks.generateTestHeaderString({ payload, secret: secrets.br });
+
+      await service.handle({ account: 'br', rawBody: Buffer.from(payload), signature });
+
+      expect(eventsRepository.insertIfNew).toHaveBeenCalledWith(expect.objectContaining({
+        eventId: 'evt_cross',
+        stripeAccount: 'br'
+      }));
+    });
+  });
+
   test('returns 400 when Stripe-Signature is missing', async () => {
     const { service, stripeBilling } = buildService();
     stripeBilling.constructEvent.mockImplementation(() => {

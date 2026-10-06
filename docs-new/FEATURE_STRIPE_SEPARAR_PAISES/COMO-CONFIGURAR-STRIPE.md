@@ -10,7 +10,7 @@ Webhook no localhost: [../BUG_CHECKOUT_BACK_AND_FRONT_END/STRIPE_CLI_WEBHOOK_LOC
 
 QA e localhost usam a QA Brazil sandbox e a conta de teste dos Estados Unidos. "Área Restrita" é o nome em português que a Stripe dá a uma sandbox. Não é uma chave restrita. Produção usa a conta live do Brasil e a conta live dos Estados Unidos. A sandbox compartilhada da Charles está aposentada.
 
-Cada endpoint assina a lista de 28 eventos em `src/infrastructure/stripe/stripe-webhook-events.js` e usa a API version `2025-09-30.clover`.
+Cada endpoint assina os 29 eventos de `src/infrastructure/stripe/stripe-webhook-events.js` (fonte canônica; a seção 8 é o espelho para o dashboard) e usa a API version `2025-09-30.clover`.
 
 URLs:
 
@@ -221,7 +221,7 @@ Repita na conta **US** (modo Test para QA) e na conta **BR** (modo Test para QA)
 5. Description opcional: `Eden Bowls API — US`.
 6. Listen to: **Your account** (não Connected accounts).
 7. API version do evento: `2025-09-30.clover` se o formulário pedir.
-8. Selecione **os 28 eventos da seção 8** (não “all events”).
+8. Selecione **os 29 eventos da seção 8** (não “all events”).
 9. Salve. Copie o **Signing secret** → `STRIPE_US_WEBHOOK_SECRET`.
 10. Restart da API.
 
@@ -238,7 +238,7 @@ Repita na conta **US** (modo Test para QA) e na conta **BR** (modo Test para QA)
 
 5. Description opcional: `Eden Bowls API — BR`.
 6. Listen to: **Your account**.
-7. Os **28 eventos** da seção 8.
+7. Os **29 eventos** da seção 8.
 8. Salve. Copie o **Signing secret** → `STRIPE_BR_WEBHOOK_SECRET`.
 9. Restart da API.
 
@@ -259,11 +259,13 @@ Evento desconhecido pelo código ainda assim deve responder **200** (o Node igno
 
 ## 8. Eventos a assinar nos dois webhooks
 
-Sempre que configurar um webhook — Dashboard US, Dashboard BR, modo Test, modo Live ou `stripe listen` — assine **estes 28 eventos**. Não use “all events” e não cadastre um endpoint com um subconjunto.
+Sempre que configurar um webhook — Dashboard US, Dashboard BR, modo Test, modo Live ou `stripe listen` — assine **estes 29 eventos**. Não use “all events” e não cadastre um endpoint com um subconjunto.
 
-A lista canônica está em `src/infrastructure/stripe/stripe-webhook-events.js`. `npm run stripe:listen` e `npm run stripe:listen:br` já passam `--events` com ela.
+A fonte canônica é `src/infrastructure/stripe/stripe-webhook-events.js`. Esta seção é o espelho para quem configura pelo dashboard. Para mudar a lista, altere o arquivo e esta seção no mesmo commit: `tests/stripe-webhook-events.test.js` falha quando as tabelas ou o bloco de texto abaixo divergem do arquivo.
 
-Eventos que o Node ainda não trata são ignorados com 200.
+Eventos que o Node ainda não trata são ignorados com 200. Um evento fora desta lista também responde 200, mas a API registra o aviso `Stripe webhook event is not in the subscribed list.`; isso indica um endpoint assinando mais do que deveria.
+
+`npm run stripe:listen` e `npm run stripe:listen:br` não passam `--events`: o CLI encaminha todos os eventos da conta, e os que estão fora da lista geram esse aviso no log local.
 
 ### Charge
 
@@ -321,6 +323,7 @@ O Node já usa `customer.subscription.updated` / `deleted` para convergir pause 
 |--------|--------|
 | `payment_intent.succeeded` | PaymentIntent pagou. |
 | `payment_intent.payment_failed` | Falhou criar método ou pagar. |
+| `payment_intent.processing` | Pagamento assíncrono em processamento (ex.: débito/boleto). O Node registra o estado no checkout. |
 | `payment_intent.canceled` | PaymentIntent cancelado. |
 
 ### Payment Method
@@ -363,6 +366,7 @@ invoice.payment_action_required
 invoice.payment_failed
 payment_intent.canceled
 payment_intent.payment_failed
+payment_intent.processing
 payment_intent.succeeded
 payment_method.attached
 payment_method.detached
@@ -384,7 +388,7 @@ npm run dev
 - API em `node --watch` com `NODE_ENV=development`.
 - Listener US → `localhost:${PORT}/stripe/v1/webhook/us`, autenticado com `STRIPE_US_SECRET_KEY` (via `STRIPE_API_KEY`, sem `stripe login`).
 - Listener BR → `localhost:${PORT}/stripe/v1/webhook/br`, com `STRIPE_BR_SECRET_KEY`. Se essa chave estiver vazia, o listener BR não sobe.
-- Os `whsec_` impressos pelos listeners vão para `.local/stripe-webhook-secrets.json` (gitignored). A API lê esse arquivo a cada webhook em `development`, com prioridade sobre o `.env`. O `npm run dev` apaga o arquivo ao encerrar (Ctrl+C, SIGTERM ou saída da API), e o `npm run dev:api` volta a usar o `.env`. Se o script for morto com `kill -9`, apague o arquivo à mão.
+- Os signing secrets impressos pelos listeners vão para `.local/stripe-webhook-secrets.json` (gitignored). A API lê esse arquivo a cada webhook em `development`, com prioridade sobre o `.env`. O `npm run dev` apaga o arquivo ao encerrar (Ctrl+C, SIGTERM ou saída da API), e o `npm run dev:api` volta a usar o `.env`. Se o script for morto com `kill -9`, apague o arquivo à mão.
 
 O `.env` local pode deixar `STRIPE_US_WEBHOOK_SECRET` e `STRIPE_BR_WEBHOOK_SECRET` vazios. Trocar o secret do listener não exige reiniciar a API.
 
@@ -447,7 +451,7 @@ VITE_STRIPE_US_AUTOMATIC_TAX=true
 - [ ] `STRIPE_API_VERSION=2025-09-30.clover`
 - [ ] Endpoint US → `.../stripe/v1/webhook/us` + `STRIPE_US_WEBHOOK_SECRET`
 - [ ] Endpoint BR → `.../stripe/v1/webhook/br` + `STRIPE_BR_WEBHOOK_SECRET`
-- [ ] Os dois endpoints com os 28 eventos da seção 8
+- [ ] Os dois endpoints com os 29 eventos da seção 8
 - [ ] Test webhook `invoice.paid` → 200 em cada conta
 - [ ] Loja rebuildada depois de mudar `VITE_*`
 - [ ] API reiniciada depois de mudar `STRIPE_*`

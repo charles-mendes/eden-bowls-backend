@@ -37,7 +37,7 @@ Secret keys, publishable keys, and webhook signing secrets MUST NOT appear on th
 #### Scenario: PR1 and PR2 do not contain merchant secrets
 
 - **WHEN** the HEAD of PR1 or PR2 is searched for live secret keys, test secret keys, publishable keys of a real account, or webhook signing secrets, excluding this change directory and the archive
-- **THEN** there is no match, and every remaining test-key prefix on that HEAD is a synthetic CI placeholder
+- **THEN** there is no match, and every remaining test-key prefix on that HEAD is a synthetic CI placeholder, a synthetic test fixture, a prefix check in source, or a doc placeholder, never a key of a real account
 - **AND** matches in commits before PR1 are historical test material (retired sandbox account fragment `TObKd`, or the placeholder suffixes `US...` and `BR...`), history is not rewritten, and those secrets are unusable after the rotations in tasks 4.2 and 4.3
 
 ### Requirement: Stored Stripe ids belong to one merchant account
@@ -63,7 +63,7 @@ Each of the four dashboard endpoints MUST subscribe to exactly the events in `sr
 #### Scenario: A new account endpoint matches the SDK pin
 
 - **WHEN** an operator reviews one of the four dashboard endpoints
-- **THEN** its event list matches the 28 events in the source list and its API version is `2025-09-30.clover`
+- **THEN** its event list matches the 29 events in the source list and its API version is `2025-09-30.clover`
 
 ### Requirement: Compromised secrets are rotated before a host is configured
 

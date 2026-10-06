@@ -58,7 +58,7 @@ Register webhooks at:
 
 Production Stripe rollback stops the production store, because `STRIPE_BR_ENABLED=false` only stops Brazil. QA Stripe rollback restores the dump taken before the retire script. Repeating the cutover deletes `background_job_cursors` where `job_name` is `stripe_ledger_retire`. Schema-migration rollback stays a database dump restore.
 
-Each endpoint (US and BR, test and live) must subscribe to the 28 events in `src/infrastructure/stripe/stripe-webhook-events.js`. Do not select “all events” and do not register a shorter list. The same list is what `npm run stripe:listen` and `npm run stripe:listen:br` forward locally.
+Each endpoint (US and BR, test and live) must subscribe to the 29 events in `src/infrastructure/stripe/stripe-webhook-events.js`. That file is the canonical list. Section 8 of `docs-new/FEATURE_STRIPE_SEPARAR_PAISES/COMO-CONFIGURAR-STRIPE.md` mirrors it for whoever configures the dashboard, and `tests/stripe-webhook-events.test.js` fails when the two differ. Do not select “all events” and do not register a shorter list. An event outside the list still gets 200, and the API logs `Stripe webhook event is not in the subscribed list.`. `npm run stripe:listen` and `npm run stripe:listen:br` do not pass `--events`, so locally the CLI forwards every event.
 
 The legacy `POST /stripe/v1/webhook` is the US endpoint. Put each signing secret in `STRIPE_US_WEBHOOK_SECRET` and `STRIPE_BR_WEBHOOK_SECRET`. Production accepts only `STRIPE_US_SECRET_KEY` and `STRIPE_US_WEBHOOK_SECRET` for the US account. A host env outside this repo must copy any live legacy secret onto those names before deploy. `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read.
 

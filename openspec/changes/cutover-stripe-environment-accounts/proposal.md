@@ -9,7 +9,7 @@ QA and local development still share one Stripe sandbox (the Charles test accoun
 - Retire the shared Charles sandbox from the QA host and from local development. QA and localhost use the QA Brazil sandbox and the QA United States test account. "Área Restrita" is Stripe's Portuguese name for a sandbox. It is not a restricted key (`rk_`). Production uses the live Brazil account and the live United States account.
 - Keep the existing variable names and the existing paths `POST /stripe/v1/webhook/br` and `POST /stripe/v1/webhook/us`. Each host's `.env` holds only that host's secret keys and that host's webhook signing secrets. Live keys never go on QA or on a developer machine.
 - Rotate the live secret keys and the live webhook signing secrets, and the QA secret keys and QA webhook signing secrets, before any host is configured. The values pasted into the planning chat are compromised. Publishable keys stay; they are public.
-- Point the Stripe dashboards at the API, not the store. Each of the four endpoints subscribes to the 28 events in `src/infrastructure/stripe/stripe-webhook-events.js` and uses API version `2025-09-30.clover`:
+- Point the Stripe dashboards at the API, not the store. Each of the four endpoints subscribes to the 29 events in `src/infrastructure/stripe/stripe-webhook-events.js` and uses API version `2025-09-30.clover`:
   - QA Brazil: `https://qa-api.edenbowls.com/stripe/v1/webhook/br`
   - QA United States: `https://qa-api.edenbowls.com/stripe/v1/webhook/us`
   - Production Brazil: `https://api.edenbowls.com/stripe/v1/webhook/br`
