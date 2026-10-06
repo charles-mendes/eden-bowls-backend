@@ -34,54 +34,57 @@ async function retireStripeLedger({ dataSource, runtime, confirm, createdBefore,
     throw failure;
   }
 
-  const existing = await dataSource.query(
-    'SELECT `cursor` FROM `background_job_cursors` WHERE `job_name` = ? LIMIT 1',
-    [RETIRE_JOB]
-  );
-  const cursor = existing && existing[0] ? String(existing[0].cursor) : '0';
-  if (existing && existing[0] && cursor !== '0') {
-    const failure = new Error('stripe_ledger_retire already ran.');
-    failure.exitCode = 1;
-    throw failure;
-  }
-
-  const rows = await dataSource.query(
-    'SELECT `id`, `stripe_subscription_id` FROM `stripe_subscriptions` WHERE `created_at` < ?',
-    [createdBefore]
-  );
-  const subscriptionIds = (Array.isArray(rows) ? rows : [])
-    .map((row) => String(row.stripe_subscription_id || ''))
-    .filter(Boolean);
-
-  if (subscriptionIds.length > 0) {
-    const placeholders = subscriptionIds.map(() => '?').join(', ');
-    await dataSource.query(
-      `DELETE FROM \`subscription_mail_claims\` WHERE \`stripe_subscription_id\` IN (${placeholders})`,
-      subscriptionIds
+  // One transaction: a failure in the middle leaves the ledger, the customer meta and the cursor as they were.
+  return dataSource.transaction(async (manager) => {
+    const existing = await manager.query(
+      'SELECT `cursor` FROM `background_job_cursors` WHERE `job_name` = ? LIMIT 1',
+      [RETIRE_JOB]
     );
-    await dataSource.query(
-      `DELETE FROM \`ups_shipments\` WHERE \`subscription_id\` IN (${placeholders})`,
-      subscriptionIds
+    const cursor = existing && existing[0] ? String(existing[0].cursor) : '0';
+    if (existing && existing[0] && cursor !== '0') {
+      const failure = new Error('stripe_ledger_retire already ran.');
+      failure.exitCode = 1;
+      throw failure;
+    }
+
+    const rows = await manager.query(
+      'SELECT `id`, `stripe_subscription_id` FROM `stripe_subscriptions` WHERE `created_at` < ?',
+      [createdBefore]
     );
-  }
+    const subscriptionIds = (Array.isArray(rows) ? rows : [])
+      .map((row) => String(row.stripe_subscription_id || ''))
+      .filter(Boolean);
 
-  await dataSource.query(
-    'DELETE FROM `stripe_subscriptions` WHERE `created_at` < ?',
-    [createdBefore]
-  );
+    if (subscriptionIds.length > 0) {
+      const placeholders = subscriptionIds.map(() => '?').join(', ');
+      await manager.query(
+        `DELETE FROM \`subscription_mail_claims\` WHERE \`stripe_subscription_id\` IN (${placeholders})`,
+        subscriptionIds
+      );
+      await manager.query(
+        `DELETE FROM \`ups_shipments\` WHERE \`subscription_id\` IN (${placeholders})`,
+        subscriptionIds
+      );
+    }
 
-  const metaPlaceholders = CUSTOMER_META_KEYS.map(() => '?').join(', ');
-  await dataSource.query(
-    `DELETE FROM \`${usermetaTable}\` WHERE \`meta_key\` IN (${metaPlaceholders})`,
-    CUSTOMER_META_KEYS
-  );
+    await manager.query(
+      'DELETE FROM `stripe_subscriptions` WHERE `created_at` < ?',
+      [createdBefore]
+    );
 
-  await dataSource.query(
-    'INSERT INTO `background_job_cursors` (`job_name`, `cursor`, `updated_at`) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE `cursor` = VALUES(`cursor`), `updated_at` = CURRENT_TIMESTAMP',
-    [RETIRE_JOB, createdBefore]
-  );
+    const metaPlaceholders = CUSTOMER_META_KEYS.map(() => '?').join(', ');
+    await manager.query(
+      `DELETE FROM \`${usermetaTable}\` WHERE \`meta_key\` IN (${metaPlaceholders})`,
+      CUSTOMER_META_KEYS
+    );
 
-  return { deletedSubscriptions: Array.isArray(rows) ? rows.length : 0, cutoff: createdBefore };
+    await manager.query(
+      'INSERT INTO `background_job_cursors` (`job_name`, `cursor`, `updated_at`) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE `cursor` = VALUES(`cursor`), `updated_at` = CURRENT_TIMESTAMP',
+      [RETIRE_JOB, createdBefore]
+    );
+
+    return { deletedSubscriptions: Array.isArray(rows) ? rows.length : 0, cutoff: createdBefore };
+  });
 }
 
 async function main() {

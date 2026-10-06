@@ -853,12 +853,19 @@ class StripeBillingClient {
       if (stripe.subscriptions.update) {
         const reusableMetadata = reusable.metadata || {};
         const update = { default_payment_method: paymentMethodId };
-        if (!String(reusableMetadata.eden_env || '').trim()) {
+        const needsEnvLabel = !String(reusableMetadata.eden_env || '').trim();
+        if (needsEnvLabel) {
           update.metadata = { ...reusableMetadata, eden_env: edenRuntime() };
         }
         try {
           await stripe.subscriptions.update(reusable.id, update);
-        } catch (_error) {
+        } catch (error) {
+          // Without eden_env, invoice.paid is ignored as marker_missing and the order never advances.
+          if (needsEnvLabel) {
+            throw this.httpError(502, this.stripeMessage(error, 'Unable to label the Stripe subscription.'), {
+              code: 'stripe_subscription_env_failed'
+            });
+          }
           // Keep the existing incomplete subscription even if the PM update fails.
         }
       }

@@ -568,6 +568,55 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     expect(result.checkout.stripe_subscription_id).toBe('sub_existing');
     expect(result.checkout.stripe_client_secret).toBe('pi_existing_secret_abc');
     expect(result.checkout.reused).toBe(true);
+    expect(stripe.subscriptions.update).toHaveBeenCalledWith('sub_existing', {
+      default_payment_method: 'pm_attached',
+      metadata: { checkout_context_fingerprint: 'abc', user_id: '7', eden_env: 'qa' }
+    });
+  });
+
+  function reusableStripe(metadata, update) {
+    return {
+      subscriptions: {
+        list: jest.fn().mockResolvedValue({
+          data: [{ id: 'sub_existing', status: 'incomplete', latest_invoice: 'in_existing', metadata }]
+        }),
+        create: jest.fn(),
+        update
+      },
+      invoices: {
+        retrieve: jest.fn().mockResolvedValue({
+          id: 'in_existing',
+          currency: 'usd',
+          confirmation_secret: { client_secret: 'pi_existing_secret_abc', type: 'payment_intent' }
+        })
+      }
+    };
+  }
+
+  test('fails the reused checkout when the subscription cannot be labeled with eden_env', async () => {
+    const update = jest.fn().mockRejectedValue(new Error('stripe down'));
+    const { stripe, client } = buildClient({
+      stripe: reusableStripe({ checkout_context_fingerprint: 'abc', user_id: '7' }, update)
+    });
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      details: { code: 'stripe_subscription_env_failed' }
+    });
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+  });
+
+  test('keeps a labeled reused subscription when only the payment method update fails', async () => {
+    const update = jest.fn().mockRejectedValue(new Error('stripe down'));
+    const { client } = buildClient({
+      stripe: reusableStripe({ checkout_context_fingerprint: 'abc', user_id: '7', eden_env: 'qa' }, update)
+    });
+
+    const result = await client.createOnboardingSubscription(validInput);
+
+    expect(update.mock.calls[0][1]).toEqual({ default_payment_method: 'pm_attached' });
+    expect(result.checkout.stripe_client_secret).toBe('pi_existing_secret_abc');
+    expect(result.checkout.reused).toBe(true);
   });
 
   test('rejects a promotion code that Stripe cannot retrieve', async () => {
