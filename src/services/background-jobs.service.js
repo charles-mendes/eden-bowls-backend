@@ -110,8 +110,15 @@ async function runUpsTracking(deps) {
       const payload = await deps.upsClient.track(row.tracking_number, { timeoutMs });
       await deps.upsShipmentRepository.updateTracking(row.id, row.tracking_number, payload);
       updated += 1;
-    } catch (_error) {
+    } catch (error) {
       failed += 1;
+      if (deps.logger) {
+        deps.logger.warn({
+          shipmentId: row.id,
+          code: error && error.details && error.details.code,
+          status: error && error.details && error.details.status
+        }, 'UPS tracking refresh failed.');
+      }
     }
   }
 

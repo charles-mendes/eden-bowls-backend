@@ -1,3 +1,4 @@
+const { randomUUID } = require('crypto');
 const { fetchJson } = require('../http/fetch-json');
 const { HttpError } = require('../../core/http-error');
 
@@ -11,6 +12,37 @@ const SERVICE_LABELS = {
   '59': 'UPS 2nd Day Air A.M.',
   '11': 'UPS Standard'
 };
+
+const UPS_BASE_URLS = Object.freeze({
+  cie: 'https://wwwcie.ups.com',
+  production: 'https://onlinetools.ups.com'
+});
+
+// Same credentials work on both hosts, so the client refuses a host that does not match the runtime.
+function resolveUpsTarget(env, runtime) {
+  const envName = String(env || 'cie').trim().toLowerCase();
+  const runtimeName = String(runtime || '').trim().toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(UPS_BASE_URLS, envName)) {
+    throw new Error('UPS env must be cie or production.');
+  }
+  if (envName === 'production' && runtimeName !== 'production') {
+    throw new Error('UPS production requires EDEN_RUNTIME=production.');
+  }
+  if (runtimeName === 'production' && envName !== 'production') {
+    throw new Error('EDEN_RUNTIME=production requires UPS env production.');
+  }
+  return { envName, baseUrl: UPS_BASE_URLS[envName] };
+}
+
+function upstreamDetails(code, response, extra = {}) {
+  const upsCode = response.body?.response?.errors?.[0]?.code;
+  return {
+    code,
+    status: response.status,
+    ...(upsCode ? { ups_code: String(upsCode) } : {}),
+    ...extra
+  };
+}
 
 function serviceLabel(code) {
   const key = String(code || '').trim();
@@ -59,17 +91,13 @@ class UpsClient {
     this.clientId = String(options.clientId || '').trim();
     this.clientSecret = String(options.clientSecret || '').trim();
     this.accountNumber = String(options.accountNumber || '').trim();
-    this.envName = String(options.env || 'cie').trim().toLowerCase() === 'production' ? 'production' : 'cie';
+    const target = resolveUpsTarget(options.env, options.runtime);
+    Object.defineProperty(this, 'envName', { value: target.envName, enumerable: true });
+    Object.defineProperty(this, 'baseUrl', { value: target.baseUrl, enumerable: true });
     this.timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 5000;
     this.transactionSrc = String(options.transactionSrc || 'eden-bowls').trim() || 'eden-bowls';
     this.fetchImpl = options.fetchImpl;
     this.tokenCache = null;
-  }
-
-  get baseUrl() {
-    return this.envName === 'production'
-      ? 'https://onlinetools.ups.com'
-      : 'https://wwwcie.ups.com';
   }
 
   isConfigured() {
@@ -84,21 +112,32 @@ class UpsClient {
 
   async request(path, options = {}) {
     this.ensureConfigured();
-    const headers = {
-      Accept: 'application/json',
-      ...(options.headers || {})
+    const send = async () => {
+      const headers = {
+        Accept: 'application/json',
+        ...(await this.authHeaders()),
+        ...(options.headers || {})
+      };
+      if (options.jsonBody !== undefined) {
+        headers['Content-Type'] = 'application/json';
+      }
+      return fetchJson(`${this.baseUrl}${path}`, {
+        method: options.method || 'GET',
+        headers,
+        body: options.jsonBody !== undefined ? options.jsonBody : options.body,
+        timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : this.timeoutMs,
+        fetchImpl: this.fetchImpl
+      });
     };
-    if (options.jsonBody !== undefined) {
-      headers['Content-Type'] = 'application/json';
-    }
 
-    const response = await fetchJson(`${this.baseUrl}${path}`, {
-      method: options.method || 'GET',
-      headers,
-      body: options.jsonBody !== undefined ? options.jsonBody : options.body,
-      timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : this.timeoutMs,
-      fetchImpl: this.fetchImpl
-    });
+    let response = await send();
+    if (response.status === 401) {
+      // A rejected token is dropped either way. Shipment creation is not repeated here.
+      this.tokenCache = null;
+      if (options.retryOnUnauthorized !== false) {
+        response = await send();
+      }
+    }
 
     if (response.timeout) {
       const error = new HttpError(504, 'UPS request timed out.', { code: 'ups_timeout' });
@@ -116,11 +155,7 @@ class UpsClient {
       const message = response.body?.response?.errors?.[0]?.message
         || response.body?.message
         || 'UPS request failed.';
-      throw new HttpError(502, message, {
-        code: 'ups_upstream_error',
-        status: response.status,
-        body: response.body
-      });
+      throw new HttpError(502, message, upstreamDetails('ups_upstream_error', response));
     }
 
     return response.body;
@@ -128,7 +163,7 @@ class UpsClient {
 
   async getAccessToken() {
     const now = Date.now();
-    if (this.tokenCache && this.tokenCache.expiresAt > now + 30_000) {
+    if (this.tokenCache && this.tokenCache.baseUrl === this.baseUrl && this.tokenCache.expiresAt > now + 30_000) {
       return this.tokenCache.accessToken;
     }
 
@@ -151,18 +186,15 @@ class UpsClient {
     });
 
     if (response.timeout) {
-      throw new HttpError(504, 'UPS OAuth timed out.', { code: 'ups_timeout' });
+      throw new HttpError(504, 'UPS OAuth timed out.', { code: 'ups_timeout', stage: 'oauth' });
     }
     if (!response.ok || !response.body?.access_token) {
-      throw new HttpError(502, 'Unable to authenticate with UPS.', {
-        code: 'ups_oauth_failed',
-        status: response.status,
-        body: response.body
-      });
+      throw new HttpError(502, 'Unable to authenticate with UPS.', upstreamDetails('ups_oauth_failed', response, { stage: 'oauth' }));
     }
 
     const expiresIn = Number(response.body.expires_in || 14399);
     this.tokenCache = {
+      baseUrl: this.baseUrl,
       accessToken: String(response.body.access_token),
       expiresAt: now + Math.max(60, expiresIn) * 1000
     };
@@ -173,7 +205,7 @@ class UpsClient {
     const token = await this.getAccessToken();
     return {
       Authorization: `Bearer ${token}`,
-      transId: `eden-${Date.now()}`,
+      transId: randomUUID().replace(/-/g, ''),
       transactionSrc: this.transactionSrc,
       ...(this.accountNumber ? { 'x-merchant-id': this.accountNumber } : {})
     };
@@ -212,7 +244,6 @@ class UpsClient {
   }
 
   async rate({ shipFrom, shipTo, package: pkg, allowedServiceCodes }) {
-    const headers = await this.authHeaders();
     const shipper = this.buildAddress({ ...shipFrom, shipperNumber: this.accountNumber });
     const shipToAddress = this.buildAddress(shipTo);
 
@@ -238,7 +269,6 @@ class UpsClient {
 
     const response = await this.request('/api/rating/v2403/Shop', {
       method: 'POST',
-      headers,
       jsonBody: body
     });
 
@@ -258,7 +288,6 @@ class UpsClient {
   }
 
   async createShipment({ shipFrom, shipTo, package: pkg, serviceCode }) {
-    const headers = await this.authHeaders();
     const code = String(serviceCode || '03').trim() || '03';
     const body = {
       ShipmentRequest: {
@@ -293,8 +322,8 @@ class UpsClient {
 
     const response = await this.request('/api/shipments/v2409/ship', {
       method: 'POST',
-      headers,
-      jsonBody: body
+      jsonBody: body,
+      retryOnUnauthorized: false
     });
 
     const results = response?.ShipmentResponse?.ShipmentResults || response?.ShipmentResults || {};
@@ -319,8 +348,7 @@ class UpsClient {
 
     if (!shipmentId || !trackingNumber) {
       throw new HttpError(502, 'UPS shipment response missing tracking number.', {
-        code: 'ups_ship_incomplete',
-        body: response
+        code: 'ups_ship_incomplete'
       });
     }
 
@@ -341,10 +369,8 @@ class UpsClient {
     if (!inquiry) {
       throw new HttpError(400, 'Tracking number is required.', { code: 'invalid_tracking' });
     }
-    const headers = await this.authHeaders();
     const response = await this.request(`/api/track/v1/details/${encodeURIComponent(inquiry)}`, {
       method: 'GET',
-      headers,
       timeoutMs: options.timeoutMs
     });
     return response;
@@ -355,10 +381,8 @@ class UpsClient {
     if (!id) {
       throw new HttpError(400, 'Shipment id is required.', { code: 'invalid_shipment_id' });
     }
-    const headers = await this.authHeaders();
     const response = await this.request(`/api/shipments/v2409/void/cancel/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers
+      method: 'DELETE'
     });
     return response;
   }
@@ -366,6 +390,8 @@ class UpsClient {
 
 module.exports = {
   UpsClient,
+  UPS_BASE_URLS,
+  resolveUpsTarget,
   pickRate,
   serviceLabel,
   SERVICE_LABELS

@@ -48,6 +48,7 @@ const { SeedUs2027DeliveryClosedDays1700000000026 } = require('./migrations/1700
 const { AddDeliveryClosedDayType1700000000027 } = require('./migrations/1700000000027-add-delivery-closed-day-type');
 const { CreateDeliveryCalendarStripeSyncs1700000000028 } = require('./migrations/1700000000028-create-delivery-calendar-stripe-syncs');
 const { CreateCustomerInvoices1700000000029 } = require('./migrations/1700000000029-create-customer-invoices');
+const { AddUpsShipmentsActiveInvoiceUnique1700000000030 } = require('./migrations/1700000000030-add-ups-shipments-active-invoice-unique');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
@@ -118,7 +119,8 @@ function buildDataSourceOptions(env) {
       SeedUs2027DeliveryClosedDays1700000000026,
       AddDeliveryClosedDayType1700000000027,
       CreateDeliveryCalendarStripeSyncs1700000000028,
-      CreateCustomerInvoices1700000000029
+      CreateCustomerInvoices1700000000029,
+      AddUpsShipmentsActiveInvoiceUnique1700000000030
     ],
     synchronize: false,
     logging: false,

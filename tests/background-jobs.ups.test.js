@@ -45,6 +45,21 @@ describe('UPS tracking job', () => {
     expect(JOB_INTERVALS.ups_tracking).toBe(30 * 60 * 1000);
   });
 
+  test('logs a failed track call without the tracking payload', async () => {
+    const warn = jest.fn();
+    const failure = Object.assign(new Error('UPS request failed.'), { details: { code: 'ups_upstream_error', status: 503 } });
+    await runUpsTracking({
+      logger: { warn },
+      upsClient: { timeoutMs: 5000, track: jest.fn().mockRejectedValue(failure) },
+      upsShipmentRepository: {
+        listOpenForTracking: async () => [{ id: 2, tracking_number: '1ZFAIL', status: 'created' }],
+        updateTracking: jest.fn()
+      }
+    });
+
+    expect(warn).toHaveBeenCalledWith({ shipmentId: 2, code: 'ups_upstream_error', status: 503 }, 'UPS tracking refresh failed.');
+  });
+
   test('caps the track call at 5s for the default client and at 10s when the client allows 20s', () => {
     expect(upsTrackTimeoutMs(5000)).toBe(5000);
     expect(upsTrackTimeoutMs(20000)).toBe(10000);
@@ -68,7 +83,7 @@ describe('UPS tracking job', () => {
           timeoutMs: clientTimeoutMs,
           fetchImpl: hangingFetch
         });
-        client.tokenCache = { accessToken: 'token', expiresAt: Date.now() + 120000 };
+        client.tokenCache = { baseUrl: client.baseUrl, accessToken: 'token', expiresAt: Date.now() + 120000 };
         const pending = client.track('1Z999', { timeoutMs: upsTrackTimeoutMs(clientTimeoutMs) });
         const assertion = expect(pending).rejects.toMatchObject({
           upsTimeout: true,

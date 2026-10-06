@@ -27,7 +27,7 @@ The store repo constant `DOMAIN_COM_URL` is `https://www.edenbowls.com`. `DOMAIN
 
 `JWT_AUTH_ISSUER` must be `https` and must not use `localhost`.
 
-`UPS_ENV` must be `production` or `cie`. QA stays on `cie`. There is no silent fallback to CIE when `NODE_ENV` is production.
+`UPS_ENV` must be `production` when `EDEN_RUNTIME=production`. A blank value or `cie` stops the process. Local and QA resolve to `cie` and stop the process on `UPS_ENV=production`. See [UPS](#ups).
 
 `AUTH_REFRESH_COOKIE_SECURE` must be enabled. Leave `AUTH_REFRESH_COOKIE_DOMAIN` empty so the refresh cookie stays host-only on the API host. If `CORS_ORIGINS` includes both an `edenbowls.com` host and an `edenbowls.com.br` host, `AUTH_REFRESH_COOKIE_SAME_SITE` must be `none`. A list that is only `https://qa.edenbowls.com,https://qa-admin.edenbowls.com` may stay `lax`.
 
@@ -66,7 +66,19 @@ Shipping is not an environment product id. Checkout stores `shipping_product_id`
 
 ## UPS
 
-`UPS_ENV=cie` uses the UPS customer integration environment. `UPS_ENV=production` uses `https://onlinetools.ups.com`. QA keeps `cie`.
+The same UPS client id and secret work on CIE and on production, so `EDEN_RUNTIME` picks the host, not the credentials.
+
+| `EDEN_RUNTIME` | `UPS_ENV` accepted | Host | Charges |
+|---|---|---|---|
+| `local` | empty or `cie` | `https://wwwcie.ups.com` | no |
+| `qa` | empty or `cie` | `https://wwwcie.ups.com` | no |
+| `production` | `production` only | `https://onlinetools.ups.com` | yes |
+
+Any other combination stops `parseEnv` before the API listens. `UpsClient` checks the same rule when it is built.
+
+One shipment per invoice that is not voided is enforced by `uq_ups_shipments_active_invoice` (migration `1700000000030`). That migration stops when an invoice already has two shipments that are not voided. Void the extra label in UPS and set its row to `voided` first.
+
+When UPS does not confirm a label (timeout, network error, 5xx, or an answer without a tracking number), the row becomes `unknown` and `POST /api/v1/admin/billing/subscriptions/:id/shipments` answers `502 ups_shipment_unknown`. Later attempts for that invoice answer `409 ups_shipment_unresolved` and do not call UPS. Look up the shipment in the UPS account. If a label exists, void it there. Then close the row with `POST /api/v1/admin/shipments/:id/void` and body `{"confirm_not_created": true}`. A 4xx from UPS or a failed token step deletes the pending row, so the operator can try again.
 
 ## SMTP
 

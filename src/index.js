@@ -203,6 +203,7 @@ async function bootstrap() {
     clientSecret: env.UPS_CLIENT_SECRET,
     accountNumber: env.UPS_ACCOUNT_NUMBER,
     env: env.UPS_ENV,
+    runtime: env.EDEN_RUNTIME,
     timeoutMs: env.UPS_HTTP_TIMEOUT_MS,
     transactionSrc: env.UPS_TRANSACTION_SRC
   });

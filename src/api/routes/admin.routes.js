@@ -164,7 +164,9 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.upsShipmentService) {
         throw new HttpError(503, 'UPS shipment service is not available.');
       }
-      return dependencies.upsShipmentService.voidShipment(request.params.id, request.adminIdentity);
+      return dependencies.upsShipmentService.voidShipment(request.params.id, request.adminIdentity, {
+        confirmNotCreated: Boolean(request.body && request.body.confirm_not_created === true)
+      });
     });
   });
 

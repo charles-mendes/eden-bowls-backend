@@ -194,11 +194,6 @@ function assertProductionEnv(rawEnv, resolved) {
     throw new Error('JWT_AUTH_ISSUER must be an https URL and must not use localhost in production.');
   }
 
-  const upsEnv = String(rawEnv.UPS_ENV ?? '').trim();
-  if (upsEnv !== 'production' && upsEnv !== 'cie') {
-    throw new Error('UPS_ENV must be production or cie in production.');
-  }
-
   if (String(rawEnv.AUTH_REFRESH_COOKIE_DOMAIN || '').trim()) {
     throw new Error('AUTH_REFRESH_COOKIE_DOMAIN must be empty in production.');
   }
@@ -246,9 +241,27 @@ function assertEdenRuntime(rawEnv) {
   }
 }
 
+// The same UPS credentials work on CIE and on production, so the runtime label picks the host.
+// Local and QA can only reach CIE. Production must name production; there is no CIE fallback there.
+function resolveUpsEnv(rawEnv) {
+  const runtime = String(rawEnv.EDEN_RUNTIME || '').trim();
+  const requested = String(rawEnv.UPS_ENV ?? '').trim().toLowerCase();
+  if (runtime === 'production') {
+    if (requested !== 'production') {
+      throw new Error('UPS_ENV must be production when EDEN_RUNTIME is production.');
+    }
+    return 'production';
+  }
+  if (requested && requested !== 'cie') {
+    throw new Error(`UPS_ENV must be cie or unset when EDEN_RUNTIME is ${runtime}.`);
+  }
+  return 'cie';
+}
+
 function parseEnv(source = process.env) {
   const rawEnv = rawEnvSchema.parse(source);
   assertEdenRuntime(rawEnv);
+  const upsEnv = resolveUpsEnv(rawEnv);
   const refreshCookieSecure = toBoolean(rawEnv.AUTH_REFRESH_COOKIE_SECURE, rawEnv.NODE_ENV === 'production');
 
   if (rawEnv.NODE_ENV === 'production' && !refreshCookieSecure) {
@@ -349,9 +362,7 @@ function parseEnv(source = process.env) {
     UPS_CLIENT_ID: firstNonEmpty(rawEnv.UPS_CLIENT_ID),
     UPS_CLIENT_SECRET: firstNonEmpty(rawEnv.UPS_CLIENT_SECRET),
     UPS_ACCOUNT_NUMBER: firstNonEmpty(rawEnv.UPS_ACCOUNT_NUMBER),
-    UPS_ENV: rawEnv.NODE_ENV === 'production'
-      ? String(rawEnv.UPS_ENV ?? '').trim()
-      : firstNonEmpty(rawEnv.UPS_ENV, 'cie'),
+    UPS_ENV: upsEnv,
     UPS_HTTP_TIMEOUT_MS: Number(firstNonEmpty(rawEnv.UPS_HTTP_TIMEOUT_MS, '5000')),
     UPS_TRANSACTION_SRC: firstNonEmpty(rawEnv.UPS_TRANSACTION_SRC, 'eden-bowls'),
     UPS_LABEL_DIR: firstNonEmpty(rawEnv.UPS_LABEL_DIR) || './data/ups-labels',

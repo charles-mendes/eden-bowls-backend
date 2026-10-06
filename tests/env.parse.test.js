@@ -47,16 +47,46 @@ describe('parseEnv', () => {
     expect(env.AUTH_REFRESH_COOKIE_DOMAIN).toBe('');
   });
 
-  test('keeps an explicit UPS production client id outside production', () => {
+  test('keeps the UPS client id outside production', () => {
     const env = parseEnv({
       NODE_ENV: 'development',
       EDEN_RUNTIME: 'local',
-      UPS_ENV: 'production',
+      UPS_ENV: 'cie',
       UPS_CLIENT_ID: 'abc'
     });
 
-    expect(env.UPS_ENV).toBe('production');
+    expect(env.UPS_ENV).toBe('cie');
     expect(env.UPS_CLIENT_ID).toBe('abc');
+  });
+
+  describe('UPS environment follows EDEN_RUNTIME', () => {
+    test.each(['production', 'PRODUCTION', ' production '])('local refuses UPS_ENV=%j', (value) => {
+      expect(() => parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local', UPS_ENV: value })).toThrow(/UPS_ENV must be cie or unset when EDEN_RUNTIME is local/);
+    });
+
+    test('QA refuses UPS_ENV=production even with NODE_ENV=production', () => {
+      expect(() => parseEnv(productionEnv({ UPS_ENV: 'production' }))).toThrow(/UPS_ENV must be cie or unset when EDEN_RUNTIME is qa/);
+    });
+
+    test('local and QA refuse an unknown UPS_ENV', () => {
+      expect(() => parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local', UPS_ENV: 'sandbox' })).toThrow(/UPS_ENV/);
+      expect(() => parseEnv(productionEnv({ UPS_ENV: 'live' }))).toThrow(/UPS_ENV/);
+    });
+
+    test('local and QA resolve to cie when UPS_ENV is unset or blank', () => {
+      expect(parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local' }).UPS_ENV).toBe('cie');
+      expect(parseEnv({ NODE_ENV: 'test', EDEN_RUNTIME: 'local', UPS_ENV: '  ' }).UPS_ENV).toBe('cie');
+      expect(parseEnv(productionEnv({ UPS_ENV: undefined })).UPS_ENV).toBe('cie');
+      expect(parseEnv(productionEnv({ UPS_ENV: '' })).UPS_ENV).toBe('cie');
+    });
+
+    test('production resolves to production only when UPS_ENV says so', () => {
+      const runtime = { EDEN_RUNTIME: 'production', CORS_ORIGINS: 'https://edenbowls.com', SHIPPING_QUOTE_SECRET: 'quote-secret-value' };
+      expect(parseEnv(productionEnv({ ...runtime, UPS_ENV: 'production' })).UPS_ENV).toBe('production');
+      expect(() => parseEnv(productionEnv({ ...runtime, UPS_ENV: 'cie' }))).toThrow(/UPS_ENV must be production when EDEN_RUNTIME is production/);
+      expect(() => parseEnv(productionEnv({ ...runtime, UPS_ENV: '' }))).toThrow(/UPS_ENV must be production/);
+      expect(() => parseEnv(productionEnv({ ...runtime, UPS_ENV: undefined }))).toThrow(/UPS_ENV must be production/);
+    });
   });
 
   test('accepts a QA-only CORS list with SameSite lax', () => {
@@ -162,7 +192,6 @@ describe('parseEnv', () => {
     expect(() => parseEnv(productionEnv({ AUTH_OTP_PEPPER: '', AUTH_SALT: '' }))).toThrow(/AUTH_OTP_PEPPER/);
     expect(() => parseEnv(productionEnv({ DB_PASSWORD: '' }))).toThrow(/DB_PASSWORD/);
     expect(() => parseEnv(productionEnv({ METRICS_TOKEN: '' }))).toThrow(/METRICS_TOKEN/);
-    expect(() => parseEnv(productionEnv({ UPS_ENV: '' }))).toThrow(/UPS_ENV/);
   });
 
   test('rejects a localhost JWT issuer in production', () => {
