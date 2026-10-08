@@ -251,3 +251,72 @@ describe('UPS error details', () => {
     expect(error.details).toEqual({ code: 'ups_ship_incomplete' });
   });
 });
+
+describe('UPS simulation client', () => {
+  test('always targets CIE, even when the runtime is production', () => {
+    const ups = client({ simulationOnly: true, env: 'production', runtime: 'production' });
+
+    expect(ups.envName).toBe('cie');
+    expect(ups.baseUrl).toBe(CIE);
+  });
+
+  test('refuses to buy or void a label', async () => {
+    const { fetchImpl, calls } = fakeUps();
+    const ups = client({ simulationOnly: true, fetchImpl });
+
+    await expect(ups.createShipment({ shipFrom: {}, shipTo: {}, package: {} })).rejects.toMatchObject({ details: { code: 'ups_simulation_only' } });
+    await expect(ups.voidShipment('1Z1')).rejects.toMatchObject({ details: { code: 'ups_simulation_only' } });
+    expect(calls).toHaveLength(0);
+  });
+
+  test('quotes with transit time through Shoptimeintransit', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/rating/v2403/Shoptimeintransit': () => jsonResponse(200, {
+        RateResponse: {
+          RatedShipment: [
+            { Service: { Code: '03' }, TotalCharges: { MonetaryValue: '14.10', CurrencyCode: 'USD' }, TimeInTransit: { ServiceSummary: { EstimatedArrival: { BusinessDaysInTransit: '2' } } } },
+            { Service: { Code: '02' }, TotalCharges: { MonetaryValue: '31.00', CurrencyCode: 'USD' } }
+          ]
+        }
+      })
+    });
+    const ups = client({ simulationOnly: true, fetchImpl });
+
+    const rated = await ups.rate({
+      shipFrom: { zipcode: '10001', state: 'NY' },
+      shipTo: { zipcode: '94105', state: 'CA' },
+      package: { weight_lb: 10 },
+      allowedServiceCodes: [],
+      withTransit: true,
+      pickupDate: new Date('2026-10-07T12:00:00Z')
+    });
+
+    const body = JSON.parse(calls[1].init.body);
+    expect(calls[1].url).toBe(`${CIE}/api/rating/v2403/Shoptimeintransit`);
+    expect(body.RateRequest.Shipment.DeliveryTimeInformation).toEqual({ PackageBillType: '03', Pickup: { Date: '20261007' } });
+    expect(rated).toMatchObject({ serviceCode: '03', monetaryValue: 14.1, deliveryDays: 2 });
+    expect(rated.ratedShipments).toHaveLength(2);
+  });
+
+  test('reads the UPS address validation verdict and candidates', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/addressvalidation/v2/1': () => jsonResponse(200, {
+        XAVResponse: {
+          ValidAddressIndicator: '',
+          Candidate: {
+            AddressKeyFormat: { AddressLine: ['26601 ALISO CREEK RD'], PoliticalDivision2: 'ALISO VIEJO', PoliticalDivision1: 'CA', PostcodePrimaryLow: '92656', PostcodeExtendedLow: '4301' }
+          }
+        }
+      })
+    });
+    const ups = client({ fetchImpl });
+
+    const result = await ups.validateAddress({ street: '26601 Aliso Creek Rd', city: 'Aliso Viejo', state: 'ca', zipcode: '92656' });
+
+    expect(JSON.parse(calls[1].init.body).XAVRequest.AddressKeyFormat).toMatchObject({ PoliticalDivision1: 'CA', PostcodePrimaryLow: '92656' });
+    expect(result).toEqual({
+      status: 'valid',
+      candidates: [{ street: '26601 ALISO CREEK RD', street2: '', city: 'ALISO VIEJO', state: 'CA', zipcode: '92656-4301' }]
+    });
+  });
+});

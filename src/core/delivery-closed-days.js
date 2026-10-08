@@ -1,6 +1,6 @@
 const { HttpError } = require('./http-error');
 const MAX_TRANSIT_DAYS_US = 1;
-const MAX_DELIVERY_RADIUS_KM_BR = 40;
+const MAX_DELIVERY_RADIUS_KM_BR = 50;
 const TIMEZONE_BR = 'America/Sao_Paulo';
 const TIMEZONE_US = 'America/New_York';
 
@@ -324,8 +324,20 @@ function editableUntil(chargeAt, timeZone) {
   return wallTimeToUtc(previous.year, previous.month, previous.day, 23, 59, 59, timeZone);
 }
 
+// The admin edits the Brazil radius in the shipping settings; the default holds until settings load.
+let brDeliveryRadiusKm = MAX_DELIVERY_RADIUS_KM_BR;
+
+function setBrDeliveryRadiusKm(value) {
+  const km = Number(value);
+  brDeliveryRadiusKm = Number.isFinite(km) && km > 0 ? km : MAX_DELIVERY_RADIUS_KM_BR;
+}
+
+function currentBrDeliveryRadiusKm() {
+  return brDeliveryRadiusKm;
+}
+
 function addressUnavailable(market, { distanceKm, transitDays } = {}) {
-  if (market === 'BR' && Number(distanceKm) > MAX_DELIVERY_RADIUS_KM_BR) {
+  if (market === 'BR' && Number(distanceKm) > brDeliveryRadiusKm) {
     return true;
   }
   if (market === 'US' && Number(transitDays) > MAX_TRANSIT_DAYS_US) {
@@ -363,6 +375,8 @@ function assertInsideDeliveryArea(market, quote = {}) {
 module.exports = {
   MAX_TRANSIT_DAYS_US,
   MAX_DELIVERY_RADIUS_KM_BR,
+  currentBrDeliveryRadiusKm,
+  setBrDeliveryRadiusKm,
   TIMEZONE_BR,
   TIMEZONE_US,
   dateKey,

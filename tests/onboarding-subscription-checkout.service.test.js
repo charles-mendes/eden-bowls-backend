@@ -679,7 +679,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(brBilling.createOnboardingSubscription).not.toHaveBeenCalled();
   });
 
-  test('refuses a Brazil address farther than 40 km and accepts 39 km', async () => {
+  test('refuses a Brazil address farther than 50 km and accepts 49 km', async () => {
     const far = {
       ...validContext,
       address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
@@ -687,9 +687,9 @@ describe('OnboardingSubscriptionCheckoutService', () => {
         ...validContext.planSelection,
         catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
       },
-      shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 41 })
+      shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 51 })
     };
-    const near = { ...far, shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 39 }) };
+    const near = { ...far, shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 49 }) };
     const farRun = buildService({
       stripeBrEnabled: true,
       repository: {
@@ -737,7 +737,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(nearRun.stripeBilling.createOnboardingSubscription).toHaveBeenCalled();
   });
 
-  test('accepts a Brazil address at exactly 40 km', async () => {
+  test('accepts a Brazil address at exactly 50 km', async () => {
     const exact = {
       ...validContext,
       address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
@@ -745,7 +745,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
         ...validContext.planSelection,
         catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
       },
-      shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 40 })
+      shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 50 })
     };
     const billing = {
       automaticTaxEnabled: false,
@@ -895,8 +895,8 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       now: () => new Date('2026-01-02T12:00:00Z')
     });
     const cases = [
-      ['BR', { distance: 41 }],
-      ['BR', { distance: 39 }],
+      ['BR', { distance: 51 }],
+      ['BR', { distance: 49 }],
       ['US', { delivery_days: 2 }],
       ['US', { delivery_days: 1 }]
     ];
@@ -978,12 +978,12 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     }
 
     test('refuses a distance changed after the server signed the quote', async () => {
-      const signed = quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 45 });
+      const signed = quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 55 });
       await expectUnverified({
         ...validContext,
         address: BR_ADDRESS,
         planSelection: brazilPlanSelection,
-        shipping: { ...signed, distance: 39 }
+        shipping: { ...signed, distance: 49 }
       });
     });
 
@@ -1064,14 +1064,14 @@ describe('OnboardingSubscriptionCheckoutService', () => {
         shippingQuoteSigner: quoteSigner
       });
       const subscription = { market: 'BR', userId: 7, chargeAt: new Date('2026-01-03T17:00:00Z') };
-      const signed = quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 45 });
+      const signed = quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 55 });
       await expect(plan.applyAddressChange(subscription, {
         zipcode: BR_ADDRESS.zipcode,
-        shipping: { ...signed, distance: 39 }
+        shipping: { ...signed, distance: 49 }
       })).rejects.toMatchObject({ details: { code: 'delivery_area_unverified' } });
       await expect(plan.applyAddressChange(subscription, {
         zipcode: BR_ADDRESS.zipcode,
-        shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 39 })
+        shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 49 })
       })).resolves.toEqual(expect.objectContaining({ stripeChanged: false }));
     });
   });

@@ -136,7 +136,7 @@ describe('customer delivery read', () => {
     await expect(service.applyAddressChange(subscription({ market: 'US', transitDays: 1 }), addressQuote('US'))).rejects.toMatchObject({
       details: { code: 'delivery_area_unverified' }
     });
-    await expect(service.applyAddressChange(subscription(), addressQuote('BR', { distance: 40 }))).resolves.toEqual(expect.objectContaining({
+    await expect(service.applyAddressChange(subscription(), addressQuote('BR', { distance: 50 }))).resolves.toEqual(expect.objectContaining({
       stripeChanged: false
     }));
   });
@@ -151,7 +151,7 @@ describe('customer delivery read', () => {
     expect(changed.chargeAt).toBe(current.chargeAt);
     expect(changed.editableUntil).toBe(wallTimeToUtc(2026, 1, 2, 23, 59, 59, TIMEZONE_BR).toISOString());
     expect(changed.stripeChanged).toBe(false);
-    await expect(service.applyAddressChange(current, addressQuote('BR', { distance: 41 }))).rejects.toBeInstanceOf(HttpError);
+    await expect(service.applyAddressChange(current, addressQuote('BR', { distance: 51 }))).rejects.toBeInstanceOf(HttpError);
   });
 
   test('does not call UPS when transit is already stored', async () => {

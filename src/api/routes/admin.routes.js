@@ -2,7 +2,7 @@ const { HttpError } = require('../../core/http-error');
 const { buildRequireAdminPermission } = require('../middleware/require-admin-permission.middleware');
 const { parseNutritionSimulateInput } = require('../validators/admin-nutrition-simulate.validator');
 const { parseRolesAssignmentInput } = require('../validators/admin-users-roles.validator');
-const { parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
+const { parseHeadquartersValidateInput, parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
 const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = require('../validators/admin-coupons.validator');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../../core/admin-market-scope');
 const { parsePageQuery } = require('../validators/admin-pagination');
@@ -119,6 +119,15 @@ function registerAdminRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Shipping service is not available.');
       }
       return dependencies.adminShippingService.test(parseShippingTestInput(request.body || {}));
+    });
+  });
+
+  app.post('/api/v1/admin/shipping/headquarters/validate', requirePermission('shipping.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminShippingService) {
+        throw new HttpError(503, 'Shipping service is not available.');
+      }
+      return dependencies.adminShippingService.validateHeadquarters(parseHeadquartersValidateInput(request.body || {}));
     });
   });
 

@@ -6,6 +6,7 @@ const {
   formatBrZipcode,
   haversineMeters
 } = require('../core/shipping-fee');
+const { setBrDeliveryRadiusKm } = require('../core/delivery-closed-days');
 const { loadShippingSettings } = require('../infrastructure/shipping/shipping-settings');
 const { serviceLabel } = require('../infrastructure/shipping/ups-client');
 
@@ -21,6 +22,16 @@ class ShippingService {
     this.fixedTransitDays = Number.isFinite(Number(options.fixedTransitDays)) && Number(options.fixedTransitDays) > 0
       ? Number(options.fixedTransitDays)
       : 1;
+  }
+
+  get settings() {
+    return this.currentSettings;
+  }
+
+  // The checkout radius guard reads the same Brazil radius the quote enforces.
+  set settings(value) {
+    this.currentSettings = value;
+    setBrDeliveryRadiusKm(value && value.br && value.br.rule ? value.br.rule.max_distance_km : null);
   }
 
   reportQuoteModeAtStartup(logger) {

@@ -110,6 +110,7 @@ const { StripeCouponService } = require('./services/stripe-coupon.service');
 const { AdminIdentityService } = require('./services/admin-identity.service');
 const { AdminNutritionService } = require('./services/admin-nutrition.service');
 const { AdminShippingService } = require('./services/admin-shipping.service');
+const { ShippingHeadquartersService } = require('./services/shipping-headquarters.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
@@ -204,6 +205,15 @@ async function bootstrap() {
     accountNumber: env.UPS_ACCOUNT_NUMBER,
     env: env.UPS_ENV,
     runtime: env.EDEN_RUNTIME,
+    timeoutMs: env.UPS_HTTP_TIMEOUT_MS,
+    transactionSrc: env.UPS_TRANSACTION_SRC
+  });
+  // The admin freight simulation always quotes on UPS CIE, whatever the runtime.
+  const upsSandboxClient = new UpsClient({
+    clientId: env.UPS_CLIENT_ID,
+    clientSecret: env.UPS_CLIENT_SECRET,
+    accountNumber: env.UPS_ACCOUNT_NUMBER,
+    simulationOnly: true,
     timeoutMs: env.UPS_HTTP_TIMEOUT_MS,
     transactionSrc: env.UPS_TRANSACTION_SRC
   });
@@ -525,7 +535,15 @@ async function bootstrap() {
   const adminNutritionService = new AdminNutritionService();
   const adminShippingService = new AdminShippingService({
     shippingService,
-    repository: shippingSettingsRepository
+    repository: shippingSettingsRepository,
+    upsSandboxClient,
+    zippopotamClient,
+    headquartersService: new ShippingHeadquartersService({
+      viaCepClient,
+      nominatimClient,
+      zippopotamClient,
+      upsClient
+    })
   });
   const adminOnboardingRepository = new AdminOnboardingRepository(dataSource, {
     usersTableName: env.WP_USERS_TABLE_NAME,

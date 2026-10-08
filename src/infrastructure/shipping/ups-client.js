@@ -19,7 +19,11 @@ const UPS_BASE_URLS = Object.freeze({
 });
 
 // Same credentials work on both hosts, so the client refuses a host that does not match the runtime.
-function resolveUpsTarget(env, runtime) {
+// A simulation client always uses CIE: it only quotes and validates, and cannot buy or void a label.
+function resolveUpsTarget(env, runtime, options = {}) {
+  if (options.simulationOnly) {
+    return { envName: 'cie', baseUrl: UPS_BASE_URLS.cie };
+  }
   const envName = String(env || 'cie').trim().toLowerCase();
   const runtimeName = String(runtime || '').trim().toLowerCase();
   if (!Object.prototype.hasOwnProperty.call(UPS_BASE_URLS, envName)) {
@@ -49,9 +53,8 @@ function serviceLabel(code) {
   return SERVICE_LABELS[key] || `UPS ${key || 'Service'}`;
 }
 
-function pickRate(ratedShipments, allowedServiceCodes = ['03']) {
-  const allowed = new Set((allowedServiceCodes || []).map((code) => String(code).trim()).filter(Boolean));
-  const rows = (Array.isArray(ratedShipments) ? ratedShipments : [])
+function mapRatedShipments(ratedShipments) {
+  return (Array.isArray(ratedShipments) ? ratedShipments : [])
     .map((row) => {
       const code = String(row?.Service?.Code || row?.serviceCode || '').trim();
       const monetary = Number(row?.TotalCharges?.MonetaryValue || row?.NegotiatedRateCharges?.TotalCharge?.MonetaryValue || row?.monetaryValue || NaN);
@@ -69,6 +72,11 @@ function pickRate(ratedShipments, allowedServiceCodes = ['03']) {
       };
     })
     .filter((row) => row.serviceCode && Number.isFinite(row.monetaryValue) && row.monetaryValue >= 0);
+}
+
+function pickRate(ratedShipments, allowedServiceCodes = ['03']) {
+  const allowed = new Set((allowedServiceCodes || []).map((code) => String(code).trim()).filter(Boolean));
+  const rows = mapRatedShipments(ratedShipments);
 
   const eligible = allowed.size > 0
     ? rows.filter((row) => allowed.has(row.serviceCode))
@@ -86,12 +94,18 @@ function pickRate(ratedShipments, allowedServiceCodes = ['03']) {
   return eligible.slice().sort((a, b) => a.monetaryValue - b.monetaryValue)[0];
 }
 
+function upsDate(value) {
+  const date = value instanceof Date ? value : new Date(value || Date.now());
+  return date.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
 class UpsClient {
   constructor(options = {}) {
     this.clientId = String(options.clientId || '').trim();
     this.clientSecret = String(options.clientSecret || '').trim();
     this.accountNumber = String(options.accountNumber || '').trim();
-    const target = resolveUpsTarget(options.env, options.runtime);
+    const target = resolveUpsTarget(options.env, options.runtime, { simulationOnly: options.simulationOnly });
+    Object.defineProperty(this, 'simulationOnly', { value: Boolean(options.simulationOnly), enumerable: true });
     Object.defineProperty(this, 'envName', { value: target.envName, enumerable: true });
     Object.defineProperty(this, 'baseUrl', { value: target.baseUrl, enumerable: true });
     this.timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 5000;
@@ -102,6 +116,12 @@ class UpsClient {
 
   isConfigured() {
     return Boolean(this.clientId && this.clientSecret);
+  }
+
+  ensureCanShip() {
+    if (this.simulationOnly) {
+      throw new HttpError(409, 'The UPS simulation client cannot create or void shipments.', { code: 'ups_simulation_only' });
+    }
   }
 
   ensureConfigured() {
@@ -243,9 +263,10 @@ class UpsClient {
     };
   }
 
-  async rate({ shipFrom, shipTo, package: pkg, allowedServiceCodes }) {
+  async rate({ shipFrom, shipTo, package: pkg, allowedServiceCodes, withTransit = false, pickupDate }) {
     const shipper = this.buildAddress({ ...shipFrom, shipperNumber: this.accountNumber });
     const shipToAddress = this.buildAddress(shipTo);
+    const packageBody = this.buildPackage(pkg);
 
     const body = {
       RateRequest: {
@@ -262,12 +283,19 @@ class UpsClient {
               BillShipper: { AccountNumber: this.accountNumber }
             }
           } : undefined,
-          Package: this.buildPackage(pkg)
+          Package: packageBody,
+          ...(withTransit ? {
+            ShipmentTotalWeight: packageBody.PackageWeight,
+            DeliveryTimeInformation: {
+              PackageBillType: '03',
+              Pickup: { Date: upsDate(pickupDate) }
+            }
+          } : {})
         }
       }
     };
 
-    const response = await this.request('/api/rating/v2403/Shop', {
+    const response = await this.request(`/api/rating/v2403/${withTransit ? 'Shoptimeintransit' : 'Shop'}`, {
       method: 'POST',
       jsonBody: body
     });
@@ -287,7 +315,52 @@ class UpsClient {
     };
   }
 
+  // UPS Address Validation (XAV). CIE only answers for New York and California addresses.
+  async validateAddress(address = {}) {
+    const zip = String(address.zipcode || '').replace(/\D/g, '');
+    const body = {
+      XAVRequest: {
+        AddressKeyFormat: {
+          AddressLine: [address.street, address.street2].filter(Boolean).map((line) => String(line).slice(0, 35)),
+          PoliticalDivision2: String(address.city || '').slice(0, 30),
+          PoliticalDivision1: String(address.state || '').toUpperCase().slice(0, 2),
+          PostcodePrimaryLow: zip.slice(0, 5),
+          ...(zip.length > 5 ? { PostcodeExtendedLow: zip.slice(5, 9) } : {}),
+          CountryCode: 'US'
+        }
+      }
+    };
+
+    const response = await this.request('/api/addressvalidation/v2/1', {
+      method: 'POST',
+      jsonBody: body
+    });
+
+    const xav = response?.XAVResponse || {};
+    const rawCandidates = xav.Candidate ? (Array.isArray(xav.Candidate) ? xav.Candidate : [xav.Candidate]) : [];
+    const candidates = rawCandidates.map((candidate) => {
+      const key = candidate?.AddressKeyFormat || {};
+      const lines = Array.isArray(key.AddressLine) ? key.AddressLine : [key.AddressLine].filter(Boolean);
+      const extended = String(key.PostcodeExtendedLow || '').trim();
+      return {
+        street: String(lines[0] || '').trim(),
+        street2: String(lines[1] || '').trim(),
+        city: String(key.PoliticalDivision2 || '').trim(),
+        state: String(key.PoliticalDivision1 || '').trim(),
+        zipcode: [String(key.PostcodePrimaryLow || '').trim(), extended].filter(Boolean).join('-')
+      };
+    });
+    let status = 'no_candidates';
+    if (xav.ValidAddressIndicator !== undefined) {
+      status = 'valid';
+    } else if (xav.AmbiguousAddressIndicator !== undefined) {
+      status = 'ambiguous';
+    }
+    return { status, candidates };
+  }
+
   async createShipment({ shipFrom, shipTo, package: pkg, serviceCode }) {
+    this.ensureCanShip();
     const code = String(serviceCode || '03').trim() || '03';
     const body = {
       ShipmentRequest: {
@@ -377,6 +450,7 @@ class UpsClient {
   }
 
   async voidShipment(shipmentIdentificationNumber) {
+    this.ensureCanShip();
     const id = String(shipmentIdentificationNumber || '').trim();
     if (!id) {
       throw new HttpError(400, 'Shipment id is required.', { code: 'invalid_shipment_id' });
@@ -392,6 +466,7 @@ module.exports = {
   UpsClient,
   UPS_BASE_URLS,
   resolveUpsTarget,
+  mapRatedShipments,
   pickRate,
   serviceLabel,
   SERVICE_LABELS

@@ -341,14 +341,14 @@ describe('SubscriptionsEditCommitRepository', () => {
       expect(repository.ledgerRepository.upsert).not.toHaveBeenCalled();
     });
 
-    test('a Brazilian address 41 km away is refused and nothing is saved', async () => {
+    test('a Brazilian address 51 km away is refused and nothing is saved', async () => {
       const repository = buildRepo();
       const brShipping = {
         method_id: 'local_delivery',
         cost: 20,
         total: 20,
-        distance: 41,
-        quote_token: quoteSigner.sign({ country: 'BR', zipcode: '01310100', cost: 20, distance: 41 })
+        distance: 51,
+        quote_token: quoteSigner.sign({ country: 'BR', zipcode: '01310100', cost: 20, distance: 51 })
       };
       await expect(repository.commit(7, 'sub_123', {
         ...addressPayload,
