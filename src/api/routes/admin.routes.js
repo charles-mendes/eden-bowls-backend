@@ -370,6 +370,20 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.get('/api/v1/admin/today', requirePermission('production.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminTodayService) {
+        throw new HttpError(503, 'Today overview is not available.');
+      }
+      const query = request.query || {};
+      return dependencies.adminTodayService.overview({
+        timezone: typeof query.timezone === 'string' ? query.timezone : undefined,
+        account: typeof query.account === 'string' && query.account ? query.account : undefined,
+        market: typeof query.market === 'string' && query.market ? query.market : undefined
+      }, request.adminIdentity);
+    });
+  });
+
   app.patch('/api/v1/admin/production/queue/:id', requirePermission('production.write', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminProductionService) {

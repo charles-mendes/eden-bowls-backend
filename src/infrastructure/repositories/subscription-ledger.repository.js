@@ -684,7 +684,7 @@ class SubscriptionLedgerRepository {
       SELECT ${columns}, ${unpaidKey} AS cycle_period_end, ${unpaidKey} AS due_at,
         COALESCE(c.status, 'to_prepare') AS production_status, c.note AS production_note,
         CASE WHEN s.status = 'past_due' THEN 'past_due' ELSE 'awaiting_payment' END AS payment_state,
-        NULL AS paid_at, NULL AS preparation_day, NULL AS delivery_date
+        NULL AS paid_at, NULL AS paid_invoice_id, NULL AS preparation_day, NULL AS delivery_date
       FROM ${ledger} s
       LEFT JOIN ${cycles} c ON c.subscription_id = s.id AND c.period_end = ${unpaidKey}
       WHERE s.status IN ('active','trialing','past_due')
@@ -695,7 +695,8 @@ class SubscriptionLedgerRepository {
       SELECT ${columns}, c.period_end AS cycle_period_end,
         COALESCE(TIMESTAMP(c.preparation_day, '12:00:00'), c.period_end) AS due_at,
         c.status AS production_status, c.note AS production_note, 'paid' AS payment_state,
-        c.paid_at AS paid_at, c.preparation_day AS preparation_day, c.delivery_date AS delivery_date
+        c.paid_at AS paid_at, c.paid_invoice_id AS paid_invoice_id, c.preparation_day AS preparation_day,
+        c.delivery_date AS delivery_date
       FROM ${cycles} c
       JOIN ${ledger} s ON s.id = c.subscription_id
       WHERE c.paid_at IS NOT NULL
@@ -765,6 +766,7 @@ class SubscriptionLedgerRepository {
       dueAt: row.due_at || row.cycle_period_end || mapped.currentPeriodEnd,
       paymentState: String(row.payment_state || 'awaiting_payment'),
       paidAt: row.paid_at || null,
+      paidInvoiceId: row.paid_invoice_id ? String(row.paid_invoice_id) : null,
       preparationDay: dateOnly(row.preparation_day),
       deliveryDate: dateOnly(row.delivery_date),
       displayName: null,

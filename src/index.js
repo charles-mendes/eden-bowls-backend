@@ -111,6 +111,7 @@ const { AdminIdentityService } = require('./services/admin-identity.service');
 const { AdminNutritionService } = require('./services/admin-nutrition.service');
 const { AdminShippingService } = require('./services/admin-shipping.service');
 const { ShippingHeadquartersService } = require('./services/shipping-headquarters.service');
+const { AdminTodayService } = require('./services/admin-today.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
@@ -597,6 +598,11 @@ async function bootstrap() {
     auditService: adminAuditService,
     customerDeliveriesService
   });
+  const adminTodayService = new AdminTodayService({
+    ledgerRepository: subscriptionLedgerRepository,
+    upsShipmentRepository,
+    calendar: deliveryCalendar
+  });
   const adminUsersService = new AdminUsersService({
     usersRepository: adminUsersRepository,
     profileService,
@@ -670,6 +676,7 @@ async function bootstrap() {
     adminOnboardingService,
     adminBillingService,
     adminProductionService,
+    adminTodayService,
     adminDeliveryCalendarService,
     upsShipmentService,
     customerInvoicesService,
