@@ -335,7 +335,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.adminCatalogService) {
         throw new HttpError(503, 'Catalog service is not available.');
       }
-      return dependencies.adminCatalogService.status();
+      return dependencies.adminCatalogService.status(request.marketQuery || {});
     });
   }
 
@@ -498,6 +498,24 @@ function registerAdminRoutes(app, dependencies = {}) {
         request.query && (request.query.type || request.query.state),
         request.adminIdentity
       );
+    });
+  });
+
+  app.get('/api/v1/admin/billing/webhooks/health', requirePermission('system.health.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminSystemHealthService) {
+        throw new HttpError(503, 'System health service is not available.');
+      }
+      return dependencies.adminSystemHealthService.webhookHealth();
+    });
+  });
+
+  app.get('/api/v1/admin/markets/conflicts', requirePermission('system.health.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminSystemHealthService) {
+        throw new HttpError(503, 'System health service is not available.');
+      }
+      return dependencies.adminSystemHealthService.marketConflicts(parsePageQuery(request.query));
     });
   });
 

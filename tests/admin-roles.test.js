@@ -43,6 +43,13 @@ describe('admin roles', () => {
     expect(ROLE_PERMISSIONS.admin).toContain('users.access.write');
   });
 
+  test('reserves system health for admin', () => {
+    expect(ROLE_PERMISSIONS.admin).toContain('system.health.read');
+    for (const role of ['operator', 'readonly', 'nutritionist']) {
+      expect(ROLE_PERMISSIONS[role]).not.toContain('system.health.read');
+    }
+  });
+
   test('bootstraps admin from allowlist email', () => {
     expect(resolveAdminRoles({
       storedRoles: '',

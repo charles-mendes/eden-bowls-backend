@@ -1,0 +1,646 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/customer-invoices/:id/pdf"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/billing/customer-invoices/:id/send"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/invoices/:id/pdf"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/metrics"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/subscriptions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/subscriptions/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/subscriptions/:id/customer-invoices"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/billing/subscriptions/:id/customer-invoices"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/subscriptions/:id/shipments"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/billing/subscriptions/:id/shipments"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/billing/subscriptions/:id/sync-invoices"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/billing/subscriptions/backfill-links"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/billing/subscriptions/reconcile"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/webhooks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/webhooks/health"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/pricing"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/products"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/catalog/products"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/products/:productId"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/products/:productId"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/catalog/products/:productId"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/products/:productId/variations/:variationId"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/catalog/sync"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/catalog/sync/:productId"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/sync/health"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/sync/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/delivery-calendar"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/delivery-calendar"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/delivery-calendar/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/delivery-calendar/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/delivery-calendar/alerts"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/delivery-calendar/history"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/delivery-calendar/preview"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/delivery-calendar/syncs"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/delivery-calendar/syncs/:id/resend"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/feedbacks"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/feedbacks"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/feedbacks/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/feedbacks/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/feedbacks/:id"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/feedbacks/:id/active"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/markets/conflicts"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/me"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/me/password"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/nutrition/simulate"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/checkouts"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/checkouts.csv"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/checkouts/:userId"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/metrics"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/sessions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/sessions/:userId"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/privacy/requests"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/privacy/requests"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/privacy/requests/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/privacy/requests/:id/complete"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/privacy/requests/:id/export"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/privacy/requests/:id/extend"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/privacy/requests/:id/in-progress"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/privacy/requests/:id/reject"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/privacy/requests/:id/send-verification"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/privacy/requests/:id/verify-identity"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/production/queue"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/production/queue/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/shipments/:id/label"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/shipments/:id/refresh-tracking"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/shipments/:id/void"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/shipping/headquarters/validate"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/shipping/settings"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/shipping/settings"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/shipping/test"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/stripe/first-purchase-coupons"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/stripe/first-purchase-promos"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/stripe/first-purchase-promos"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/stripe/first-purchase-promos/sync"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/stripe/promotion-codes"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/today"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/users"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/users"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/users/:userId"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/users/:userId"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/users/:userId"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/users/:userId/delivery"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/users/:userId/delivery-instructions"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/users/:userId/invite"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/users/:userId/privacy"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/users/:userId/roles"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/users/:userId/roles"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/users/:userId/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/users/roles"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/auth/account/email-exists"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/auth/logout"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/auth/me"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/auth/otp/resend"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/auth/otp/verify"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/auth/password/forgot"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/auth/password/reset"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/auth/refresh"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/auth/register"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/auth/token"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/billing/catalog/sync"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/billing/catalog/sync/:productId"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/billing/catalog/sync/health"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/billing/catalog/sync/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/breeds"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/geo/context"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/address"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/address/autocomplete"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/onboarding/delivery-estimate"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/onboarding/discount/eligibility"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/payment-intent/ack"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/onboarding/payment-methods"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/onboarding/pets"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/pets"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/onboarding/pets/:petId"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/onboarding/pets/:petId"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/onboarding/pets/:petId/image"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/pets/:petId/image"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/pets/sync"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/plan-selection"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/plan/preview"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/onboarding/plan/snapshot"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/plan/snapshot"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/onboarding/recommendation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/recommendation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/recurrence"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/sales-tax/quote"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/shipping"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/subscription/checkout"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/subscription/preview"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/zipcode/lookup"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/privacy/consents"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/privacy/cookies"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/privacy/identity-confirm"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/privacy/requests"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/privacy/requests"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/privacy/requests/:id/export"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/products"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/profile"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/profile"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/profile/avatar"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/profile/delivery"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/profile/delivery"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/profile/email"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/profile/email"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/profile/marketing"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/profile/marketing"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/profile/marketing"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/profile/password"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/profile/password"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/profile/personal"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/profile/personal"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/public/feedbacks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/subscriptions"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/subscriptions/:subscriptionId/actions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/subscriptions/:subscriptionId/deliveries"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/subscriptions/:subscriptionId/deliveries/:deliveryId/packs"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/subscriptions/:subscriptionId/deliveries/:deliveryId/reschedule"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/subscriptions/:subscriptionId/deliveries/:deliveryId/skip"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/subscriptions/:subscriptionId/detail"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/subscriptions/:subscriptionId/edit/commit"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/subscriptions/:subscriptionId/edit/preview"
+  }
+]

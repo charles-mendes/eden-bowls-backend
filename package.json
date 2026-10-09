@@ -17,7 +17,8 @@
     "email:previews": "node src/scripts/render-email-previews.js",
     "invoice:previews": "node src/scripts/render-invoice-previews.js",
     "stripe:listen": "stripe listen --forward-to localhost:3000/stripe/v1/webhook/us",
-    "stripe:listen:br": "stripe listen --forward-to localhost:3000/stripe/v1/webhook/br"
+    "stripe:listen:br": "stripe listen --forward-to localhost:3000/stripe/v1/webhook/br",
+    "routes:manifest": "node src/scripts/api-routes-manifest.js"
   },
   "dependencies": {
     "@sentry/node": "^11.2.0",

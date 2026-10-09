@@ -136,6 +136,26 @@ describe('AdminProductionService', () => {
     expect(result.metrics).toEqual({ today: 1, tomorrow: 0, upcoming: 1, overdue: 0 });
   });
 
+  test('passes the due bucket and brings overdue rows back when that bucket is asked for', async () => {
+    const listQueue = jest.fn().mockResolvedValue({ total: 0, items: [] });
+    const listQueueMetricRows = jest.fn().mockResolvedValue([]);
+    const service = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository: { listQueue, listQueueMetricRows }
+    });
+
+    await service.listQueue({ windowDays: 7, includeOverdue: false, due: 'overdue' }, { page: 1, perPage: 20, offset: 0 });
+
+    expect(listQueue).toHaveBeenCalledWith(expect.objectContaining({
+      due: 'overdue',
+      includeOverdue: true,
+      startOfTomorrow: '2026-09-21 03:00:00',
+      startOfDayAfterTomorrow: '2026-09-22 03:00:00'
+    }));
+    // The bucket counts stay the same whatever bucket the list shows.
+    expect(listQueueMetricRows).toHaveBeenCalledWith(expect.not.objectContaining({ due: expect.anything() }));
+  });
+
   test('blocks in_production when a note is provided', async () => {
     const productionRepository = {
       findBySubscriptionAndPeriodEnd: jest.fn().mockResolvedValue({ status: 'in_production' }),

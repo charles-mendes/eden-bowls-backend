@@ -36,6 +36,8 @@ function civilBounds({ timezone, windowDays, now = new Date() }) {
   const today = DateTime.fromJSDate(now, { zone: timezone }).startOf('day');
   return {
     startOfToday: today.toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
+    startOfTomorrow: today.plus({ days: 1 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
+    startOfDayAfterTomorrow: today.plus({ days: 2 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     windowEndExclusive: today.plus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     overdueFloor: today.minus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
   };
@@ -113,12 +115,14 @@ class AdminProductionService {
       account = scoped.stripeAccount || account;
     }
 
+    // Asking for the overdue bucket brings the overdue rows back even when the list would leave them out.
     const listInput = {
       ...bounds,
-      includeOverdue: query.includeOverdue !== false,
+      includeOverdue: query.due === 'overdue' || query.includeOverdue !== false,
       account,
       stripeAccounts,
       productionStatus: query.productionStatus || undefined,
+      due: query.due || undefined,
       q: query.q || undefined,
       offset: pagination.offset,
       perPage: pagination.perPage

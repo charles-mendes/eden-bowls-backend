@@ -3,6 +3,7 @@ const { HttpError } = require('../../core/http-error');
 
 const WINDOW_DAYS = [7, 14, 30];
 const PRODUCTION_STATUSES = ['to_prepare', 'in_production', 'ready', 'blocked'];
+const DUE_BUCKETS = ['overdue', 'today', 'tomorrow', 'upcoming'];
 
 function parseBooleanQuery(value, defaultValue = true) {
   if (value === undefined || value === null || String(value).trim() === '') {
@@ -23,6 +24,7 @@ const listQuerySchema = z.object({
   includeOverdue: z.union([z.string(), z.number(), z.boolean()]).optional(),
   account: z.string().optional(),
   productionStatus: z.string().optional(),
+  due: z.string().optional(),
   q: z.string().optional(),
   timezone: z.string().optional()
 });
@@ -51,9 +53,15 @@ function parseProductionQueueQuery(query = {}) {
     throw new HttpError(400, 'Invalid productionStatus.', { code: 'invalid_production_status' });
   }
 
+  const due = String(parsed.data.due || '').trim();
+  if (due && !DUE_BUCKETS.includes(due)) {
+    throw new HttpError(400, 'due must be overdue, today, tomorrow, or upcoming.', { code: 'invalid_due' });
+  }
+
   return {
     windowDays,
     includeOverdue: parseBooleanQuery(parsed.data.includeOverdue, true),
+    due: due || '',
     account: parsed.data.account ? String(parsed.data.account).trim() : '',
     productionStatus: productionStatus || '',
     q: parsed.data.q ? String(parsed.data.q).trim() : '',

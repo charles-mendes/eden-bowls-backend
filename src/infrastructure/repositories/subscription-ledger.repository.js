@@ -710,7 +710,7 @@ class SubscriptionLedgerRepository {
     ].join(' ');
   }
 
-  queueMembership({ startOfToday, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, q }) {
+  queueMembership({ startOfToday, startOfTomorrow, startOfDayAfterTomorrow, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, due, q }) {
     const where = [
       `(
         (q.due_at >= ? AND q.due_at < ?)
@@ -738,6 +738,23 @@ class SubscriptionLedgerRepository {
     if (productionStatus) {
       where.push('q.production_status = ?');
       params.push(String(productionStatus));
+    }
+
+    // The same civil-day buckets the metrics count: before today, today, tomorrow, then the rest of the window.
+    const dueRanges = {
+      overdue: [null, startOfToday],
+      today: [startOfToday, startOfTomorrow],
+      tomorrow: [startOfTomorrow, startOfDayAfterTomorrow],
+      upcoming: [startOfDayAfterTomorrow, windowEndExclusive]
+    };
+    const dueRange = due ? dueRanges[due] : null;
+    if (dueRange) {
+      if (dueRange[0]) {
+        where.push('q.due_at >= ?');
+        params.push(dueRange[0]);
+      }
+      where.push('q.due_at < ?');
+      params.push(dueRange[1]);
     }
 
     if (q) {

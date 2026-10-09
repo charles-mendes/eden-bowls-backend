@@ -106,6 +106,35 @@ describe('SubscriptionLedgerRepository', () => {
     expect(sql).not.toContain('payment_method_last4');
   });
 
+  test('narrows the queue to one civil-day due bucket', async () => {
+    const bounds = {
+      startOfToday: '2026-09-20 03:00:00',
+      startOfTomorrow: '2026-09-21 03:00:00',
+      startOfDayAfterTomorrow: '2026-09-22 03:00:00',
+      windowEndExclusive: '2026-09-27 03:00:00',
+      overdueFloor: '2026-09-13 03:00:00',
+      includeOverdue: true,
+      offset: 0,
+      perPage: 20
+    };
+    const run = async (due) => {
+      const query = jest.fn().mockResolvedValueOnce([{ total: 0 }]).mockResolvedValueOnce([]);
+      await new SubscriptionLedgerRepository({ isInitialized: true, query }).listQueue({ ...bounds, due });
+      return { sql: query.mock.calls[0][0], params: query.mock.calls[0][1] };
+    };
+
+    const today = await run('today');
+    expect(today.sql).toContain('q.due_at >= ? AND q.due_at < ?');
+    expect(today.params.slice(-2)).toEqual(['2026-09-20 03:00:00', '2026-09-21 03:00:00']);
+    expect((await run('tomorrow')).params.slice(-2)).toEqual(['2026-09-21 03:00:00', '2026-09-22 03:00:00']);
+    expect((await run('upcoming')).params.slice(-2)).toEqual(['2026-09-22 03:00:00', '2026-09-27 03:00:00']);
+    const overdue = await run('overdue');
+    expect(overdue.params.slice(-1)).toEqual(['2026-09-20 03:00:00']);
+    expect(overdue.params).toHaveLength(today.params.length - 1);
+    const all = await run(undefined);
+    expect(all.params).toHaveLength(today.params.length - 2);
+  });
+
   test('queue metrics omit search and production status filters', async () => {
     const query = jest.fn().mockResolvedValueOnce([
       { current_period_end: '2026-09-20 08:00:00', production_status: 'to_prepare' }

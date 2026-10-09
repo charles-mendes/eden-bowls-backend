@@ -115,6 +115,9 @@ const { AdminTodayService } = require('./services/admin-today.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
+const { AdminSystemHealthService } = require('./services/admin-system-health.service');
+const { MarketConflictsRepository } = require('./infrastructure/repositories/market-conflicts.repository');
+const { CatalogSyncRunsRepository } = require('./infrastructure/repositories/catalog-sync-runs.repository');
 const { AdminUsersService } = require('./services/admin-users.service');
 const { AdminAuditRepository } = require('./infrastructure/repositories/admin-audit.repository');
 const { AdminAuditService } = require('./services/admin-audit.service');
@@ -582,7 +585,16 @@ async function bootstrap() {
     ledgerRepository: subscriptionLedgerRepository,
     stripeAccounts,
     stripeBilling,
-    stripeBrEnabled: env.STRIPE_BR_ENABLED
+    stripeBrEnabled: env.STRIPE_BR_ENABLED,
+    syncRunsRepository: new CatalogSyncRunsRepository(dataSource),
+    logger
+  });
+  const adminSystemHealthService = new AdminSystemHealthService({
+    marketConflictsRepository: new MarketConflictsRepository(dataSource, {
+      usersTableName: env.WP_USERS_TABLE_NAME,
+      usermetaTableName: env.WP_USERMETA_TABLE_NAME
+    }),
+    webhookEventsRepository: stripeWebhookEventsRepository
   });
   const adminUsersRepository = new AdminUsersRepository(dataSource, {
     usersTableName: env.WP_USERS_TABLE_NAME,
@@ -681,6 +693,7 @@ async function bootstrap() {
     upsShipmentService,
     customerInvoicesService,
     adminCatalogService,
+    adminSystemHealthService,
     adminUsersService,
     stripeCouponService,
     feedbacksService,

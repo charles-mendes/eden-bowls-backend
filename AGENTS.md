@@ -39,3 +39,11 @@ npx jest --changedSince=HEAD
 ```
 
 `--findRelatedTests` recebe o arquivo de source. `--changedSince=main` cobre o diff da branch. Integração MySQL só com `RUN_DB_INTEGRATION_TESTS=true` no arquivo afetado. Detalhes em `.github/instructions/testing.instructions.md`.
+
+## Manifesto de rotas `/api/v1`
+
+`docs/api-routes.json` lista toda rota `/api/v1` registrada. O painel guarda uma cópia e falha o Vitest se chamar ou simular uma rota que não esteja lá.
+
+- Rota nova, renomeada ou removida: rode `npm run routes:manifest` e commite o JSON. `tests/api-routes-manifest.test.js` falha se esquecer.
+- Rota removida: registre `{ method, path, reason }` em `docs/api-routes-removed.json`. `tests/api-routes-removal.test.js` compara com `origin/main` e falha sem esse registro.
+- Depois, no painel: `npm run contract:sync` e commite `contracts/backend-routes.json`.

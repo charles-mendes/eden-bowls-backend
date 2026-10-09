@@ -19,6 +19,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tests/api-routes-removal.test.js compares docs/api-routes.json with origin/main.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
