@@ -57,6 +57,23 @@ describe('admin production routes', () => {
     expect(adminProductionService.listQueue).toHaveBeenCalled();
   });
 
+  test('passes the due filter and rejects an unknown one', async () => {
+    const adminProductionService = {
+      listQueue: jest.fn().mockResolvedValue(queueEnvelope)
+    };
+    const app = adminApp({ adminProductionService });
+    const ok = await request(app)
+      .get('/api/v1/admin/production/queue?due=tomorrow')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+    expect(ok.status).toBe(200);
+    expect(adminProductionService.listQueue.mock.calls[0][0].due).toBe('tomorrow');
+
+    const bad = await request(app)
+      .get('/api/v1/admin/production/queue?due=yesterday')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+    expect(bad.status).toBe(400);
+  });
+
   test('patches production status', async () => {
     const adminProductionService = {
       updateStatus: jest.fn().mockResolvedValue({

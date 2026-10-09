@@ -5,6 +5,9 @@ const DEFAULT_SETTINGS = {
     center: {
       name: 'CD',
       street: '',
+      number: '',
+      complement: '',
+      neighborhood: '',
       city: '',
       state: '',
       zipcode: '',
@@ -17,7 +20,7 @@ const DEFAULT_SETTINGS = {
       road_factor: 1.3,
       min_fee: 0,
       max_fee: null,
-      max_distance_km: 500,
+      max_distance_km: 50,
       km_per_day: 80,
       min_days: 2,
       max_days: 10
@@ -34,6 +37,7 @@ const DEFAULT_SETTINGS = {
     ship_from: {
       name: '',
       street: '',
+      street2: '',
       city: '',
       state: '',
       zipcode: '',
@@ -107,6 +111,7 @@ function mergeShipFrom(base = {}, overlay = {}) {
   return {
     name: overlay.name == null ? (base.name || '') : String(overlay.name),
     street: overlay.street == null ? (base.street || '') : String(overlay.street),
+    street2: overlay.street2 == null ? (base.street2 || '') : String(overlay.street2),
     city: overlay.city == null ? (base.city || '') : String(overlay.city),
     state: overlay.state == null ? (base.state || '') : String(overlay.state),
     zipcode: overlay.zipcode == null ? (base.zipcode || '') : String(overlay.zipcode),
@@ -140,6 +145,9 @@ function mergeSettings(base, overlay) {
       center: {
         name: fileCenter.name || baseCenter.name,
         street: fileCenter.street == null ? (baseCenter.street || '') : String(fileCenter.street),
+        number: fileCenter.number == null ? (baseCenter.number || '') : String(fileCenter.number),
+        complement: fileCenter.complement == null ? (baseCenter.complement || '') : String(fileCenter.complement),
+        neighborhood: fileCenter.neighborhood == null ? (baseCenter.neighborhood || '') : String(fileCenter.neighborhood),
         city: fileCenter.city == null ? (baseCenter.city || '') : String(fileCenter.city),
         state: fileCenter.state == null ? (baseCenter.state || '') : String(fileCenter.state),
         zipcode: fileCenter.zipcode == null ? (baseCenter.zipcode || '') : String(fileCenter.zipcode),
@@ -231,6 +239,9 @@ function brFromRow(row) {
     center: {
       name: row.center_name,
       street: row.center_street || '',
+      number: row.center_number || '',
+      complement: row.center_complement || '',
+      neighborhood: row.center_neighborhood || '',
       city: row.center_city || '',
       state: row.center_state || '',
       zipcode: row.center_zipcode || '',
@@ -267,6 +278,7 @@ function usFromRow(row) {
     ship_from: {
       name: row.ship_from_name || '',
       street: row.ship_from_street || '',
+      street2: row.ship_from_street2 || '',
       city: row.ship_from_city || '',
       state: row.ship_from_state || '',
       zipcode: row.ship_from_zipcode || '',
@@ -295,6 +307,9 @@ function brToParams(br) {
     br.label,
     br.center.name,
     br.center.street || '',
+    br.center.number || '',
+    br.center.complement || '',
+    br.center.neighborhood || '',
     br.center.city || '',
     br.center.state || '',
     br.center.zipcode || '',
@@ -323,6 +338,7 @@ function usToParams(us) {
     us.fallback_enabled ? 1 : 0,
     us.ship_from?.name || '',
     us.ship_from?.street || '',
+    us.ship_from?.street2 || '',
     us.ship_from?.city || '',
     us.ship_from?.state || '',
     us.ship_from?.zipcode || '',

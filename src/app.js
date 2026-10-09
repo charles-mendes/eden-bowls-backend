@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const Sentry = require('@sentry/node');
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -7,6 +8,7 @@ const { buildBearerTokenMiddleware } = require('./api/middleware/bearer-token.mi
 const { registerAuthRoutes } = require('./api/routes/auth.routes');
 const { registerBreedsRoutes } = require('./api/routes/breeds.routes');
 const { registerGeoRoutes } = require('./api/routes/geo.routes');
+const { registerDeliveryEstimateRoutes } = require('./api/routes/delivery-estimate.routes');
 const { registerProductsRoutes } = require('./api/routes/products.routes');
 const { registerOnboardingAddressAutocompleteRoutes } = require('./api/routes/onboarding-address-autocomplete.routes');
 const { registerOnboardingDiscountEligibilityRoutes } = require('./api/routes/onboarding-discount-eligibility.routes');
@@ -30,6 +32,7 @@ const { registerShippingRoutes } = require('./api/routes/shipping.routes');
 const { registerSubscriptionsActionsRoutes } = require('./api/routes/subscriptions-actions.routes');
 const { registerSubscriptionsDetailRoutes } = require('./api/routes/subscriptions-detail.routes');
 const { registerSubscriptionsEditCommitRoutes } = require('./api/routes/subscriptions-edit-commit.routes');
+const { registerCustomerDeliveriesRoutes } = require('./api/routes/customer-deliveries.routes');
 const { registerSubscriptionsEditPreviewRoutes } = require('./api/routes/subscriptions-edit-preview.routes');
 const { registerSubscriptionsRoutes } = require('./api/routes/subscriptions.routes');
 const { registerStripeWebhookRoutes } = require('./api/routes/stripe-webhook.routes');
@@ -176,6 +179,7 @@ function createApp(dependencies = {}) {
 
   registerBreedsRoutes(app, dependencies);
   registerGeoRoutes(app, dependencies);
+  registerDeliveryEstimateRoutes(app, dependencies);
   registerProductsRoutes(app, dependencies);
   registerAuthRoutes(app, dependencies);
   registerOnboardingAddressAutocompleteRoutes(app, dependencies);
@@ -201,6 +205,7 @@ function createApp(dependencies = {}) {
   registerSubscriptionsDetailRoutes(app, dependencies);
   registerSubscriptionsEditPreviewRoutes(app, dependencies);
   registerSubscriptionsEditCommitRoutes(app, dependencies);
+  registerCustomerDeliveriesRoutes(app, dependencies);
   registerSubscriptionsRoutes(app, dependencies);
   registerStripeWebhookRoutes(app, dependencies);
   registerOnboardingPetImageRoutes(app, dependencies);
@@ -214,6 +219,10 @@ function createApp(dependencies = {}) {
   app.use((request, response, next) => {
     next(new HttpError(404, 'Route not found.'));
   });
+
+  if (Sentry.getClient()) {
+    Sentry.setupExpressErrorHandler(app);
+  }
 
   app.use((error, request, response, next) => {
     if (response.headersSent) {

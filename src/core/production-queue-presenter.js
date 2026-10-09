@@ -8,6 +8,11 @@ const { canAccessMarket } = require('./admin-market-scope');
 
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 
+const PAYMENT_LABELS = {
+  awaiting_payment: 'Aguardando pagamento',
+  past_due: 'Pagamento atrasado'
+};
+
 function jsonColumn(value) {
   return parseJsonColumn(value) || {};
 }
@@ -165,11 +170,13 @@ function presentProductionQueueItem(row, options = {}) {
   const catalogItems = lineItemsFromCatalog(catalog);
   const lineItems = catalogItems.length > 0 ? catalogItems : lineItemsFromPets(plan);
   const packSizeLabel = packSizeLabelFor(lineItems);
-  const daysUntil = civilDaysUntil(row.currentPeriodEnd || row.current_period_end, timezone, now);
+  // A paid cycle is due on its preparation day; an unpaid one on its charge.
+  const daysUntil = civilDaysUntil(row.dueAt || row.currentPeriodEnd || row.current_period_end, timezone, now);
   const address = jsonColumn(row.address);
   const displayName = address.name || address.full_name || address.recipient
     || row.customerEmail || row.customer_email || '';
-  const periodEnd = toJsDate(row.currentPeriodEnd || row.current_period_end);
+  // The cycle key the admin sends back when it changes the production status.
+  const periodEnd = toJsDate(row.cyclePeriodEnd || row.currentPeriodEnd || row.current_period_end);
   const { country, city } = addressBits(row);
   const subtotal = Number.isFinite(Number(catalog.subtotal)) ? Number(catalog.subtotal) : null;
   const productionStatus = String(row.productionStatus || row.production_status || 'to_prepare');
@@ -197,6 +204,10 @@ function presentProductionQueueItem(row, options = {}) {
     city,
     stripeStatus: String(row.status || row.stripeStatus || ''),
     productionStatus,
+    paymentState: String(row.paymentState || 'paid'),
+    paymentLabel: PAYMENT_LABELS[row.paymentState] || null,
+    preparationDay: row.preparationDay || null,
+    deliveryDate: row.deliveryDate || null,
     note: row.note || row.production_note || null,
     subtotal,
     currency: catalog.currency || (country === 'BR' ? 'BRL' : null),

@@ -25,7 +25,7 @@ Rodam **depois** de `validateCheckoutState` e da revalidacao de desconto ([01 §
 | 3 | email do `wp_users` vinculado invalido | 422 | `invalid_customer_email` | **falta** (hoje usa billing.email como fallback) |
 | 4 | US + automatic tax sem `country`+`zipcode` | 422 | `sales_tax_unavailable` | **falta** (hoje so liga `automatic_tax` se country US) |
 | 5 | promo 1a compra | 503 | `first_purchase_promo_not_configured` | implementado |
-| 6 | `STRIPE_SECRET_KEY` ausente | 503 | `stripe_secret_missing` | implementado |
+| 6 | `STRIPE_US_SECRET_KEY` ausente. `STRIPE_SECRET_KEY` is not read | 503 | `stripe_secret_missing` | implementado |
 
 `extract_payment_method_id`: so aceitar string que comeca com `pm_`. Qualquer outro valor → 422. Fazer isso **antes** de chamar Stripe.
 

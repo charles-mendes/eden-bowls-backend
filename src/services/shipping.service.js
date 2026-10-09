@@ -6,6 +6,7 @@ const {
   formatBrZipcode,
   haversineMeters
 } = require('../core/shipping-fee');
+const { setBrDeliveryRadiusKm } = require('../core/delivery-closed-days');
 const { loadShippingSettings } = require('../infrastructure/shipping/shipping-settings');
 const { serviceLabel } = require('../infrastructure/shipping/ups-client');
 
@@ -16,6 +17,42 @@ class ShippingService {
     this.nominatimClient = options.nominatimClient || null;
     this.osrmClient = options.osrmClient || null;
     this.upsClient = options.upsClient || null;
+    this.quoteSigner = options.quoteSigner || null;
+    this.production = Boolean(options.production);
+    this.fixedTransitDays = Number.isFinite(Number(options.fixedTransitDays)) && Number(options.fixedTransitDays) > 0
+      ? Number(options.fixedTransitDays)
+      : 1;
+  }
+
+  get settings() {
+    return this.currentSettings;
+  }
+
+  // The checkout radius guard reads the same Brazil radius the quote enforces.
+  set settings(value) {
+    this.currentSettings = value;
+    setBrDeliveryRadiusKm(value && value.br && value.br.rule ? value.br.rule.max_distance_km : null);
+  }
+
+  reportQuoteModeAtStartup(logger) {
+    if (this.production && (this.settings.us.quote_mode || 'fixed') !== 'ups' && logger) {
+      logger.error('US shipping quote_mode is fixed in production; United States checkout will refuse every address as unverified.');
+    }
+  }
+
+  withQuoteToken(country, zipcode, result) {
+    if (!this.quoteSigner || !result || !result.data) {
+      return result;
+    }
+    const data = result.data;
+    data.quote_token = this.quoteSigner.sign({
+      country,
+      zipcode,
+      cost: data.shipping,
+      distance: country === 'BR' ? data.distance : null,
+      deliveryDays: data.delivery_days
+    });
+    return result;
   }
 
   getPublicSettings(country) {
@@ -55,11 +92,11 @@ class ShippingService {
 
   buildUsFallbackQuote(zipcode, reason = 'fallback') {
     const us = this.settings.us;
-    return {
+    return this.withQuoteToken('US', zipcode, {
       success: true,
       data: {
         shipping: Number(Number(us.cost).toFixed(2)),
-        delivery_days: null,
+        delivery_days: reason === 'fixed' && !this.production ? this.fixedTransitDays : null,
         currency: 'USD',
         label: us.label,
         carrier: us.carrier,
@@ -73,7 +110,7 @@ class ShippingService {
           zipcode: String(zipcode || '')
         }
       }
-    };
+    });
   }
 
   async calculateUs(payload = {}) {
@@ -122,7 +159,7 @@ class ShippingService {
       });
 
       const code = rated.serviceCode;
-      return {
+      return this.withQuoteToken('US', zipcode, {
         success: true,
         data: {
           shipping: Number(Number(rated.monetaryValue).toFixed(2)),
@@ -140,7 +177,7 @@ class ShippingService {
             zipcode
           }
         }
-      };
+      });
     } catch (error) {
       const retryable = Boolean(
         error?.upsTimeout
@@ -236,7 +273,7 @@ class ShippingService {
     const fee = applyShippingFee(distanceKm, br.rule);
     const days = deliveryDays(distanceKm, br.rule);
 
-    return {
+    return this.withQuoteToken('BR', zipcode, {
       success: true,
       data: {
         distance: distanceKm,
@@ -264,7 +301,7 @@ class ShippingService {
           state: viaCep.address.state
         }
       }
-    };
+    });
   }
 }
 

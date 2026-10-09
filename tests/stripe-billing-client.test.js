@@ -1,5 +1,19 @@
 const { StripeBillingClient } = require('../src/infrastructure/stripe/stripe-billing-client');
 
+const previousRuntime = process.env.EDEN_RUNTIME;
+
+beforeAll(() => {
+  process.env.EDEN_RUNTIME = 'qa';
+});
+
+afterAll(() => {
+  if (previousRuntime === undefined) {
+    delete process.env.EDEN_RUNTIME;
+  } else {
+    process.env.EDEN_RUNTIME = previousRuntime;
+  }
+});
+
 function buildClient(overrides = {}) {
   const stripe = {
     customers: {
@@ -10,7 +24,8 @@ function buildClient(overrides = {}) {
     },
     paymentMethods: {
       retrieve: jest.fn().mockResolvedValue({ id: 'pm_123', customer: null }),
-      attach: jest.fn().mockResolvedValue({ id: 'pm_123' })
+      // Stripe answers with the attached payment method, whose id can differ from the one sent.
+      attach: jest.fn().mockResolvedValue({ id: 'pm_attached' })
     },
     invoices: {
       retrieve: jest.fn().mockResolvedValue({
@@ -41,6 +56,9 @@ function buildClient(overrides = {}) {
         promotion: { type: 'coupon', coupon: 'eden_fp_1m' }
       })
     },
+    paymentIntents: {
+      update: jest.fn().mockResolvedValue({ id: 'pi_123' })
+    },
     subscriptions: {
       create: jest.fn().mockResolvedValue({
         id: 'sub_123',
@@ -66,8 +84,12 @@ function buildClient(overrides = {}) {
     stripe,
     client: new StripeBillingClient({
       client: stripe,
+      account: overrides.account,
+      logger: overrides.logger,
       automaticTaxEnabled: overrides.automaticTaxEnabled !== false,
-      shippingProductId: overrides.shippingProductId || 'prod_ship'
+      shippingProductId: Object.prototype.hasOwnProperty.call(overrides, 'shippingProductId')
+        ? overrides.shippingProductId
+        : 'prod_ship'
     })
   };
 }
@@ -104,7 +126,7 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     expect(stripe.subscriptions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         automatic_tax: { enabled: true },
-        default_payment_method: 'pm_123',
+        default_payment_method: 'pm_attached',
         payment_behavior: 'default_incomplete',
         payment_settings: { save_default_payment_method: 'on_subscription' },
         billing_mode: { type: 'flexible' },
@@ -113,6 +135,73 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
       { idempotencyKey: 'eb-sub-create-7-test' }
     );
     expect(stripe.subscriptions.create.mock.calls[0][0].expand).toBeUndefined();
+    expect(stripe.paymentMethods.attach).toHaveBeenCalledWith('pm_123', { customer: 'cus_stored' });
+    expect(stripe.customers.update).toHaveBeenCalledWith('cus_stored', expect.objectContaining({
+      invoice_settings: { default_payment_method: 'pm_attached' }
+    }));
+  });
+
+  test('creates a Shipping product and reuses it for the next checkout', async () => {
+    const { stripe, client } = buildClient({ shippingProductId: '' });
+    stripe.products.create.mockResolvedValueOnce({ id: 'prod_created' });
+
+    await client.createOnboardingSubscription(validInput);
+    await client.createOnboardingSubscription({
+      ...validInput,
+      idempotencyKey: 'eb-sub-create-7-second'
+    });
+
+    expect(stripe.products.create).toHaveBeenCalledTimes(1);
+    expect(stripe.products.create).toHaveBeenCalledWith({
+      name: 'Shipping',
+      tax_code: 'txcd_92010001'
+    });
+    expect(stripe.subscriptions.create.mock.calls[0][0].metadata.shipping_product_id).toBe('prod_created');
+    expect(stripe.subscriptions.create.mock.calls[1][0].metadata.shipping_product_id).toBe('prod_created');
+    expect(stripe.subscriptions.create.mock.calls[0][0].add_invoice_items[0].price_data.product).toBe('prod_created');
+  });
+
+  test('does not create a shipping product when the quote has no cost', async () => {
+    const { stripe, client } = buildClient({ shippingProductId: '' });
+
+    await client.createOnboardingSubscription({
+      ...validInput,
+      shipping: { cost: 0 }
+    });
+
+    expect(stripe.products.create).not.toHaveBeenCalled();
+    expect(stripe.subscriptions.create.mock.calls[0][0].metadata.shipping_product_id).toBeUndefined();
+    expect(stripe.subscriptions.create.mock.calls[0][0].add_invoice_items).toBeUndefined();
+  });
+
+  test('creates the BR shipping product on the BR client', async () => {
+    const us = buildClient({ account: 'us', shippingProductId: '' });
+    const br = buildClient({ account: 'br', automaticTaxEnabled: false, shippingProductId: '' });
+
+    await br.client.createOnboardingSubscription({
+      ...validInput,
+      currency: 'brl',
+      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' }
+    });
+
+    expect(br.stripe.products.create).toHaveBeenCalledWith({
+      name: 'Shipping',
+      tax_code: 'txcd_92010001'
+    });
+    expect(br.stripe.subscriptions.create.mock.calls[0][0].metadata.shipping_product_id).toBe('prod_ship');
+    expect(us.stripe.products.create).not.toHaveBeenCalled();
+    expect(us.stripe.subscriptions.create).not.toHaveBeenCalled();
+  });
+
+  test('does not create the subscription when the shipping product is rejected', async () => {
+    const { stripe, client } = buildClient({ shippingProductId: '' });
+    stripe.products.create.mockRejectedValue(new Error('stripe down'));
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      details: { code: 'stripe_subscription_failed' }
+    });
+    expect(stripe.subscriptions.create).not.toHaveBeenCalled();
   });
 
   test('retrieves confirmation_secret when create returns only an invoice id', async () => {
@@ -479,6 +568,55 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     expect(result.checkout.stripe_subscription_id).toBe('sub_existing');
     expect(result.checkout.stripe_client_secret).toBe('pi_existing_secret_abc');
     expect(result.checkout.reused).toBe(true);
+    expect(stripe.subscriptions.update).toHaveBeenCalledWith('sub_existing', {
+      default_payment_method: 'pm_attached',
+      metadata: { checkout_context_fingerprint: 'abc', user_id: '7', eden_env: 'qa' }
+    });
+  });
+
+  function reusableStripe(metadata, update) {
+    return {
+      subscriptions: {
+        list: jest.fn().mockResolvedValue({
+          data: [{ id: 'sub_existing', status: 'incomplete', latest_invoice: 'in_existing', metadata }]
+        }),
+        create: jest.fn(),
+        update
+      },
+      invoices: {
+        retrieve: jest.fn().mockResolvedValue({
+          id: 'in_existing',
+          currency: 'usd',
+          confirmation_secret: { client_secret: 'pi_existing_secret_abc', type: 'payment_intent' }
+        })
+      }
+    };
+  }
+
+  test('fails the reused checkout when the subscription cannot be labeled with eden_env', async () => {
+    const update = jest.fn().mockRejectedValue(new Error('stripe down'));
+    const { stripe, client } = buildClient({
+      stripe: reusableStripe({ checkout_context_fingerprint: 'abc', user_id: '7' }, update)
+    });
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      details: { code: 'stripe_subscription_env_failed' }
+    });
+    expect(stripe.paymentIntents.update).not.toHaveBeenCalled();
+  });
+
+  test('keeps a labeled reused subscription when only the payment method update fails', async () => {
+    const update = jest.fn().mockRejectedValue(new Error('stripe down'));
+    const { client } = buildClient({
+      stripe: reusableStripe({ checkout_context_fingerprint: 'abc', user_id: '7', eden_env: 'qa' }, update)
+    });
+
+    const result = await client.createOnboardingSubscription(validInput);
+
+    expect(update.mock.calls[0][1]).toEqual({ default_payment_method: 'pm_attached' });
+    expect(result.checkout.stripe_client_secret).toBe('pi_existing_secret_abc');
+    expect(result.checkout.reused).toBe(true);
   });
 
   test('rejects a promotion code that Stripe cannot retrieve', async () => {
@@ -503,11 +641,21 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
 });
 
 describe('StripeBillingClient.ensureClient', () => {
-  test('reports a missing secret key', () => {
-    const client = new StripeBillingClient({});
+  test('names STRIPE_US_SECRET_KEY when the US secret is missing', () => {
+    const client = new StripeBillingClient({ account: 'us' });
     expect(() => client.ensureClient()).toThrow(expect.objectContaining({
+      message: expect.stringContaining('STRIPE_US_SECRET_KEY'),
       statusCode: 503,
-      details: { code: 'stripe_secret_missing' }
+      details: expect.objectContaining({ code: 'stripe_secret_missing', stripe_account: 'us' })
+    }));
+  });
+
+  test('names STRIPE_BR_SECRET_KEY when a Brazil client is called directly', () => {
+    const client = new StripeBillingClient({ account: 'br' });
+    expect(() => client.ensureClient()).toThrow(expect.objectContaining({
+      message: expect.stringContaining('STRIPE_BR_SECRET_KEY'),
+      statusCode: 503,
+      details: expect.objectContaining({ code: 'stripe_secret_missing', stripe_account: 'br' })
     }));
   });
 });
@@ -590,6 +738,57 @@ describe('StripeBillingClient.archiveCatalogProduct', () => {
     await expect(client.archiveCatalogProduct('prod_seed_br_beef_300g')).resolves.toBeNull();
     expect(stripe.products.update).not.toHaveBeenCalled();
   });
+
+  test('returns the client secret only after the PaymentIntent is labeled', async () => {
+    let labeled = false;
+    const { stripe, client } = buildClient();
+    stripe.paymentIntents.update.mockImplementation(async () => {
+      labeled = true;
+      return { id: 'pi_123' };
+    });
+
+    const result = await client.createOnboardingSubscription(validInput);
+
+    expect(labeled).toBe(true);
+    expect(stripe.paymentIntents.update).toHaveBeenCalledWith('pi_123', {
+      metadata: { eden_env: 'qa' }
+    });
+    expect(result.checkout.stripe_client_secret).toBe('pi_123_secret');
+  });
+
+  test('does not return a client secret when the PaymentIntent label fails', async () => {
+    const { stripe, client } = buildClient();
+    stripe.paymentIntents.update.mockRejectedValue(new Error('stripe down'));
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      details: { code: 'stripe_payment_intent_env_failed' }
+    });
+  });
+});
+
+describe('listPaidInvoicesForSubscription', () => {
+  test('reads every page of paid invoices, past the first 100', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({ id: `in_${index}`, status: 'paid' }));
+    const list = jest.fn()
+      .mockResolvedValueOnce({ data: firstPage, has_more: true })
+      .mockResolvedValueOnce({ data: [{ id: 'in_100', status: 'paid' }], has_more: false });
+    const client = new StripeBillingClient({ client: { invoices: { list } } });
+
+    const invoices = await client.listPaidInvoicesForSubscription('sub_123');
+
+    expect(invoices).toHaveLength(101);
+    expect(list).toHaveBeenNthCalledWith(1, { subscription: 'sub_123', status: 'paid', limit: 100 });
+    expect(list).toHaveBeenNthCalledWith(2, { subscription: 'sub_123', status: 'paid', limit: 100, starting_after: 'in_99' });
+  });
+
+  test('turns a Stripe error into stripe_invoices_list_failed', async () => {
+    const client = new StripeBillingClient({ client: { invoices: { list: jest.fn().mockRejectedValue(new Error('down')) } } });
+    await expect(client.listPaidInvoicesForSubscription('sub_123')).rejects.toMatchObject({
+      statusCode: 502,
+      details: expect.objectContaining({ code: 'stripe_invoices_list_failed' })
+    });
+  });
 });
 
 describe('extractInvoicePayment', () => {
@@ -609,5 +808,80 @@ describe('extractInvoicePayment', () => {
     expect(couponIdFromPromotion({
       promotion: { type: 'coupon', coupon: 'nVJYDOag' }
     })).toBe('nVJYDOag');
+  });
+});
+
+describe('setTrialEnd', () => {
+  test('passes the idempotency key as a request option only when given', async () => {
+    const update = jest.fn().mockResolvedValue({ id: 'sub_9' });
+    const { client } = buildClient({ stripe: { subscriptions: { update } } });
+    await client.setTrialEnd({ subscriptionId: 'sub_9', trial_end: 1830000000, idempotencyKey: 'delivery-calendar-sync:3' });
+    await client.setTrialEnd({ subscriptionId: 'sub_9', trial_end: 1830000000 });
+    expect(update.mock.calls[0]).toEqual([
+      'sub_9',
+      { trial_end: 1830000000, proration_behavior: 'none' },
+      { idempotencyKey: 'delivery-calendar-sync:3' }
+    ]);
+    expect(update.mock.calls[1]).toEqual(['sub_9', { trial_end: 1830000000, proration_behavior: 'none' }]);
+  });
+});
+
+describe('customer update failure', () => {
+  test('logs the original Stripe error without the request payload, and keeps the generic response', async () => {
+    const stripeError = Object.assign(new Error('Invalid US state: Nova York'), {
+      type: 'StripeInvalidRequestError',
+      code: 'parameter_invalid',
+      param: 'address[state]',
+      raw: { message: 'Invalid US state: Nova York' }
+    });
+    const logger = { warn: jest.fn() };
+    const { client } = buildClient({
+      logger,
+      stripe: {
+        customers: {
+          retrieve: jest.fn().mockResolvedValue({ id: 'cus_stored', deleted: false, currency: 'usd' }),
+          list: jest.fn().mockResolvedValue({ data: [] }),
+          create: jest.fn().mockResolvedValue({ id: 'cus_new' }),
+          update: jest.fn().mockRejectedValue(stripeError)
+        }
+      }
+    });
+
+    await expect(client.createOnboardingSubscription(validInput)).rejects.toMatchObject({
+      statusCode: 502,
+      message: 'Unable to update Stripe customer.',
+      details: { code: 'stripe_customer_failed' }
+    });
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const [fields, message] = logger.warn.mock.calls[0];
+    expect(message).toBe('Stripe customer update failed.');
+    expect(fields).toEqual({
+      stripe_account: 'us',
+      customerId: 'cus_stored',
+      type: 'StripeInvalidRequestError',
+      code: 'parameter_invalid',
+      param: 'address[state]',
+      message: 'Invalid US state: Nova York'
+    });
+    const logged = JSON.stringify(fields);
+    for (const sensitive of ['pm_123', 'jane@example.com', 'Jane Doe', '94105', 'San Francisco']) {
+      expect(logged).not.toContain(sensitive);
+    }
+  });
+});
+
+
+describe('attachPaymentMethod', () => {
+  test('returns the id Stripe answers with, and falls back to the sent id without one', async () => {
+    const attached = buildClient({
+      stripe: { paymentMethods: { retrieve: jest.fn().mockResolvedValue({ id: 'pm_card_visa', customer: null }), attach: jest.fn().mockResolvedValue({ id: 'pm_1Copy' }) } }
+    });
+    await expect(attached.client.attachPaymentMethod('cus_1', 'pm_card_visa')).resolves.toBe('pm_1Copy');
+
+    const silent = buildClient({
+      stripe: { paymentMethods: { retrieve: jest.fn().mockResolvedValue({ id: 'pm_9', customer: null }), attach: jest.fn().mockResolvedValue({}) } }
+    });
+    await expect(silent.client.attachPaymentMethod('cus_1', 'pm_9')).resolves.toBe('pm_9');
   });
 });

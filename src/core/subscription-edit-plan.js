@@ -73,6 +73,17 @@ function mapProrationFromInvoice(invoice = {}, currencyFallback = 'USD') {
   };
 }
 
+// Stripe keeps one item per price, so two pets on the same recipe share one item with the summed quantity.
+function sumByPrice(items) {
+  const byPrice = new Map();
+  for (const item of items) {
+    const quantity = Math.max(1, Number(item.quantity) || 1);
+    const kept = byPrice.get(item.price);
+    byPrice.set(item.price, { price: item.price, quantity: (kept ? kept.quantity : 0) + quantity });
+  }
+  return [...byPrice.values()];
+}
+
 async function resolveProposedPlan(planPreviewRepository, resolveSubscriptionItems, { userId, payload }) {
   if (!planPreviewRepository) {
     throw new HttpError(503, 'Plan preview repository is not available.');
@@ -105,10 +116,7 @@ async function resolveProposedPlan(planPreviewRepository, resolveSubscriptionIte
     currency: String((resolved.catalog_pricing && resolved.catalog_pricing.currency) || market.currency || 'USD'),
     resolved,
     planSelection,
-    items: items.map((item) => ({
-      price: item.price,
-      quantity: Math.max(1, Number(item.quantity) || 1)
-    })),
+    items: sumByPrice(items),
     catalogSubtotal: roundMoney(resolved.catalog_pricing && resolved.catalog_pricing.subtotal)
   };
 }

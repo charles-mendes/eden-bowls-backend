@@ -13,7 +13,7 @@ Front:
 
 Rota legado WordPress:
 
-- `GET /custom/v1/profile` — `docs/profile/01-get-profile.md`
+- `GET /custom/v1/profile` — `docs/archive/wordpress-migration/profile/01-get-profile.md`
 
 ## Responsabilidade
 

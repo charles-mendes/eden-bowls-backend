@@ -1,10 +1,14 @@
 const { buildInviteEmailContent } = require('../src/core/invite-email');
 const { buildPrivacyEmailContent } = require('../src/core/privacy-email');
 const {
+  buildCancelledEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,
   buildPausedEmail,
   buildPaymentFailedEmail,
+  buildPlanChangedEmail,
+  buildRenewalEmail,
+  buildResumedEmail,
   buildShippedEmail
 } = require('../src/core/email/transactional-emails');
 const { listEmailPreviews } = require('../src/core/email/preview-fixtures');
@@ -59,7 +63,7 @@ describe('transactional email catalog', () => {
 
   test('lists every preview fixture with subject, text and html', () => {
     const previews = listEmailPreviews();
-    expect(previews).toHaveLength(13);
+    expect(previews).toHaveLength(14);
     for (const item of previews) {
       expect(item.content.subject).toBeTruthy();
       expect(item.content.text).toBeTruthy();
@@ -140,6 +144,73 @@ describe('designer email shell', () => {
     });
     expect(present.html).toContain('Retomada prevista');
     expect(present.html).toContain('16 out 2026');
+  });
+
+  test('builds renewal, pause, resume, cancel, and plan change in pt-BR and en-US', () => {
+    const shared = {
+      firstName: 'Ana',
+      petName: 'Luna',
+      flavors: ['Bovino'],
+      planName: 'Fresh Bowl',
+      totalLabel: 'R$ 189,00',
+      nextDeliveryLabel: '16 de out. de 2026',
+      resumeAtLabel: '16 de out. de 2026',
+      endsAtLabel: '16 de out. de 2026',
+      dashboardUrl: 'https://edenbowls.com/dashboard/plans'
+    };
+    const letters = [
+      {
+        build: buildRenewalEmail,
+        ptSubject: 'Mais um ciclo na cozinha: recibo da Luna',
+        enSubject: "Another cycle in the kitchen: Luna's receipt",
+        ptFact: 'Valor cobrado',
+        enFact: 'Amount charged'
+      },
+      {
+        build: buildPausedEmail,
+        ptSubject: 'A tigela da Luna está pausada',
+        enSubject: "Luna's bowl is paused",
+        ptFact: 'Retomada prevista',
+        enFact: 'Scheduled to resume'
+      },
+      {
+        build: buildResumedEmail,
+        ptSubject: 'A Luna está de volta à cozinha',
+        enSubject: 'Luna is back in the kitchen',
+        ptFact: 'Próxima entrega',
+        enFact: 'Next delivery'
+      },
+      {
+        build: buildCancelledEmail,
+        ptSubject: 'A assinatura da Luna foi encerrada',
+        enSubject: "Luna's subscription has been cancelled",
+        ptFact: 'Válida até',
+        enFact: 'Active until'
+      },
+      {
+        build: buildPlanChangedEmail,
+        ptSubject: 'O cardápio da Luna mudou',
+        enSubject: "Luna's menu has changed",
+        ptFact: 'Fresh Bowl',
+        enFact: 'Fresh Bowl'
+      }
+    ];
+
+    for (const letter of letters) {
+      const portuguese = letter.build({ ...shared, locale: 'pt-BR' });
+      const english = letter.build({ ...shared, locale: 'en-US' });
+
+      expect(portuguese.subject).toBe(letter.ptSubject);
+      expect(portuguese.text).toContain(letter.ptFact);
+      expect(portuguese.html).toContain('Eden Bowls');
+      expect(portuguese.html).toContain(letter.ptFact === 'Fresh Bowl' ? 'Fresh Bowl' : letter.ptFact);
+
+      expect(english.subject).toBe(letter.enSubject);
+      expect(english.text).toContain(letter.enFact);
+      expect(english.html).toContain('Eden Bowls');
+      expect(english.html).toContain('Automated email from Eden Bowls');
+      expect(english.subject).not.toBe(portuguese.subject);
+    }
   });
 });
 

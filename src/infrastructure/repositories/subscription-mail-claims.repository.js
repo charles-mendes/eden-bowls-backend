@@ -77,6 +77,32 @@ class SubscriptionMailClaimsRepository {
     );
   }
 
+  async releaseUnsent(id) {
+    this.ensureDataSource();
+    const claimId = Number(id);
+    if (!Number.isSafeInteger(claimId) || claimId <= 0) {
+      return;
+    }
+    await this.dataSource.query(
+      `DELETE FROM \`${this.tableName}\` WHERE \`id\` = ? AND \`sent_at\` IS NULL`,
+      [claimId]
+    );
+  }
+
+  async hasSentClaim({ subscriptionId, template } = {}) {
+    this.ensureDataSource();
+    const subscription = String(subscriptionId || '').trim();
+    const mailTemplate = String(template || '').trim();
+    if (!subscription || !mailTemplate) {
+      return false;
+    }
+    const rows = await this.dataSource.query(
+      `SELECT \`id\` FROM \`${this.tableName}\` WHERE \`stripe_subscription_id\` = ? AND \`template\` = ? AND \`sent_at\` IS NOT NULL LIMIT 1`,
+      [subscription, mailTemplate]
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
   async savePayload(id, payload) {
     this.ensureDataSource();
     const claimId = Number(id);

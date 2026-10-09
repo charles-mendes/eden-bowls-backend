@@ -14,7 +14,7 @@ Base: `VITE_AUTH_API_BASE_URL` (senao `VITE_API_BASE_URL`, senao `http://localho
 
 Contrato legado analisado:
 
-- `docs/email/08-envio-email.md`
+- `docs/archive/wordpress-migration/email/08-envio-email.md`
 - `docs/token/07-auth-signup-login-frontend.md`
 
 Arquivos Node:

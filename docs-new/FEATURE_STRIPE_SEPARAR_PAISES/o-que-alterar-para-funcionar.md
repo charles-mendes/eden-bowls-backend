@@ -2,7 +2,7 @@
 
 O código do PAY-01 já roteia duas merchant accounts independentes (não Connect). **Cartão continua o único método.** Checkout Brasil só cria `cus_` / `sub_` na conta BR quando `STRIPE_BR_ENABLED=true`.
 
-US já funciona com as variáveis legadas (`STRIPE_SECRET_KEY`, `VITE_STRIPE_PUBLISHABLE_KEY`). Brasil é aditivo: secrets + catálogo + cupons + webhooks + flag.
+US usa só `STRIPE_US_SECRET_KEY`. `STRIPE_SECRET_KEY` is not read. A loja continua com `VITE_STRIPE_PUBLISHABLE_KEY`. Brasil é aditivo: secrets + catálogo + cupons + webhooks + flag.
 
 Não ligar a flag antes dos passos abaixo. Objetos criados na conta BR **não voltam** para a US.
 
@@ -46,16 +46,14 @@ Na conta BR nova, conferir a API version do Dashboard. O SDK **não** herda a de
 
 Arquivos: `eden-bowls-backend/.env` (local) e o `.env` da VPS (a partir de `.env.qa.example`). O compose QA lê `env_file: .env`; não precisa listar cada `STRIPE_*` no YAML.
 
-US herda o valor legado se `_US` estiver vazio.
+`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read.
 
 | Variável | Conta | Fallback |
 |----------|--------|----------|
-| `STRIPE_US_SECRET_KEY` | US | `STRIPE_SECRET_KEY` |
+| `STRIPE_US_SECRET_KEY` | US | nenhum. `STRIPE_SECRET_KEY` is not read |
 | `STRIPE_BR_SECRET_KEY` | BR | nenhum — obrigatória para criar BR |
-| `STRIPE_US_WEBHOOK_SECRET` | US | `STRIPE_WEBHOOK_SECRET` |
+| `STRIPE_US_WEBHOOK_SECRET` | US | nenhum. `STRIPE_WEBHOOK_SECRET` is not read |
 | `STRIPE_BR_WEBHOOK_SECRET` | BR | nenhum |
-| `STRIPE_US_SHIPPING_PRODUCT_ID` | US | `STRIPE_SHIPPING_PRODUCT_ID` |
-| `STRIPE_BR_SHIPPING_PRODUCT_ID` | BR | nenhum — criar `prod_` de frete **na conta BR** |
 | `STRIPE_API_VERSION` | ambas | `2025-09-30.clover` |
 | `STRIPE_US_AUTOMATIC_TAX` | só US | — |
 | `STRIPE_BR_ENABLED` | criação BR | default `false` |
@@ -113,7 +111,7 @@ No painel: Catálogo → mercado **BR** / moeda **BRL** → Sync.
 
 Conferir health: mapped = expected, sem gaps. Sem `price_` BR o checkout BR falha mesmo com a flag on.
 
-O product de frete (`STRIPE_BR_SHIPPING_PRODUCT_ID`) é criado à mão no Dashboard BR (o sync de bowls não cobre shipping). Sem ele, o 2º ciclo some o frete no `invoice.created`.
+O checkout grava `shipping_product_id` na metadata da assinatura, na mesma conta Stripe. O sync de bowls não cobre frete. Sem esse id, o 2º ciclo não adiciona frete no `invoice.created`.
 
 ---
 
@@ -145,13 +143,7 @@ Dois endpoints. Cada Dashboard aponta só para o path daquela conta. Assinatura 
 
 URL pública (QA): `https://qa-api.edenbowls.com/stripe/v1/webhook/us` e `.../webhook/br`.
 
-Eventos a assinar nas duas contas:
-
-- `invoice.paid`
-- `invoice.created` (frete do 2º ciclo)
-- `payment_intent.succeeded` / `processing` / `payment_failed`
-- `invoice.payment_failed`
-- `customer.subscription.updated` / `deleted`
+Eventos a assinar nas duas contas, em Test e em Live: os **29** de `src/infrastructure/stripe/stripe-webhook-events.js` (lista na seção 8 de [COMO-CONFIGURAR-STRIPE.md](./COMO-CONFIGURAR-STRIPE.md)). Não use “all events” e não cadastre só o subconjunto que o Node trata hoje.
 
 São 4 endpoints no total se houver test + live × br + us.
 

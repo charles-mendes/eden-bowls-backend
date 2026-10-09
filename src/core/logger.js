@@ -19,6 +19,12 @@ function createLogger(options = {}) {
       'STRIPE_WEBHOOK_SECRET',
       'STRIPE_BR_WEBHOOK_SECRET',
       'STRIPE_US_WEBHOOK_SECRET',
+      'UPS_CLIENT_SECRET',
+      'clientSecret',
+      'access_token',
+      'accessToken',
+      'headers.Authorization',
+      'headers.authorization',
       'payload',
       'secretKey',
       'webhookSecret'

@@ -5,6 +5,7 @@ const {
   fromStripeUnix
 } = require('../../core/stripe-subscription-map');
 const { PROFILE_MARKET_META_KEY, appendInFilter } = require('../../core/admin-market-scope');
+const { dateOnly } = require('./subscription-production.repository');
 
 function isMissingTableError(error) {
   const message = String(error && error.message ? error.message : '');
@@ -39,6 +40,8 @@ class SubscriptionLedgerRepository {
     this.tableName = options.tableName || 'stripe_subscriptions';
     this.userStateTableName = options.userStateTableName || 'onboarding_user_state';
     this.usermetaTableName = options.usermetaTableName || 'wp_usermeta';
+    this.chargedInvoicesTableName = options.chargedInvoicesTableName || 'subscription_charged_invoices';
+    this.productionCyclesTableName = options.productionCyclesTableName || 'subscription_production_cycles';
   }
 
   ensureDataSource() {
@@ -74,6 +77,12 @@ class SubscriptionLedgerRepository {
       subscriptionTermMonths: row.subscription_term_months == null ? null : Number(row.subscription_term_months),
       editPaymentPending: Boolean(Number(row.edit_payment_pending)),
       editPending: parseJsonColumn(row.edit_pending),
+      chargedDeliveries: row.charged_deliveries == null ? null : Number(row.charged_deliveries),
+      lastChargedInvoiceId: row.last_charged_invoice_id ? String(row.last_charged_invoice_id) : null,
+      autoRenew: row.auto_renew == null ? null : Boolean(Number(row.auto_renew)),
+      pendingDeliveryChanges: row.pending_delivery_changes === undefined
+        ? undefined
+        : parseJsonColumn(row.pending_delivery_changes),
       createdAt: row.created_at || null,
       updatedAt: row.updated_at || null,
       profileMarket: row.profile_market ? String(row.profile_market).trim().toUpperCase() : ''
@@ -393,6 +402,105 @@ class SubscriptionLedgerRepository {
     return this.findByStripeSubscriptionId(subscriptionId);
   }
 
+  // Records one counted cycle invoice. True only when the row is new, so a repeat, late or concurrent, is a no-op.
+  async recordChargedInvoice(subscriptionId, invoiceId) {
+    this.ensureDataSource();
+    const result = await this.dataSource.query(
+      `INSERT IGNORE INTO \`${this.chargedInvoicesTableName}\` (\`stripe_subscription_id\`, \`invoice_id\`) VALUES (?, ?)`,
+      [subscriptionId, invoiceId]
+    );
+    return Boolean(result && typeof result.affectedRows === 'number' && result.affectedRows === 1);
+  }
+
+  // First count for a row that predates the column: the earlier paid cycle invoices are recorded and counted
+  // from the table; the invoice being processed then goes through the same insert as any later one.
+  async seedChargedDeliveries(subscriptionId, earlierInvoiceIds = []) {
+    this.ensureDataSource();
+    for (const invoiceId of earlierInvoiceIds) {
+      await this.recordChargedInvoice(subscriptionId, invoiceId);
+    }
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`charged_deliveries\` = (
+          SELECT COUNT(*) FROM \`${this.chargedInvoicesTableName}\` WHERE \`stripe_subscription_id\` = ?
+        )
+        WHERE \`stripe_subscription_id\` = ? AND \`charged_deliveries\` IS NULL`,
+      [subscriptionId, subscriptionId]
+    );
+    return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
+  // Adds one charged delivery only when this invoice was not recorded before.
+  async incrementChargedDeliveries(subscriptionId, invoiceId) {
+    this.ensureDataSource();
+    const counted = await this.recordChargedInvoice(subscriptionId, invoiceId);
+    if (counted) {
+      await this.dataSource.query(
+        `UPDATE \`${this.tableName}\` SET \`charged_deliveries\` = \`charged_deliveries\` + 1, \`last_charged_invoice_id\` = ?
+          WHERE \`stripe_subscription_id\` = ? AND \`charged_deliveries\` IS NOT NULL`,
+        [invoiceId, subscriptionId]
+      );
+    }
+    return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
+  async setPendingDeliveryChanges(subscriptionId, changes) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`pending_delivery_changes\` = ? WHERE \`stripe_subscription_id\` = ?`,
+      [changes ? JSON.stringify(changes) : null, subscriptionId]
+    );
+    return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
+  // Inside a calendar closure's transaction: moves a pending charge move only while it still points where the
+  // preview saw it, so a change the customer made meanwhile refuses the closure instead of being overwritten.
+  async rewritePendingChargeMove(executor, subscriptionId, { previous, next }) {
+    const db = executor || this.dataSource;
+    const rows = await db.query(
+      `SELECT \`pending_delivery_changes\` AS pending FROM \`${this.tableName}\`
+        WHERE \`stripe_subscription_id\` = ? FOR UPDATE`,
+      [subscriptionId]
+    );
+    const pending = rows.length > 0 ? parseJsonColumn(rows[0].pending) : null;
+    const move = pending && pending.charge_move;
+    if (!move || Number(move.trial_end) !== Number(previous)) {
+      throw new HttpError(409, 'A entrega mudou desde a prévia. Revise o fechamento.', {
+        code: 'pending_change_moved',
+        subscriptionId
+      });
+    }
+    const changes = { ...pending, charge_move: { ...move, trial_end: Number(next) } };
+    await db.query(
+      `UPDATE \`${this.tableName}\` SET \`pending_delivery_changes\` = ? WHERE \`stripe_subscription_id\` = ?`,
+      [JSON.stringify(changes), subscriptionId]
+    );
+    return changes;
+  }
+
+  // Reads and clears in one step, so two deliveries of the same webhook do not both apply the change.
+  async takePendingDeliveryChanges(subscriptionId) {
+    this.ensureDataSource();
+    const row = await this.findByStripeSubscriptionId(subscriptionId);
+    const changes = row && row.pendingDeliveryChanges;
+    if (!changes) return null;
+    const result = await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`pending_delivery_changes\` = NULL
+        WHERE \`stripe_subscription_id\` = ? AND \`pending_delivery_changes\` IS NOT NULL`,
+      [subscriptionId]
+    );
+    const affected = result && typeof result.affectedRows === 'number' ? result.affectedRows : 0;
+    return affected > 0 ? changes : null;
+  }
+
+  async setAutoRenew(subscriptionId, enabled) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`auto_renew\` = ? WHERE \`stripe_subscription_id\` = ?`,
+      [enabled ? 1 : 0, subscriptionId]
+    );
+    return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
   async findById(id) {
     this.ensureDataSource();
     const numericId = Number(id);
@@ -559,24 +667,56 @@ class SubscriptionLedgerRepository {
     return { linked };
   }
 
+  // A queue row is one production cycle. An unpaid cycle is the next renewal (for past_due, the renewal that
+  // failed) and waits for payment. A paid cycle stays until it is marked ready, whatever happens to renewals
+  // after it, so cancel_at_period_end only removes the renewals that would follow.
+  queueSourceSql() {
+    const ledger = `\`${this.tableName}\``;
+    const cycles = `\`${this.productionCyclesTableName}\``;
+    const columns = [
+      's.id', 's.user_id', 's.customer_email', 's.stripe_subscription_id', 's.stripe_customer_id', 's.stripe_account',
+      's.status', 's.plan_label', 's.stripe_price_id', 's.current_period_start', 's.current_period_end',
+      's.cancel_at_period_end', 's.pets_snapshot', 's.plan_selection', 's.shipping', 's.address',
+      's.subscription_term_months', 's.edit_payment_pending', 's.edit_pending', 's.created_at', 's.updated_at'
+    ].join(', ');
+    const unpaidKey = "CASE WHEN s.status = 'past_due' THEN s.current_period_start ELSE s.current_period_end END";
+    return `(
+      SELECT ${columns}, ${unpaidKey} AS cycle_period_end, ${unpaidKey} AS due_at,
+        COALESCE(c.status, 'to_prepare') AS production_status, c.note AS production_note,
+        CASE WHEN s.status = 'past_due' THEN 'past_due' ELSE 'awaiting_payment' END AS payment_state,
+        NULL AS paid_at, NULL AS paid_invoice_id, NULL AS preparation_day, NULL AS delivery_date
+      FROM ${ledger} s
+      LEFT JOIN ${cycles} c ON c.subscription_id = s.id AND c.period_end = ${unpaidKey}
+      WHERE s.status IN ('active','trialing','past_due')
+        AND ${unpaidKey} IS NOT NULL
+        AND c.paid_at IS NULL
+        AND (s.status = 'past_due' OR s.cancel_at_period_end = 0)
+      UNION ALL
+      SELECT ${columns}, c.period_end AS cycle_period_end,
+        COALESCE(TIMESTAMP(c.preparation_day, '12:00:00'), c.period_end) AS due_at,
+        c.status AS production_status, c.note AS production_note, 'paid' AS payment_state,
+        c.paid_at AS paid_at, c.paid_invoice_id AS paid_invoice_id, c.preparation_day AS preparation_day,
+        c.delivery_date AS delivery_date
+      FROM ${cycles} c
+      JOIN ${ledger} s ON s.id = c.subscription_id
+      WHERE c.paid_at IS NOT NULL
+    ) q`;
+  }
+
   queueJoinSql() {
     return [
-      `FROM \`${this.tableName}\` s`,
-      'LEFT JOIN `subscription_production_cycles` c ON c.subscription_id = s.id AND c.period_end = s.current_period_end',
-      this.profileMarketJoinSql()
+      `FROM ${this.queueSourceSql()}`,
+      `LEFT JOIN \`${this.usermetaTableName}\` pm ON pm.user_id = q.user_id AND pm.meta_key = '${PROFILE_MARKET_META_KEY}'`
     ].join(' ');
   }
 
-  queueMembership({ startOfToday, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, q }) {
+  queueMembership({ startOfToday, startOfTomorrow, startOfDayAfterTomorrow, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, due, q }) {
     const where = [
-      "s.status IN ('active','trialing','past_due')",
-      's.cancel_at_period_end = 0',
-      's.current_period_end IS NOT NULL',
       `(
-        (s.current_period_end >= ? AND s.current_period_end < ?)
+        (q.due_at >= ? AND q.due_at < ?)
         OR (
-          ? AND s.current_period_end >= ? AND s.current_period_end < ?
-          AND COALESCE(c.status,'to_prepare') <> 'ready'
+          ? AND q.due_at >= ? AND q.due_at < ?
+          AND q.production_status <> 'ready'
         )
       )`
     ];
@@ -592,17 +732,34 @@ class SubscriptionLedgerRepository {
       ? stripeAccounts.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
       : (account ? [String(account).trim().toLowerCase()] : []);
     if (accounts.length) {
-      appendInFilter(where, params, 's.stripe_account', accounts);
+      appendInFilter(where, params, 'q.stripe_account', accounts);
     }
 
     if (productionStatus) {
-      where.push("COALESCE(c.status,'to_prepare') = ?");
+      where.push('q.production_status = ?');
       params.push(String(productionStatus));
+    }
+
+    // The same civil-day buckets the metrics count: before today, today, tomorrow, then the rest of the window.
+    const dueRanges = {
+      overdue: [null, startOfToday],
+      today: [startOfToday, startOfTomorrow],
+      tomorrow: [startOfTomorrow, startOfDayAfterTomorrow],
+      upcoming: [startOfDayAfterTomorrow, windowEndExclusive]
+    };
+    const dueRange = due ? dueRanges[due] : null;
+    if (dueRange) {
+      if (dueRange[0]) {
+        where.push('q.due_at >= ?');
+        params.push(dueRange[0]);
+      }
+      where.push('q.due_at < ?');
+      params.push(dueRange[1]);
     }
 
     if (q) {
       const needle = `%${String(q).trim()}%`;
-      where.push('(s.customer_email LIKE ? OR s.stripe_subscription_id LIKE ? OR s.stripe_customer_id LIKE ? OR CAST(s.user_id AS CHAR) LIKE ?)');
+      where.push('(q.customer_email LIKE ? OR q.stripe_subscription_id LIKE ? OR q.stripe_customer_id LIKE ? OR CAST(q.user_id AS CHAR) LIKE ?)');
       params.push(needle, needle, needle, needle);
     }
 
@@ -622,6 +779,13 @@ class SubscriptionLedgerRepository {
       ...mapped,
       productionStatus: String(row.production_status || mapped.productionStatus || 'to_prepare'),
       note: row.production_note == null ? (mapped.note || null) : String(row.production_note),
+      cyclePeriodEnd: row.cycle_period_end || mapped.currentPeriodEnd,
+      dueAt: row.due_at || row.cycle_period_end || mapped.currentPeriodEnd,
+      paymentState: String(row.payment_state || 'awaiting_payment'),
+      paidAt: row.paid_at || null,
+      paidInvoiceId: row.paid_invoice_id ? String(row.paid_invoice_id) : null,
+      preparationDay: dateOnly(row.preparation_day),
+      deliveryDate: dateOnly(row.delivery_date),
       displayName: null,
       profileMarket: row.profile_market ? String(row.profile_market).trim().toUpperCase() : mapped.profileMarket,
       paymentMethodLast4: null,
@@ -630,13 +794,7 @@ class SubscriptionLedgerRepository {
   }
 
   queueSelectSql() {
-    return [
-      'SELECT s.id, s.user_id, s.customer_email, s.stripe_subscription_id, s.stripe_customer_id,',
-      's.stripe_account, s.status, s.plan_label, s.stripe_price_id, s.current_period_start, s.current_period_end,',
-      's.cancel_at_period_end, s.pets_snapshot, s.plan_selection, s.shipping, s.address, s.subscription_term_months,',
-      's.edit_payment_pending, s.edit_pending, s.created_at, s.updated_at,',
-      "COALESCE(c.status, 'to_prepare') AS production_status, c.note AS production_note, pm.meta_value AS profile_market"
-    ].join(' ');
+    return 'SELECT q.*, pm.meta_value AS profile_market';
   }
 
   async listQueue(input = {}) {
@@ -655,7 +813,7 @@ class SubscriptionLedgerRepository {
           this.queueSelectSql(),
           joinSql,
           whereSql,
-          'ORDER BY s.current_period_end ASC, s.id ASC',
+          'ORDER BY q.due_at ASC, q.id ASC',
           'LIMIT ? OFFSET ?'
         ].join(' '),
         [...params, input.perPage, input.offset]
@@ -687,7 +845,7 @@ class SubscriptionLedgerRepository {
 
     try {
       const rows = await this.dataSource.query(
-        `SELECT s.current_period_end, COALESCE(c.status,'to_prepare') AS production_status ${joinSql} ${whereSql}`,
+        `SELECT q.due_at, q.production_status ${joinSql} ${whereSql}`,
         params
       );
       return Array.isArray(rows) ? rows : [];
@@ -699,21 +857,24 @@ class SubscriptionLedgerRepository {
     }
   }
 
-  async findQueueRowById(id) {
+  // One cycle of one subscription; without a period end, the earliest open cycle.
+  async findQueueRowById(id, periodEnd) {
     this.ensureDataSource();
     const numericId = Number(id);
     if (!Number.isSafeInteger(numericId) || numericId < 1) {
       return null;
     }
+    const period = periodEnd ? toMysqlDateTime(periodEnd) : null;
 
     try {
       const rows = await this.dataSource.query(
         [
           this.queueSelectSql(),
           this.queueJoinSql(),
-          'WHERE s.id = ? LIMIT 1'
+          period ? 'WHERE q.id = ? AND q.cycle_period_end = ?' : 'WHERE q.id = ?',
+          'ORDER BY q.due_at ASC LIMIT 1'
         ].join(' '),
-        [numericId]
+        period ? [numericId, period] : [numericId]
       );
       return this.mapQueueRow(Array.isArray(rows) ? rows[0] : null);
     } catch (error) {
@@ -784,6 +945,27 @@ class SubscriptionLedgerRepository {
     } catch (error) {
       if (isMissingTableError(error)) {
         return { variationIds: [], priceIds: [] };
+      }
+      throw error;
+    }
+  }
+
+  // Subscriptions that still have a delivery to make: the same statuses the production queue keeps.
+  async listDeliverableByAccount(stripeAccount) {
+    this.ensureDataSource();
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT * FROM \`${this.tableName}\`
+          WHERE \`stripe_account\` = ?
+            AND \`status\` IN ('active', 'trialing', 'past_due')
+            AND \`cancel_at_period_end\` = 0
+          ORDER BY \`id\``,
+        [String(stripeAccount || '').toLowerCase()]
+      );
+      return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row));
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return [];
       }
       throw error;
     }

@@ -2,7 +2,7 @@
 
 Guia de **implementacao** do Place Order (`POST /api/v1/onboarding/subscription/checkout`) e dos efeitos Stripe (create + webhook).
 
-Origem WP (nao copiar): `docs/subscription-checkout/`.
+Origem WP (nao copiar): `docs/archive/wordpress-migration/subscription-checkout/`.
 
 Identidade: **JWT**. Nao ha `session_id`, `x-session-token`, `account-link` nem `linked_user_id`. O usuario e `request.currentUser.id`. Estado mora em `onboarding_user_state` (PK `user_id`) + ledger `stripe_subscriptions`.
 

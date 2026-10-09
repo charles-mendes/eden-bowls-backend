@@ -2,7 +2,7 @@ const { HttpError } = require('../../core/http-error');
 const { buildRequireAdminPermission } = require('../middleware/require-admin-permission.middleware');
 const { parseNutritionSimulateInput } = require('../validators/admin-nutrition-simulate.validator');
 const { parseRolesAssignmentInput } = require('../validators/admin-users-roles.validator');
-const { parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
+const { parseHeadquartersValidateInput, parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
 const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = require('../validators/admin-coupons.validator');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../../core/admin-market-scope');
 const { parsePageQuery } = require('../validators/admin-pagination');
@@ -24,6 +24,7 @@ const {
   parseUpdateFeedbackInput
 } = require('../validators/feedbacks.validator');
 const { registerAdminPrivacyRoutes } = require('./privacy.routes');
+const { registerAdminDeliveryCalendarRoutes } = require('./admin-delivery-calendar.routes');
 
 function couponAccountFor(request) {
   const query = { ...(request.query || {}), ...(request.body || {}) };
@@ -121,6 +122,15 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.post('/api/v1/admin/shipping/headquarters/validate', requirePermission('shipping.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminShippingService) {
+        throw new HttpError(503, 'Shipping service is not available.');
+      }
+      return dependencies.adminShippingService.validateHeadquarters(parseHeadquartersValidateInput(request.body || {}));
+    });
+  });
+
   app.get('/api/v1/admin/billing/subscriptions/:id/shipments', requirePermission('shipping.read', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.upsShipmentService) {
@@ -163,7 +173,9 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.upsShipmentService) {
         throw new HttpError(503, 'UPS shipment service is not available.');
       }
-      return dependencies.upsShipmentService.voidShipment(request.params.id, request.adminIdentity);
+      return dependencies.upsShipmentService.voidShipment(request.params.id, request.adminIdentity, {
+        confirmNotCreated: Boolean(request.body && request.body.confirm_not_created === true)
+      });
     });
   });
 
@@ -323,7 +335,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.adminCatalogService) {
         throw new HttpError(503, 'Catalog service is not available.');
       }
-      return dependencies.adminCatalogService.status();
+      return dependencies.adminCatalogService.status(request.marketQuery || {});
     });
   }
 
@@ -355,6 +367,20 @@ function registerAdminRoutes(app, dependencies = {}) {
         parsePageQuery(request.query, { defaultPerPage: 20 }),
         request.adminIdentity
       );
+    });
+  });
+
+  app.get('/api/v1/admin/today', requirePermission('production.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminTodayService) {
+        throw new HttpError(503, 'Today overview is not available.');
+      }
+      const query = request.query || {};
+      return dependencies.adminTodayService.overview({
+        timezone: typeof query.timezone === 'string' ? query.timezone : undefined,
+        account: typeof query.account === 'string' && query.account ? query.account : undefined,
+        market: typeof query.market === 'string' && query.market ? query.market : undefined
+      }, request.adminIdentity);
     });
   });
 
@@ -425,7 +451,35 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
-  app.get('/api/v1/admin/billing/invoices/:id/pdf', requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
+  function requireCustomerInvoices() {
+    if (!dependencies.customerInvoicesService) {
+      throw new HttpError(503, 'Invoice service is not available.');
+    }
+    return dependencies.customerInvoicesService;
+  }
+
+  // Eden Bowls invoices (EB-YYYY-NNNNNN): the PDF stored by the API and when it was emailed to the customer.
+  app.get('/api/v1/admin/billing/subscriptions/:id/customer-invoices', requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCustomerInvoices().listForSubscription(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/billing/subscriptions/:id/customer-invoices', requirePermission('billing.subscribers.sync', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCustomerInvoices().issueFromAdmin(
+      request.params.id,
+      request.body && request.body.stripe_invoice_id,
+      request.adminIdentity
+    ));
+  });
+
+  app.get('/api/v1/admin/billing/customer-invoices/:id/pdf', requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCustomerInvoices().downloadPdf(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/billing/customer-invoices/:id/send', requirePermission('billing.subscribers.sync', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCustomerInvoices().resendEmail(request.params.id, request.adminIdentity));
+  });
+
+  app.get('/api/v1/admin/billing/invoices/:id/pdf',requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminBillingService) {
         throw new HttpError(503, 'Billing service is not available.');
@@ -444,6 +498,24 @@ function registerAdminRoutes(app, dependencies = {}) {
         request.query && (request.query.type || request.query.state),
         request.adminIdentity
       );
+    });
+  });
+
+  app.get('/api/v1/admin/billing/webhooks/health', requirePermission('system.health.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminSystemHealthService) {
+        throw new HttpError(503, 'System health service is not available.');
+      }
+      return dependencies.adminSystemHealthService.webhookHealth();
+    });
+  });
+
+  app.get('/api/v1/admin/markets/conflicts', requirePermission('system.health.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminSystemHealthService) {
+        throw new HttpError(503, 'System health service is not available.');
+      }
+      return dependencies.adminSystemHealthService.marketConflicts(parsePageQuery(request.query));
     });
   });
 
@@ -697,6 +769,7 @@ function registerAdminRoutes(app, dependencies = {}) {
   });
 
   registerAdminPrivacyRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminDeliveryCalendarRoutes(app, dependencies, { requirePermission, handle });
 }
 
 module.exports = {

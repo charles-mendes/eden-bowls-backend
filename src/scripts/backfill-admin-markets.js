@@ -1,4 +1,5 @@
 const { PROFILE_MARKET_META_KEY } = require('../core/admin-market-scope');
+const { countMarketConflicts } = require('../infrastructure/repositories/market-conflicts.repository');
 
 function parseArgs(argv = process.argv.slice(2)) {
   return {
@@ -37,23 +38,13 @@ async function collectBackfillStats(query) {
     ].join(' '),
     [PROFILE_MARKET_META_KEY]
   );
-  const conflictRows = await query(
-    [
-      'SELECT COUNT(*) AS total',
-      'FROM `stripe_subscriptions` sub',
-      `INNER JOIN \`wp_usermeta\` pm ON pm.user_id = sub.user_id AND pm.meta_key = ?`,
-      "WHERE UPPER(TRIM(pm.meta_value)) IN ('BR', 'US')",
-      "AND LOWER(TRIM(sub.stripe_account)) IN ('br', 'us')",
-      "AND LOWER(TRIM(sub.stripe_account)) <> LOWER(TRIM(CASE WHEN UPPER(TRIM(pm.meta_value)) = 'BR' THEN 'br' ELSE 'us' END))"
-    ].join(' '),
-    [PROFILE_MARKET_META_KEY]
-  );
+  const profileVsStripeConflicts = await countMarketConflicts(query);
 
   return {
     fillableProfiles: Number(fillableProfileRows && fillableProfileRows[0] && fillableProfileRows[0].total || 0),
     fillableOnboarding: Number(fillableOnboardingRows && fillableOnboardingRows[0] && fillableOnboardingRows[0].total || 0),
     orphansWithoutCountry: Number(orphanRows && orphanRows[0] && orphanRows[0].total || 0),
-    profileVsStripeConflicts: Number(conflictRows && conflictRows[0] && conflictRows[0].total || 0)
+    profileVsStripeConflicts
   };
 }
 

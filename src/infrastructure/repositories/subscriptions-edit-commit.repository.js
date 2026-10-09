@@ -10,6 +10,25 @@ const {
 } = require('../../core/subscription-edit-plan');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
+const { verifiedEditShipping } = require('../../core/shipping-quote-token');
+const { resolveMarket } = require('../../core/market');
+const { assertPackOnlyChange, withStoredPets } = require('../../core/pack-adjustment');
+
+function itemsUnchanged(currentItems, itemUpdates) {
+  if (itemUpdates.length !== currentItems.length) return false;
+  return itemUpdates.every((update) => {
+    if (update.deleted || !update.id) return false;
+    const current = currentItems.find((item) => item.id === update.id);
+    return Boolean(current) && Number(current.quantity) === Number(update.quantity);
+  });
+}
+
+function addressWithTransit(address, shipping) {
+  if (!address || resolveMarket({ country: address.country }).country !== 'US') return address;
+  if (!shipping || shipping.delivery_days == null || shipping.delivery_days === '') return address;
+  const days = Number(shipping.delivery_days);
+  return Number.isFinite(days) ? { ...address, business_days_in_transit: days } : address;
+}
 
 class SubscriptionsEditCommitRepository {
   constructor(options = {}) {
@@ -18,9 +37,13 @@ class SubscriptionsEditCommitRepository {
     this.stripeBilling = options.stripeBilling || null;
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.resolveSubscriptionItems = options.resolveSubscriptionItems || null;
+    this.shippingQuoteSigner = options.shippingQuoteSigner || null;
+    this.transactionalMailer = options.transactionalMailer || null;
+    this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
 
-  async commit(userId, subscriptionId, payload = {}, ledgerRow = null) {
+  // With `defer`, validates the save (hash, plan, prices) and returns it without touching Stripe or the ledger.
+  async commit(userId, subscriptionId, requestPayload = {}, ledgerRow = null, options = {}) {
     if (!this.ledgerRepository) {
       throw new HttpError(503, 'Subscription edit commit dependencies are not available.');
     }
@@ -29,6 +52,11 @@ class SubscriptionsEditCommitRepository {
     if (!row) {
       throw new HttpError(404, 'Subscription not found.', { code: 'subscription_not_found' });
     }
+    // A pack save applies from the editable delivery forward: the next monthly invoice carries it, nothing is charged now.
+    const packMode = Boolean(requestPayload.delivery_id);
+    if (packMode) assertPackOnlyChange(requestPayload, row);
+    const payload = packMode ? withStoredPets(requestPayload, row.planSelection) : requestPayload;
+    const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
 
     const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
     const subscription = await stripeBilling.retrieveSubscription(subscriptionId);
@@ -54,19 +82,36 @@ class SubscriptionsEditCommitRepository {
       payload
     });
     const itemUpdates = diffSubscriptionItems(currentItems, proposed.items);
+    if (options.defer) {
+      const lines = proposed.resolved && proposed.resolved.catalog_pricing
+        ? proposed.resolved.catalog_pricing.line_items || []
+        : [];
+      return {
+        subscription_id: subscriptionId,
+        stripe_account: ledgerStripeAccount(row),
+        proration: { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency },
+        packs_per_month: lines.reduce((sum, line) => sum + Math.max(0, Number(line.quantity) || 0), 0),
+        subtotal: proposed.catalogSubtotal,
+        edit_payment_pending: false
+      };
+    }
     const currentTerm = Number(row.subscriptionTermMonths || 1);
     const proposedTerm = Number(payload.subscription_term_months || currentTerm);
     const termChange = currentTerm !== proposedTerm;
+    // An address or shipping change alone must not invoice now or move the renewal.
+    const deliveryOnly = packMode || (!termChange && itemsUnchanged(currentItems, itemUpdates));
 
     let proration = { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency };
-    try {
-      const previewInvoice = await stripeBilling.previewProration({
-        subscriptionId,
-        items: itemUpdates
-      });
-      proration = mapProrationFromInvoice(previewInvoice, proposed.currency);
-    } catch (_error) {
-      proration = { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency };
+    if (!deliveryOnly) {
+      try {
+        const previewInvoice = await stripeBilling.previewProration({
+          subscriptionId,
+          items: itemUpdates
+        });
+        proration = mapProrationFromInvoice(previewInvoice, proposed.currency);
+      } catch (_error) {
+        proration = { direction: 'none', amount_due_now: 0, credit_applied: 0, currency: proposed.currency };
+      }
     }
 
     if (proration.direction === 'charge') {
@@ -83,15 +128,18 @@ class SubscriptionsEditCommitRepository {
       }
     }
 
-    const shipping = payload.shipping || row.shipping || {};
     const shippingCost = shippingCostFrom(shipping);
     const metadata = {
       ...(subscription.metadata || {}),
       wp_user_id: String(userId),
       user_id: String(userId),
       source: 'eden_bowls_node',
-      subscription_term_months: String(proposedTerm)
+      subscription_term_months: String(proposedTerm),
+      eden_env: String(process.env.EDEN_RUNTIME || '').trim()
     };
+    if (!metadata.eden_env) {
+      throw new HttpError(500, 'EDEN_RUNTIME must be local, qa, or production.');
+    }
     if (shippingCost > 0) {
       metadata.shipping_amount_minor = String(Math.round(shippingCost * 100));
       metadata.shipping_currency = String(proposed.currency || 'usd').toLowerCase();
@@ -104,7 +152,9 @@ class SubscriptionsEditCommitRepository {
       subscriptionId,
       items: itemUpdates,
       metadata,
-      prorationBehavior: proration.direction === 'charge' ? 'always_invoice' : 'create_prorations'
+      prorationBehavior: deliveryOnly
+        ? 'none'
+        : (proration.direction === 'charge' ? 'always_invoice' : 'create_prorations')
     });
 
     const invoice = updated.latest_invoice && typeof updated.latest_invoice === 'object'
@@ -127,6 +177,7 @@ class SubscriptionsEditCommitRepository {
       subscription_term_months: proposedTerm
     };
     const nextPets = buildPetsSnapshot(nextPlanSelection);
+    const savedAddress = payload.address ? addressWithTransit(payload.address, shipping) : row.address;
 
     if (editPaymentPending) {
       await this.ledgerRepository.upsert({
@@ -154,10 +205,21 @@ class SubscriptionsEditCommitRepository {
         planSelection: nextPlanSelection,
         petsSnapshot: nextPets,
         shipping,
-        address: payload.address || row.address,
+        address: savedAddress,
         subscriptionTermMonths: proposedTerm,
         editPaymentPending: false,
         editPending: null
+      });
+      await this.notifyPlanChangedMail({
+        row,
+        subscriptionId,
+        invoice,
+        nextPlanSelection,
+        nextPets,
+        shipping,
+        address: savedAddress,
+        proposedTerm,
+        proposed
       });
     }
 
@@ -174,6 +236,54 @@ class SubscriptionsEditCommitRepository {
       stripe_payment_intent_status: paymentIntentStatus || undefined,
       edit_payment_pending: editPaymentPending
     };
+  }
+
+  async notifyPlanChangedMail({
+    row,
+    subscriptionId,
+    invoice,
+    nextPlanSelection,
+    nextPets,
+    shipping,
+    address,
+    proposedTerm,
+    proposed
+  }) {
+    if (!this.transactionalMailer || typeof this.transactionalMailer.notifyPlanChanged !== 'function') {
+      return;
+    }
+
+    const referenceId = invoice.id
+      ? `plan:${invoice.id}`
+      : `plan:${buildCurrentHash({
+        items: proposed.items || [],
+        termMonths: proposedTerm,
+        address: address || {},
+        shipping: shipping || {}
+      })}`;
+
+    try {
+      await this.transactionalMailer.notifyPlanChanged({
+        ledger: {
+          ...row,
+          planSelection: nextPlanSelection,
+          petsSnapshot: nextPets,
+          shipping,
+          address,
+          subscriptionTermMonths: proposedTerm,
+          stripeAccount: ledgerStripeAccount(row)
+        },
+        subscriptionId,
+        referenceId,
+        invoice
+      });
+    } catch (error) {
+      this.logger.error({
+        template: 'plan_changed',
+        subscriptionId,
+        code: error && error.code ? error.code : 'smtp_failed'
+      }, 'Transactional email failed.');
+    }
   }
 }
 

@@ -82,6 +82,14 @@ function couponIdFromPromotion(promo = {}) {
   return '';
 }
 
+function edenRuntime() {
+  const value = String(process.env.EDEN_RUNTIME || '').trim();
+  if (value !== 'local' && value !== 'qa' && value !== 'production') {
+    throw new Error('EDEN_RUNTIME must be local, qa, or production.');
+  }
+  return value;
+}
+
 function extractInvoicePayment(invoice = {}) {
   const confirmation = invoice.confirmation_secret && typeof invoice.confirmation_secret === 'object'
     ? invoice.confirmation_secret
@@ -133,6 +141,7 @@ class StripeBillingClient {
     this.secretKey = options.secretKey || '';
     this.automaticTaxEnabled = Boolean(options.automaticTaxEnabled);
     this.shippingProductId = options.shippingProductId || '';
+    this.logger = options.logger || { warn() {} };
     this.missingReason = null;
 
     if (options.client) {
@@ -167,7 +176,8 @@ class StripeBillingClient {
         code: 'stripe_sdk_missing'
       });
     }
-    throw this.httpError(503, 'STRIPE_SECRET_KEY is not configured.', { code: 'stripe_secret_missing' });
+    const secretName = this.account === 'br' ? 'STRIPE_BR_SECRET_KEY' : 'STRIPE_US_SECRET_KEY';
+    throw this.httpError(503, `${secretName} is not configured.`, { code: 'stripe_secret_missing' });
   }
 
   async ensureRecurringPrice({ lookupKey, currency, unitAmount, nickname, stripeProductId }) {
@@ -461,7 +471,8 @@ class StripeBillingClient {
         metadata: {
           wp_user_id: String(userId || ''),
           user_id: String(userId || ''),
-          billing_currency: wantedCurrency || ''
+          billing_currency: wantedCurrency || '',
+          eden_env: edenRuntime()
         }
       });
       if (!created || !String(created.id || '').startsWith('cus_')) {
@@ -520,12 +531,18 @@ class StripeBillingClient {
     }
 
     if (!attachedCustomer) {
+      let attached;
       try {
-        await stripe.paymentMethods.attach(pmId, { customer: customerId });
+        attached = await stripe.paymentMethods.attach(pmId, { customer: customerId });
       } catch (error) {
         throw this.httpError(502, this.stripeMessage(error, 'Unable to attach payment method.'), {
           code: 'stripe_payment_method_attach_failed'
         });
+      }
+      // Stripe may answer with another id (a test shortcut such as pm_card_visa is copied); use the attached one.
+      const attachedId = attached && String(attached.id || '');
+      if (attachedId.startsWith('pm_')) {
+        return attachedId;
       }
     }
 
@@ -604,6 +621,29 @@ class StripeBillingClient {
       return String(metadata.user_id || metadata.wp_user_id || '') === userValue;
     });
     return byUser.length === 1 ? byUser[0] : null;
+  }
+
+  async stampPaymentIntentEnv(paymentIntentId) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    const id = String(paymentIntentId || '').trim();
+    if (!id.startsWith('pi_') || !stripe.paymentIntents || typeof stripe.paymentIntents.update !== 'function') {
+      throw this.httpError(502, 'Unable to label the PaymentIntent.', {
+        code: 'stripe_payment_intent_env_failed'
+      });
+    }
+    try {
+      await stripe.paymentIntents.update(id, {
+        metadata: { eden_env: edenRuntime() }
+      });
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to label the PaymentIntent.'), {
+        code: 'stripe_payment_intent_env_failed'
+      });
+    }
   }
 
   async loadInvoicePayment(subscription) {
@@ -789,6 +829,15 @@ class StripeBillingClient {
     try {
       await stripe.customers.update(customerId, customerUpdate);
     } catch (error) {
+      // The response keeps a generic message; the log keeps Stripe's own, without the request payload.
+      this.logger.warn({
+        stripe_account: this.account,
+        customerId,
+        type: error && error.type ? String(error.type) : null,
+        code: error && error.code ? String(error.code) : null,
+        param: error && error.param ? String(error.param) : null,
+        message: stripeRawMessage(error) || null
+      }, 'Stripe customer update failed.');
       throw this.httpError(502, this.stripeMessage(error, 'Unable to update Stripe customer.'), {
         code: 'stripe_customer_failed'
       });
@@ -802,11 +851,21 @@ class StripeBillingClient {
     });
     if (reusable && reusable.id) {
       if (stripe.subscriptions.update) {
+        const reusableMetadata = reusable.metadata || {};
+        const update = { default_payment_method: paymentMethodId };
+        const needsEnvLabel = !String(reusableMetadata.eden_env || '').trim();
+        if (needsEnvLabel) {
+          update.metadata = { ...reusableMetadata, eden_env: edenRuntime() };
+        }
         try {
-          await stripe.subscriptions.update(reusable.id, {
-            default_payment_method: paymentMethodId
-          });
-        } catch (_error) {
+          await stripe.subscriptions.update(reusable.id, update);
+        } catch (error) {
+          // Without eden_env, invoice.paid is ignored as marker_missing and the order never advances.
+          if (needsEnvLabel) {
+            throw this.httpError(502, this.stripeMessage(error, 'Unable to label the Stripe subscription.'), {
+              code: 'stripe_subscription_env_failed'
+            });
+          }
           // Keep the existing incomplete subscription even if the PM update fails.
         }
       }
@@ -823,7 +882,8 @@ class StripeBillingClient {
     const metadata = {
       wp_user_id: String(input.userId || ''),
       user_id: String(input.userId || ''),
-      source: 'eden_bowls_node'
+      source: 'eden_bowls_node',
+      eden_env: edenRuntime()
     };
     if (input.subscriptionTermMonths) {
       metadata.subscription_term_months = String(input.subscriptionTermMonths);
@@ -947,6 +1007,9 @@ class StripeBillingClient {
     }
 
     const clientSecret = payment.clientSecret;
+    if (payment.paymentIntentId) {
+      await this.stampPaymentIntentEnv(payment.paymentIntentId);
+    }
     if (!subscription.id || !clientSecret) {
       throw this.httpError(502, 'Unable to create Stripe subscription.', {
         code: 'stripe_client_secret_missing'
@@ -1001,7 +1064,8 @@ class StripeBillingClient {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     if (!secret) {
-      throw this.httpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
+      const webhookName = this.account === 'br' ? 'STRIPE_BR_WEBHOOK_SECRET' : 'STRIPE_US_WEBHOOK_SECRET';
+      throw this.httpError(503, `${webhookName} is not configured.`, {
         code: 'stripe_webhook_secret_missing'
       });
     }
@@ -1262,6 +1326,22 @@ class StripeBillingClient {
     }
   }
 
+  async setTrialEnd({ subscriptionId, trial_end, proration_behavior = 'none', idempotencyKey }) {
+    const { HttpError } = require('../../core/http-error');
+    const stripe = this.ensureClient();
+    try {
+      const params = { trial_end, proration_behavior };
+      if (idempotencyKey) {
+        return await stripe.subscriptions.update(subscriptionId, params, { idempotencyKey: String(idempotencyKey) });
+      }
+      return await stripe.subscriptions.update(subscriptionId, params);
+    } catch (error) {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to update the subscription charge date.'), {
+        code: 'stripe_trial_end_failed'
+      });
+    }
+  }
+
   async listInvoicesForSubscription(subscriptionId) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
@@ -1274,6 +1354,54 @@ class StripeBillingClient {
     } catch (error) {
       throw this.httpError(502, this.stripeMessage(error, 'Unable to list Stripe invoices.'), {
         code: 'stripe_invoices_list_failed'
+      });
+    }
+  }
+
+  async listPaidInvoicesForSubscription(subscriptionId) {
+    const stripe = this.ensureClient();
+    const invoices = [];
+    let startingAfter;
+    try {
+      for (;;) {
+        const listed = await stripe.invoices.list({
+          subscription: subscriptionId,
+          status: 'paid',
+          limit: 100,
+          ...(startingAfter ? { starting_after: startingAfter } : {})
+        });
+        const page = listed && Array.isArray(listed.data) ? listed.data : [];
+        invoices.push(...page);
+        if (!listed || !listed.has_more || page.length === 0) return invoices;
+        startingAfter = page[page.length - 1].id;
+      }
+    } catch (error) {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to list Stripe invoices.'), {
+        code: 'stripe_invoices_list_failed'
+      });
+    }
+  }
+
+  // The invoice with every line: an event or a retrieve embeds only the first page of lines.
+  async retrieveInvoiceWithLines(invoiceId) {
+    const stripe = this.ensureClient();
+    try {
+      const invoice = await stripe.invoices.retrieve(invoiceId);
+      const lines = invoice && invoice.lines && Array.isArray(invoice.lines.data) ? [...invoice.lines.data] : [];
+      let hasMore = Boolean(invoice && invoice.lines && invoice.lines.has_more);
+      while (hasMore && lines.length > 0) {
+        const page = await stripe.invoices.listLineItems(invoiceId, {
+          limit: 100,
+          starting_after: lines[lines.length - 1].id
+        });
+        const data = page && Array.isArray(page.data) ? page.data : [];
+        lines.push(...data);
+        hasMore = Boolean(page && page.has_more && data.length > 0);
+      }
+      return { ...invoice, lines: { ...(invoice.lines || {}), data: lines, has_more: false } };
+    } catch (error) {
+      throw this.httpError(502, this.stripeMessage(error, 'Unable to retrieve the Stripe invoice.'), {
+        code: 'stripe_invoice_retrieve_failed'
       });
     }
   }

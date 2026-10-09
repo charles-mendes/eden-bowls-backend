@@ -63,6 +63,52 @@ class NominatimClient {
     return result;
   }
 
+  // Locates one exact address, number included. geocodeBr stays at CEP precision for customer quotes.
+  async geocodeBrAddress({ street, number, city, state, zipcode }) {
+    const cep8 = String(zipcode || '').replace(/\D/g, '').slice(0, 8);
+    const streetLine = [String(number || '').trim(), String(street || '').trim()].filter(Boolean).join(' ');
+    const params = new URLSearchParams({
+      street: streetLine,
+      city: String(city || '').trim(),
+      state: String(state || '').trim(),
+      postalcode: cep8,
+      country: 'Brasil',
+      countrycodes: 'br',
+      format: 'jsonv2',
+      limit: '1'
+    });
+    const cacheKey = `geo-address:${params.toString().toLowerCase()}`;
+    if (this.cache) {
+      const cached = this.cache.get(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    const response = await fetchJson(`${this.baseUrl}/search?${params.toString()}`, {
+      timeoutMs: this.timeoutMs,
+      fetchImpl: this.fetchImpl,
+      headers: this.headers()
+    });
+
+    if (!response.ok) {
+      return { status: 'upstream' };
+    }
+
+    const hit = Array.isArray(response.body) ? response.body[0] : null;
+    const lat = Number(hit && hit.lat);
+    const lng = Number(hit && hit.lon);
+    if (!hit || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return { status: 'not_found' };
+    }
+
+    const result = { status: 'ok', lat, lng, label: String(hit.display_name || '').trim() };
+    if (this.cache) {
+      this.cache.set(cacheKey, result, GEOCODE_TTL_MS);
+    }
+    return result;
+  }
+
   async autocompleteUs(query, context = {}) {
     const normalizedQuery = this.buildUsQuery(query, context);
     const cacheKey = `ac-us:${normalizedQuery.toLowerCase()}`;

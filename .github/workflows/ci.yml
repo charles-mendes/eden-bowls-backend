@@ -1,0 +1,99 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # tests/api-routes-removal.test.js compares docs/api-routes.json with origin/main.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: cp .env.qa.example .env
+      - run: npm test
+
+  config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: production
+      JWT_AUTH_SECRET_KEY: ci-synthetic-jwt
+      JWT_AUTH_ISSUER: https://ci.edenbowls.com
+      AUTH_OTP_PEPPER: ci-synthetic-otp-pepper
+      AUTH_SMTP_HOST: smtp.example.com
+      AUTH_MAIL_FROM: ci@example.com
+      AUTH_REFRESH_COOKIE_DOMAIN: ""
+      AUTH_REFRESH_COOKIE_SECURE: "true"
+      STRIPE_BR_ENABLED: "true"
+      STRIPE_US_SECRET_KEY: sk_test_ci_synthetic_us
+      STRIPE_US_WEBHOOK_SECRET: whsec_ci_synthetic_us
+      STRIPE_BR_SECRET_KEY: sk_test_ci_synthetic_br
+      STRIPE_BR_WEBHOOK_SECRET: whsec_ci_synthetic_br
+      UPS_ENV: cie
+      UPS_CLIENT_ID: ci-synthetic-ups-id
+      UPS_CLIENT_SECRET: ci-synthetic-ups-secret
+      UPS_ACCOUNT_NUMBER: ci-synthetic-ups-account
+      METRICS_TOKEN: ci-synthetic-metrics
+      DB_PASSWORD: ci-db-password
+      CORS_ORIGINS: https://ci.edenbowls.com
+      EDEN_RUNTIME: qa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: node -e "require('./src/config/env').parseEnv()"
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [unit]
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci
+          MYSQL_DATABASE: eden_bowls
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=20s
+    env:
+      INTEGRATION_DB_HOST: 127.0.0.1
+      INTEGRATION_DB_PORT: 3306
+      INTEGRATION_DB_USER: root
+      INTEGRATION_DB_PASSWORD: ci
+      INTEGRATION_DB_NAME: eden_bowls
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:integration -- --json --outputFile=jest-integration.json
+      - run: node -e "const report=require('./jest-integration.json'); if (!report.numPassedTests || report.numPendingTests) process.exit(1)"

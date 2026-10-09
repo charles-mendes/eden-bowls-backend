@@ -1,0 +1,28 @@
+EDEN BOWLS · MEU PLANO · TELAS EM HTML
+======================================
+
+Telas propostas para a área "Meu plano" do site (versão web), em português (pt/) e inglês (en/).
+Abra o index.html para navegar entre elas.
+
+TELAS
+1. Meu plano: próxima entrega com prazo para alterar, ações Pular entrega, Mudar data e Ajustar packs, entregas seguintes e dados da assinatura.
+2. Ajustar packs: quantidade por receita, sugestão do sistema, porcentagem da porção diária e novo valor recalculado.
+3. Mudar data: janela (modal) com calendário só com os dias possíveis.
+4. Pular entrega: janela de confirmação.
+5. Depois da data limite: entrega em produção travada; as ações passam para a entrega seguinte.
+
+REGRAS
+- Alterações só até a data limite do ciclo (a definir pela Cris; nas telas o exemplo é 4 dias antes da entrega).
+- O valor é recalculado antes de salvar.
+- Depois da data limite, a entrega fica travada e as ações valem para a seguinte.
+- Mudar data: as entregas seguintes continuam na mesma frequência a partir da nova data (regra proposta, a confirmar).
+- O aviso de porção na tela Ajustar packs depende do aval da nutricionista.
+
+ARQUIVOS
+- styles.css: todos os estilos. Cores e fontes estão em variáveis no :root (fundo #F4EFE3, cards #FFFCF6, botão #6F7C63, dourado #B08F66, texto #2F3A31).
+- Fontes: Tenor Sans (títulos) e Quicksand (texto), carregadas do Google Fonts.
+- Layout pensado para 1280 px de largura, conteúdo centralizado com 1100 px.
+- Nomes, datas e valores são exemplos (Luna, 8 packs, entrega a cada 14 dias).
+
+FIGMA
+Para levar ao Figma com camadas editáveis: abrir cada HTML no Chrome e importar com o plugin html.to.design (extensão do Chrome + plugin no Figma).

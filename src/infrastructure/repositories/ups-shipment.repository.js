@@ -1,5 +1,9 @@
 const { HttpError } = require('../../core/http-error');
 
+function isDuplicateEntry(error) {
+  return Boolean(error && (error.code === 'ER_DUP_ENTRY' || error.errno === 1062));
+}
+
 class UpsShipmentRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
@@ -47,7 +51,7 @@ class UpsShipmentRepository {
   async findActiveByInvoiceId(invoiceId) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT * FROM \`${this.tableName}\` WHERE \`stripe_invoice_id\` = ? AND \`status\` IN ('pending', 'created') ORDER BY \`id\` DESC LIMIT 1`,
+      `SELECT * FROM \`${this.tableName}\` WHERE \`stripe_invoice_id\` = ? AND \`status\` <> 'voided' ORDER BY \`id\` DESC LIMIT 1`,
       [String(invoiceId)]
     );
     return this.mapRow(Array.isArray(rows) ? rows[0] : null);
@@ -94,19 +98,28 @@ class UpsShipmentRepository {
     return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row));
   }
 
+  // Returns null when another row that is not voided already holds this invoice (uq_ups_shipments_active_invoice).
   async insertPending({ subscriptionId, invoiceId, userId, quotedShippingCost }) {
     this.ensureDataSource();
-    const result = await this.dataSource.query(
-      `INSERT INTO \`${this.tableName}\` (
-        \`subscription_id\`, \`stripe_invoice_id\`, \`user_id\`, \`quoted_shipping_cost\`, \`status\`
-      ) VALUES (?, ?, ?, ?, 'pending')`,
-      [
-        String(subscriptionId),
-        String(invoiceId),
-        userId == null ? null : Number(userId),
-        quotedShippingCost == null ? null : Number(quotedShippingCost)
-      ]
-    );
+    let result;
+    try {
+      result = await this.dataSource.query(
+        `INSERT INTO \`${this.tableName}\` (
+          \`subscription_id\`, \`stripe_invoice_id\`, \`user_id\`, \`quoted_shipping_cost\`, \`status\`
+        ) VALUES (?, ?, ?, ?, 'pending')`,
+        [
+          String(subscriptionId),
+          String(invoiceId),
+          userId == null ? null : Number(userId),
+          quotedShippingCost == null ? null : Number(quotedShippingCost)
+        ]
+      );
+    } catch (error) {
+      if (isDuplicateEntry(error)) {
+        return null;
+      }
+      throw error;
+    }
     const insertId = Number(result?.insertId || result?.[0]?.insertId || 0);
     return this.findById(insertId);
   }
@@ -143,6 +156,16 @@ class UpsShipmentRepository {
     this.ensureDataSource();
     await this.dataSource.query(
       `UPDATE \`${this.tableName}\` SET \`status\` = 'voided' WHERE \`id\` = ?`,
+      [Number(id)]
+    );
+    return this.findById(id);
+  }
+
+  // UPS may have bought the label, so the row stays and blocks a second purchase for the invoice.
+  async markUnknown(id) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`status\` = 'unknown' WHERE \`id\` = ? AND \`status\` = 'pending'`,
       [Number(id)]
     );
     return this.findById(id);

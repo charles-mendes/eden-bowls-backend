@@ -30,7 +30,8 @@ const editShippingSchema = z.object({
   label: z.string().trim().max(255).optional(),
   cost: z.number().finite().nonnegative().optional(),
   tax_total: z.number().finite().nonnegative().optional(),
-  total: z.number().finite().nonnegative().optional()
+  total: z.number().finite().nonnegative().optional(),
+  quote_token: z.string().trim().max(1024).optional()
 }).passthrough();
 
 const subscriptionsEditPayloadSchema = z.object({
@@ -39,6 +40,8 @@ const subscriptionsEditPayloadSchema = z.object({
   address: editAddressSchema.optional(),
   shipping: editShippingSchema.optional(),
   payment_method_id: z.string().trim().max(128).optional(),
+  // Present when the customer adjusts packs for one delivery: no proration, nothing charged now.
+  delivery_id: z.string().trim().min(1).max(64).optional(),
   expected_current_hash: z.string().trim().max(128).optional()
 });
 

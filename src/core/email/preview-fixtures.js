@@ -3,6 +3,7 @@ const { buildInviteEmailContent } = require('../invite-email');
 const { buildPrivacyEmailContent } = require('../privacy-email');
 const {
   buildAdminNewSubscriptionEmail,
+  buildAutoRenewOffEmail,
   buildCancelledEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,
@@ -131,6 +132,13 @@ function listEmailPreviews(options = {}) {
       label: 'Cancelamento',
       wired: false,
       content: buildCancelledEmail({ ...sample, ...shell })
+    },
+    {
+      id: 'auto-renew-off',
+      group: 'P1 · ciclo',
+      label: 'Renovação automática desligada',
+      wired: true,
+      content: buildAutoRenewOffEmail({ ...sample, endsOnLabel: sample.endsAtLabel, ...shell })
     },
     {
       id: 'plan-changed',
