@@ -394,6 +394,63 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     }));
   });
 
+  test('creates a new subscription for a new pet whose cart matches a paid checkout of another pet', async () => {
+    const jamaica = '10d9b8f8-e879-46dc-888f-fb608427f460';
+    const chocolate = '730521c0-432a-4b71-9978-93d4b224bebc';
+    const cartFor = (petId, petName) => ({
+      ...validContext.planSelection,
+      pets: [{ pet_id: petId, pet_name: petName, enabled: true, selected_flavors: ['beef'], flavor_weights: [10] }]
+    });
+    const contextFor = (petId, petName, checkoutReference) => ({
+      ...validContext,
+      pets: [{ id: jamaica }, { id: chocolate }],
+      planSelection: cartFor(petId, petName),
+      checkoutReference
+    });
+
+    const paid = buildService({
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(cartFor(jamaica, 'Jamaica')),
+        getCheckoutContext: jest.fn().mockResolvedValue(contextFor(jamaica, 'Jamaica', null)),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+    await paid.service.checkout({ userId: 7, payload });
+    // The last cart (chocolate) was saved on the reference before this fix.
+    const stored = {
+      ...paid.repository.checkout.mock.calls[0][1].checkout,
+      status: 'active',
+      stripe_subscription_status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      pet_ids: [chocolate]
+    };
+
+    const { service, stripeBilling } = buildService({
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(cartFor(chocolate, 'chocolate')),
+        getCheckoutContext: jest.fn().mockResolvedValue(contextFor(chocolate, 'chocolate', stored)),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+    service.ledgerRepository = {
+      listByUserId: jest.fn().mockResolvedValue([{
+        status: 'active',
+        petsSnapshot: { pet_ids: [jamaica] },
+        planSelection: {}
+      }]),
+      upsert: jest.fn().mockResolvedValue({})
+    };
+
+    const result = await service.checkout({ userId: 7, payload });
+
+    expect(result.data.reused).toBe(false);
+    expect(stripeBilling.createOnboardingSubscription).toHaveBeenCalledTimes(1);
+  });
+
   test('rejects a paid checkout when the same pets change shipping', async () => {
     const stored = {
       stripe_subscription_id: 'sub_old',

@@ -37,6 +37,24 @@ describe('checkout-idempotency', () => {
     expect(changedShipping).not.toBe(first);
   });
 
+  test('changes the fingerprint when the checkout is for another UUID pet', () => {
+    const input = {
+      userId: 5,
+      currency: 'BRL',
+      subtotal: 450,
+      subscriptionTermMonths: 1,
+      lineItems: [{ stripe_price_id: 'price_br', quantity: 1 }],
+      pets: ['10d9b8f8-e879-46dc-888f-fb608427f460'],
+      shipping: { rate_id: 'distance_km:br-default', method_id: 'distance_km', cost: 2.47 },
+      address: { country: 'BR', zipcode: '83330-030', state: 'PR' }
+    };
+
+    expect(buildCheckoutFingerprint({
+      ...input,
+      pets: ['730521c0-432a-4b71-9978-93d4b224bebc']
+    })).not.toBe(buildCheckoutFingerprint(input));
+  });
+
   test('reuses a stored attempt id when the fingerprint matches', () => {
     expect(resolveAttemptId({
       payloadAttemptId: '',
@@ -81,6 +99,18 @@ describe('checkout-idempotency', () => {
       stripe_payment_intent_status: 'succeeded',
       checkout_context_fingerprint: 'abc'
     }, 'other', {
+      currentPetIds: ['pet-2'],
+      subscribedPetIds: ['pet-1']
+    })).toEqual({ reuse: false, reason: 'new_pets' });
+  });
+
+  test('does not reuse a paid checkout with a matching fingerprint for an unsubscribed pet', () => {
+    expect(evaluateCheckoutReuse({
+      stripe_subscription_id: 'sub_123',
+      status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      checkout_context_fingerprint: 'abc'
+    }, 'abc', {
       currentPetIds: ['pet-2'],
       subscribedPetIds: ['pet-1']
     })).toEqual({ reuse: false, reason: 'new_pets' });

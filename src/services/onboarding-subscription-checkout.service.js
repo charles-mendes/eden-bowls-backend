@@ -240,7 +240,7 @@ class OnboardingSubscriptionCheckoutService {
       discountedFirstMonthTotal: catalogPricing && catalogPricing.discounted_first_month_total,
       subscriptionTermMonths: termMonths,
       lineItems: catalogPricing && catalogPricing.line_items,
-      pets: context.pets,
+      pets: buildPetsSnapshot(nextPlanSelection, context.pets).pet_ids,
       shipping: context.shipping || {},
       address,
       promotionCodeId
@@ -560,15 +560,16 @@ class OnboardingSubscriptionCheckoutService {
   }
 
   async collectSubscribedPetIds(userId, storedReference = {}) {
-    const ids = collectPetIdsFromSnapshot(
-      { pet_ids: storedReference.pet_ids, pets: storedReference.pets },
-      storedReference.plan_selection || {}
-    );
-
+    // The stored checkout reference holds the pets of the last cart, which may not be
+    // subscribed yet; the ledger is the source of truth whenever it is available.
     if (!this.ledgerRepository || !userId) {
-      return ids;
+      return collectPetIdsFromSnapshot(
+        { pet_ids: storedReference.pet_ids, pets: storedReference.pets },
+        storedReference.plan_selection || {}
+      );
     }
 
+    const ids = [];
     const rows = await this.ledgerRepository.listByUserId(userId);
     for (const row of Array.isArray(rows) ? rows : []) {
       if (!SUBSCRIBED_PET_STATUSES.has(String(row.status || ''))) {
