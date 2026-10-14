@@ -89,3 +89,38 @@ describe('admin customer invoice routes', () => {
     expect(service.resendEmail).not.toHaveBeenCalled();
   });
 });
+
+describe('customer invoice route', () => {
+  function customerApp(customerInvoicesService) {
+    return createApp({ corsOrigins: ['http://localhost:5173'], jwt, customerInvoicesService });
+  }
+
+  test('downloads the signed-in customer\'s invoice as a PDF', async () => {
+    const service = {
+      downloadForCustomer: jest.fn().mockResolvedValue({
+        binary: true,
+        buffer: Buffer.from('%PDF-1.3'),
+        contentType: 'application/pdf',
+        filename: 'EB-2026-000418.pdf'
+      })
+    };
+
+    const response = await request(customerApp(service))
+      .get('/api/v1/subscriptions/sub_1/invoices/in_1/pdf')
+      .set('Authorization', `Bearer ${token()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    expect(response.headers['content-disposition']).toBe('attachment; filename="EB-2026-000418.pdf"');
+    expect(service.downloadForCustomer).toHaveBeenCalledWith({ userId: 7, subscriptionId: 'sub_1', stripeInvoiceId: 'in_1' });
+  });
+
+  test('refuses an anonymous request', async () => {
+    const service = { downloadForCustomer: jest.fn() };
+
+    const response = await request(customerApp(service)).get('/api/v1/subscriptions/sub_1/invoices/in_1/pdf');
+
+    expect(response.status).toBe(401);
+    expect(service.downloadForCustomer).not.toHaveBeenCalled();
+  });
+});

@@ -63,7 +63,10 @@ function buildService(overrides = {}) {
   };
   const ledgerRepository = {
     findByStripeSubscriptionId: jest.fn().mockResolvedValue(ledger),
-    findById: jest.fn().mockResolvedValue(ledger)
+    findById: jest.fn().mockResolvedValue(ledger),
+    findByUserIdAndSubscriptionId: jest.fn(async (userId, subscriptionId) => (
+      userId === ledger.userId && subscriptionId === ledger.stripeSubscriptionId ? ledger : null
+    ))
   };
   const service = new CustomerInvoicesService({
     repository,
@@ -280,5 +283,45 @@ describe('CustomerInvoicesService admin', () => {
     });
 
     await expect(service.issueFromAdmin(9, 'in_preview_us', {})).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('CustomerInvoicesService customer download', () => {
+  const request = { userId: 7, subscriptionId: 'sub_preview', stripeInvoiceId: 'in_preview_us' };
+
+  test('issues a missing invoice on the spot, without emailing it, and returns the PDF', async () => {
+    const { service, mailer } = buildService();
+
+    await expect(service.downloadForCustomer(request)).resolves.toMatchObject({
+      binary: true,
+      contentType: 'application/pdf',
+      filename: 'EB-2026-000418.pdf'
+    });
+    expect(mailer.sendMail).not.toHaveBeenCalled();
+  });
+
+  test('returns the PDF already issued under the same number', async () => {
+    const { service, repository } = buildService();
+    await service.issueForInvoice({ invoice: { id: 'in_preview_us' }, account: 'us' });
+
+    await expect(service.downloadForCustomer(request)).resolves.toMatchObject({ filename: 'EB-2026-000418.pdf' });
+    expect(repository.nextSequence).toHaveBeenCalledTimes(1);
+  });
+
+  test('another customer cannot download it', async () => {
+    const { service } = buildService();
+
+    await expect(service.downloadForCustomer({ ...request, userId: 8 })).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  test('refuses a Stripe invoice of another subscription', async () => {
+    const { service, billing, repository } = buildService();
+    billing.retrieveInvoiceWithLines.mockResolvedValue({
+      ...PREVIEW_CASES['en-US'].invoice('paid'),
+      parent: { subscription_details: { subscription: 'sub_other' } }
+    });
+
+    await expect(service.downloadForCustomer(request)).rejects.toMatchObject({ statusCode: 404 });
+    expect(repository.insertOrGet).not.toHaveBeenCalled();
   });
 });

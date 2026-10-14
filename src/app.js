@@ -33,6 +33,7 @@ const { registerSubscriptionsActionsRoutes } = require('./api/routes/subscriptio
 const { registerSubscriptionsDetailRoutes } = require('./api/routes/subscriptions-detail.routes');
 const { registerSubscriptionsEditCommitRoutes } = require('./api/routes/subscriptions-edit-commit.routes');
 const { registerCustomerDeliveriesRoutes } = require('./api/routes/customer-deliveries.routes');
+const { registerCustomerInvoicesRoutes } = require('./api/routes/customer-invoices.routes');
 const { registerSubscriptionsEditPreviewRoutes } = require('./api/routes/subscriptions-edit-preview.routes');
 const { registerSubscriptionsRoutes } = require('./api/routes/subscriptions.routes');
 const { registerStripeWebhookRoutes } = require('./api/routes/stripe-webhook.routes');
@@ -206,6 +207,7 @@ function createApp(dependencies = {}) {
   registerSubscriptionsEditPreviewRoutes(app, dependencies);
   registerSubscriptionsEditCommitRoutes(app, dependencies);
   registerCustomerDeliveriesRoutes(app, dependencies);
+  registerCustomerInvoicesRoutes(app, dependencies);
   registerSubscriptionsRoutes(app, dependencies);
   registerStripeWebhookRoutes(app, dependencies);
   registerOnboardingPetImageRoutes(app, dependencies);

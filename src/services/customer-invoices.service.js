@@ -280,6 +280,43 @@ class CustomerInvoicesService {
     return { scanned: rows.length, sent };
   }
 
+  // ---- Customer ----
+
+  /**
+   * The customer's own invoice PDF. The subscription must be theirs and the Stripe invoice must belong to it;
+   * an invoice paid before the PDF existed is issued on the spot, without emailing it again.
+   */
+  async downloadForCustomer({ userId, subscriptionId, stripeInvoiceId }) {
+    this.ensureReady();
+    const notFound = () => new HttpError(404, 'Invoice not found.', { code: 'invoice_not_found' });
+    const id = String(stripeInvoiceId || '').trim();
+    if (!userId || !this.ledgerRepository || !id.startsWith('in_')) {
+      throw notFound();
+    }
+    const ledger = await this.ledgerRepository.findByUserIdAndSubscriptionId(userId, String(subscriptionId || '').trim());
+    if (!ledger) {
+      throw notFound();
+    }
+    const account = ledgerStripeAccount(ledger);
+    let row = await this.repository.findByStripeInvoice(account, id);
+    if (row && row.stripeSubscriptionId !== ledger.stripeSubscriptionId) {
+      throw notFound();
+    }
+    if (!row) {
+      const full = await this.retrieveFullInvoice({ id }, account);
+      if (extractSubscriptionIdFromInvoice(full) !== ledger.stripeSubscriptionId) {
+        throw notFound();
+      }
+      const result = await this.issueForInvoice({ invoice: full, account, ledger, send: false });
+      if (result.skipped) {
+        throw notFound();
+      }
+      row = result.row;
+    }
+    const buffer = await this.readPdf(row);
+    return { binary: true, buffer, contentType: 'application/pdf', filename: `${row.invoiceNumber}.pdf` };
+  }
+
   // ---- Admin ----
 
   async requireSubscription(subscriptionId, actor) {
