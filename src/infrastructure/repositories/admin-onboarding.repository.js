@@ -1,6 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const { parseJsonColumn } = require('../../core/stripe-subscription-map');
-const { appendInFilter } = require('../../core/admin-market-scope');
+const { PROFILE_MARKET_META_KEY, appendInFilter } = require('../../core/admin-market-scope');
 
 function isMissingTableError(error) {
   const message = String(error && error.message ? error.message : '');
@@ -193,15 +193,19 @@ class AdminOnboardingRepository {
       return null;
     }
 
+    // Pets and the user exist before the state row (it is written on address save or checkout),
+    // so start from the user: a customer without a checkout still has pets to show.
     const rows = await this.dataSource.query(
       [
-        'SELECT s.*, u.user_email AS email, u.display_name AS displayName,',
-        "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS activationStatus",
-        `FROM \`${this.tableNames.userState}\` s`,
-        `INNER JOIN \`${this.tableNames.users}\` u ON u.ID = s.user_id`,
-        `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
-        'WHERE s.user_id = ?',
-        'GROUP BY s.user_id'
+        'SELECT s.`checkout_reference`, s.`plan_selection`, s.`recurrence`, s.`address`, s.`shipping`,',
+        's.`payment_reference`, s.`market`, s.`created_at`, s.`updated_at`,',
+        'u.ID AS user_id, u.user_email AS email, u.display_name AS displayName,',
+        `(SELECT meta_value FROM \`${this.tableNames.usermeta}\` WHERE user_id = u.ID AND meta_key = 'hsr_activation_status' LIMIT 1) AS activationStatus,`,
+        `(SELECT meta_value FROM \`${this.tableNames.usermeta}\` WHERE user_id = u.ID AND meta_key = '${PROFILE_MARKET_META_KEY}' LIMIT 1) AS profileMarket`,
+        `FROM \`${this.tableNames.users}\` u`,
+        `LEFT JOIN \`${this.tableNames.userState}\` s ON s.user_id = u.ID`,
+        'WHERE u.ID = ?',
+        'LIMIT 1'
       ].join(' '),
       [normalizedUserId]
     );
@@ -234,7 +238,7 @@ class AdminOnboardingRepository {
       address: safeJson(row.address),
       shipping: safeJson(row.shipping),
       paymentReference: safeJson(row.payment_reference),
-      market: row.market ? String(row.market).trim().toUpperCase() : null,
+      market: row.market || row.profileMarket ? String(row.market || row.profileMarket).trim().toUpperCase() : null,
       pets: (Array.isArray(pets) ? pets : []).map((pet) => ({
         id: String(pet.id),
         name: String(pet.name || '') || 'Unnamed pet',
