@@ -19,10 +19,14 @@ const CANCELED_LEDGER_STATUSES = new Set(['canceled', 'cancelled']);
 function emptyDelivery() {
   return {
     address: '',
+    number: '',
+    neighborhood: '',
     complement: '',
     city: '',
     state: '',
+    stateCode: '',
     zipCode: '',
+    country: '',
     deliveryInstructions: ''
   };
 }
@@ -157,10 +161,15 @@ function mapDelivery(address, country) {
 
   return {
     address: String(address.street || address.address_line1 || ''),
+    // Records saved only through the profile screen have no number or neighborhood.
+    number: String(address.number || ''),
+    neighborhood: String(address.neighborhood || ''),
     complement: String(address.complement || address.address_line2 || ''),
     city: String(address.city || ''),
     state: formatStateForDisplay(address.state, country),
+    stateCode: formatStateForStorage(address.state, country),
     zipCode: String(address.zipcode || address.postal_code || ''),
+    country,
     deliveryInstructions: String(address.delivery_instructions || '')
   };
 }
