@@ -11,9 +11,11 @@ class OnboardingPetDeleteRepository {
       throw new HttpError(503, 'Database connection is not initialized.');
     }
 
+    // DATETIME rejects ISO strings with a trailing `Z`; the driver serializes a Date in UTC.
+    const deletedAtValue = deletedAt instanceof Date ? deletedAt : new Date(deletedAt);
     const result = await this.dataSource.query(
       `UPDATE \`${this.tableName}\` SET \`deleted_at\` = ? WHERE \`id\` = ? AND \`user_id\` = ? AND \`deleted_at\` IS NULL`,
-      [deletedAt, petId, userId]
+      [deletedAtValue, petId, userId]
     );
 
     if (!result || result.affectedRows !== 1) {

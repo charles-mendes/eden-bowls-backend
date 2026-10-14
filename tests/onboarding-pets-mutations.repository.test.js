@@ -31,8 +31,9 @@ describe('user-owned pet mutation repositories', () => {
     expect(result.removed_pet).toEqual(expect.objectContaining({ id: 'pet-1', deleted_by_user_id: 7 }));
     expect(dataSource.query).toHaveBeenCalledWith(
       expect.stringContaining('WHERE `id` = ? AND `user_id` = ? AND `deleted_at` IS NULL'),
-      ['2026-08-13T00:00:00.000Z', 'pet-1', 7]
+      [new Date('2026-08-13T00:00:00.000Z'), 'pet-1', 7]
     );
+    expect(result.removed_pet.deleted_at).toBe('2026-08-13T00:00:00.000Z');
   });
 
   test('returns null when a foreign or missing pet cannot be mutated', async () => {
