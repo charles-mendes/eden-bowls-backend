@@ -9,6 +9,14 @@ function countryFromPayload(payload = {}) {
   return raw === 'BR' ? 'BR' : 'US';
 }
 
+// A subscription never leaves the market of its Stripe account, whatever country the edit payload claims.
+function withLedgerMarket(payload = {}, stripeAccount) {
+  const country = stripeAccount === 'br' ? 'BR' : 'US';
+  const next = { ...payload, country };
+  if (payload.address) next.address = { ...payload.address, country };
+  return next;
+}
+
 function shippingCostFrom(shipping = {}) {
   const cost = Number(shipping.cost || shipping.total || 0);
   return Number.isFinite(cost) && cost > 0 ? cost : 0;
@@ -123,6 +131,7 @@ async function resolveProposedPlan(planPreviewRepository, resolveSubscriptionIte
 
 module.exports = {
   countryFromPayload,
+  withLedgerMarket,
   shippingCostFrom,
   extractStripeItemRefs,
   diffSubscriptionItems,

@@ -166,6 +166,20 @@ function mapLedgerToDashboardListItem(row, index = 0) {
   };
 }
 
+function addressFields(address, market) {
+  const text = (...values) => String(values.find((value) => String(value || '').trim()) || '').trim();
+  return {
+    country: text(address.country).toUpperCase() || (market === MARKETS.BR ? 'BR' : 'US'),
+    street: text(address.street, address.line1, address.address_line1, address.address),
+    number: text(address.number),
+    complement: text(address.complement, address.address_line2, address.line2),
+    neighborhood: text(address.neighborhood),
+    city: text(address.city),
+    state: text(address.state),
+    zipcode: text(address.zipcode, address.postal_code, address.postalCode)
+  };
+}
+
 function mapLedgerToDashboardDetail(row, extras = {}) {
   const list = mapLedgerToDashboardListItem(row);
   const pets = readPets(row);
@@ -190,6 +204,7 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
     payment_method_brand: extras.paymentMethodBrand || row.paymentMethodBrand || row.payment_method_brand || null,
     payment_method_last4: extras.paymentMethodLast4 || row.paymentMethodLast4 || row.payment_method_last4 || null,
     delivery_address: formatDeliveryAddress(address),
+    delivery_address_fields: addressFields(address, market),
     auto_renew: storedAutoRenew == null ? !cancelAtPeriodEnd : Boolean(Number(storedAutoRenew)),
     current_cycle: extras.currentCycle == null ? 1 : extras.currentCycle,
     total_cycles: term,

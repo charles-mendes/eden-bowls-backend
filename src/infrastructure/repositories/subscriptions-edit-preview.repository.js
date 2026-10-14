@@ -6,7 +6,8 @@ const {
   extractStripeItemRefs,
   diffSubscriptionItems,
   mapProrationFromInvoice,
-  resolveProposedPlan
+  resolveProposedPlan,
+  withLedgerMarket
 } = require('../../core/subscription-edit-plan');
 const { roundMoney } = require('../../core/plan-catalog-pricing');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
@@ -43,7 +44,10 @@ class SubscriptionsEditPreviewRepository {
     }
     const packMode = Boolean(requestPayload.delivery_id);
     if (packMode) assertPackOnlyChange(requestPayload, row);
-    const payload = packMode ? withStoredPets(requestPayload, row.planSelection) : requestPayload;
+    const payload = withLedgerMarket(
+      packMode ? withStoredPets(requestPayload, row.planSelection) : requestPayload,
+      ledgerStripeAccount(row)
+    );
     const currentTerm = Number(row.subscriptionTermMonths || 1);
     const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
 
@@ -88,7 +92,8 @@ class SubscriptionsEditPreviewRepository {
         currency: String(currency).toUpperCase()
       }
       : await this.buildNextCycle({
-        payload,
+        // An unchanged address is left out of the payload; the next cycle is still taxed at the stored one.
+        payload: payload.address ? payload : { ...payload, address: { ...(row.address || {}), country: payload.country } },
         proposed,
         shippingCost,
         currency,

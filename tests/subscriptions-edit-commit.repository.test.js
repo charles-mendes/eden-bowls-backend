@@ -64,7 +64,8 @@ describe('SubscriptionsEditCommitRepository', () => {
       status: 'active',
       subscriptionTermMonths: 1,
       address: { country: 'US' },
-      shipping: { cost: 12.9 }
+      shipping: { cost: 12.9 },
+      ...overrides.ledgerRow
     };
     const ledgerRepository = {
       findByUserIdAndSubscriptionId: jest.fn().mockResolvedValue(ledgerRow),
@@ -341,21 +342,47 @@ describe('SubscriptionsEditCommitRepository', () => {
       expect(repository.ledgerRepository.upsert).not.toHaveBeenCalled();
     });
 
+    const brShippingAt = (distance) => ({
+      method_id: 'distance_km',
+      cost: 20,
+      total: 20,
+      distance,
+      quote_token: quoteSigner.sign({ country: 'BR', zipcode: '01310100', cost: 20, distance })
+    });
+    const brAddress = { zipcode: '01310-100', line1: 'Av. Paulista', number: '1000', city: 'São Paulo', state: 'SP' };
+
     test('a Brazilian address 51 km away is refused and nothing is saved', async () => {
-      const repository = buildRepo();
-      const brShipping = {
-        method_id: 'local_delivery',
-        cost: 20,
-        total: 20,
-        distance: 51,
-        quote_token: quoteSigner.sign({ country: 'BR', zipcode: '01310100', cost: 20, distance: 51 })
-      };
+      const repository = buildRepo({ ledgerRow: { stripeAccount: 'br' } });
       await expect(repository.commit(7, 'sub_123', {
         ...addressPayload,
-        address: { country: 'BR', zipcode: '01310-100', line1: 'Av. Paulista, 1000', city: 'São Paulo', state: 'SP' },
-        shipping: brShipping
+        address: { ...brAddress, country: 'BR' },
+        shipping: brShippingAt(51)
       })).rejects.toMatchObject({ statusCode: 422, details: { code: 'outside_delivery_area' } });
       expect(repository.stripeBilling.updateSubscriptionItems).not.toHaveBeenCalled();
+      expect(repository.ledgerRepository.upsert).not.toHaveBeenCalled();
+    });
+
+    test('a Brazilian subscription stays in Brazil even when the payload claims a US address', async () => {
+      const repository = buildRepo({ ledgerRow: { stripeAccount: 'br' } });
+      await repository.commit(7, 'sub_123', {
+        ...addressPayload,
+        address: { ...brAddress, country: 'US' },
+        shipping: brShippingAt(10)
+      });
+
+      expect(repository.planPreviewRepository.previewPlan.mock.calls[0][1].country).toBe('BR');
+      expect(repository.ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        address: expect.objectContaining({ country: 'BR', number: '1000' })
+      }));
+    });
+
+    test('a US subscription cannot switch to a Brazilian address', async () => {
+      const repository = buildRepo();
+      await expect(repository.commit(7, 'sub_123', {
+        ...addressPayload,
+        address: { ...brAddress, country: 'BR' },
+        shipping: brShippingAt(10)
+      })).rejects.toMatchObject({ statusCode: 422, details: { code: 'delivery_area_unverified' } });
       expect(repository.ledgerRepository.upsert).not.toHaveBeenCalled();
     });
   });

@@ -86,3 +86,46 @@ describe('subscription dashboard automatic renewal', () => {
     expect(mapLedgerToDashboardDetail({ ...ledgerRow('us', ['turkey']), auto_renew: 1, cancel_at_period_end: 1 }).auto_renew).toBe(true);
   });
 });
+
+describe('subscription dashboard delivery address', () => {
+  test('returns the stored Brazilian address field by field', () => {
+    const detail = mapLedgerToDashboardDetail({
+      ...ledgerRow('br', ['beef']),
+      address: {
+        street: 'Rua Augusta',
+        number: '500',
+        complement: 'Apto 12',
+        neighborhood: 'Consolação',
+        city: 'São Paulo',
+        state: 'SP',
+        zipcode: '01305-000'
+      }
+    });
+
+    expect(detail.delivery_address_fields).toEqual({
+      country: 'BR',
+      street: 'Rua Augusta',
+      number: '500',
+      complement: 'Apto 12',
+      neighborhood: 'Consolação',
+      city: 'São Paulo',
+      state: 'SP',
+      zipcode: '01305-000'
+    });
+  });
+
+  test('reads a US line1 and postal code', () => {
+    const detail = mapLedgerToDashboardDetail({
+      ...ledgerRow('us', ['beef']),
+      address: { country: 'US', line1: '1 Market St', city: 'San Francisco', state: 'CA', postal_code: '94105' }
+    });
+
+    expect(detail.delivery_address_fields).toMatchObject({
+      country: 'US',
+      street: '1 Market St',
+      city: 'San Francisco',
+      state: 'CA',
+      zipcode: '94105'
+    });
+  });
+});

@@ -6,7 +6,8 @@ const {
   extractStripeItemRefs,
   diffSubscriptionItems,
   mapProrationFromInvoice,
-  resolveProposedPlan
+  resolveProposedPlan,
+  withLedgerMarket
 } = require('../../core/subscription-edit-plan');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
@@ -55,7 +56,10 @@ class SubscriptionsEditCommitRepository {
     // A pack save applies from the editable delivery forward: the next monthly invoice carries it, nothing is charged now.
     const packMode = Boolean(requestPayload.delivery_id);
     if (packMode) assertPackOnlyChange(requestPayload, row);
-    const payload = packMode ? withStoredPets(requestPayload, row.planSelection) : requestPayload;
+    const payload = withLedgerMarket(
+      packMode ? withStoredPets(requestPayload, row.planSelection) : requestPayload,
+      ledgerStripeAccount(row)
+    );
     const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
 
     const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
