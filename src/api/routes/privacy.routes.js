@@ -5,6 +5,7 @@ const {
   parseCookieInput,
   parseMarketingInput,
   parseCreateRequestInput,
+  parseUpdateRequestInput,
   parseRequestId
 } = require('../validators/privacy.validator');
 
@@ -133,6 +134,21 @@ function registerPrivacyRoutes(app, dependencies = {}) {
         ...context
       });
       response.status(201).json({ success: true, data });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch('/api/v1/privacy/requests/:id', async (request, response, next) => {
+    try {
+      const privacyService = requirePrivacyService(dependencies);
+      const payload = parseUpdateRequestInput(request.body || {});
+      const data = await privacyService.updateOwnRequestNote({
+        userId: requireUserId(request),
+        requestId: parseRequestId(request.params.id),
+        note: payload.note
+      });
+      response.status(200).json({ success: true, data });
     } catch (error) {
       next(error);
     }

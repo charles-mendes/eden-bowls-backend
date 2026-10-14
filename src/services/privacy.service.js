@@ -46,7 +46,10 @@ function presentOwnRequest(row) {
     channel: row.channel,
     createdAt: row.createdAt,
     resolvedAt: row.resolvedAt,
-    resultNote: row.resultNote
+    resultNote: row.resultNote,
+    note: row.payload && row.payload.note ? String(row.payload.note) : null,
+    // The customer can still reword a request nobody has closed yet.
+    editable: !isTerminalStatus(row.status)
   };
 }
 
@@ -361,6 +364,18 @@ class PrivacyService {
       return row.payload.package;
     }
     return this.buildExportPackage(userId);
+  }
+
+  async updateOwnRequestNote({ userId, requestId, note }) {
+    const row = await this.requireOwnedRequest(userId, requestId);
+    if (isTerminalStatus(row.status)) {
+      throw new HttpError(422, 'This request is already closed.', { code: 'request_closed' });
+    }
+    const updated = await this.repository.updateRequest(row.id, {
+      payload: { ...(row.payload || {}), note: note || null }
+    });
+    this.logger.info({ requestId: row.id, userId }, 'Privacy request note updated by the customer.');
+    return presentOwnRequest(updated);
   }
 
   async requireOwnedRequest(userId, requestId) {
