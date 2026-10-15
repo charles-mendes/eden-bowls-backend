@@ -155,6 +155,52 @@ class StripeWebhookEventsRepository {
     );
   }
 
+  // Per Stripe account: newest receipt and its type, failures since `failedSince`, and events
+  // received before `overdueBefore` that are still neither processed nor failed.
+  async healthByAccount({ failedSince, overdueBefore }) {
+    this.ensureDataSource();
+    try {
+      const totals = await this.dataSource.query(
+        [
+          'SELECT `stripe_account` AS account, MAX(`created_at`) AS lastEventAt,',
+          'SUM(CASE WHEN `failed_at` >= ? THEN 1 ELSE 0 END) AS failedLast24h,',
+          'SUM(CASE WHEN `processed_at` IS NULL AND `failed_at` IS NULL AND `created_at` < ? THEN 1 ELSE 0 END) AS pendingOverdue',
+          `FROM \`${this.tableName}\``,
+          'GROUP BY `stripe_account`'
+        ].join(' '),
+        [failedSince, overdueBefore]
+      );
+      const newest = await this.dataSource.query(
+        [
+          'SELECT e.`stripe_account` AS account, e.`type` AS type',
+          `FROM \`${this.tableName}\` e`,
+          `INNER JOIN (SELECT \`stripe_account\`, MAX(\`created_at\`) AS newest FROM \`${this.tableName}\` GROUP BY \`stripe_account\`) latest`,
+          'ON latest.`stripe_account` = e.`stripe_account` AND latest.newest = e.`created_at`',
+          'ORDER BY e.`event_id` DESC'
+        ].join(' ')
+      );
+      const typeByAccount = new Map();
+      for (const row of Array.isArray(newest) ? newest : []) {
+        if (!typeByAccount.has(row.account)) {
+          typeByAccount.set(row.account, row.type);
+        }
+      }
+
+      return (Array.isArray(totals) ? totals : []).map((row) => ({
+        account: String(row.account || '').toLowerCase(),
+        lastEventAt: row.lastEventAt,
+        lastEventType: typeByAccount.get(row.account) || null,
+        failedLast24h: Number(row.failedLast24h || 0),
+        pendingOverdue: Number(row.pendingOverdue || 0)
+      }));
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
   async deleteProcessedBefore(cutoff) {
     this.ensureDataSource();
     const result = await this.dataSource.query(

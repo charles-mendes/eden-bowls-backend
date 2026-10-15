@@ -5,6 +5,7 @@ const {
   validateCheckoutState
 } = require('../core/checkout-state');
 const { resolveMarket } = require('../core/market');
+const { assertVerifiedDeliveryArea } = require('../core/shipping-quote-token');
 const { resolveStripeAccountFromCountry } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
@@ -23,6 +24,18 @@ const {
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CHECKOUT_MODE = 'subscription_first';
+
+function checkoutCurrency(stripeAccount, catalogPricing) {
+  const currency = catalogPricing && catalogPricing.currency
+    ? String(catalogPricing.currency).trim().toLowerCase()
+    : '';
+  if (stripeAccount === 'br' && !currency) {
+    throw new HttpError(422, 'Brazil checkout requires a catalog currency.', {
+      code: 'catalog_currency_missing'
+    });
+  }
+  return currency || 'usd';
+}
 const SUBSCRIBED_PET_STATUSES = new Set(['active', 'trialing', 'incomplete', 'past_due', 'paused', 'unpaid']);
 
 function pushPetIdentity(ids, pet) {
@@ -112,6 +125,7 @@ class OnboardingSubscriptionCheckoutService {
     this.lockStore = options.lockStore || defaultCheckoutLockStore;
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.petsSyncRepository = options.petsSyncRepository || null;
+    this.shippingQuoteSigner = options.shippingQuoteSigner || null;
   }
 
   async checkout({ userId, payload = {} }) {
@@ -150,6 +164,11 @@ class OnboardingSubscriptionCheckoutService {
     const pricedContext = await this.ensurePricedPlanSelection(userId, rawContext);
     const context = await this.ensurePersistedPets(userId, pricedContext);
     validateCheckoutState(context);
+    const deliveryAddress = context.address || {};
+    const deliveryMarket = resolveMarket({ country: deliveryAddress.country }).country;
+    assertVerifiedDeliveryArea(this.shippingQuoteSigner, deliveryMarket, context.shipping || {}, {
+      zipcode: deliveryAddress.zipcode
+    });
 
     const eligibility = await this.discountEligibilityRepository.getEligibility(userId);
     const planSelection = context.planSelection || (
@@ -206,7 +225,8 @@ class OnboardingSubscriptionCheckoutService {
     }
 
     if (!stripeBilling) {
-      throw new HttpError(503, 'STRIPE_SECRET_KEY is not configured.', {
+      const secretName = stripeAccount === 'br' ? 'STRIPE_BR_SECRET_KEY' : 'STRIPE_US_SECRET_KEY';
+      throw new HttpError(503, `${secretName} is not configured.`, {
         code: 'stripe_secret_missing',
         stripe_account: stripeAccount
       });
@@ -220,7 +240,7 @@ class OnboardingSubscriptionCheckoutService {
       discountedFirstMonthTotal: catalogPricing && catalogPricing.discounted_first_month_total,
       subscriptionTermMonths: termMonths,
       lineItems: catalogPricing && catalogPricing.line_items,
-      pets: context.pets,
+      pets: buildPetsSnapshot(nextPlanSelection, context.pets).pet_ids,
       shipping: context.shipping || {},
       address,
       promotionCodeId
@@ -289,7 +309,7 @@ class OnboardingSubscriptionCheckoutService {
         items,
         address,
         shipping: context.shipping || {},
-        currency: catalogPricing && catalogPricing.currency ? catalogPricing.currency : 'usd',
+        currency: checkoutCurrency(stripeAccount, catalogPricing),
         promotionCodeId,
         subscriptionTermMonths: termMonths,
         attemptId,
@@ -540,15 +560,16 @@ class OnboardingSubscriptionCheckoutService {
   }
 
   async collectSubscribedPetIds(userId, storedReference = {}) {
-    const ids = collectPetIdsFromSnapshot(
-      { pet_ids: storedReference.pet_ids, pets: storedReference.pets },
-      storedReference.plan_selection || {}
-    );
-
+    // The stored checkout reference holds the pets of the last cart, which may not be
+    // subscribed yet; the ledger is the source of truth whenever it is available.
     if (!this.ledgerRepository || !userId) {
-      return ids;
+      return collectPetIdsFromSnapshot(
+        { pet_ids: storedReference.pet_ids, pets: storedReference.pets },
+        storedReference.plan_selection || {}
+      );
     }
 
+    const ids = [];
     const rows = await this.ledgerRepository.listByUserId(userId);
     for (const row of Array.isArray(rows) ? rows : []) {
       if (!SUBSCRIBED_PET_STATUSES.has(String(row.status || ''))) {

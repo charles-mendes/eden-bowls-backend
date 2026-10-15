@@ -6,6 +6,7 @@ dotenv.config();
 
 const rawEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  SENTRY_DSN: z.string().optional(),
   PORT: z.string().default('3000'),
   MODE: z.enum(['all', 'http', 'cron', 'worker']).default('http'),
   ENABLE_BACKGROUND_JOBS: z.string().optional(),
@@ -36,6 +37,8 @@ const rawEnvSchema = z.object({
   AUTH_OTP_MAX_ATTEMPTS: z.string().default('5'),
   AUTH_OTP_PEPPER: z.string().optional(),
   AUTH_OTP_RESEND_MAX_ATTEMPTS: z.string().default('3'),
+  DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS: z.string().default('8'),
+  DELIVERY_CALENDAR_SYNC_DELAY_MINUTES: z.string().default('15'),
   AUTH_OTP_RESEND_WINDOW_SECONDS: z.string().default('3600'),
   AUTH_SMTP_HOST: z.string().optional(),
   AUTH_SMTP_PORT: z.string().optional(),
@@ -65,19 +68,15 @@ const rawEnvSchema = z.object({
   WP_TERM_TAXONOMY_TABLE_NAME: z.string().default('wp_term_taxonomy'),
   WP_TERM_RELATIONSHIPS_TABLE_NAME: z.string().default('wp_term_relationships'),
   WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME: z.string().default('wp_hsr_stripe_subscriptions'),
-  STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_BR_SECRET_KEY: z.string().optional(),
   STRIPE_US_SECRET_KEY: z.string().optional(),
   STRIPE_API_VERSION: z.string().optional(),
   STRIPE_MAX_RETRIES: z.string().optional(),
   STRIPE_US_AUTOMATIC_TAX: z.string().optional(),
-  STRIPE_SHIPPING_PRODUCT_ID: z.string().optional(),
-  STRIPE_BR_SHIPPING_PRODUCT_ID: z.string().optional(),
-  STRIPE_US_SHIPPING_PRODUCT_ID: z.string().optional(),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_BR_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_US_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_BR_ENABLED: z.string().optional(),
+  EDEN_RUNTIME: z.string().optional(),
   NOMINATIM_USER_AGENT: z.string().optional(),
   GEO_MAXMIND_DB_PATH: z.string().default('./data/GeoLite2-Country.mmdb'),
   GEO_TRUST_PROXY_HEADERS: z.string().optional(),
@@ -95,6 +94,9 @@ const rawEnvSchema = z.object({
   UPS_HTTP_TIMEOUT_MS: z.string().optional(),
   UPS_TRANSACTION_SRC: z.string().optional(),
   UPS_LABEL_DIR: z.string().optional(),
+  INVOICE_PDF_DIR: z.string().optional(),
+  SHIPPING_QUOTE_SECRET: z.string().optional(),
+  SHIPPING_US_FIXED_TRANSIT_DAYS: z.string().optional(),
   METRICS_TOKEN: z.string().optional()
 });
 
@@ -192,11 +194,6 @@ function assertProductionEnv(rawEnv, resolved) {
     throw new Error('JWT_AUTH_ISSUER must be an https URL and must not use localhost in production.');
   }
 
-  const upsEnv = String(rawEnv.UPS_ENV ?? '').trim();
-  if (upsEnv !== 'production' && upsEnv !== 'cie') {
-    throw new Error('UPS_ENV must be production or cie in production.');
-  }
-
   if (String(rawEnv.AUTH_REFRESH_COOKIE_DOMAIN || '').trim()) {
     throw new Error('AUTH_REFRESH_COOKIE_DOMAIN must be empty in production.');
   }
@@ -220,8 +217,51 @@ function assertProductionEnv(rawEnv, resolved) {
   }
 }
 
+const LOCAL_SHIPPING_QUOTE_SECRET = 'eden-local-shipping-quote';
+
+function assertShippingQuoteSecret(rawEnv, resolved) {
+  if (String(rawEnv.EDEN_RUNTIME || '').trim() !== 'production') {
+    return;
+  }
+  const secret = resolved.SHIPPING_QUOTE_SECRET;
+  if (isRejectedSecret(secret) || secret === LOCAL_SHIPPING_QUOTE_SECRET) {
+    throw new Error('SHIPPING_QUOTE_SECRET must be set to a non-placeholder value in production.');
+  }
+  if (secret === resolved.JWT_AUTH_SECRET_KEY) {
+    throw new Error('SHIPPING_QUOTE_SECRET must differ from JWT_AUTH_SECRET_KEY in production.');
+  }
+}
+
+const EDEN_RUNTIMES = new Set(['local', 'qa', 'production']);
+
+function assertEdenRuntime(rawEnv) {
+  const value = String(rawEnv.EDEN_RUNTIME || '').trim();
+  if (!EDEN_RUNTIMES.has(value)) {
+    throw new Error('EDEN_RUNTIME must be local, qa, or production.');
+  }
+}
+
+// The same UPS credentials work on CIE and on production, so the runtime label picks the host.
+// Local and QA can only reach CIE. Production must name production; there is no CIE fallback there.
+function resolveUpsEnv(rawEnv) {
+  const runtime = String(rawEnv.EDEN_RUNTIME || '').trim();
+  const requested = String(rawEnv.UPS_ENV ?? '').trim().toLowerCase();
+  if (runtime === 'production') {
+    if (requested !== 'production') {
+      throw new Error('UPS_ENV must be production when EDEN_RUNTIME is production.');
+    }
+    return 'production';
+  }
+  if (requested && requested !== 'cie') {
+    throw new Error(`UPS_ENV must be cie or unset when EDEN_RUNTIME is ${runtime}.`);
+  }
+  return 'cie';
+}
+
 function parseEnv(source = process.env) {
   const rawEnv = rawEnvSchema.parse(source);
+  assertEdenRuntime(rawEnv);
+  const upsEnv = resolveUpsEnv(rawEnv);
   const refreshCookieSecure = toBoolean(rawEnv.AUTH_REFRESH_COOKIE_SECURE, rawEnv.NODE_ENV === 'production');
 
   if (rawEnv.NODE_ENV === 'production' && !refreshCookieSecure) {
@@ -241,6 +281,8 @@ function parseEnv(source = process.env) {
 
   const resolved = {
     NODE_ENV: rawEnv.NODE_ENV,
+    SENTRY_DSN: String(rawEnv.SENTRY_DSN || '').trim(),
+    EDEN_RUNTIME: String(rawEnv.EDEN_RUNTIME || '').trim(),
     PORT: Number(rawEnv.PORT),
     MODE: rawEnv.MODE,
     ENABLE_BACKGROUND_JOBS: toBoolean(rawEnv.ENABLE_BACKGROUND_JOBS),
@@ -278,6 +320,8 @@ function parseEnv(source = process.env) {
     AUTH_OTP_MAX_ATTEMPTS: Number(rawEnv.AUTH_OTP_MAX_ATTEMPTS),
     AUTH_OTP_PEPPER: firstNonEmpty(rawEnv.AUTH_OTP_PEPPER, rawEnv.AUTH_SALT, rawEnv.JWT_AUTH_SECRET_KEY) || 'hsr-default-salt',
     AUTH_OTP_RESEND_MAX_ATTEMPTS: Number(rawEnv.AUTH_OTP_RESEND_MAX_ATTEMPTS),
+    DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS: Number(rawEnv.DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS),
+    DELIVERY_CALENDAR_SYNC_DELAY_MINUTES: Number(rawEnv.DELIVERY_CALENDAR_SYNC_DELAY_MINUTES),
     AUTH_OTP_RESEND_WINDOW_SECONDS: Number(rawEnv.AUTH_OTP_RESEND_WINDOW_SECONDS),
     AUTH_SMTP_HOST: firstNonEmpty(rawEnv.AUTH_SMTP_HOST, rawEnv.HSR_SMTP_HOST),
     AUTH_SMTP_PORT: Number(firstNonEmpty(rawEnv.AUTH_SMTP_PORT, rawEnv.HSR_SMTP_PORT, '587')),
@@ -297,18 +341,13 @@ function parseEnv(source = process.env) {
     WP_TERM_TAXONOMY_TABLE_NAME: rawEnv.WP_TERM_TAXONOMY_TABLE_NAME,
     WP_TERM_RELATIONSHIPS_TABLE_NAME: rawEnv.WP_TERM_RELATIONSHIPS_TABLE_NAME,
     WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME: rawEnv.WP_HSR_STRIPE_SUBSCRIPTIONS_TABLE_NAME,
-    STRIPE_SECRET_KEY: firstNonEmpty(rawEnv.STRIPE_SECRET_KEY),
     STRIPE_BR_SECRET_KEY: firstNonEmpty(rawEnv.STRIPE_BR_SECRET_KEY),
-    STRIPE_US_SECRET_KEY: firstNonEmpty(rawEnv.STRIPE_US_SECRET_KEY, rawEnv.STRIPE_SECRET_KEY),
+    STRIPE_US_SECRET_KEY: firstNonEmpty(rawEnv.STRIPE_US_SECRET_KEY),
     STRIPE_API_VERSION: firstNonEmpty(rawEnv.STRIPE_API_VERSION, '2025-09-30.clover'),
     STRIPE_MAX_RETRIES: Number(firstNonEmpty(rawEnv.STRIPE_MAX_RETRIES, '2')),
     STRIPE_US_AUTOMATIC_TAX: toBoolean(rawEnv.STRIPE_US_AUTOMATIC_TAX, true),
-    STRIPE_SHIPPING_PRODUCT_ID: firstNonEmpty(rawEnv.STRIPE_SHIPPING_PRODUCT_ID),
-    STRIPE_BR_SHIPPING_PRODUCT_ID: firstNonEmpty(rawEnv.STRIPE_BR_SHIPPING_PRODUCT_ID),
-    STRIPE_US_SHIPPING_PRODUCT_ID: firstNonEmpty(rawEnv.STRIPE_US_SHIPPING_PRODUCT_ID, rawEnv.STRIPE_SHIPPING_PRODUCT_ID),
-    STRIPE_WEBHOOK_SECRET: firstNonEmpty(rawEnv.STRIPE_WEBHOOK_SECRET),
     STRIPE_BR_WEBHOOK_SECRET: firstNonEmpty(rawEnv.STRIPE_BR_WEBHOOK_SECRET),
-    STRIPE_US_WEBHOOK_SECRET: firstNonEmpty(rawEnv.STRIPE_US_WEBHOOK_SECRET, rawEnv.STRIPE_WEBHOOK_SECRET),
+    STRIPE_US_WEBHOOK_SECRET: firstNonEmpty(rawEnv.STRIPE_US_WEBHOOK_SECRET),
     STRIPE_BR_ENABLED: toBoolean(rawEnv.STRIPE_BR_ENABLED, false),
     NOMINATIM_USER_AGENT: firstNonEmpty(rawEnv.NOMINATIM_USER_AGENT) || 'EdenBowlShipping/1.0 (https://edenbowl.com; shipping@edenbowl.com)',
     GEO_MAXMIND_DB_PATH: firstNonEmpty(rawEnv.GEO_MAXMIND_DB_PATH) || './data/GeoLite2-Country.mmdb',
@@ -323,15 +362,18 @@ function parseEnv(source = process.env) {
     UPS_CLIENT_ID: firstNonEmpty(rawEnv.UPS_CLIENT_ID),
     UPS_CLIENT_SECRET: firstNonEmpty(rawEnv.UPS_CLIENT_SECRET),
     UPS_ACCOUNT_NUMBER: firstNonEmpty(rawEnv.UPS_ACCOUNT_NUMBER),
-    UPS_ENV: rawEnv.NODE_ENV === 'production'
-      ? String(rawEnv.UPS_ENV ?? '').trim()
-      : firstNonEmpty(rawEnv.UPS_ENV, 'cie'),
+    UPS_ENV: upsEnv,
     UPS_HTTP_TIMEOUT_MS: Number(firstNonEmpty(rawEnv.UPS_HTTP_TIMEOUT_MS, '5000')),
     UPS_TRANSACTION_SRC: firstNonEmpty(rawEnv.UPS_TRANSACTION_SRC, 'eden-bowls'),
     UPS_LABEL_DIR: firstNonEmpty(rawEnv.UPS_LABEL_DIR) || './data/ups-labels',
+    INVOICE_PDF_DIR: firstNonEmpty(rawEnv.INVOICE_PDF_DIR) || './data/invoices',
+    SHIPPING_QUOTE_SECRET: firstNonEmpty(rawEnv.SHIPPING_QUOTE_SECRET)
+      || (String(rawEnv.EDEN_RUNTIME || '').trim() === 'production' ? '' : LOCAL_SHIPPING_QUOTE_SECRET),
+    SHIPPING_US_FIXED_TRANSIT_DAYS: Number(firstNonEmpty(rawEnv.SHIPPING_US_FIXED_TRANSIT_DAYS, '1')),
     METRICS_TOKEN: firstNonEmpty(rawEnv.METRICS_TOKEN)
   };
 
+  assertShippingQuoteSecret(rawEnv, resolved);
   assertProductionEnv(rawEnv, resolved);
   return resolved;
 }

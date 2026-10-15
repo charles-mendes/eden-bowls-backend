@@ -29,7 +29,7 @@ Rota legado WordPress (substituida):
 
 - `GET /wp-json/custom/v1/geo/context`
 
-Analise WP + front: `docs/geo/DOCUMENTACAO_TECNICA_ROTA_CUSTOM_V1_GEO_CONTEXT.md`.
+Analise historica: `docs/archive/wordpress-migration/geo/DOCUMENTACAO_TECNICA_ROTA_CUSTOM_V1_GEO_CONTEXT.md`. Nao e modelo de implementacao.
 
 Como encaixar no repo: [APLICACAO_GEO_CONTEXT.md](./APLICACAO_GEO_CONTEXT.md).
 
@@ -57,9 +57,9 @@ Nao faz:
 
 | Parte | Status |
 |---|---|
-| Endpoint no Express | **nao implementado** |
-| Contrato JSON (paridade WP) | definido abaixo |
-| MaxMind no Node | **nao implementado** |
+| Endpoint no Express | registrada: `GET /api/v1/geo/context` |
+| Contrato JSON | definido abaixo |
+| MaxMind no Node | `src/infrastructure/geo/maxmind-country-reader.js` |
 | Uso de `market.js` nesta rota | propositalmente **nao** |
 
 ## Endpoint, controller e permissao

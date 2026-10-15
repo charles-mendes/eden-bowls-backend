@@ -1,0 +1,21 @@
+# Tasks
+
+## 1. Stop reading the shipping product variables
+
+- [x] 1.1 Remove `STRIPE_US_SHIPPING_PRODUCT_ID`, `STRIPE_SHIPPING_PRODUCT_ID`, and `STRIPE_BR_SHIPPING_PRODUCT_ID` from the env schema and from `parseEnv`, including the US fallback onto `STRIPE_SHIPPING_PRODUCT_ID`. Verify with `npx jest --runTestsByPath tests/env.parse.test.js` after asserting both of these: a production env without those keys still parses and does not expose them, and a production env that still sets all three keys still parses, does not throw, and does not expose them.
+- [x] 1.2 Stop passing those ids from `createStripeAccountsFromEnv` and from `src/index.js` (the webhook service and the fallback US client). Do not add a product lookup. Verify with `rg -n "STRIPE_US_SHIPPING_PRODUCT_ID|STRIPE_SHIPPING_PRODUCT_ID|STRIPE_BR_SHIPPING_PRODUCT_ID" src` returning no matches.
+
+## 2. Lock checkout and metadata-only renewal
+
+- [x] 2.1 Cover checkout with no pre-seeded shipping product in `tests/stripe-billing-client.test.js`: a positive US shipping quote creates a `Shipping` product with tax code `txcd_92010001`, writes `shipping_product_id`, and a second create in the same client reuses the id. A zero shipping cost must not create a product. A BR client must create or reuse the product on its own Stripe client, not a US client. When `products.create` rejects, `subscriptions.create` must not be called and the error must be the existing shipping failure (`stripe_subscription_failed`). Verify with `npx jest --runTestsByPath tests/stripe-billing-client.test.js`.
+- [x] 2.2 In `handleInvoiceCreated`, use only metadata `shipping_product_id`. Do not fall back to the client cache or the webhook service id. When the amount is positive and that id is missing, do not add an item and `logger.warn` with the subscription id and Stripe account only. A zero amount must not add an item, must not create a product, and must not log that warning. Amount comes from `shipping_amount_minor` when positive, otherwise from the ledger shipping cost. Verify with `npx jest --runTestsByPath tests/stripe-webhook.service.test.js`, including: metadata id wins over a different cached id; ledger amount with a metadata product id; missing product id with a cached id still adds nothing and warns; zero amount is quiet.
+
+## 3. Templates, local env, and operator docs
+
+- [x] 3.1 Remove the three keys from `.env.example`, `.env.qa.example`, and the local `.env`. Do not commit `.env`. Verify with `rg -n "STRIPE_US_SHIPPING_PRODUCT_ID|STRIPE_SHIPPING_PRODUCT_ID|STRIPE_BR_SHIPPING_PRODUCT_ID" .env.example .env.qa.example .env` returning no matches. This does not prove a QA host env that is a different file.
+- [x] 3.2 Update the docs that still tell operators to set those keys or that `invoice.created` reads them: `docs-new/subscription-checkout/04-stripe-create-webhook-e-efeitos.md`, `docs-new/FEATURE_STRIPE_SEPARAR_PAISES/o-que-alterar-para-funcionar.md`, `docs-new/FEATURE_STRIPE_SEPARAR_PAISES/COMO-CONFIGURAR-STRIPE.md`, `docs-new/FEATURE_STRIPE_SEPARAR_PAISES/contexto.md`, `docs-new/other-routers/ROTA_STRIPE_WEBHOOK.md`, `docs-new/other-routers/README.md`, `docs-new/other-routers/APLICACAO_POS_CHECKOUT.md`, `docs/other-routers/ROTA_STRIPE_WEBHOOK.md`, `docs/other-routers/README.md`, and `docs/other-routers/APLICACAO_POS_CHECKOUT.md`. Describe the id stored on the subscription. The old names may appear only on a line that also says `not read`. Verify with `rg -n "STRIPE_US_SHIPPING_PRODUCT_ID|STRIPE_SHIPPING_PRODUCT_ID|STRIPE_BR_SHIPPING_PRODUCT_ID" docs docs-new` and confirm every match contains `not read`.
+- [x] 3.3 Add a Stripe note to `docs/production-go-live.md`: before production, review subscriptions with a positive shipping amount and no `shipping_product_id`, because that renewal adds no shipping line and only logs a warning; and more than one `Shipping` product can exist after a restart or two concurrent first checkouts. Also say a QA host env that is not the repo `.env` must drop the three keys at deploy. Verify that those sentences are in that file.
+
+## 4. Related tests
+
+- [x] 4.1 Run the related Jest files together and confirm they pass: `npx jest --runTestsByPath tests/env.parse.test.js tests/stripe-billing-client.test.js tests/stripe-webhook.service.test.js tests/stripe-accounts.test.js`.

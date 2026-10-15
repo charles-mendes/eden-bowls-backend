@@ -14,7 +14,7 @@ Front:
 
 Rota legado WordPress:
 
-- `PUT|PATCH|POST /custom/v1/profile/password` — `docs/profile/05-put-profile-password.md`
+- `PUT|PATCH|POST /custom/v1/profile/password` — `docs/archive/wordpress-migration/profile/05-put-profile-password.md`
 
 Login (nao troca senha):
 

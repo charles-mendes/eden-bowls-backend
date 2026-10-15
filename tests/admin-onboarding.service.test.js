@@ -120,6 +120,35 @@ describe('AdminOnboardingService.csv', () => {
     );
   });
 
+  test('returns pets and subscriptions for a customer who never reached checkout', async () => {
+    const service = new AdminOnboardingService({
+      repository: {
+        getCheckout: jest.fn().mockResolvedValue({
+          userId: '91',
+          email: 'ana@x.com',
+          market: 'BR',
+          checkoutReference: null,
+          planSelection: null,
+          address: null,
+          pets: [{ id: '7', name: 'Rex', ageYears: 2, ageMonths: 0, weightInput: 10, weightUnit: 'kg' }]
+        })
+      },
+      ledgerRepository: {
+        listByUserId: jest.fn().mockResolvedValue([{ id: 3, stripeSubscriptionId: 'sub_1', stripeAccount: 'br', status: 'active' }])
+      }
+    });
+
+    const result = await service.getByUserId('91', { roles: ['operator'], markets: ['BR'] });
+
+    expect(result).toMatchObject({
+      userId: '91',
+      empty: true,
+      pets: [{ id: '7', name: 'Rex' }],
+      subscriptions: [{ id: '3', stripeSubscriptionId: 'sub_1' }],
+      lineItems: []
+    });
+  });
+
   test('returns 404 for an out-of-scope session', async () => {
     const service = new AdminOnboardingService({
       repository: {

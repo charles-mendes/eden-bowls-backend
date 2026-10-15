@@ -6,7 +6,7 @@ Parte da serie `POST /api/v1/onboarding/subscription/checkout`.
 - Unico fluxo Node: [02-fluxo-stripe-first.md](./02-fluxo-stripe-first.md)
 - Stripe + webhook: [04-stripe-create-webhook-e-efeitos.md](./04-stripe-create-webhook-e-efeitos.md)
 
-Origem WP: `docs/subscription-checkout/03-ramo-order-first.md`.
+Origem WP: `docs/archive/wordpress-migration/subscription-checkout/03-ramo-order-first.md`.
 
 No PHP este era o **default** (body sem `checkout_mode`): criava `WC_Order` pending, opcionalmente sincronizava Stripe no mesmo request se viesse `pm_`, e engolia erro Stripe em HTTP 200.
 

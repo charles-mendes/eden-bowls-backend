@@ -28,7 +28,7 @@ describe('onboarding payment methods routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.data).toHaveLength(1);
-    expect(onboardingPaymentMethodsService.listSavedPaymentMethods).toHaveBeenCalledWith({ userId: 7 });
+    expect(onboardingPaymentMethodsService.listSavedPaymentMethods).toHaveBeenCalledWith({ userId: 7, country: 'US' });
   });
 
   test('requires bearer authentication', async () => {

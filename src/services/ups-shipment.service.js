@@ -16,6 +16,34 @@ function normalizeShipTo(address = {}) {
   };
 }
 
+const LABEL_IMAGE_KEYS = new Set(['GraphicImage', 'GraphicImagePart', 'HTMLImage']);
+
+// The label file is stored on disk. The database copy keeps the UPS response without the image.
+function withoutLabelImages(raw) {
+  if (raw == null) {
+    return raw;
+  }
+  return JSON.parse(JSON.stringify(raw, (key, value) => (LABEL_IMAGE_KEYS.has(key) ? undefined : value)));
+}
+
+// True only when UPS cannot have bought a label: the token step failed, or UPS answered 4xx.
+// Timeouts, network errors, 5xx and incomplete answers leave the outcome unknown.
+function upsRejectedShipment(error) {
+  const details = (error && error.details) || {};
+  if (details.stage === 'oauth' || details.code === 'ups_not_configured') {
+    return true;
+  }
+  const status = Number(details.status);
+  return details.code === 'ups_upstream_error' && status >= 400 && status < 500;
+}
+
+function unresolvedShipmentError(shipment) {
+  return new HttpError(409, 'A UPS shipment for this invoice has no confirmed outcome. Check UPS, then void it before buying another label.', {
+    code: 'ups_shipment_unresolved',
+    shipment_id: shipment.id
+  });
+}
+
 class UpsShipmentService {
   constructor(options = {}) {
     this.repository = options.repository || null;
@@ -111,11 +139,8 @@ class UpsShipmentService {
     await this.requireSubscriptionInScope(subscriptionId, actor);
 
     const existing = await this.repository.findActiveByInvoiceId(invoice);
-    if (existing && existing.status === 'created') {
-      return { success: true, data: { shipment: this.present(existing), reused: true } };
-    }
-    if (existing && existing.status === 'pending' && existing.ups_shipment_id) {
-      return { success: true, data: { shipment: this.present(existing), reused: true } };
+    if (existing) {
+      return this.reuseExisting(existing);
     }
 
     if (!this.adminBillingService) {
@@ -144,59 +169,100 @@ class UpsShipmentService {
       ? settings.allowed_service_codes[0]
       : '03';
 
-    let pending = existing;
+    const pending = await this.repository.insertPending({
+      subscriptionId: String(subscription.id || subscriptionId),
+      invoiceId: invoice,
+      userId: subscription.user?.id || null,
+      quotedShippingCost: quoted
+    });
     if (!pending) {
-      pending = await this.repository.insertPending({
-        subscriptionId: String(subscription.id || subscriptionId),
-        invoiceId: invoice,
-        userId: subscription.user?.id || null,
-        quotedShippingCost: quoted
-      });
+      // Another request inserted the row for this invoice first.
+      const winner = await this.repository.findActiveByInvoiceId(invoice);
+      if (winner) {
+        return this.reuseExisting(winner);
+      }
+      throw new HttpError(409, 'Another UPS shipment request for this invoice is in progress.', { code: 'ups_shipment_in_progress' });
     }
 
+    let created;
     try {
-      const created = await this.upsClient.createShipment({
+      created = await this.upsClient.createShipment({
         shipFrom,
         shipTo,
         package: settings.package,
         serviceCode
       });
-
-      const recovered = await this.repository.findByUpsShipmentId(created.upsShipmentId);
-      if (recovered && recovered.id !== pending.id) {
-        await this.repository.deletePending(pending.id);
-        return { success: true, data: { shipment: this.present(recovered), reused: true } };
+    } catch (error) {
+      if (upsRejectedShipment(error)) {
+        await this.repository.deletePending(pending.id).catch(() => {});
+        throw error;
       }
+      await this.repository.markUnknown(pending.id).catch((markError) => {
+        this.logger.error({ shipmentId: pending.id, code: markError && markError.code }, 'UPS shipment could not be marked unknown.');
+      });
+      this.logger.error({
+        shipmentId: pending.id,
+        invoiceId: invoice,
+        code: error && error.details && error.details.code,
+        status: error && error.details && error.details.status
+      }, 'UPS shipment outcome is unknown.');
+      throw new HttpError(502, 'UPS did not confirm the shipment. Check UPS before buying another label.', {
+        code: 'ups_shipment_unknown',
+        shipment_id: pending.id
+      });
+    }
 
-      let labelPath = null;
-      if (created.labelBase64 && this.labelStorage) {
-        const buffer = Buffer.from(created.labelBase64, 'base64');
+    // From here UPS has bought the label, so the pending row is never deleted on failure.
+    const recovered = await this.repository.findByUpsShipmentId(created.upsShipmentId);
+    if (recovered && recovered.id !== pending.id) {
+      await this.repository.deletePending(pending.id);
+      return { success: true, data: { shipment: this.present(recovered), reused: true } };
+    }
+
+    let labelPath = null;
+    if (created.labelBase64 && this.labelStorage) {
+      try {
         labelPath = await this.labelStorage.write({
           invoiceId: invoice,
           format: created.labelFormat || 'gif',
-          buffer
+          buffer: Buffer.from(created.labelBase64, 'base64')
         });
+      } catch (error) {
+        this.logger.error({ shipmentId: pending.id, code: error && error.code }, 'UPS label file could not be stored.');
       }
+    }
 
-      const saved = await this.repository.markCreated(pending.id, {
+    let saved;
+    try {
+      saved = await this.repository.markCreated(pending.id, {
         upsShipmentId: created.upsShipmentId,
         trackingNumber: created.trackingNumber,
         serviceCode: created.serviceCode,
         labelFormat: created.labelFormat || 'GIF',
         labelPath,
         upsMonetaryValue: created.monetaryValue,
-        rawResponse: created.raw
+        // Without a stored file the response is the only copy of the label.
+        rawResponse: labelPath ? withoutLabelImages(created.raw) : created.raw
       });
-
-      await this.notifyShippedMail({ subscription, shipment: saved });
-
-      return { success: true, data: { shipment: this.present(saved), reused: false } };
     } catch (error) {
-      if (pending?.id) {
-        await this.repository.deletePending(pending.id).catch(() => {});
-      }
+      this.logger.error({
+        shipmentId: pending.id,
+        upsShipmentId: created.upsShipmentId,
+        code: error && error.code
+      }, 'UPS bought a label that could not be saved.');
       throw error;
     }
+
+    await this.notifyShippedMail({ subscription, shipment: saved });
+
+    return { success: true, data: { shipment: this.present(saved), reused: false } };
+  }
+
+  reuseExisting(existing) {
+    if (existing.status === 'created' || existing.ups_shipment_id) {
+      return { success: true, data: { shipment: this.present(existing), reused: true } };
+    }
+    throw unresolvedShipmentError(existing);
   }
 
   async notifyShippedMail({ subscription, shipment }) {
@@ -234,15 +300,24 @@ class UpsShipmentService {
     };
   }
 
-  async voidShipment(shipmentId, actor = {}) {
-    this.ensureUps();
+  // A row without a UPS id (pending or unknown) is closed locally only when the operator confirms
+  // in UPS that no label exists for it, or has voided that label there.
+  async voidShipment(shipmentId, actor = {}, options = {}) {
     const shipment = await this.requireShipmentInScope(shipmentId, actor);
     if (shipment.status === 'voided') {
       return { success: true, data: { shipment: this.present(shipment) } };
     }
     if (!shipment.ups_shipment_id) {
-      throw new HttpError(422, 'Shipment has no UPS id to void.', { code: 'missing_ups_id' });
+      if (shipment.status !== 'pending' && shipment.status !== 'unknown') {
+        throw new HttpError(422, 'Shipment has no UPS id to void.', { code: 'missing_ups_id' });
+      }
+      if (options.confirmNotCreated !== true) {
+        throw unresolvedShipmentError(shipment);
+      }
+      const closed = await this.repository.markVoided(shipment.id);
+      return { success: true, data: { shipment: this.present(closed), local_only: true } };
     }
+    this.ensureUps();
     await this.upsClient.voidShipment(shipment.ups_shipment_id);
     const voided = await this.repository.markVoided(shipment.id);
     return { success: true, data: { shipment: this.present(voided) } };
@@ -272,5 +347,7 @@ class UpsShipmentService {
 
 module.exports = {
   UpsShipmentService,
-  normalizeShipTo
+  normalizeShipTo,
+  upsRejectedShipment,
+  withoutLabelImages
 };

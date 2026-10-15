@@ -2,6 +2,7 @@ const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { ledgerStripeAccount, parseStripeAccountInput } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
+const { resolveAutoRenew } = require('../core/contract-deliveries');
 const {
   constrainMarketQuery,
   assertStripeAccountMarket,
@@ -25,7 +26,7 @@ function presentSubscription(item, secretKey, actor = {}) {
     stripeCustomerId: item.stripeCustomerId,
     stripeAccount,
     status: item.status,
-    autoRenew: !item.cancelAtPeriodEnd,
+    autoRenew: resolveAutoRenew(item),
     nextBillingAt: item.currentPeriodEnd,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,

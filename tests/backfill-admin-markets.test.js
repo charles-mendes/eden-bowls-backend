@@ -58,4 +58,15 @@ describe('backfill-admin-markets', () => {
       profileVsStripeConflicts: 3
     });
   });
+
+  test('counts conflicts as distinct customer and account pairs', async () => {
+    const query = jest.fn().mockResolvedValue([{ total: 0 }]);
+
+    await collectBackfillStats(query);
+
+    const conflictSql = String(query.mock.calls[3][0]);
+    expect(conflictSql).toContain('SELECT DISTINCT');
+    expect(conflictSql).toContain('`stripe_subscriptions`');
+    expect(query.mock.calls[3][1]).toEqual(['hsr_market_country']);
+  });
 });

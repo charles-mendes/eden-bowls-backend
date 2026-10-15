@@ -117,6 +117,29 @@ function buildStripeSubscriptionEntitySchema(tableName = 'stripe_subscriptions')
         type: 'json',
         nullable: true
       },
+      chargedDeliveries: {
+        name: 'charged_deliveries',
+        type: 'int',
+        unsigned: true,
+        nullable: true
+      },
+      lastChargedInvoiceId: {
+        name: 'last_charged_invoice_id',
+        type: String,
+        length: 64,
+        nullable: true
+      },
+      autoRenew: {
+        name: 'auto_renew',
+        type: 'tinyint',
+        width: 1,
+        nullable: true
+      },
+      pendingDeliveryChanges: {
+        name: 'pending_delivery_changes',
+        type: 'json',
+        nullable: true
+      },
       createdAt: {
         name: 'created_at',
         type: 'datetime',

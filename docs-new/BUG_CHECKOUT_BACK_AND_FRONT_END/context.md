@@ -77,7 +77,7 @@ Response:
 }
 
 
-curl --url ^"https://api.stripe.com/v1/payment_intents/pi_3U5wFDRhwGQO7Fk21wiBUxiA?is_stripe_sdk=false^&client_secret=pi_3U5wFDRhwGQO7Fk21wiBUxiA_secret_BRmIBABuGPE27LdqakuuiZh6l^&key=pk_test_51TObKdRhwGQO7Fk2nvHMzE105eJO6YhksWpzE4vSPKwWc7Xxs8062CpHZ1PyMpoqpVoWYIeDEjhYQoq4ytvv3vhl005Tg7xCzI^&_stripe_version=2026-03-25.dahlia^" ^
+curl --url ^"https://api.stripe.com/v1/payment_intents/pi_3U5wFDRhwGQO7Fk21wiBUxiA?is_stripe_sdk=false^&client_secret=pi_3U5wFDRhwGQO7Fk21wiBUxiA_secret_BRmIBABuGPE27LdqakuuiZh6l^&key=pk_test_the retired sandbox accountRhwGQO7Fk2nvHMzE105eJO6YhksWpzE4vSPKwWc7Xxs8062CpHZ1PyMpoqpVoWYIeDEjhYQoq4ytvv3vhl005Tg7xCzI^&_stripe_version=2026-03-25.dahlia^" ^
   -H ^"accept: application/json^" ^
   -H ^"accept-language: en-US,en;q=0.9,pt;q=0.8^" ^
   -H ^"content-type: application/x-www-form-urlencoded^" ^
@@ -94,7 +94,7 @@ curl --url ^"https://api.stripe.com/v1/payment_intents/pi_3U5wFDRhwGQO7Fk21wiBUx
 
   Payload
 
-  is_stripe_sdk=false&client_secret=pi_3U5wFDRhwGQO7Fk21wiBUxiA_secret_BRmIBABuGPE27LdqakuuiZh6l&key=pk_test_51TObKdRhwGQO7Fk2nvHMzE105eJO6YhksWpzE4vSPKwWc7Xxs8062CpHZ1PyMpoqpVoWYIeDEjhYQoq4ytvv3vhl005Tg7xCzI&_stripe_version=2026-03-25.dahlia
+  is_stripe_sdk=false&client_secret=pi_3U5wFDRhwGQO7Fk21wiBUxiA_secret_BRmIBABuGPE27LdqakuuiZh6l&key=pk_test_the retired sandbox accountRhwGQO7Fk2nvHMzE105eJO6YhksWpzE4vSPKwWc7Xxs8062CpHZ1PyMpoqpVoWYIeDEjhYQoq4ytvv3vhl005Tg7xCzI&_stripe_version=2026-03-25.dahlia
 
   Response
 
@@ -146,10 +146,10 @@ curl --url ^"https://api.stripe.com/v1/payment_intents/pi_3U5wFDRhwGQO7Fk21wiBUx
   -H ^"sec-fetch-mode: cors^" ^
   -H ^"sec-fetch-site: same-site^" ^
   -H ^"user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36^" ^
-  --data-raw ^"payment_method=pm_1U5y2uRhwGQO7Fk2WrRvsdHS^&expected_payment_method_type=card^&use_stripe_sdk=true^&key=pk_test_51TObKdRhwGQO7Fk2nvHMzE105eJO6YhksWpzE4vSPKwWc7Xxs8062CpHZ1PyMpoqpVoWYIeDEjhYQoq4ytvv3vhl005Tg7xCzI^&_stripe_version=2026-03-25.dahlia^&client_attribution_metadata^[client_session_id^]=89ea0400-d1d7-4548-8f7e-ef00804a5eee^&client_attribution_metadata^[merchant_integration_source^]=l1^&client_secret=pi_3U5wFDRhwGQO7Fk21wiBUxiA_secret_BRmIBABuGPE27LdqakuuiZh6l^"
+  --data-raw ^"payment_method=pm_1U5y2uRhwGQO7Fk2WrRvsdHS^&expected_payment_method_type=card^&use_stripe_sdk=true^&key=pk_test_the retired sandbox accountRhwGQO7Fk2nvHMzE105eJO6YhksWpzE4vSPKwWc7Xxs8062CpHZ1PyMpoqpVoWYIeDEjhYQoq4ytvv3vhl005Tg7xCzI^&_stripe_version=2026-03-25.dahlia^&client_attribution_metadata^[client_session_id^]=89ea0400-d1d7-4548-8f7e-ef00804a5eee^&client_attribution_metadata^[merchant_integration_source^]=l1^&client_secret=pi_3U5wFDRhwGQO7Fk21wiBUxiA_secret_BRmIBABuGPE27LdqakuuiZh6l^"
 
   Payload:
-  payment_method=pm_1U5y2uRhwGQO7Fk2WrRvsdHS&expected_payment_method_type=card&use_stripe_sdk=true&key=pk_test_51TObKdRhwGQO7Fk2nvHMzE105eJO6YhksWpzE4vSPKwWc7Xxs8062CpHZ1PyMpoqpVoWYIeDEjhYQoq4ytvv3vhl005Tg7xCzI&_stripe_version=2026-03-25.dahlia&client_attribution_metadata[client_session_id]=89ea0400-d1d7-4548-8f7e-ef00804a5eee&client_attribution_metadata[merchant_integration_source]=l1&client_secret=pi_3U5wFDRhwGQO7Fk21wiBUxiA_secret_BRmIBABuGPE27LdqakuuiZh6l
+  payment_method=pm_1U5y2uRhwGQO7Fk2WrRvsdHS&expected_payment_method_type=card&use_stripe_sdk=true&key=pk_test_the retired sandbox accountRhwGQO7Fk2nvHMzE105eJO6YhksWpzE4vSPKwWc7Xxs8062CpHZ1PyMpoqpVoWYIeDEjhYQoq4ytvv3vhl005Tg7xCzI&_stripe_version=2026-03-25.dahlia&client_attribution_metadata[client_session_id]=89ea0400-d1d7-4548-8f7e-ef00804a5eee&client_attribution_metadata[merchant_integration_source]=l1&client_secret=pi_3U5wFDRhwGQO7Fk21wiBUxiA_secret_BRmIBABuGPE27LdqakuuiZh6l
 
   Response:
   {

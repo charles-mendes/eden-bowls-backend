@@ -10,6 +10,8 @@ description: "Arquitetura, ORM e limites de runtime do backend."
 - Entidades ficam em `src/infrastructure/entities`, repositorios em `src/infrastructure/repositories` e o DataSource em `src/infrastructure/db.js`.
 - Nunca criar Prisma, Sequelize, Knex, Drizzle, `prisma/schema.prisma`, pasta `prisma` ou `PrismaClient`.
 - O banco ativo e MySQL via `mysql2`; use sintaxe MySQL (`LIMIT`, backticks etc.), mesmo que `mssql` e `pg` estejam instalados.
+- O runtime não é WordPress.
+- O prefixo `wp_` em tabela MySQL é legado de schema. Não indica runtime WordPress.
 - Para persistencia nova, reutilize os repositorios TypeORM existentes.
 
 ## Stack e integracoes

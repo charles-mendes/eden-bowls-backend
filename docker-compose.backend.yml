@@ -15,11 +15,13 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       UPS_LABEL_DIR: /app/ups-labels
+      INVOICE_PDF_DIR: /app/invoices
     volumes:
       - eden-bowls-avatars:/app/public/avatars
       - eden-bowls-feedback-photos:/app/public/feedback-photos
       - eden-bowls-pet-photos:/app/public/pet-photos
       - eden-bowls-ups-labels:/app/ups-labels
+      - eden-bowls-invoices:/app/invoices
       - ./data:/app/data:ro
     healthcheck:
       test:
@@ -39,3 +41,4 @@ volumes:
   eden-bowls-feedback-photos:
   eden-bowls-pet-photos:
   eden-bowls-ups-labels:
+  eden-bowls-invoices:

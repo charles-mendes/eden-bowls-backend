@@ -17,7 +17,7 @@ The store repo constant `DOMAIN_COM_URL` is `https://www.edenbowls.com`. `DOMAIN
 - `JWT_AUTH_SECRET_KEY`
 - `AUTH_OTP_PEPPER` or `AUTH_SALT` (the JWT secret is not a pepper)
 - `AUTH_SMTP_HOST` and `AUTH_MAIL_FROM`
-- Stripe US secret and webhook secret (`STRIPE_US_*`, or the legacy `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET`)
+- Stripe US secret and webhook secret (`STRIPE_US_SECRET_KEY` and `STRIPE_US_WEBHOOK_SECRET` only; `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read)
 - `STRIPE_BR_SECRET_KEY` and `STRIPE_BR_WEBHOOK_SECRET`
 - `UPS_CLIENT_ID`, `UPS_CLIENT_SECRET`, `UPS_ACCOUNT_NUMBER`
 - `METRICS_TOKEN`
@@ -27,7 +27,7 @@ The store repo constant `DOMAIN_COM_URL` is `https://www.edenbowls.com`. `DOMAIN
 
 `JWT_AUTH_ISSUER` must be `https` and must not use `localhost`.
 
-`UPS_ENV` must be `production` or `cie`. QA stays on `cie`. There is no silent fallback to CIE when `NODE_ENV` is production.
+`UPS_ENV` must be `production` when `EDEN_RUNTIME=production`. A blank value or `cie` stops the process. Local and QA resolve to `cie` and stop the process on `UPS_ENV=production`. See [UPS](#ups).
 
 `AUTH_REFRESH_COOKIE_SECURE` must be enabled. Leave `AUTH_REFRESH_COOKIE_DOMAIN` empty so the refresh cookie stays host-only on the API host. If `CORS_ORIGINS` includes both an `edenbowls.com` host and an `edenbowls.com.br` host, `AUTH_REFRESH_COOKIE_SAME_SITE` must be `none`. A list that is only `https://qa.edenbowls.com,https://qa-admin.edenbowls.com` may stay `lax`.
 
@@ -47,12 +47,38 @@ Register webhooks at:
 
 - `POST /stripe/v1/webhook/us`
 - `POST /stripe/v1/webhook/br`
+- `https://qa-api.edenbowls.com/stripe/v1/webhook/br`
+- `https://qa-api.edenbowls.com/stripe/v1/webhook/us`
+- `https://api.edenbowls.com/stripe/v1/webhook/br`
+- `https://api.edenbowls.com/stripe/v1/webhook/us`
 
-The legacy `POST /stripe/v1/webhook` is the US endpoint. Put each signing secret in `STRIPE_US_WEBHOOK_SECRET` and `STRIPE_BR_WEBHOOK_SECRET`.
+`api.edenbowls.com` is not a host in `infra/caddy/Caddyfile`. A live signed-event check is blocked until DNS, TLS, and a reverse proxy outside this repo route `POST /stripe/v1/webhook/br` and `POST /stripe/v1/webhook/us` to the production API. Do not add that hostname to the Caddyfile. The two live webhook endpoints stay disabled until that host routes both paths and the live signing secrets are loaded. Live secrets are written only after the ledger count and the customer-meta count are each zero, including when a ledger price id is a seed placeholder.
+
+`main` does not deploy QA. `deploy.yml` exists on `ci/minimal-ci` and publishes QA only after that branch is merged and CI on `main` succeeds. The QA host `.env` is what compose reads. `EDEN_RUNTIME` must already be set before a process that requires it is started. This repo has no production deploy workflow.
+
+Production Stripe rollback stops the production store, because `STRIPE_BR_ENABLED=false` only stops Brazil. QA Stripe rollback restores the dump taken before the retire script. Repeating the cutover deletes `background_job_cursors` where `job_name` is `stripe_ledger_retire`. Schema-migration rollback stays a database dump restore.
+
+Each endpoint (US and BR, test and live) must subscribe to the 29 events in `src/infrastructure/stripe/stripe-webhook-events.js`. That file is the canonical list. Section 8 of `docs-new/FEATURE_STRIPE_SEPARAR_PAISES/COMO-CONFIGURAR-STRIPE.md` mirrors it for whoever configures the dashboard, and `tests/stripe-webhook-events.test.js` fails when the two differ. Do not select “all events” and do not register a shorter list. An event outside the list still gets 200, and the API logs `Stripe webhook event is not in the subscribed list.`. `npm run stripe:listen` and `npm run stripe:listen:br` do not pass `--events`, so locally the CLI forwards every event.
+
+The legacy `POST /stripe/v1/webhook` is the US endpoint. Put each signing secret in `STRIPE_US_WEBHOOK_SECRET` and `STRIPE_BR_WEBHOOK_SECRET`. Production accepts only `STRIPE_US_SECRET_KEY` and `STRIPE_US_WEBHOOK_SECRET` for the US account. A host env outside this repo must copy any live legacy secret onto those names before deploy. `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are not read.
+
+Shipping is not an environment product id. Checkout stores `shipping_product_id` on the subscription. Before production, review subscriptions that have a positive shipping amount and no `shipping_product_id`: that renewal adds no shipping line and only logs a warning. More than one `Shipping` product can exist after a process restart or two concurrent first checkouts. A QA host env that is not this repo `.env` must drop `STRIPE_US_SHIPPING_PRODUCT_ID`, `STRIPE_SHIPPING_PRODUCT_ID`, and `STRIPE_BR_SHIPPING_PRODUCT_ID` at deploy; those names are not read.
 
 ## UPS
 
-`UPS_ENV=cie` uses the UPS customer integration environment. `UPS_ENV=production` uses `https://onlinetools.ups.com`. QA keeps `cie`.
+The same UPS client id and secret work on CIE and on production, so `EDEN_RUNTIME` picks the host, not the credentials.
+
+| `EDEN_RUNTIME` | `UPS_ENV` accepted | Host | Charges |
+|---|---|---|---|
+| `local` | empty or `cie` | `https://wwwcie.ups.com` | no |
+| `qa` | empty or `cie` | `https://wwwcie.ups.com` | no |
+| `production` | `production` only | `https://onlinetools.ups.com` | yes |
+
+Any other combination stops `parseEnv` before the API listens. `UpsClient` checks the same rule when it is built.
+
+One shipment per invoice that is not voided is enforced by `uq_ups_shipments_active_invoice` (migration `1700000000030`). That migration stops when an invoice already has two shipments that are not voided. Void the extra label in UPS and set its row to `voided` first.
+
+When UPS does not confirm a label (timeout, network error, 5xx, or an answer without a tracking number), the row becomes `unknown` and `POST /api/v1/admin/billing/subscriptions/:id/shipments` answers `502 ups_shipment_unknown`. Later attempts for that invoice answer `409 ups_shipment_unresolved` and do not call UPS. Look up the shipment in the UPS account. If a label exists, void it there. Then close the row with `POST /api/v1/admin/shipments/:id/void` and body `{"confirm_not_created": true}`. A 4xx from UPS or a failed token step deletes the pending row, so the operator can try again.
 
 ## SMTP
 

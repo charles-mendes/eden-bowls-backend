@@ -30,7 +30,7 @@ Arquivos:
 - `tests/stripe-webhook.routes.test.js`
 - `tests/stripe-webhook.service.test.js`
 
-Env: `STRIPE_US_WEBHOOK_SECRET` (fallback `STRIPE_WEBHOOK_SECRET`) e `STRIPE_BR_WEBHOOK_SECRET`.
+Env: `STRIPE_US_WEBHOOK_SECRET` e `STRIPE_BR_WEBHOOK_SECRET`. `STRIPE_WEBHOOK_SECRET` is not read.
 
 ## Responsabilidade
 
@@ -46,7 +46,7 @@ Pública. **Sem JWT**. Auth = `Stripe-Signature` + secret da conta do path:
 
 | Path | Secret |
 |------|--------|
-| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET` (fallback `STRIPE_WEBHOOK_SECRET`) |
+| `/stripe/v1/webhook/us` e `/stripe/v1/webhook` | `STRIPE_US_WEBHOOK_SECRET`. `STRIPE_WEBHOOK_SECRET` is not read |
 | `/stripe/v1/webhook/br` | `STRIPE_BR_WEBHOOK_SECRET` |
 
 Path **fora** de `/api/v1`: `buildBearerTokenMiddleware` já faz `next()` se `!request.path.startsWith('/api/v1')` — igual `/shipping/v1/*` e `/health`.
@@ -87,7 +87,7 @@ Sem este evento, Meu Plano fica vazio e a 2a compra ainda pode receber cupom de 
 
 O checkout Node so coloca frete na **1a** invoice (`add_invoice_items`). Ciclos seguintes **somem o frete** se este handler nao existir.
 
-Alvo: se `billing_reason === 'subscription_cycle'` (nao `subscription_create`), invoice `status === 'draft'`, e a sub/ledger tiver shipping persistido, chamar `invoiceItems.create` com o product da **mesma** conta (`STRIPE_US_SHIPPING_PRODUCT_ID` / `STRIPE_BR_SHIPPING_PRODUCT_ID`; US herda `STRIPE_SHIPPING_PRODUCT_ID`) **antes** da invoice fechar.
+Alvo: se `billing_reason === 'subscription_cycle'` (nao `subscription_create`), invoice `status === 'draft'`, e a sub/ledger tiver shipping persistido, chamar `invoiceItems.create` com o `shipping_product_id` gravado na metadata da assinatura, na mesma conta, **antes** da invoice fechar. Sem esse `prod_`, o handler não adiciona frete e registra um aviso.
 
 Checkout precisa gravar na metadata da Subscription (hoje so tem `wp_user_id` + `source`):
 
@@ -214,14 +214,12 @@ Resolver user no ACK repository ja le `checkout_reference` por `user_id`. O webh
 
 | Variavel | Conta | Fallback |
 |----------|--------|----------|
-| `STRIPE_US_WEBHOOK_SECRET` | US | `STRIPE_WEBHOOK_SECRET` |
+| `STRIPE_US_WEBHOOK_SECRET` | US | nenhum. `STRIPE_WEBHOOK_SECRET` is not read |
 | `STRIPE_BR_WEBHOOK_SECRET` | BR | nenhum |
-| `STRIPE_US_SHIPPING_PRODUCT_ID` | US | `STRIPE_SHIPPING_PRODUCT_ID` |
-| `STRIPE_BR_SHIPPING_PRODUCT_ID` | BR | nenhum |
 
 Sem secret da conta do path → 503 neste path, nao derrubar o resto da API.
 
-Dashboard: endpoint US → `{API}/stripe/v1/webhook/us`; BR → `{API}/stripe/v1/webhook/br`. Eventos minimos: `invoice.paid`, `invoice.created`, `payment_intent.succeeded`, `payment_intent.processing`, `payment_intent.payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`. Test + live × br + us = 4 endpoints.
+Dashboard: endpoint US → `{API}/stripe/v1/webhook/us`; BR → `{API}/stripe/v1/webhook/br`. Sempre que configurar o endpoint, assine os 29 eventos de `src/infrastructure/stripe/stripe-webhook-events.js` (não “all events”). Test + live × br + us = 4 endpoints.
 
 ## O que mudou em relacao ao WordPress
 

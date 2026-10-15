@@ -111,4 +111,43 @@ describe('SubscriptionsEditCommitService', () => {
     });
     expect(repository.commit).not.toHaveBeenCalled();
   });
+
+  function ledgerWithStatus(status, others = []) {
+    return {
+      findByUserIdAndSubscriptionId: jest.fn().mockResolvedValue({
+        stripeSubscriptionId: 'sub_123',
+        userId: 7,
+        status,
+        editPaymentPending: false,
+        subscriptionTermMonths: 1,
+        petsSnapshot: { pet_ids: ['pet_1'] }
+      }),
+      listByUserId: jest.fn().mockResolvedValue(others)
+    };
+  }
+
+  test('a trialing subscription after a skip is editable like an active one', async () => {
+    for (const status of ['active', 'trialing']) {
+      const { service, repository } = buildService({ ledgerRepository: ledgerWithStatus(status) });
+      await expect(service.commit({ userId: 7, subscriptionId: 'sub_123', payload: validPayload }))
+        .resolves.toMatchObject({ success: true });
+      expect(repository.commit).toHaveBeenCalledTimes(1);
+    }
+    const { service, repository } = buildService({ ledgerRepository: ledgerWithStatus('canceled') });
+    await expect(service.commit({ userId: 7, subscriptionId: 'sub_123', payload: validPayload }))
+      .rejects.toMatchObject({ statusCode: 422, details: { code: 'subscription_not_editable' } });
+    expect(repository.commit).not.toHaveBeenCalled();
+  });
+
+  test('a pet on another trialing subscription is blocked like one on an active subscription', async () => {
+    const payload = { ...validPayload, pets: [{ ...validPayload.pets[0], pet_id: 'pet_9' }] };
+    for (const status of ['active', 'trialing']) {
+      const { service, repository } = buildService({
+        ledgerRepository: ledgerWithStatus('active', [{ stripeSubscriptionId: 'sub_other', status, petsSnapshot: { pet_ids: ['pet_9'] } }])
+      });
+      await expect(service.commit({ userId: 7, subscriptionId: 'sub_123', payload }))
+        .rejects.toMatchObject({ statusCode: 422, details: { code: 'pet_blocked' } });
+      expect(repository.commit).not.toHaveBeenCalled();
+    }
+  });
 });

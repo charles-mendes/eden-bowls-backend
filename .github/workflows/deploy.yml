@@ -1,0 +1,134 @@
+name: deploy
+
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-qa-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Publicar API no QA
+        uses: appleboy/ssh-action@v1.2.5
+        env:
+          DEPLOY_SHA: ${{ env.DEPLOY_SHA }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 30m
+          envs: DEPLOY_SHA
+          script: |
+            set -eu
+
+            APP_DIR=/var/www/html/new-application/eden-bowls-backend
+            cd "$APP_DIR"
+
+            git_cmd() {
+              git -c safe.directory="$APP_DIR" "$@"
+            }
+
+            wait_http() {
+              url="$1"
+              i=0
+              code=""
+              while [ "$i" -lt 45 ]; do
+                code="$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' "$url" || true)"
+                if [ "$code" = "200" ]; then
+                  echo "$url HTTP 200"
+                  return 0
+                fi
+                i=$((i + 1))
+                sleep 2
+              done
+              echo "$url não respondeu 200 (último código: ${code:-nenhum})"
+              return 1
+            }
+
+            case "${DEPLOY_SHA:-}" in
+              *[!0-9a-f]*|"")
+                echo "DEPLOY_SHA ausente ou inválido."
+                exit 1
+                ;;
+            esac
+            if [ "${#DEPLOY_SHA}" -ne 40 ]; then
+              echo "DEPLOY_SHA ausente ou inválido."
+              exit 1
+            fi
+
+            echo "Publicando API $DEPLOY_SHA"
+
+            dirty="$(git_cmd status --porcelain --untracked-files=no)"
+            if [ -n "$dirty" ]; then
+              echo "Há alterações locais em arquivos versionados. O deploy parou para não sobrescrever o servidor."
+              printf '%s\n' "$dirty"
+              exit 1
+            fi
+
+            PREV="$(git_cmd rev-parse HEAD)"
+
+            export GIT_TERMINAL_PROMPT=0
+            git_cmd fetch origin main
+            if ! git_cmd cat-file -e "${DEPLOY_SHA}^{commit}" 2>/dev/null; then
+              git_cmd fetch --unshallow origin main 2>/dev/null || git_cmd fetch origin main
+            fi
+            if ! git_cmd merge-base --is-ancestor "$DEPLOY_SHA" origin/main; then
+              echo "O commit $DEPLOY_SHA não está em origin/main."
+              exit 1
+            fi
+            git_cmd checkout --detach "$DEPLOY_SHA"
+
+            if [ ! -f .env ]; then
+              echo "Arquivo .env não encontrado em $APP_DIR"
+              exit 1
+            fi
+            if [ ! -f .env.proxy ]; then
+              echo "Arquivo .env.proxy não encontrado em $APP_DIR"
+              exit 1
+            fi
+
+            docker compose --env-file .env -f docker-compose.qa.yml up -d --build --no-deps api cron
+            wait_http http://127.0.0.1:3000/health
+            curl -fsS --max-time 10 http://127.0.0.1:3000/health
+            echo
+
+            reload_caddy=0
+            if [ "$PREV" = "$DEPLOY_SHA" ]; then
+              reload_caddy=0
+            elif names="$(git_cmd diff --name-only "$PREV" "$DEPLOY_SHA" -- infra/caddy/Caddyfile docker-compose.proxy.yml)"; then
+              if [ -n "$names" ]; then
+                echo "Caddyfile ou proxy mudou:"
+                printf '%s\n' "$names"
+                reload_caddy=1
+              fi
+            else
+              echo "Não foi possível comparar o Caddyfile com o commit anterior. Recriando o proxy."
+              reload_caddy=1
+            fi
+
+            if [ "$reload_caddy" -eq 1 ]; then
+              docker compose --env-file .env.proxy -f docker-compose.proxy.yml up -d --force-recreate
+            else
+              docker compose --env-file .env.proxy -f docker-compose.proxy.yml up -d
+            fi
+
+            echo "API publicada em $DEPLOY_SHA"

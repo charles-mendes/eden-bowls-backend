@@ -1,12 +1,10 @@
 # Perfil da conta no backend Node
 
-Documentacao para **implementar** as rotas de My Profile no `eden-bowls-backend`.
+Contrato das rotas de My Profile no `eden-bowls-backend`. `registerProfileRoutes` em `src/app.js` registra `/api/v1/profile*`. O front chama esses paths com o JWT do Node.
 
-Hoje **nenhuma** rota `/api/v1/profile*` existe em `src/app.js`. O front ainda chama o WordPress (`/custom/v1/profile*`) com o mesmo JWT emitido pelo Node.
+Identidade: **JWT**. Nao ha `session_id`. Nao ha `x-session-token`. O usuario e `request.currentUser.id` (claim `data.user.id`).
 
-Identidade: **JWT**. Nao ha `session_id`. Nao ha `x-session-token`. Nao ha cookie WP. O usuario e `request.currentUser.id` (claim `data.user.id`).
-
-Analise legado WP: `docs/profile/`.
+Analise historica: `docs/archive/wordpress-migration/profile/`. Nao e modelo de implementacao.
 
 Contrato do front:
 
@@ -19,19 +17,19 @@ Contrato do front:
 
 ## Estado atual
 
-| Rota alvo Node | Metodo | Estado | Front hoje |
+| Rota Node | Metodo | Estado | Front |
 |---|---|---|---|
-| `/api/v1/profile` | GET | **404** | `GET /custom/v1/profile` |
-| `/api/v1/profile/personal` | PUT | **404** | `PUT /custom/v1/profile/personal` |
-| `/api/v1/profile/delivery` | PUT | **404** | `PUT /custom/v1/profile/delivery` |
-| `/api/v1/profile/email` | PUT | **404** | `PUT /custom/v1/profile/email` |
-| `/api/v1/profile/password` | PUT | **404** | `PUT /custom/v1/profile/password` |
-| `/api/v1/profile/avatar` | POST | **404** | `POST /custom/v1/profile/avatar` |
-| `/api/v1/profile` | DELETE | **404** | `DELETE /custom/v1/profile` |
+| `/api/v1/profile` | GET | registrada | `GET /api/v1/profile` |
+| `/api/v1/profile/personal` | PUT | registrada | `PUT /api/v1/profile/personal` |
+| `/api/v1/profile/delivery` | PUT | registrada | `PUT /api/v1/profile/delivery` |
+| `/api/v1/profile/email` | PUT | registrada | `PUT /api/v1/profile/email` |
+| `/api/v1/profile/password` | PUT | registrada | `PUT /api/v1/profile/password` |
+| `/api/v1/profile/avatar` | POST | registrada | `POST /api/v1/profile/avatar` |
+| `/api/v1/profile` | DELETE | registrada | `DELETE /api/v1/profile` |
 
 ## Mudanca de modelo
 
-| Aspecto | WordPress (legado) | Node (alvo) |
+| Aspecto | Legado substituido | Node (atual) |
 |---|---|---|
 | Identidade | JWT ou cookie WP | so `Authorization: Bearer <jwt>` |
 | Sessao de onboarding | nao usava nesta familia | continua **nao** usando |
@@ -44,7 +42,7 @@ Contrato do front:
 | Logout apos senha | destroi cookies WP; JWT **segue valido** | revogar `auth_refresh_tokens` do user |
 | Delete | `wp_delete_user`; Stripe **nao** e chamado | cancelar leftover Stripe + apagar user + revogar refresh |
 
-O front de perfil ainda parseia o envelope WP (`body.code` + `body.data.field` / `body.data.errors`). Ao ligar as rotas Node, `profileApi.ts` tem de passar a ler `details.code` / `details.field` / `details.errors` — o mesmo padrao do error handler em `src/app.js`.
+`profileApi.ts` le `details.code`, `details.field` e `details.errors`, e ainda aceita `data.field` / `data.errors` como fallback.
 
 ## Rotas cobertas
 

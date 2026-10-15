@@ -31,7 +31,7 @@ push branches: [main]
 workflow_dispatch
 ```
 
-`permissions: contents: read`. Node 20. `npm ci`. No `pull_request_target`. Concurrency group per ref, cancel in progress.
+`permissions: contents: read`. Node 20. `npm ci`. No `pull_request_target`. One concurrency group per ref. `cancel-in-progress` is true only for `pull_request`, so a later push to `main` does not cancel the run of the previous commit. Each job sets `timeout-minutes: 20`. Action references stay on the same major tags the Copilot workflow already uses (`actions/checkout@v4`, `actions/setup-node@v4`); pinning SHAs is out of scope.
 
 ### Jobs
 
@@ -42,21 +42,16 @@ pull_request | push main | workflow_dispatch
         |     |
         |     +-- integration   needs: unit
         |
-        +-- config    parseEnv() with placeholders
+        +-- config    parseEnv() with NODE_ENV=production
 ```
 
 `unit` does not set `RUN_DB_INTEGRATION_TESTS`, so the integration files skip. It has no service container.
 
-`integration` declares `needs: [unit]`. It adds a MySQL 8.4 service with a health check, creates the database via the image's own env (`MYSQL_DATABASE`, `MYSQL_ROOT_PASSWORD`), and publishes port 3306 to the job. The job then exports only:
+`integration` declares `needs: [unit]`. It adds a MySQL 8.4 service with a health check, creates the database via the image's own env (`MYSQL_DATABASE`, `MYSQL_ROOT_PASSWORD`), and publishes port 3306 to the job. The job exports only `INTEGRATION_DB_HOST=127.0.0.1`, `INTEGRATION_DB_PORT=3306`, and throwaway `INTEGRATION_DB_USER` / `INTEGRATION_DB_PASSWORD` / `INTEGRATION_DB_NAME`. It does not also export `RUN_DB_INTEGRATION_TESTS`: `npm run test:integration` already sets that for the Jest process. Those literals are not GitHub secrets and must not be echoed.
 
-- `RUN_DB_INTEGRATION_TESTS=true`
-- `INTEGRATION_DB_HOST=127.0.0.1`
-- `INTEGRATION_DB_PORT=3306`
-- `INTEGRATION_DB_USER` / `INTEGRATION_DB_PASSWORD` / `INTEGRATION_DB_NAME` as fixed CI literals (for example user `root`, password `ci`, database `eden_bowls`)
+Jest exits 0 when every integration case is skipped. After the script, the job reads the Jest JSON report and fails unless `numPassedTests` is greater than 0 and `numPendingTests` is 0. A green log that only says skipped is a failed check.
 
-Those literals are not GitHub secrets and must not be echoed. Then `npm run test:integration`.
-
-`config` has no `needs`. It runs `node -e` that requires `parseEnv` and exits 0 or 1. The placeholder env is a workflow `env:` block: `NODE_ENV=test`, a dummy `JWT_AUTH_SECRET_KEY`, and dummy `DB_*` that are never connected. The script must not `console.log` the result. Do not pass Stripe, SMTP, or UPS values; the schema marks them optional.
+`config` has no `needs`. It uses `actions/setup-node` and `npm ci` before any `node -e`, because `parseEnv` loads Zod from `node_modules`. `NODE_ENV=test` does not run `assertProductionEnv` in `src/config/env.js`, and `JWT_AUTH_SECRET_KEY` is optional outside production, so omitting it would still pass. The job therefore uses `NODE_ENV=production` and synthetic values that are not the rejected literals `change-this-in-production` or `hsr-default-salt`, including the Stripe, SMTP, UPS, and metrics values that production mode requires. The command calls `parseEnv()` and does not `console.log` the result. The step must not use `set -x` or echo the environment. A local check, not a second CI job, confirms that `NODE_ENV=production` with `JWT_AUTH_SECRET_KEY=change-this-in-production` exits non-zero.
 
 Alternative considered: run migrate, then integration, on the service database. Rejected because current migrations assume WordPress tables. The integration tests do not call the migration runner.
 
@@ -68,6 +63,7 @@ Success means `unit`, `integration`, and `config` are green. `integration` is sk
 
 ## Risks / Trade-offs
 
+- [Jest exits 0 when the integration suite is skipped] → The job fails unless the JSON report shows passed tests and zero pending tests.
 - [Integration tests create ad hoc tables and still assume a reachable MySQL] → Service health check before Jest. They do not need the app schema.
 - [A future migration that the integration tests start to require will not be covered] → Out of scope until seeds no longer touch `wp_*`. Called out so nobody adds `npm run migrate` to this workflow as a drive-by.
 - [`npm test` and `npm run test:unit` are the same command] → CI calls `npm test` only. No second unit job.

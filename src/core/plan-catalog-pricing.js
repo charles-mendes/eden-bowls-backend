@@ -193,6 +193,22 @@ function pickClosestVariation(variations, targetGrams) {
   return best ? best.variation : null;
 }
 
+// Every catalog recipe at the variation closest to one pet's pack size, so a recipe at zero still has a unit price.
+function catalogPricesAt(catalogItems, targetGrams) {
+  const prices = [];
+  for (const [flavor, variations] of indexFlavorVariations(catalogItems)) {
+    const variation = pickClosestVariation(variations, targetGrams);
+    if (!variation || prices.some((price) => price.flavor === variation.flavor)) continue;
+    prices.push({
+      flavor: variation.flavor,
+      flavor_label: variation.flavor_label || variation.flavor,
+      unit_price: roundMoney(variation.price),
+      pack_size_grams: Math.round(variation.grams)
+    });
+  }
+  return prices;
+}
+
 function throwPlanError(status, code, message, errors) {
   throw new HttpError(status, message, errors ? { code, errors } : { code });
 }
@@ -335,6 +351,7 @@ module.exports = {
   aggregatePetTotals,
   buildCatalogPricingSnapshot,
   buildPlanPreviewResponse,
+  catalogPricesAt,
   flattenProductCatalog,
   formatPackSizeLabel,
   indexFlavorVariations,

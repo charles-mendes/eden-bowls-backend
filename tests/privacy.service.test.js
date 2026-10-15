@@ -222,3 +222,36 @@ describe('PrivacyService', () => {
     await expect(service.getUserPrivacySnapshot(91, actor)).rejects.toMatchObject({ statusCode: 404 });
   });
 });
+
+describe('PrivacyService customer note', () => {
+  test('lists the note and lets the customer reword an open request', async () => {
+    const { service, repository } = createService();
+    repository.findRequestById.mockResolvedValue(requestRow({ payload: { note: 'old' } }));
+
+    const updated = await service.updateOwnRequestNote({ userId: 77, requestId: 11, note: 'Meu CEP mudou' });
+
+    expect(repository.updateRequest).toHaveBeenCalledWith(11, { payload: { note: 'Meu CEP mudou' } });
+    expect(updated).toMatchObject({ id: 11, note: 'Meu CEP mudou', editable: true });
+  });
+
+  test('keeps the export package when the note changes', async () => {
+    const { service, repository } = createService();
+    repository.findRequestById.mockResolvedValue(requestRow({ status: 'in_progress', payload: { note: 'a', identityTokenHash: 'h' } }));
+
+    await service.updateOwnRequestNote({ userId: 77, requestId: 11, note: 'b' });
+
+    expect(repository.updateRequest).toHaveBeenCalledWith(11, { payload: { note: 'b', identityTokenHash: 'h' } });
+  });
+
+  test('refuses a closed request and another customer\'s request', async () => {
+    const { service, repository } = createService();
+    repository.findRequestById.mockResolvedValue(requestRow({ status: 'completed' }));
+    await expect(service.updateOwnRequestNote({ userId: 77, requestId: 11, note: 'x' }))
+      .rejects.toMatchObject({ statusCode: 422, details: { code: 'request_closed' } });
+
+    repository.findRequestById.mockResolvedValue(requestRow());
+    await expect(service.updateOwnRequestNote({ userId: 78, requestId: 11, note: 'x' }))
+      .rejects.toMatchObject({ statusCode: 404 });
+    expect(repository.updateRequest).not.toHaveBeenCalled();
+  });
+});

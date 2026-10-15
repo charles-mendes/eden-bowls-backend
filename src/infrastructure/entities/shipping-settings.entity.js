@@ -28,6 +28,24 @@ function buildShippingBrSettingsEntitySchema(tableName = 'shipping_br_settings')
         length: 191,
         default: ''
       },
+      centerNumber: {
+        name: 'center_number',
+        type: String,
+        length: 32,
+        default: ''
+      },
+      centerComplement: {
+        name: 'center_complement',
+        type: String,
+        length: 128,
+        default: ''
+      },
+      centerNeighborhood: {
+        name: 'center_neighborhood',
+        type: String,
+        length: 128,
+        default: ''
+      },
       centerCity: {
         name: 'center_city',
         type: String,
@@ -173,6 +191,12 @@ function buildShippingUsSettingsEntitySchema(tableName = 'shipping_us_settings')
       },
       shipFromStreet: {
         name: 'ship_from_street',
+        type: String,
+        length: 191,
+        default: ''
+      },
+      shipFromStreet2: {
+        name: 'ship_from_street2',
         type: String,
         length: 191,
         default: ''

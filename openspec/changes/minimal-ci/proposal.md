@@ -7,7 +7,7 @@ Pull requests to `eden-bowls-backend` can merge with no automated check. The onl
 ## What Changes
 
 - Add one GitHub Actions workflow on pull requests, pushes to `main`, and manual dispatch.
-- Required jobs: Jest unit (`npm test`, integration files self-skip), then a MySQL 8.4 integration job (`npm run test:integration`) that starts only after unit tests pass, then a config check that loads `parseEnv()` with placeholder values and does not print them.
+- Required checks, named `unit`, `integration`, and `config`: Jest unit (`npm test`, integration files self-skip), then a MySQL 8.4 integration job (`npm run test:integration`) that starts only after `unit` passes and fails if those cases are skipped, plus a `config` check that loads `parseEnv()` in production mode with synthetic values and does not print them.
 - Do not run `npm run migrate` in this pipeline. Migration seeds still query WordPress tables (`wp_posts` and related). An empty MySQL service is not a safe target.
 - Do not add Playwright or ESLint. This repository has neither.
 - Leave `copilot-setup-steps.yml` in place.

@@ -13,7 +13,7 @@ Front:
 
 Rota legado WordPress:
 
-- `PUT|PATCH|POST /custom/v1/profile/email` — `docs/profile/04-put-profile-email.md`
+- `PUT|PATCH|POST /custom/v1/profile/email` — `docs/archive/wordpress-migration/profile/04-put-profile-email.md`
 
 Checagem publica (nao substitui esta rota):
 

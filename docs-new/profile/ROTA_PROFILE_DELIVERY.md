@@ -13,7 +13,7 @@ Front:
 
 Rota legado WordPress:
 
-- `PUT|PATCH|POST /custom/v1/profile/delivery` — `docs/profile/03-put-profile-delivery.md`
+- `PUT|PATCH|POST /custom/v1/profile/delivery` — `docs/archive/wordpress-migration/profile/03-put-profile-delivery.md`
 
 Checkout que **grava** o mesmo JSON:
 

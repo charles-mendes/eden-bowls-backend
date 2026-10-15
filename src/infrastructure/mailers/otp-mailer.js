@@ -34,7 +34,7 @@ function createOtpMailer(options = {}) {
     ? options.createTransport
     : () => createSmtpTransport(smtp);
 
-  async function sendMail({ to, subject, text, html }) {
+  async function sendMail({ to, subject, text, html, attachments }) {
     const recipient = String(to || '').trim();
     if (!recipient) {
       throw new Error('Mail recipient is missing.');
@@ -69,6 +69,9 @@ function createOtpMailer(options = {}) {
       };
       if (mailHtml) {
         payload.html = mailHtml;
+      }
+      if (Array.isArray(attachments) && attachments.length > 0) {
+        payload.attachments = attachments;
       }
       await transporter.sendMail(payload);
       logger.info({ to: recipient, subject: mailSubject }, 'Email sent.');

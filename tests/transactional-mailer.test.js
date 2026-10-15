@@ -6,17 +6,18 @@ function buildMailer(overrides = {}) {
   const markSent = overrides.markSent || jest.fn().mockResolvedValue(undefined);
   const savePayload = overrides.savePayload || jest.fn().mockResolvedValue(undefined);
   const recordSendFailure = overrides.recordSendFailure || jest.fn().mockResolvedValue({ attempts: 1, exhausted: false });
+  const releaseUnsent = overrides.releaseUnsent || jest.fn().mockResolvedValue(undefined);
   const listResendable = overrides.listResendable || jest.fn().mockResolvedValue([]);
   const logger = overrides.logger || { error: jest.fn(), warn: jest.fn(), info: jest.fn() };
   const mailer = createTransactionalMailer({
     otpMailer: { sendMail },
-    claimsRepository: { claimMailSend, markSent, savePayload, recordSendFailure, listResendable },
+    claimsRepository: { claimMailSend, markSent, savePayload, recordSendFailure, releaseUnsent, listResendable },
     storeAppUrl: 'http://localhost:5173',
     adminAppUrl: 'http://localhost:5174',
     opsEmails: overrides.opsEmails === undefined ? ['ops@edenbowls.com'] : overrides.opsEmails,
     logger
   });
-  return { mailer, sendMail, claimMailSend, markSent, savePayload, recordSendFailure, listResendable, logger };
+  return { mailer, sendMail, claimMailSend, markSent, savePayload, recordSendFailure, releaseUnsent, listResendable, logger };
 }
 
 const ledger = {
@@ -52,17 +53,54 @@ describe('createTransactionalMailer', () => {
     expect(markSent).toHaveBeenCalledWith(8);
   });
 
-  test('does not mark sent when SMTP throws after claim', async () => {
+  test('the renewal and the order confirmation carry the invoice PDF; the remembered payload does not', async () => {
+    const { mailer, sendMail, savePayload } = buildMailer();
+    const invoice = { id: 'in_1', amount_paid: 14450, currency: 'brl', customer_email: 'ana@example.com' };
+    const invoiceAttachment = { invoiceNumber: 'EB-2026-000418', filename: 'EB-2026-000418.pdf', content: Buffer.from('%PDF') };
+
+    const renewal = await mailer.notifyRenewal({ invoice, ledger, subscriptionId: 'sub_123', referenceId: 'in_1', invoiceAttachment });
+    await mailer.notifyOrderConfirmed({ invoice, ledger, subscriptionId: 'sub_123', invoiceAttachment });
+
+    expect(renewal).toMatchObject({ claimed: true, skipped: false, to: 'ana@example.com' });
+    for (const call of sendMail.mock.calls) {
+      expect(call[0].attachments).toEqual([{ filename: 'EB-2026-000418.pdf', content: Buffer.from('%PDF'), contentType: 'application/pdf' }]);
+      expect(call[0].text).toContain('Fatura: EB-2026-000418 (PDF em anexo)');
+    }
+    for (const call of savePayload.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('attachments');
+    }
+  });
+
+  test('without an invoice the letters have no attachment and no invoice row', async () => {
+    const { mailer, sendMail } = buildMailer();
+
+    await mailer.notifyRenewal({ invoice: { id: 'in_1', amount_paid: 14450, currency: 'brl' }, ledger, subscriptionId: 'sub_123', referenceId: 'in_1' });
+
+    expect(sendMail.mock.calls[0][0].attachments).toBeUndefined();
+    expect(sendMail.mock.calls[0][0].text).not.toContain('Fatura');
+  });
+
+  test('tries SMTP three times, then releases the unsent claim', async () => {
     const sendMail = jest.fn().mockRejectedValue({ code: 'EENVELOPE' });
-    const { mailer, markSent } = buildMailer({ sendMail });
+    const { mailer, markSent, releaseUnsent, logger } = buildMailer({ sendMail });
 
     await expect(mailer.notifyOrderConfirmed({
       invoice: { id: 'in_1', amount_paid: 1000, currency: 'usd' },
       ledger,
       subscriptionId: 'sub_123'
-    })).resolves.toMatchObject({ failed: true, claimed: true });
+    })).resolves.toMatchObject({ failed: true, claimed: false });
 
+    expect(sendMail).toHaveBeenCalledTimes(3);
     expect(markSent).not.toHaveBeenCalled();
+    expect(releaseUnsent).toHaveBeenCalledWith(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: 'order_confirmed',
+        subscriptionId: 'sub_123',
+        code: 'EENVELOPE'
+      }),
+      'Transactional email failed.'
+    );
   });
 
   test('skips admin mail when MAIL_OPS_TO is empty', async () => {
@@ -97,25 +135,8 @@ describe('createTransactionalMailer', () => {
     expect(sendMail).toHaveBeenCalledTimes(2);
   });
 
-  test('keeps sent_at null and increments attempts when SMTP throws', async () => {
-    const sendMail = jest.fn().mockRejectedValue(new Error('smtp down'));
-    const { mailer, markSent, recordSendFailure, claimMailSend } = buildMailer({ sendMail });
-
-    await mailer.notifyOrderConfirmed({
-      invoice: { id: 'in_1', amount_paid: 1000, currency: 'usd' },
-      ledger,
-      subscriptionId: 'sub_123'
-    });
-
-    expect(markSent).not.toHaveBeenCalled();
-    expect(recordSendFailure).toHaveBeenCalledWith(1, expect.any(Error));
-    expect(claimMailSend).toHaveBeenCalledTimes(1);
-  });
-
   test('resends an unsent claim once without a second claim insert', async () => {
-    const sendMail = jest.fn()
-      .mockRejectedValueOnce(new Error('smtp down'))
-      .mockResolvedValue({ skipped: false });
+    const sendMail = jest.fn().mockResolvedValue({ skipped: false });
     const listResendable = jest.fn().mockResolvedValue([{
       id: 4,
       template: 'order_confirmed',
@@ -124,15 +145,10 @@ describe('createTransactionalMailer', () => {
     }]);
     const { mailer, markSent, claimMailSend } = buildMailer({ sendMail, listResendable });
 
-    await mailer.notifyOrderConfirmed({
-      invoice: { id: 'in_1', amount_paid: 1000, currency: 'usd' },
-      ledger,
-      subscriptionId: 'sub_123'
-    });
     await mailer.resendUnsent({ now: new Date('2026-01-01T00:02:00Z') });
 
-    expect(claimMailSend).toHaveBeenCalledTimes(1);
-    expect(sendMail).toHaveBeenCalledTimes(2);
+    expect(claimMailSend).not.toHaveBeenCalled();
+    expect(sendMail).toHaveBeenCalledTimes(1);
     expect(markSent).toHaveBeenCalledTimes(1);
     expect(markSent).toHaveBeenCalledWith(4);
     expect(listResendable).toHaveBeenCalledWith(expect.objectContaining({
@@ -196,5 +212,59 @@ describe('createTransactionalMailer', () => {
     await mailer.resendUnsent();
 
     expect(sendMail).toHaveBeenCalledTimes(20);
+  });
+
+  test('sends each subscription letter once and skips when the email is missing', async () => {
+    const { mailer, sendMail, claimMailSend } = buildMailer();
+    const invoice = { id: 'in_9', amount_paid: 18900, currency: 'brl', customer_email: 'ana@example.com' };
+    const cycleLedger = { ...ledger, currentPeriodEnd: '2026-10-16 12:00:00', planLabel: 'Fresh Bowl' };
+
+    await mailer.notifyRenewal({ invoice, ledger: cycleLedger, subscriptionId: 'sub_123', referenceId: 'in_9' });
+    await mailer.notifyPaused({ ledger: cycleLedger, subscriptionId: 'sub_123', referenceId: 'paused:evt_1' });
+    await mailer.notifyResumed({ ledger: cycleLedger, subscriptionId: 'sub_123', referenceId: 'resumed:evt_2' });
+    await mailer.notifyCancelled({ ledger: cycleLedger, subscriptionId: 'sub_123', referenceId: 'deleted', endsAt: '2026-10-16 12:00:00' });
+    await mailer.notifyPlanChanged({ invoice, ledger: cycleLedger, subscriptionId: 'sub_123', referenceId: 'plan:in_9' });
+
+    expect(sendMail).toHaveBeenCalledTimes(5);
+    for (const call of sendMail.mock.calls) {
+      expect(call[0].to).toBe('ana@example.com');
+      expect(call[0].subject).toBeTruthy();
+      expect(call[0].text).toBeTruthy();
+      expect(call[0].html).toContain('Eden Bowls');
+    }
+    expect(claimMailSend.mock.calls.map((call) => call[0].template)).toEqual([
+      'renewal',
+      'paused',
+      'resumed',
+      'cancelled',
+      'plan_changed'
+    ]);
+
+    sendMail.mockClear();
+    await expect(mailer.notifyRenewal({
+      invoice: { id: 'in_9' },
+      ledger: { address: { country: 'BR' } },
+      subscriptionId: 'sub_123',
+      referenceId: 'in_9'
+    })).resolves.toMatchObject({ skipped: true, reason: 'missing_context' });
+    await expect(mailer.notifyPaused({
+      ledger: { stripeSubscriptionId: 'sub_123' },
+      subscriptionId: 'sub_123',
+      referenceId: 'paused:evt_1'
+    })).resolves.toMatchObject({ skipped: true, reason: 'missing_context' });
+    await expect(mailer.notifyResumed({
+      ledger: cycleLedger,
+      subscriptionId: 'sub_123'
+    })).resolves.toMatchObject({ skipped: true, reason: 'missing_context' });
+    await expect(mailer.notifyCancelled({
+      ledger: { address: { country: 'US' } },
+      referenceId: 'deleted'
+    })).resolves.toMatchObject({ skipped: true, reason: 'missing_context' });
+    await expect(mailer.notifyPlanChanged({
+      ledger: { ...cycleLedger, customerEmail: '' },
+      subscriptionId: 'sub_123',
+      referenceId: 'plan:in_9'
+    })).resolves.toMatchObject({ skipped: true, reason: 'missing_context' });
+    expect(sendMail).not.toHaveBeenCalled();
   });
 });

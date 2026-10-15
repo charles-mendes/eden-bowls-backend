@@ -94,7 +94,8 @@ describe('OnboardingSubscriptionCheckoutRepository', () => {
     const dataSource = {
       isInitialized: true,
       query: jest.fn().mockResolvedValue([
-        { post_id: 1001, meta_key: '_stripe_price_id', meta_value: 'price_seed_br_beef_300g' }
+        { post_id: 1001, meta_key: '_stripe_price_id', meta_value: 'price_seed_br_beef_300g' },
+        { post_id: 1001, meta_key: '_stripe_price_ids_by_currency', meta_value: '{"brl":"price_seed_br_beef_300g"}' }
       ])
     };
     const repository = new OnboardingSubscriptionCheckoutRepository(dataSource);
@@ -107,5 +108,26 @@ describe('OnboardingSubscriptionCheckoutRepository', () => {
     })).resolves.toEqual([
       { price: 'price_seed_br_beef_300g', quantity: 2, unit_price: 25, currency: 'brl' }
     ]);
+  });
+
+  test('does not use the single price field when the currency map has no entry', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn().mockResolvedValue([
+        { post_id: 1001, meta_key: '_stripe_price_id', meta_value: 'price_us_only' },
+        { post_id: 1001, meta_key: '_stripe_price_ids_by_currency', meta_value: '{"usd":"price_us_only"}' }
+      ])
+    };
+    const repository = new OnboardingSubscriptionCheckoutRepository(dataSource);
+
+    await expect(repository.resolveSubscriptionItems({
+      catalog_pricing: {
+        currency: 'BRL',
+        line_items: [{ variation_id: 1001, quantity: 1, unit_price: 25, currency: 'BRL' }]
+      }
+    })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'unmapped_variant', variation_id: 1001 }
+    });
   });
 });

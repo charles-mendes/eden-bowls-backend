@@ -41,10 +41,9 @@ function buildCheckoutFingerprint({
       return leftKey.localeCompare(rightKey);
     });
 
-  const petIds = (Array.isArray(pets) ? pets : [])
-    .map((pet) => Number(pet && pet.id != null ? pet.id : pet))
-    .filter((id) => Number.isFinite(id) && id > 0)
-    .sort((left, right) => left - right);
+  // Pet ids are UUIDs: they must stay strings, or every pet drops out of the fingerprint
+  // and a checkout for a new pet matches an already-paid checkout for another pet.
+  const petIds = normalizePetIds(pets);
 
   return hashCanonical({
     user_id: Number(userId || 0),
@@ -169,6 +168,9 @@ function evaluateCheckoutReuse(checkoutReference = {}, fingerprint = '', options
   }
 
   if (settled && fingerprintOk) {
+    if (hasUncoveredCheckoutPets(options.currentPetIds, options.subscribedPetIds)) {
+      return { reuse: false, reason: 'new_pets' };
+    }
     return { reuse: true, reason: 'settled' };
   }
 

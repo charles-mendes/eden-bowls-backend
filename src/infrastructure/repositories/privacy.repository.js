@@ -65,7 +65,7 @@ class PrivacyRepository {
       usermeta: options.usermetaTableName || 'wp_usermeta',
       pets: options.petsTableName || 'onboarding_pets',
       userState: options.userStateTableName || 'onboarding_user_state',
-      ledger: options.ledgerTableName || 'wp_hsr_stripe_subscriptions'
+      ledger: options.ledgerTableName || 'stripe_subscriptions'
     };
   }
 

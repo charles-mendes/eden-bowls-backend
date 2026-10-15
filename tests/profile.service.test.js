@@ -133,6 +133,28 @@ describe('ProfileService', () => {
     expect(profile.cookiePreferences).toEqual({ analytics: null, ads: null });
   });
 
+  test('returns number, neighborhood and country saved by the checkout', async () => {
+    const { service } = createService();
+    const profile = await service.getProfile({ userId: 77 });
+
+    expect(profile.delivery).toMatchObject({ number: '123', neighborhood: 'SOMA', country: 'US', state: 'CALIFORNIA', stateCode: 'CA' });
+  });
+
+  test('fills the missing fields of an address saved before the checkout stored them', async () => {
+    const { service } = createService({
+      repository: {
+        findUserById: jest.fn().mockResolvedValue(createUser({ phoneCountry: 'BR' })),
+        getAddress: jest.fn().mockResolvedValue({
+          exists: true,
+          address: { street: 'Rua A', city: 'Sao Paulo', state: 'sp', zipcode: '01310100' }
+        })
+      }
+    });
+    const profile = await service.getProfile({ userId: 77 });
+
+    expect(profile.delivery).toMatchObject({ address: 'Rua A', number: '', neighborhood: '', country: 'BR' });
+  });
+
   test('uppercases a Brazilian state and returns empty delivery when address is missing', async () => {
     const withBr = createService({
       repository: {
@@ -155,10 +177,14 @@ describe('ProfileService', () => {
     const emptyProfile = await missing.service.getProfile({ userId: 77 });
     expect(emptyProfile.delivery).toEqual({
       address: '',
+      number: '',
+      neighborhood: '',
       complement: '',
       city: '',
       state: '',
+      stateCode: '',
       zipCode: '',
+      country: '',
       deliveryInstructions: ''
     });
     expect(emptyProfile.avatarUrl).toBeNull();

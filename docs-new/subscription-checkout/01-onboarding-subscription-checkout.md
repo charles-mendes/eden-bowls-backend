@@ -4,7 +4,7 @@ Documentacao de **implementacao** do Place Order no `eden-bowls-backend`.
 
 Escopo: converter o estado autenticado do usuario (plano + endereco + frete) em cobranca Stripe da **primeira fatura**, devolver `stripe_client_secret` para o front confirmar o PaymentIntent, e gravar ledger `incomplete`. A cobranca so fecha no webhook `invoice.paid`.
 
-Origem WP: `docs/subscription-checkout/01-onboarding-subscription-checkout.md`. Nao copiar PHP. Nao recriar sessao.
+Origem WP: `docs/archive/wordpress-migration/subscription-checkout/01-onboarding-subscription-checkout.md`. Nao copiar PHP. Nao recriar sessao.
 
 Stripe (create, tax, cupom, lock, webhook): [04-stripe-create-webhook-e-efeitos.md](./04-stripe-create-webhook-e-efeitos.md).
 
@@ -146,7 +146,7 @@ Origem do JWT: `POST /api/v1/auth/token` (apos OTP). Envelope de erro padrao: ve
 
 ### 2.3 Pipeline comum (antes do create Stripe)
 
-Gate Woo (`woocommerce_required`) **nao existe**. Sem `STRIPE_SECRET_KEY` → `503 stripe_secret_missing`.
+Gate Woo (`woocommerce_required`) **nao existe**. Sem `STRIPE_US_SECRET_KEY` → `503 stripe_secret_missing`. `STRIPE_SECRET_KEY` is not read.
 
 1. `getCheckoutContext(userId)` — `plan_selection`, `address`, `shipping`, `recurrence`, `checkout_reference` + pets em `onboarding_pets`.
 2. `validateCheckoutState` — falha → 422, **nada gravado**.
@@ -406,7 +406,7 @@ Casar no front por `details.code` (e `message`). Manter os **mesmos codes** do W
 | 502 | `stripe_subscription_failed` | SDK throw / sub ou client_secret vazio |
 | 502 | `stripe_customer_failed` | create/retrieve/update sem `cus_` |
 | 502 | `stripe_price_retrieve_failed` | `prices.retrieve` throw (check de ciclo) |
-| 503 | `stripe_secret_missing` | `STRIPE_SECRET_KEY` vazio |
+| 503 | `stripe_secret_missing` | `STRIPE_US_SECRET_KEY` vazio. `STRIPE_SECRET_KEY` is not read |
 | 503 | `first_purchase_promo_not_configured` | elegivel e slot `promo_` vazio / prazo invalido |
 
 Nao devolver:

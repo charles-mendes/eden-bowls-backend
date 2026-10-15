@@ -55,6 +55,10 @@ const extendSchema = z.object({
   reason: z.string().trim().min(3).max(255)
 });
 
+const updateRequestSchema = z.object({
+  note: z.string().trim().max(2000)
+});
+
 const completeSchema = z.object({
   note: z.string().trim().max(2000).optional()
 });
@@ -74,6 +78,10 @@ function parseMarketingInput(input) {
 
 function parseCreateRequestInput(input) {
   return parseOrThrow(createRequestSchema, input);
+}
+
+function parseUpdateRequestInput(input) {
+  return parseOrThrow(updateRequestSchema, input);
 }
 
 function parseAdminCreateRequestInput(input) {
@@ -114,6 +122,7 @@ module.exports = {
   parseCookieInput,
   parseMarketingInput,
   parseCreateRequestInput,
+  parseUpdateRequestInput,
   parseAdminCreateRequestInput,
   parseAdminListQuery,
   parseRequestId,

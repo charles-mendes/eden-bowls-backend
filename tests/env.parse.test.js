@@ -22,13 +22,20 @@ function productionEnv(overrides = {}) {
     METRICS_TOKEN: 'metrics-token',
     DB_PASSWORD: 'db-password',
     CORS_ORIGINS: 'https://qa.edenbowls.com,https://qa-admin.edenbowls.com',
+    EDEN_RUNTIME: 'qa',
     ...overrides
   };
 }
 
 describe('parseEnv', () => {
+  test('rejects a missing runtime label', () => {
+    expect(() => parseEnv({ NODE_ENV: 'development' })).toThrow(/EDEN_RUNTIME/);
+    expect(() => parseEnv(productionEnv({ EDEN_RUNTIME: '' }))).toThrow(/EDEN_RUNTIME/);
+    expect(() => parseEnv(productionEnv({ EDEN_RUNTIME: 'staging' }))).toThrow(/EDEN_RUNTIME/);
+  });
+
   test('keeps development defaults when production keys are absent', () => {
-    const env = parseEnv({ NODE_ENV: 'development' });
+    const env = parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local' });
 
     expect(env.UPS_ENV).toBe('cie');
     expect(env.UPS_CLIENT_ID).toBe('');
@@ -40,15 +47,46 @@ describe('parseEnv', () => {
     expect(env.AUTH_REFRESH_COOKIE_DOMAIN).toBe('');
   });
 
-  test('keeps an explicit UPS production client id outside production', () => {
+  test('keeps the UPS client id outside production', () => {
     const env = parseEnv({
       NODE_ENV: 'development',
-      UPS_ENV: 'production',
+      EDEN_RUNTIME: 'local',
+      UPS_ENV: 'cie',
       UPS_CLIENT_ID: 'abc'
     });
 
-    expect(env.UPS_ENV).toBe('production');
+    expect(env.UPS_ENV).toBe('cie');
     expect(env.UPS_CLIENT_ID).toBe('abc');
+  });
+
+  describe('UPS environment follows EDEN_RUNTIME', () => {
+    test.each(['production', 'PRODUCTION', ' production '])('local refuses UPS_ENV=%j', (value) => {
+      expect(() => parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local', UPS_ENV: value })).toThrow(/UPS_ENV must be cie or unset when EDEN_RUNTIME is local/);
+    });
+
+    test('QA refuses UPS_ENV=production even with NODE_ENV=production', () => {
+      expect(() => parseEnv(productionEnv({ UPS_ENV: 'production' }))).toThrow(/UPS_ENV must be cie or unset when EDEN_RUNTIME is qa/);
+    });
+
+    test('local and QA refuse an unknown UPS_ENV', () => {
+      expect(() => parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local', UPS_ENV: 'sandbox' })).toThrow(/UPS_ENV/);
+      expect(() => parseEnv(productionEnv({ UPS_ENV: 'live' }))).toThrow(/UPS_ENV/);
+    });
+
+    test('local and QA resolve to cie when UPS_ENV is unset or blank', () => {
+      expect(parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local' }).UPS_ENV).toBe('cie');
+      expect(parseEnv({ NODE_ENV: 'test', EDEN_RUNTIME: 'local', UPS_ENV: '  ' }).UPS_ENV).toBe('cie');
+      expect(parseEnv(productionEnv({ UPS_ENV: undefined })).UPS_ENV).toBe('cie');
+      expect(parseEnv(productionEnv({ UPS_ENV: '' })).UPS_ENV).toBe('cie');
+    });
+
+    test('production resolves to production only when UPS_ENV says so', () => {
+      const runtime = { EDEN_RUNTIME: 'production', CORS_ORIGINS: 'https://edenbowls.com', SHIPPING_QUOTE_SECRET: 'quote-secret-value' };
+      expect(parseEnv(productionEnv({ ...runtime, UPS_ENV: 'production' })).UPS_ENV).toBe('production');
+      expect(() => parseEnv(productionEnv({ ...runtime, UPS_ENV: 'cie' }))).toThrow(/UPS_ENV must be production when EDEN_RUNTIME is production/);
+      expect(() => parseEnv(productionEnv({ ...runtime, UPS_ENV: '' }))).toThrow(/UPS_ENV must be production/);
+      expect(() => parseEnv(productionEnv({ ...runtime, UPS_ENV: undefined }))).toThrow(/UPS_ENV must be production/);
+    });
   });
 
   test('accepts a QA-only CORS list with SameSite lax', () => {
@@ -62,6 +100,81 @@ describe('parseEnv', () => {
     ]);
     expect(env.STRIPE_BR_ENABLED).toBe(true);
     expect(env.UPS_ENV).toBe('cie');
+    expect(env.STRIPE_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_US_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_BR_SHIPPING_PRODUCT_ID).toBeUndefined();
+  });
+
+  test('ignores leftover shipping product ids', () => {
+    const env = parseEnv(productionEnv({
+      STRIPE_SHIPPING_PRODUCT_ID: 'prod_legacy',
+      STRIPE_US_SHIPPING_PRODUCT_ID: 'prod_us',
+      STRIPE_BR_SHIPPING_PRODUCT_ID: 'prod_br'
+    }));
+
+    expect(env.STRIPE_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_US_SHIPPING_PRODUCT_ID).toBeUndefined();
+    expect(env.STRIPE_BR_SHIPPING_PRODUCT_ID).toBeUndefined();
+  });
+
+  test('ignores legacy Stripe credentials when the regional keys are absent', () => {
+    const env = parseEnv({
+      NODE_ENV: 'development',
+      EDEN_RUNTIME: 'local',
+      STRIPE_SECRET_KEY: 'sk_legacy',
+      STRIPE_WEBHOOK_SECRET: 'whsec_legacy'
+    });
+
+    expect(env.STRIPE_US_SECRET_KEY).toBe('');
+    expect(env.STRIPE_US_WEBHOOK_SECRET).toBe('');
+    expect(env.STRIPE_SECRET_KEY).toBeUndefined();
+    expect(env.STRIPE_WEBHOOK_SECRET).toBeUndefined();
+  });
+
+  test('ignores legacy Stripe credentials when the regional keys are set', () => {
+    const env = parseEnv({
+      NODE_ENV: 'development',
+      EDEN_RUNTIME: 'local',
+      STRIPE_SECRET_KEY: 'sk_legacy',
+      STRIPE_WEBHOOK_SECRET: 'whsec_legacy',
+      STRIPE_US_SECRET_KEY: 'sk_us',
+      STRIPE_US_WEBHOOK_SECRET: 'whsec_us'
+    });
+
+    expect(env.STRIPE_US_SECRET_KEY).toBe('sk_us');
+    expect(env.STRIPE_US_WEBHOOK_SECRET).toBe('whsec_us');
+    expect(env.STRIPE_SECRET_KEY).toBeUndefined();
+    expect(env.STRIPE_WEBHOOK_SECRET).toBeUndefined();
+  });
+
+  test('defaults the shared Stripe API version and retries', () => {
+    const env = parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local' });
+
+    expect(env.STRIPE_API_VERSION).toBe('2025-09-30.clover');
+    expect(env.STRIPE_MAX_RETRIES).toBe(2);
+  });
+
+  test('rejects production that only sets the legacy Stripe credentials', () => {
+    expect(() => parseEnv(productionEnv({
+      STRIPE_US_SECRET_KEY: '',
+      STRIPE_SECRET_KEY: 'sk_legacy'
+    }))).toThrow(/STRIPE_US_SECRET_KEY/);
+    expect(() => parseEnv(productionEnv({
+      STRIPE_US_WEBHOOK_SECRET: '',
+      STRIPE_WEBHOOK_SECRET: 'whsec_legacy'
+    }))).toThrow(/STRIPE_US_WEBHOOK_SECRET/);
+  });
+
+  test('parses production when the regional Stripe credentials are set', () => {
+    const env = parseEnv(productionEnv({ STRIPE_BR_ENABLED: 'false' }));
+
+    expect(env.STRIPE_US_SECRET_KEY).toBe('sk_us');
+    expect(env.STRIPE_US_WEBHOOK_SECRET).toBe('whsec_us');
+    expect(env.STRIPE_BR_SECRET_KEY).toBe('sk_br');
+    expect(env.STRIPE_BR_WEBHOOK_SECRET).toBe('whsec_br');
+    expect(env.STRIPE_BR_ENABLED).toBe(false);
+    expect(env.STRIPE_SECRET_KEY).toBeUndefined();
+    expect(env.STRIPE_WEBHOOK_SECRET).toBeUndefined();
   });
 
   test('accepts STRIPE_BR_ENABLED false', () => {
@@ -79,7 +192,6 @@ describe('parseEnv', () => {
     expect(() => parseEnv(productionEnv({ AUTH_OTP_PEPPER: '', AUTH_SALT: '' }))).toThrow(/AUTH_OTP_PEPPER/);
     expect(() => parseEnv(productionEnv({ DB_PASSWORD: '' }))).toThrow(/DB_PASSWORD/);
     expect(() => parseEnv(productionEnv({ METRICS_TOKEN: '' }))).toThrow(/METRICS_TOKEN/);
-    expect(() => parseEnv(productionEnv({ UPS_ENV: '' }))).toThrow(/UPS_ENV/);
   });
 
   test('rejects a localhost JWT issuer in production', () => {

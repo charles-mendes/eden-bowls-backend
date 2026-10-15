@@ -217,7 +217,7 @@ No dashboard Stripe **modo test**:
 
 - Webhook: `https://qa-api.edenbowls.com/stripe/v1/webhook`  
   (não use mais `https://edenbowls.com/qa-api/stripe/v1/webhook`)
-- Se gerar um endpoint novo, atualize `STRIPE_WEBHOOK_SECRET` em `$BACKEND/.env` e recrie só a API.
+- Se gerar um endpoint novo, atualize `STRIPE_US_WEBHOOK_SECRET` em `$BACKEND/.env` e recrie só a API. `STRIPE_WEBHOOK_SECRET` is not read.
 
 ---
 

@@ -29,4 +29,21 @@ describe('SubscriptionMailClaimsRepository resend selection', () => {
     expect(params).not.toContain('otp');
     expect(params).not.toContain('invite');
   });
+
+  test('deletes an unsent claim and does not delete a sent claim', async () => {
+    const query = jest.fn().mockResolvedValue({ affectedRows: 1 });
+    const repository = new SubscriptionMailClaimsRepository({ isInitialized: true, query });
+
+    await repository.releaseUnsent(4);
+    await repository.releaseUnsent(9);
+
+    expect(query).toHaveBeenCalledTimes(2);
+    for (const [sql, params] of query.mock.calls) {
+      expect(sql).toContain('DELETE FROM `subscription_mail_claims`');
+      expect(sql).toContain('WHERE `id` = ? AND `sent_at` IS NULL');
+      expect(sql).not.toContain('sent_at` IS NOT NULL');
+    }
+    expect(query.mock.calls[0][1]).toEqual([4]);
+    expect(query.mock.calls[1][1]).toEqual([9]);
+  });
 });

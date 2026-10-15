@@ -286,7 +286,7 @@ Detalhe em cada `ROTA_*.md`. Resumo do que o front chama hoje:
 - Stripe: duas merchant accounts. Publishable keys no front:
   - US: `VITE_STRIPE_PUBLISHABLE_KEY_US` (fallback `VITE_STRIPE_PUBLISHABLE_KEY`)
   - BR: `VITE_STRIPE_PUBLISHABLE_KEY_BR`
-- Segredos Stripe / cupom / webhook: so no Node (`STRIPE_US_*` / `STRIPE_BR_*`; US herda as vars legadas). Cupom de 1a compra e por conta (`promo_` US nao aplica no checkout BR).
+- Segredos Stripe / cupom / webhook: so no Node (`STRIPE_US_*` / `STRIPE_BR_*`). `STRIPE_SECRET_KEY` e `STRIPE_WEBHOOK_SECRET` are not read. Cupom de 1a compra e por conta (`promo_` US nao aplica no checkout BR).
 - Kill switch: `STRIPE_BR_ENABLED` (default `false`). Sem flag/secret BR → `503 stripe_br_disabled` / `stripe_br_not_configured`; o checkout **nao** cai na conta US.
 - Lookup e autocomplete publicos: rate limit global 300/min. Nao ha bucket por usuario como no WP (`onboarding_address_autocomplete` 60/300s).
 - Escritas e cobranca exigem JWT de usuario, nao token de sessao anonima.

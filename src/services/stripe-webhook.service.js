@@ -2,12 +2,17 @@ const { HttpError } = require('../core/http-error');
 const { withTimeout } = require('../core/with-timeout');
 const { parseStripeAccountInput } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
+const { isSubscribedStripeEvent } = require('../infrastructure/stripe/stripe-webhook-events');
 const {
   extractSubscriptionIdFromInvoice,
   extractSubscriptionPeriod,
   mapStripeStatus,
   extractCardFromPaymentMethod
 } = require('../core/stripe-subscription-map');
+const {
+  isChargedDeliveryInvoice,
+  lastContractedDeliveryCharged
+} = require('../core/contract-deliveries');
 
 const WEBHOOK_EVENT_TIMEOUT_MS = 30 * 1000;
 const WEBHOOK_RETRY_BATCH = 20;
@@ -36,6 +41,9 @@ class StripeWebhookService {
     this.customerStore = options.customerStore || null;
     this.shippingProductId = options.shippingProductId || '';
     this.transactionalMailer = options.transactionalMailer || null;
+    this.pendingDeliveryChanges = options.pendingDeliveryChanges || null;
+    this.paidCycles = options.paidCycles || null;
+    this.customerInvoices = options.customerInvoices || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.withTimeout = options.withTimeout || withTimeout;
   }
@@ -48,7 +56,11 @@ class StripeWebhookService {
     const stripeBilling = resolveStripeBilling(this, stripeAccount);
 
     if (!webhookSecret) {
-      throw new HttpError(503, 'STRIPE_WEBHOOK_SECRET is not configured.', {
+      const webhookName = stripeAccount === 'br' ? 'STRIPE_BR_WEBHOOK_SECRET' : 'STRIPE_US_WEBHOOK_SECRET';
+      const message = this.stripeAccounts && this.stripeAccounts.usesListenerSecrets && this.stripeAccounts.usesListenerSecrets()
+        ? `The Stripe CLI listener secret for ${stripeAccount.toUpperCase()} is not available yet (start npm run dev or set ${webhookName}).`
+        : `${webhookName} is not configured.`;
+      throw new HttpError(503, message, {
         code: 'stripe_webhook_secret_missing',
         stripe_account: stripeAccount
       });
@@ -64,6 +76,14 @@ class StripeWebhookService {
       eventId: event.id,
       type: event.type
     }, 'Stripe webhook received.');
+    if (!isSubscribedStripeEvent(event.type)) {
+      // The dashboard endpoint sends more than stripe-webhook-events.js lists. Keep the 200; fix the endpoint.
+      this.logger.warn({
+        stripe_account: stripeAccount,
+        eventId: event.id,
+        type: event.type
+      }, 'Stripe webhook event is not in the subscribed list.');
+    }
 
     const inserted = await this.eventsRepository.insertIfNew({
       eventId: event.id,
@@ -209,7 +229,7 @@ class StripeWebhookService {
   async dispatch(event, runtime) {
     const object = event.data && event.data.object ? event.data.object : {};
     if (event.type === 'invoice.paid') {
-      await this.handleInvoicePaid(object, runtime);
+      await this.handleInvoicePaid(object, runtime, event);
       return;
     }
     if (event.type === 'invoice.created') {
@@ -217,15 +237,31 @@ class StripeWebhookService {
       return;
     }
     if (event.type === 'payment_intent.succeeded' || event.type === 'payment_intent.processing') {
+      const marker = this.edenEnvValue(object.metadata);
+      if (marker && marker !== this.edenEnvLabel()) {
+        this.warnIgnored(event, 'marker_mismatch', { stripe_account: runtime.account });
+        return;
+      }
       await this.handlePaymentIntentUpdate(object);
       return;
     }
-    if (event.type === 'payment_intent.payment_failed' || event.type === 'invoice.payment_failed') {
-      await this.handlePaymentFailed(object, event.type);
+    if (event.type === 'payment_intent.payment_failed') {
+      await this.handlePaymentFailed(object, event.type, { sendMail: false });
+      return;
+    }
+    if (event.type === 'invoice.payment_failed') {
+      await this.handlePaymentFailed(object, event.type, { sendMail: true });
       return;
     }
     if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
-      await this.handleSubscriptionChanged(object, runtime);
+      const marker = this.edenEnvValue(object.metadata);
+      if (!marker || marker !== this.edenEnvLabel()) {
+        this.warnIgnored(event, marker ? 'marker_mismatch' : 'marker_missing', {
+          stripe_account: runtime.account
+        });
+        return;
+      }
+      await this.handleSubscriptionChanged(object, runtime, event);
     }
   }
 
@@ -276,10 +312,42 @@ class StripeWebhookService {
     return extractCardFromPaymentMethod(paymentMethod);
   }
 
-  async handleInvoicePaid(invoice, runtime = {}) {
+  edenEnvLabel() {
+    return String(process.env.EDEN_RUNTIME || '').trim();
+  }
+
+  warnIgnored(event, reason, extra = {}) {
+    this.logger.warn({
+      type: event && event.type,
+      eventId: event && event.id,
+      stripe_account: extra.stripe_account,
+      reason
+    }, 'Stripe webhook ignored.');
+  }
+
+  edenEnvValue(metadata) {
+    if (!metadata || typeof metadata !== 'object') {
+      return '';
+    }
+    return String(metadata.eden_env || '').trim();
+  }
+
+  async handleInvoicePaid(invoice, runtime = {}, event = {}) {
     const subscriptionId = extractSubscriptionIdFromInvoice(invoice);
     const subscription = await this.retrieveSubscriptionSafe(subscriptionId, runtime.stripeBilling);
-    const metadata = (subscription && subscription.metadata) || invoice.subscription_details && invoice.subscription_details.metadata || {};
+    const subscriptionMeta = subscription && subscription.metadata ? subscription.metadata : null;
+    const detailMeta = invoice.subscription_details && invoice.subscription_details.metadata
+      ? invoice.subscription_details.metadata
+      : null;
+    const edenEnv = this.edenEnvValue(subscriptionMeta) || this.edenEnvValue(detailMeta);
+    const runtimeLabel = this.edenEnvLabel();
+    if (!edenEnv || edenEnv !== runtimeLabel) {
+      this.warnIgnored(event, edenEnv ? 'marker_mismatch' : 'marker_missing', {
+        stripe_account: runtime.account
+      });
+      return;
+    }
+    const metadata = subscriptionMeta || detailMeta || {};
     const context = await this.resolveUserContext({
       subscriptionId,
       customerId: invoice.customer,
@@ -312,7 +380,8 @@ class StripeWebhookService {
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(invoice.customer || (subscription && subscription.customer) || existing && existing.stripeCustomerId || ''),
       stripeAccount: runtime.account || (existing && existing.stripeAccount) || 'us',
-      status: 'active',
+      // A skip or a postponement pays a $0 invoice while the charge waits in trial.
+      status: subscription && subscription.status === 'trialing' ? 'trialing' : 'active',
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
       currentPeriodStart: period.start,
       currentPeriodEnd: period.end,
@@ -334,28 +403,174 @@ class StripeWebhookService {
       stripe_invoice_id: invoice.id || undefined
     });
 
-    await this.notifyFirstCycleMail({
+    // One delivery estimate for this payment: the confirmation email and the production cycle use the same one.
+    const delivery = await this.estimateDelivery(invoice, subscriptionId);
+
+    // The invoice PDF is issued before the letters so the order confirmation and the renewal can carry it.
+    const issued = await this.prepareCustomerInvoice(invoice, runtime);
+
+    const letter = await this.notifyFirstCycleMail({
       invoice,
       subscriptionId,
-      promotedPending
+      promotedPending,
+      delivery,
+      invoiceAttachment: issued && issued.attachment
     });
+
+    await this.recordChargedDelivery({
+      invoice,
+      subscriptionId,
+      subscription,
+      billing: runtime.stripeBilling || this.stripeBilling,
+      delivery
+    });
+
+    await this.finishCustomerInvoice(invoice, runtime, issued, letter);
   }
 
-  async notifyFirstCycleMail({ invoice, subscriptionId, promotedPending }) {
+  // Issues the Eden Bowls invoice PDF of a paid invoice above zero without emailing it. A failure here does not stop
+  // the letters or the production cycle; finishCustomerInvoice tries again and throws.
+  async prepareCustomerInvoice(invoice, runtime = {}) {
+    if (!this.customerInvoices || !(Number(invoice.total) > 0)) {
+      return null;
+    }
+    try {
+      const result = await this.customerInvoices.issueForInvoice({
+        invoice,
+        account: runtime.account || 'us',
+        send: false
+      });
+      if (!result || !result.row) {
+        return null;
+      }
+      return { row: result.row, attachment: await this.customerInvoices.letterAttachment(result.row) };
+    } catch (error) {
+      this.logger.error({ invoiceId: invoice && invoice.id, code: error && error.code }, 'Invoice PDF failed before the letter.');
+      return { failed: true };
+    }
+  }
+
+  // The renewal and the order confirmation carry the PDF; a plan change, or a letter that did not go out, gets the
+  // invoice in its own email. Throws when the PDF still cannot be issued, so the event is retried; the steps above
+  // are safe to repeat and the number is kept.
+  async finishCustomerInvoice(invoice, runtime, issued, letter) {
+    if (!this.customerInvoices || !(Number(invoice.total) > 0)) {
+      return;
+    }
+    if (!issued || issued.failed) {
+      await this.customerInvoices.issueForInvoice({ invoice, account: runtime.account || 'us', send: true });
+      return;
+    }
+    if (issued.row.emailStatus !== 'pending') {
+      return;
+    }
+    const sent = letter && letter.attached && letter.result && letter.result.claimed && !letter.result.skipped;
+    if (sent) {
+      await this.customerInvoices.recordSentWithLetter(issued.row, { to: letter.result.to });
+      return;
+    }
+    await this.customerInvoices.sendEmail(issued.row, {});
+  }
+
+  async estimateDelivery(invoice, subscriptionId) {
+    if (!this.paidCycles || typeof this.paidCycles.estimateFor !== 'function' || !isChargedDeliveryInvoice(invoice)) {
+      return null;
+    }
+    const ledgerRow = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
+    return ledgerRow ? this.paidCycles.estimateFor({ ledgerRow, invoice }) : null;
+  }
+
+  // Throws so the event is retried; the seed and the increment are both safe to repeat.
+  async recordChargedDelivery({ invoice, subscriptionId, subscription, billing, delivery = null }) {
+    const ledger = this.ledgerRepository;
+    if (!invoice.id || !isChargedDeliveryInvoice(invoice)
+      || !ledger || typeof ledger.incrementChargedDeliveries !== 'function') {
+      return;
+    }
+    let row = await ledger.findByStripeSubscriptionId(subscriptionId);
+    if (!row) {
+      return;
+    }
+    if (row.chargedDeliveries == null) {
+      if (!billing || typeof billing.listPaidInvoicesForSubscription !== 'function') {
+        throw new Error('Stripe billing cannot list paid invoices to seed the charged deliveries.');
+      }
+      const paid = await billing.listPaidInvoicesForSubscription(subscriptionId);
+      const earlier = paid
+        .filter((item) => item.id && item.id !== invoice.id && isChargedDeliveryInvoice(item))
+        .map((item) => item.id);
+      await ledger.seedChargedDeliveries(subscriptionId, earlier);
+    }
+    row = await ledger.incrementChargedDeliveries(subscriptionId, invoice.id);
+    await this.endContractAfterLastDelivery(row, subscription, billing);
+    // The cycle this invoice paid enters production; until now it was awaiting payment.
+    if (this.paidCycles) {
+      await this.paidCycles.recordPaid({ ledgerRow: row, subscription, invoice, estimate: delivery });
+    }
+    if (this.pendingDeliveryChanges) {
+      await this.pendingDeliveryChanges.applyAfterCharge({ subscriptionId, subscription, billing });
+    }
+  }
+
+  async endContractAfterLastDelivery(row, subscription, billing) {
+    if (!row || row.autoRenew !== false || row.cancelAtPeriodEnd) {
+      return;
+    }
+    if (subscription && subscription.cancel_at_period_end) {
+      return;
+    }
+    const plan = row.planSelection || {};
+    const term = Number(row.subscriptionTermMonths || plan.subscription_term_months || 1) || 1;
+    if (!lastContractedDeliveryCharged(row.chargedDeliveries, term)) {
+      return;
+    }
+    if (!billing || typeof billing.setCancelAtPeriodEnd !== 'function') {
+      throw new Error('Stripe billing cannot end the contract after its last delivery.');
+    }
+    await billing.setCancelAtPeriodEnd(row.stripeSubscriptionId, true);
+  }
+
+  // Returns `{ attached, result }`: whether the letter carried the invoice PDF and what the mailer did.
+  async notifyFirstCycleMail({ invoice, subscriptionId, promotedPending, delivery = null, invoiceAttachment = null }) {
     if (!this.transactionalMailer) {
-      return;
-    }
-    if (promotedPending) {
-      return;
-    }
-    if (String(invoice.billing_reason || '') !== 'subscription_create') {
-      return;
+      return null;
     }
 
     try {
       const ledger = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId) || {};
-      await this.transactionalMailer.notifyOrderConfirmed({ invoice, ledger, subscriptionId });
-      await this.transactionalMailer.notifyAdminNewSubscription({ invoice, ledger, subscriptionId });
+      if (promotedPending) {
+        await this.transactionalMailer.notifyPlanChanged({
+          invoice,
+          ledger,
+          subscriptionId,
+          referenceId: String(invoice.id || '')
+        });
+        return { attached: false };
+      }
+
+      const reason = String(invoice.billing_reason || '');
+      if (reason === 'subscription_create') {
+        const result = await this.transactionalMailer.notifyOrderConfirmed({
+          invoice,
+          ledger,
+          subscriptionId,
+          firstDeliveryDate: delivery ? delivery.deliveryDate : null,
+          invoiceAttachment
+        });
+        await this.transactionalMailer.notifyAdminNewSubscription({ invoice, ledger, subscriptionId });
+        return { attached: Boolean(invoiceAttachment), result };
+      }
+      if (reason === 'subscription_cycle') {
+        const result = await this.transactionalMailer.notifyRenewal({
+          invoice,
+          ledger,
+          subscriptionId,
+          referenceId: String(invoice.id || ''),
+          invoiceAttachment
+        });
+        return { attached: Boolean(invoiceAttachment), result };
+      }
+      return { attached: false };
     } catch (error) {
       this.logger.error({
         invoiceId: invoice && invoice.id,
@@ -378,7 +593,7 @@ class StripeWebhookService {
     const metadata = (subscription && subscription.metadata) || {};
     let amountMinor = Number(metadata.shipping_amount_minor || 0);
     let currency = metadata.shipping_currency || invoice.currency || 'usd';
-    let productId = metadata.shipping_product_id || runtime.shippingProductId || this.shippingProductId;
+    const productId = metadata.shipping_product_id;
 
     if (!amountMinor && subscriptionId) {
       const ledger = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
@@ -389,7 +604,15 @@ class StripeWebhookService {
       }
     }
 
-    if (amountMinor <= 0 || !productId || !String(productId).startsWith('prod_')) {
+    if (amountMinor <= 0) {
+      return;
+    }
+
+    if (!productId || !String(productId).startsWith('prod_')) {
+      this.logger.warn({
+        subscriptionId,
+        stripe_account: runtime.account
+      }, 'invoice.created skipped shipping: shipping_product_id missing.');
       return;
     }
 
@@ -425,7 +648,7 @@ class StripeWebhookService {
     });
   }
 
-  async handlePaymentFailed(object, type) {
+  async handlePaymentFailed(object, type, options = {}) {
     const paymentIntentId = type === 'invoice.payment_failed'
       ? String(object.payment_intent && object.payment_intent.id ? object.payment_intent.id : object.payment_intent || '')
       : String(object.id || '');
@@ -454,7 +677,9 @@ class StripeWebhookService {
       ? await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId)
       : null;
 
-    await this.notifyPaymentFailedMail({ object, ledger, subscriptionId });
+    if (options.sendMail !== false) {
+      await this.notifyPaymentFailedMail({ object, ledger, subscriptionId });
+    }
 
     if (ledger && ['active', 'trialing'].includes(ledger.status)) {
       return;
@@ -487,7 +712,7 @@ class StripeWebhookService {
     }
   }
 
-  async handleSubscriptionChanged(subscription, runtime = {}) {
+  async handleSubscriptionChanged(subscription, runtime = {}, event = {}) {
     const subscriptionId = String(subscription.id || '');
     if (!subscriptionId.startsWith('sub_')) {
       return;
@@ -522,6 +747,121 @@ class StripeWebhookService {
       paymentMethodLast4: card.last4 || undefined,
       paymentMethodBrand: card.brand || undefined
     });
+
+    await this.discardPendingAfterFailedCharge(subscription, subscriptionId);
+
+    await this.notifySubscriptionTransition({
+      subscription,
+      subscriptionId,
+      event,
+      stripeBilling: runtime.stripeBilling
+    });
+  }
+
+  // A change to the following delivery waits for the current charge. When Stripe gives up on that charge
+  // (the subscription is unpaid or canceled), the change is dropped. past_due keeps it: a late payment applies it.
+  async discardPendingAfterFailedCharge(subscription, subscriptionId) {
+    const status = String(subscription.status || '');
+    if (status !== 'unpaid' && status !== 'canceled' && status !== 'incomplete_expired') return;
+    const row = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
+    const pending = row && row.pendingDeliveryChanges;
+    if (!pending || typeof this.ledgerRepository.setPendingDeliveryChanges !== 'function') return;
+    await this.ledgerRepository.setPendingDeliveryChanges(subscriptionId, null);
+    this.logger.warn({
+      subscriptionId,
+      stripeStatus: status,
+      chargeMove: pending.charge_move ? pending.charge_move.kind : null,
+      packs: Boolean(pending.packs),
+      recordedAgainst: pending.after_charge_at || null
+    }, 'Pending delivery change dropped: the current charge failed for good.');
+  }
+
+  async stillCancelling(subscriptionId, stripeBilling) {
+    const fresh = await this.retrieveSubscriptionSafe(subscriptionId, stripeBilling);
+    return fresh ? Boolean(fresh.cancel_at_period_end) : true;
+  }
+
+  attributeChanged(previous, key) {
+    return Boolean(previous) && Object.prototype.hasOwnProperty.call(previous, key);
+  }
+
+  async notifySubscriptionTransition({ subscription, subscriptionId, event, stripeBilling }) {
+    if (!this.transactionalMailer) {
+      return;
+    }
+
+    try {
+      const ledger = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId) || {};
+      if (event.type === 'customer.subscription.deleted') {
+        const alreadySent = typeof this.transactionalMailer.hasSentClaim === 'function'
+          ? await this.transactionalMailer.hasSentClaim({
+            subscriptionId,
+            template: 'cancelled'
+          })
+          : false;
+        if (alreadySent) {
+          return;
+        }
+        await this.transactionalMailer.notifyCancelled({
+          ledger,
+          subscriptionId,
+          referenceId: 'deleted',
+          endsAt: subscription.current_period_end || ledger.currentPeriodEnd
+        });
+        return;
+      }
+
+      if (event.type !== 'customer.subscription.updated') {
+        return;
+      }
+
+      const previous = event.data && event.data.previous_attributes;
+      const eventId = String(event.id || '').trim();
+      if (this.attributeChanged(previous, 'pause_collection') && eventId) {
+        const wasPaused = Boolean(previous.pause_collection);
+        const isPaused = Boolean(subscription.pause_collection);
+        if (!wasPaused && isPaused) {
+          const resumesAt = subscription.pause_collection && subscription.pause_collection.resumes_at;
+          await this.transactionalMailer.notifyPaused({
+            ledger,
+            subscriptionId,
+            referenceId: `paused:${eventId}`,
+            resumeAt: resumesAt || null
+          });
+        } else if (wasPaused && !isPaused) {
+          await this.transactionalMailer.notifyResumed({
+            ledger,
+            subscriptionId,
+            referenceId: `resumed:${eventId}`
+          });
+        }
+      }
+
+      if (this.attributeChanged(previous, 'cancel_at_period_end')) {
+        const wasCancelling = Boolean(previous.cancel_at_period_end);
+        const isCancelling = Boolean(subscription.cancel_at_period_end);
+        // The customer may have turned renewal back on before this event was processed; then the
+        // scheduled end no longer holds and its letter is not sent.
+        const stillCancelling = !wasCancelling && isCancelling
+          ? await this.stillCancelling(subscriptionId, stripeBilling)
+          : false;
+        if (stillCancelling) {
+          const periodEnd = subscription.current_period_end || ledger.currentPeriodEnd || '';
+          await this.transactionalMailer.notifyCancelled({
+            ledger,
+            subscriptionId,
+            referenceId: `cancel_scheduled:${periodEnd}`,
+            endsAt: periodEnd
+          });
+        }
+      }
+    } catch (error) {
+      this.logger.error({
+        template: event && event.type,
+        subscriptionId,
+        code: error && error.code
+      }, 'Transactional email failed.');
+    }
   }
 }
 

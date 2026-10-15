@@ -10,6 +10,9 @@ const shippingSettingsSchema = z.object({
     center: z.object({
       name: z.string().optional(),
       street: z.string().optional(),
+      number: z.string().optional(),
+      complement: z.string().optional(),
+      neighborhood: z.string().optional(),
       city: z.string().optional(),
       state: z.string().optional(),
       zipcode: z.string().optional(),
@@ -38,6 +41,7 @@ const shippingSettingsSchema = z.object({
     ship_from: z.object({
       name: z.string().optional(),
       street: z.string().optional(),
+      street2: z.string().optional(),
       city: z.string().optional(),
       state: z.string().optional(),
       zipcode: z.string().optional(),
@@ -58,6 +62,22 @@ const shippingTestSchema = z.object({
   country: z.enum(['BR', 'US']).default('BR')
 });
 
+const headquartersAddressSchema = z.object({
+  street: z.string().max(191).optional(),
+  number: z.string().max(32).optional(),
+  complement: z.string().max(128).optional(),
+  neighborhood: z.string().max(128).optional(),
+  street2: z.string().max(191).optional(),
+  city: z.string().max(128).optional(),
+  state: z.string().max(8).optional(),
+  zipcode: z.string().max(16).optional()
+});
+
+const headquartersValidateSchema = z.object({
+  country: z.enum(['BR', 'US']),
+  address: headquartersAddressSchema
+});
+
 function parseShippingSettingsInput(input) {
   const parsed = shippingSettingsSchema.safeParse(input || {});
   if (!parsed.success) {
@@ -74,7 +94,16 @@ function parseShippingTestInput(input) {
   return parsed.data;
 }
 
+function parseHeadquartersValidateInput(input) {
+  const parsed = headquartersValidateSchema.safeParse(input || {});
+  if (!parsed.success) {
+    throw new HttpError(400, 'Invalid request payload.', parsed.error.issues);
+  }
+  return parsed.data;
+}
+
 module.exports = {
+  parseHeadquartersValidateInput,
   parseShippingSettingsInput,
   parseShippingTestInput
 };

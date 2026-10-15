@@ -152,6 +152,8 @@ describeIntegration('ProductsRepository integration (MySQL)', () => {
         {
           variation_id: 1001,
           flavor: 'Frango',
+          flavor_key: 'turkey',
+          flavor_aliases: [],
           weight: '300g',
           price: 29.9,
           currency: 'BRL'

@@ -13,7 +13,7 @@ Front:
 
 Rota legado WordPress:
 
-- `DELETE /custom/v1/profile` — `docs/profile/07-delete-profile.md`
+- `DELETE /custom/v1/profile` — `docs/archive/wordpress-migration/profile/07-delete-profile.md`
 
 Cancelar assinatura (nao apaga a conta):
 

@@ -45,6 +45,7 @@ function normalizeShippingPayload(payload = {}) {
     distance_source: payload.distance_source || 'manual',
     per_km: perKm,
     zipcode,
+    quote_token: String(payload.quote_token || '').trim(),
     snapshot: true
   };
 }

@@ -74,7 +74,10 @@ class OnboardingPlanPreviewRepository {
         pet_name: petName,
         enabled: true,
         selected_flavors: [...flavorQuantities.keys()],
-        pack_size_grams: targetPackSizeGrams
+        pack_size_grams: targetPackSizeGrams,
+        suggested_packs: canMatchRecommendation && Number(matchedPet.packs && matchedPet.packs.count) > 0
+          ? Number(matchedPet.packs.count)
+          : null
       });
       flavorsByPet.push({
         pet_id: petId,

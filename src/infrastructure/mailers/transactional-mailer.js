@@ -1,8 +1,15 @@
+const { DateTime } = require('luxon');
 const { withTimeout } = require('../../core/with-timeout');
 const {
   buildAdminNewSubscriptionEmail,
+  buildAutoRenewOffEmail,
+  buildCancelledEmail,
   buildOrderConfirmedEmail,
+  buildPausedEmail,
   buildPaymentFailedEmail,
+  buildPlanChangedEmail,
+  buildRenewalEmail,
+  buildResumedEmail,
   buildShippedEmail
 } = require('../../core/email/transactional-emails');
 const {
@@ -19,13 +26,79 @@ const TEMPLATES = {
   orderConfirmed: 'order_confirmed',
   adminNewSubscription: 'admin_new_subscription',
   paymentFailed: 'payment_failed',
-  shipped: 'shipped'
+  shipped: 'shipped',
+  renewal: 'renewal',
+  paused: 'paused',
+  resumed: 'resumed',
+  cancelled: 'cancelled',
+  autoRenewOff: 'auto_renew_off',
+  planChanged: 'plan_changed'
 };
 
-const RESEND_TEMPLATES = Object.values(TEMPLATES);
+const RESEND_TEMPLATES = [
+  TEMPLATES.orderConfirmed,
+  TEMPLATES.adminNewSubscription,
+  TEMPLATES.paymentFailed,
+  TEMPLATES.shipped
+];
 const RESEND_BATCH = 20;
 const RESEND_MIN_AGE_MS = 2 * 60 * 1000;
 const SMTP_TIMEOUT_MS = 20 * 1000;
+const SEND_ATTEMPTS = 3;
+const SEND_RETRY_DELAY_MS = 100;
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function formatLetterDate(value, locale) {
+  if (value == null || value === '') {
+    return '';
+  }
+  const zone = locale === 'pt-BR' ? 'America/Sao_Paulo' : 'America/New_York';
+  const loc = locale === 'pt-BR' ? 'pt-BR' : 'en-US';
+  let date = null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const millis = value < 1e12 ? value * 1000 : value;
+    date = DateTime.fromMillis(millis, { zone });
+  } else if (value instanceof Date) {
+    date = DateTime.fromJSDate(value, { zone });
+  } else {
+    const text = String(value).trim();
+    if (!text) {
+      return '';
+    }
+    date = DateTime.fromISO(text, { zone });
+    if (!date.isValid) {
+      date = DateTime.fromSQL(text, { zone });
+    }
+  }
+  if (!date || !date.isValid) {
+    return '';
+  }
+  return date.setLocale(loc).toLocaleString(DateTime.DATE_MED);
+}
+
+// A delivery date (YYYY-MM-DD) as a weekday and day: "quinta-feira, 8 de outubro" / "Thursday, October 8".
+function formatDeliveryDay(isoDate, locale) {
+  const date = DateTime.fromISO(String(isoDate || ''), { zone: 'UTC' });
+  if (!isoDate || !date.isValid) return '';
+  return locale === 'pt-BR'
+    ? date.setLocale('pt-BR').toFormat("cccc, d 'de' MMMM")
+    : date.setLocale('en-US').toFormat('cccc, MMMM d');
+}
+
+// The Eden Bowls invoice PDF rides along with the order confirmation and the renewal letter.
+function attachmentList(invoiceAttachment) {
+  if (!invoiceAttachment || !invoiceAttachment.content) return undefined;
+  return [{
+    filename: invoiceAttachment.filename,
+    content: invoiceAttachment.content,
+    contentType: invoiceAttachment.contentType || 'application/pdf'
+  }];
+}
 
 function createTransactionalMailer(options = {}) {
   const logger = options.logger || { error() {}, warn() {}, info() {} };
@@ -45,7 +118,50 @@ function createTransactionalMailer(options = {}) {
     );
   }
 
-  async function sendClaimed({ subscriptionId, template, referenceId, to, content }) {
+  function missingContext(template) {
+    logger.warn({ template, reason: 'missing_context' }, 'Transactional email skipped.');
+    return { skipped: true, reason: 'missing_context' };
+  }
+
+  function logSmtpFailure(template, subscriptionId, error) {
+    logger.error({
+      template,
+      subscriptionId,
+      code: error && error.code ? error.code : 'smtp_failed'
+    }, 'Transactional email failed.');
+  }
+
+  async function releaseClaim(claimId) {
+    if (!claimsRepository || typeof claimsRepository.releaseUnsent !== 'function') {
+      return;
+    }
+    try {
+      await claimsRepository.releaseUnsent(claimId);
+    } catch (error) {
+      logger.error({
+        claimId,
+        code: error && error.code ? error.code : 'release_failed'
+      }, 'Mail claim release failed.');
+    }
+  }
+
+  async function sendWithRetries(payload) {
+    let lastError = null;
+    for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
+      try {
+        return await withTimeout(otpMailer.sendMail(payload), SMTP_TIMEOUT_MS);
+      } catch (error) {
+        lastError = error;
+        if (attempt < SEND_ATTEMPTS) {
+          await wait(SEND_RETRY_DELAY_MS);
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  // `attachments` go out with this send only; a resend of the remembered payload carries none.
+  async function sendClaimed({ subscriptionId, template, referenceId, to, content, attachments }) {
     if (!canSend()) {
       return { skipped: true, reason: 'mailer_unavailable' };
     }
@@ -81,34 +197,30 @@ function createTransactionalMailer(options = {}) {
         text: content.text,
         html: content.html
       });
-      const result = await withTimeout(otpMailer.sendMail({
+      const result = await sendWithRetries({
         to: recipient,
         subject: content.subject,
         text: content.text,
-        html: content.html
-      }), SMTP_TIMEOUT_MS);
+        html: content.html,
+        ...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {})
+      });
       if (!result || result.skipped !== true) {
         await claimsRepository.markSent(claim.id);
       }
-      return { skipped: Boolean(result && result.skipped), claimed: true };
+      return { skipped: Boolean(result && result.skipped), claimed: true, to: recipient };
     } catch (error) {
-      const failure = await recordClaimFailure(claim.id, error);
-      logSendFailure(template, claim.id, failure);
-      return {
-        skipped: false,
-        failed: !failure.exhausted,
-        exhausted: failure.exhausted,
-        claimed: true
-      };
+      await releaseClaim(claim.id);
+      logSmtpFailure(template, subscriptionId, error);
+      return { skipped: false, failed: true, claimed: false };
     }
   }
 
-  async function notifyOrderConfirmed({ invoice = {}, ledger = {}, subscriptionId }) {
+  async function notifyOrderConfirmed({ invoice = {}, ledger = {}, subscriptionId, firstDeliveryDate = null, invoiceAttachment = null }) {
     const id = String(subscriptionId || ledger.stripeSubscriptionId || '').trim();
     const invoiceId = String(invoice.id || '').trim();
     const to = String(ledger.customerEmail || invoice.customer_email || '').trim();
     if (!id || !invoiceId || !to) {
-      return { skipped: true, reason: 'missing_context' };
+      return missingContext(TEMPLATES.orderConfirmed);
     }
 
     const locale = localeFrom(ledger);
@@ -123,6 +235,8 @@ function createTransactionalMailer(options = {}) {
           : `Every ${ledger.subscriptionTermMonths} months`)
         : '',
       totalLabel: formatMoney(invoice.amount_paid || invoice.total, invoice.currency),
+      firstDeliveryLabel: formatDeliveryDay(firstDeliveryDate, locale),
+      invoiceNumber: invoiceAttachment ? invoiceAttachment.invoiceNumber : '',
       dashboardUrl: dashboardPlansUrl(storeAppUrl),
       locale,
       assetBaseUrl: emailAssetBaseUrl
@@ -133,7 +247,8 @@ function createTransactionalMailer(options = {}) {
       template: TEMPLATES.orderConfirmed,
       referenceId: invoiceId,
       to,
-      content
+      content,
+      attachments: attachmentList(invoiceAttachment)
     });
   }
 
@@ -145,7 +260,7 @@ function createTransactionalMailer(options = {}) {
     const id = String(subscriptionId || ledger.stripeSubscriptionId || '').trim();
     const invoiceId = String(invoice.id || '').trim();
     if (!id || !invoiceId) {
-      return { skipped: true, reason: 'missing_context' };
+      return missingContext(TEMPLATES.adminNewSubscription);
     }
 
     const locale = localeFrom(ledger);
@@ -190,26 +305,36 @@ function createTransactionalMailer(options = {}) {
         text: content.text,
         html: content.html
       });
-      let delivered = false;
-      for (const to of opsEmails) {
-        const result = await withTimeout(otpMailer.sendMail({
-          to,
-          subject: content.subject,
-          text: content.text,
-          html: content.html
-        }), SMTP_TIMEOUT_MS);
-        if (!result || result.skipped !== true) {
-          delivered = true;
+      let lastError = null;
+      for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt += 1) {
+        try {
+          for (const to of opsEmails) {
+            const result = await withTimeout(otpMailer.sendMail({
+              to,
+              subject: content.subject,
+              text: content.text,
+              html: content.html
+            }), SMTP_TIMEOUT_MS);
+            if (result && result.skipped === true) {
+              throw Object.assign(new Error('smtp_skipped'), { code: 'smtp_skipped' });
+            }
+          }
+          await claimsRepository.markSent(claim.id);
+          return { skipped: false, claimed: true };
+        } catch (error) {
+          lastError = error;
+          if (attempt < SEND_ATTEMPTS) {
+            await wait(SEND_RETRY_DELAY_MS);
+          }
         }
       }
-      if (delivered) {
-        await claimsRepository.markSent(claim.id);
-      }
-      return { skipped: !delivered, claimed: true };
+      await releaseClaim(claim.id);
+      logSmtpFailure(TEMPLATES.adminNewSubscription, id, lastError);
+      return { skipped: false, failed: true, claimed: false };
     } catch (error) {
-      const failure = await recordClaimFailure(claim.id, error);
-      logSendFailure(TEMPLATES.adminNewSubscription, claim.id, failure);
-      return { skipped: false, failed: !failure.exhausted, exhausted: failure.exhausted, claimed: true };
+      await releaseClaim(claim.id);
+      logSmtpFailure(TEMPLATES.adminNewSubscription, id, error);
+      return { skipped: false, failed: true, claimed: false };
     }
   }
 
@@ -221,7 +346,7 @@ function createTransactionalMailer(options = {}) {
     const referenceId = String(object.id || paymentIntentId || '').trim();
     const to = String(ledger.customerEmail || object.customer_email || '').trim();
     if (!id || !referenceId || !to) {
-      return { skipped: true, reason: 'missing_context' };
+      return missingContext(TEMPLATES.paymentFailed);
     }
 
     const amount = object.amount_due || object.amount || object.total;
@@ -254,7 +379,7 @@ function createTransactionalMailer(options = {}) {
     const to = String((subscription.user && subscription.user.email) || '').trim();
     const trackingNumber = String(shipment.tracking_number || '').trim();
     if (!id || !referenceId || !to || !trackingNumber) {
-      return { skipped: true, reason: 'missing_context' };
+      return missingContext(TEMPLATES.shipped);
     }
 
     const source = {
@@ -281,6 +406,177 @@ function createTransactionalMailer(options = {}) {
       to,
       content
     });
+  }
+
+  function customerTarget({ ledger = {}, subscriptionId, referenceId, fallbackEmail }) {
+    return {
+      id: String(subscriptionId || ledger.stripeSubscriptionId || '').trim(),
+      reference: String(referenceId || '').trim(),
+      to: String(ledger.customerEmail || fallbackEmail || '').trim()
+    };
+  }
+
+  async function notifyRenewal({ invoice = {}, ledger = {}, subscriptionId, referenceId, invoiceAttachment = null }) {
+    const target = customerTarget({
+      ledger,
+      subscriptionId,
+      referenceId: referenceId || invoice.id,
+      fallbackEmail: invoice.customer_email
+    });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.renewal);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildRenewalEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      flavors: flavorsFrom(ledger),
+      totalLabel: formatMoney(invoice.amount_paid || invoice.total, invoice.currency),
+      nextDeliveryLabel: formatLetterDate(ledger.currentPeriodEnd, locale),
+      invoiceNumber: invoiceAttachment ? invoiceAttachment.invoiceNumber : '',
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.renewal,
+      referenceId: target.reference,
+      to: target.to,
+      content,
+      attachments: attachmentList(invoiceAttachment)
+    });
+  }
+
+  async function notifyPaused({ ledger = {}, subscriptionId, referenceId, resumeAt }) {
+    const target = customerTarget({ ledger, subscriptionId, referenceId });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.paused);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildPausedEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      resumeAtLabel: formatLetterDate(resumeAt, locale),
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.paused,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
+  async function notifyResumed({ ledger = {}, subscriptionId, referenceId }) {
+    const target = customerTarget({ ledger, subscriptionId, referenceId });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.resumed);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildResumedEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      nextDeliveryLabel: formatLetterDate(ledger.currentPeriodEnd, locale),
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.resumed,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
+  async function notifyCancelled({ ledger = {}, subscriptionId, referenceId, endsAt }) {
+    const target = customerTarget({ ledger, subscriptionId, referenceId });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.cancelled);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildCancelledEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      endsAtLabel: formatLetterDate(endsAt || ledger.currentPeriodEnd, locale),
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.cancelled,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
+  // `endsOn` is the last contracted delivery date (YYYY-MM-DD) from the deliveries read.
+  async function notifyAutoRenewOff({ ledger = {}, subscriptionId, referenceId, endsOn }) {
+    const target = customerTarget({ ledger, subscriptionId, referenceId });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.autoRenewOff);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildAutoRenewOffEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      endsOnLabel: formatLetterDate(endsOn, locale),
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.autoRenewOff,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
+  async function notifyPlanChanged({ invoice = {}, ledger = {}, subscriptionId, referenceId }) {
+    const target = customerTarget({
+      ledger,
+      subscriptionId,
+      referenceId,
+      fallbackEmail: invoice.customer_email
+    });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.planChanged);
+    }
+    const locale = localeFrom(ledger);
+    const amount = invoice.amount_paid || invoice.total;
+    const content = buildPlanChangedEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      planName: ledger.planLabel || '',
+      flavors: flavorsFrom(ledger),
+      totalLabel: amount ? formatMoney(amount, invoice.currency) : '',
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.planChanged,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
+  async function hasSentClaim({ subscriptionId, template }) {
+    if (!claimsRepository || typeof claimsRepository.hasSentClaim !== 'function') {
+      return false;
+    }
+    return Boolean(await claimsRepository.hasSentClaim({ subscriptionId, template }));
   }
 
   async function resendUnsent({ now = new Date(), limit = RESEND_BATCH } = {}) {
@@ -365,12 +661,20 @@ function createTransactionalMailer(options = {}) {
     notifyAdminNewSubscription,
     notifyPaymentFailed,
     notifyShipped,
+    notifyRenewal,
+    notifyPaused,
+    notifyResumed,
+    notifyCancelled,
+    notifyAutoRenewOff,
+    notifyPlanChanged,
+    hasSentClaim,
     sendClaimed,
     resendUnsent
   };
 }
 
 module.exports = {
+  formatDeliveryDay,
   TEMPLATES,
   RESEND_TEMPLATES,
   RESEND_BATCH,

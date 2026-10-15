@@ -2,6 +2,8 @@ const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accoun
 const { withTimeout } = require('../core/with-timeout');
 const { startScheduler } = require('../core/job-scheduler');
 const { BackgroundJobCursorRepository } = require('../infrastructure/repositories/background-job-cursor.repository');
+const { DeliveryCalendarStripeSyncsRepository } = require('../infrastructure/repositories/delivery-calendar-stripe-syncs.repository');
+const { DeliveryCalendarStripeSyncService } = require('./delivery-calendar-stripe-sync.service');
 
 const UPS_TRACK_CAP_MS = 10 * 1000;
 const UPS_TRACK_BATCH = 20;
@@ -14,18 +16,22 @@ const JOB_INTERVALS = {
   webhook_retry: 60 * 1000,
   ledger_reconcile: 60 * 60 * 1000,
   mail_resend: 5 * 60 * 1000,
+  invoice_email: 5 * 60 * 1000,
   ups_tracking: 30 * 60 * 1000,
   refresh_cleanup: DAY_MS,
-  webhook_retention: DAY_MS
+  webhook_retention: DAY_MS,
+  delivery_calendar_stripe_sync: 60 * 1000
 };
 
 const LOCKS = {
   webhook_retry: 'eden_job_webhook_retry',
   ledger_reconcile: 'eden_job_ledger_reconcile',
   mail_resend: 'eden_job_mail_resend',
+  invoice_email: 'eden_job_invoice_email',
   ups_tracking: 'eden_job_ups_tracking',
   refresh_cleanup: 'eden_job_refresh_cleanup',
-  webhook_retention: 'eden_job_webhook_retention'
+  webhook_retention: 'eden_job_webhook_retention',
+  delivery_calendar_stripe_sync: 'eden_job_delivery_calendar_stripe_sync'
 };
 
 function upsTrackTimeoutMs(clientTimeoutMs) {
@@ -104,8 +110,15 @@ async function runUpsTracking(deps) {
       const payload = await deps.upsClient.track(row.tracking_number, { timeoutMs });
       await deps.upsShipmentRepository.updateTracking(row.id, row.tracking_number, payload);
       updated += 1;
-    } catch (_error) {
+    } catch (error) {
       failed += 1;
+      if (deps.logger) {
+        deps.logger.warn({
+          shipmentId: row.id,
+          code: error && error.details && error.details.code,
+          status: error && error.details && error.details.status
+        }, 'UPS tracking refresh failed.');
+      }
     }
   }
 
@@ -121,6 +134,16 @@ async function runWebhookRetention(deps, now = new Date()) {
   const cutoff = new Date(now.getTime() - RETENTION_DAYS * DAY_MS);
   const deleted = await deps.eventsRepository.deleteProcessedBefore(cutoff);
   return { deleted };
+}
+
+function deliveryCalendarSyncService(deps) {
+  if (deps.deliveryCalendarSyncService) return deps.deliveryCalendarSyncService;
+  return new DeliveryCalendarStripeSyncService({
+    repository: deps.deliveryCalendarSyncsRepository || new DeliveryCalendarStripeSyncsRepository(deps.dataSource),
+    billingFor: (market) => resolveStripeBilling(deps, String(market || 'us').toLowerCase()),
+    maxAttempts: deps.deliveryCalendarSyncMaxAttempts,
+    logger: deps.logger
+  });
 }
 
 function createJobDefinitions(deps) {
@@ -144,6 +167,12 @@ function createJobDefinitions(deps) {
       run: () => deps.transactionalMailer.resendUnsent()
     },
     {
+      name: 'invoice_email',
+      lockName: LOCKS.invoice_email,
+      intervalMs: JOB_INTERVALS.invoice_email,
+      run: () => (deps.customerInvoicesService ? deps.customerInvoicesService.sendDueEmails() : { skipped: true })
+    },
+    {
       name: 'ups_tracking',
       lockName: LOCKS.ups_tracking,
       intervalMs: JOB_INTERVALS.ups_tracking,
@@ -160,6 +189,12 @@ function createJobDefinitions(deps) {
       lockName: LOCKS.webhook_retention,
       intervalMs: JOB_INTERVALS.webhook_retention,
       run: () => runWebhookRetention(deps)
+    },
+    {
+      name: 'delivery_calendar_stripe_sync',
+      lockName: LOCKS.delivery_calendar_stripe_sync,
+      intervalMs: JOB_INTERVALS.delivery_calendar_stripe_sync,
+      run: () => deliveryCalendarSyncService(deps).runDue()
     }
   ];
 }

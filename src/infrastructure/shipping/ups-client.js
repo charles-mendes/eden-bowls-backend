@@ -1,3 +1,4 @@
+const { randomUUID } = require('crypto');
 const { fetchJson } = require('../http/fetch-json');
 const { HttpError } = require('../../core/http-error');
 
@@ -12,14 +13,48 @@ const SERVICE_LABELS = {
   '11': 'UPS Standard'
 };
 
+const UPS_BASE_URLS = Object.freeze({
+  cie: 'https://wwwcie.ups.com',
+  production: 'https://onlinetools.ups.com'
+});
+
+// Same credentials work on both hosts, so the client refuses a host that does not match the runtime.
+// A simulation client always uses CIE: it only quotes and validates, and cannot buy or void a label.
+function resolveUpsTarget(env, runtime, options = {}) {
+  if (options.simulationOnly) {
+    return { envName: 'cie', baseUrl: UPS_BASE_URLS.cie };
+  }
+  const envName = String(env || 'cie').trim().toLowerCase();
+  const runtimeName = String(runtime || '').trim().toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(UPS_BASE_URLS, envName)) {
+    throw new Error('UPS env must be cie or production.');
+  }
+  if (envName === 'production' && runtimeName !== 'production') {
+    throw new Error('UPS production requires EDEN_RUNTIME=production.');
+  }
+  if (runtimeName === 'production' && envName !== 'production') {
+    throw new Error('EDEN_RUNTIME=production requires UPS env production.');
+  }
+  return { envName, baseUrl: UPS_BASE_URLS[envName] };
+}
+
+function upstreamDetails(code, response, extra = {}) {
+  const upsCode = response.body?.response?.errors?.[0]?.code;
+  return {
+    code,
+    status: response.status,
+    ...(upsCode ? { ups_code: String(upsCode) } : {}),
+    ...extra
+  };
+}
+
 function serviceLabel(code) {
   const key = String(code || '').trim();
   return SERVICE_LABELS[key] || `UPS ${key || 'Service'}`;
 }
 
-function pickRate(ratedShipments, allowedServiceCodes = ['03']) {
-  const allowed = new Set((allowedServiceCodes || []).map((code) => String(code).trim()).filter(Boolean));
-  const rows = (Array.isArray(ratedShipments) ? ratedShipments : [])
+function mapRatedShipments(ratedShipments) {
+  return (Array.isArray(ratedShipments) ? ratedShipments : [])
     .map((row) => {
       const code = String(row?.Service?.Code || row?.serviceCode || '').trim();
       const monetary = Number(row?.TotalCharges?.MonetaryValue || row?.NegotiatedRateCharges?.TotalCharge?.MonetaryValue || row?.monetaryValue || NaN);
@@ -37,6 +72,11 @@ function pickRate(ratedShipments, allowedServiceCodes = ['03']) {
       };
     })
     .filter((row) => row.serviceCode && Number.isFinite(row.monetaryValue) && row.monetaryValue >= 0);
+}
+
+function pickRate(ratedShipments, allowedServiceCodes = ['03']) {
+  const allowed = new Set((allowedServiceCodes || []).map((code) => String(code).trim()).filter(Boolean));
+  const rows = mapRatedShipments(ratedShipments);
 
   const eligible = allowed.size > 0
     ? rows.filter((row) => allowed.has(row.serviceCode))
@@ -54,26 +94,34 @@ function pickRate(ratedShipments, allowedServiceCodes = ['03']) {
   return eligible.slice().sort((a, b) => a.monetaryValue - b.monetaryValue)[0];
 }
 
+function upsDate(value) {
+  const date = value instanceof Date ? value : new Date(value || Date.now());
+  return date.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
 class UpsClient {
   constructor(options = {}) {
     this.clientId = String(options.clientId || '').trim();
     this.clientSecret = String(options.clientSecret || '').trim();
     this.accountNumber = String(options.accountNumber || '').trim();
-    this.envName = String(options.env || 'cie').trim().toLowerCase() === 'production' ? 'production' : 'cie';
+    const target = resolveUpsTarget(options.env, options.runtime, { simulationOnly: options.simulationOnly });
+    Object.defineProperty(this, 'simulationOnly', { value: Boolean(options.simulationOnly), enumerable: true });
+    Object.defineProperty(this, 'envName', { value: target.envName, enumerable: true });
+    Object.defineProperty(this, 'baseUrl', { value: target.baseUrl, enumerable: true });
     this.timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 5000;
     this.transactionSrc = String(options.transactionSrc || 'eden-bowls').trim() || 'eden-bowls';
     this.fetchImpl = options.fetchImpl;
     this.tokenCache = null;
   }
 
-  get baseUrl() {
-    return this.envName === 'production'
-      ? 'https://onlinetools.ups.com'
-      : 'https://wwwcie.ups.com';
-  }
-
   isConfigured() {
     return Boolean(this.clientId && this.clientSecret);
+  }
+
+  ensureCanShip() {
+    if (this.simulationOnly) {
+      throw new HttpError(409, 'The UPS simulation client cannot create or void shipments.', { code: 'ups_simulation_only' });
+    }
   }
 
   ensureConfigured() {
@@ -84,21 +132,32 @@ class UpsClient {
 
   async request(path, options = {}) {
     this.ensureConfigured();
-    const headers = {
-      Accept: 'application/json',
-      ...(options.headers || {})
+    const send = async () => {
+      const headers = {
+        Accept: 'application/json',
+        ...(await this.authHeaders()),
+        ...(options.headers || {})
+      };
+      if (options.jsonBody !== undefined) {
+        headers['Content-Type'] = 'application/json';
+      }
+      return fetchJson(`${this.baseUrl}${path}`, {
+        method: options.method || 'GET',
+        headers,
+        body: options.jsonBody !== undefined ? options.jsonBody : options.body,
+        timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : this.timeoutMs,
+        fetchImpl: this.fetchImpl
+      });
     };
-    if (options.jsonBody !== undefined) {
-      headers['Content-Type'] = 'application/json';
-    }
 
-    const response = await fetchJson(`${this.baseUrl}${path}`, {
-      method: options.method || 'GET',
-      headers,
-      body: options.jsonBody !== undefined ? options.jsonBody : options.body,
-      timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : this.timeoutMs,
-      fetchImpl: this.fetchImpl
-    });
+    let response = await send();
+    if (response.status === 401) {
+      // A rejected token is dropped either way. Shipment creation is not repeated here.
+      this.tokenCache = null;
+      if (options.retryOnUnauthorized !== false) {
+        response = await send();
+      }
+    }
 
     if (response.timeout) {
       const error = new HttpError(504, 'UPS request timed out.', { code: 'ups_timeout' });
@@ -116,11 +175,7 @@ class UpsClient {
       const message = response.body?.response?.errors?.[0]?.message
         || response.body?.message
         || 'UPS request failed.';
-      throw new HttpError(502, message, {
-        code: 'ups_upstream_error',
-        status: response.status,
-        body: response.body
-      });
+      throw new HttpError(502, message, upstreamDetails('ups_upstream_error', response));
     }
 
     return response.body;
@@ -128,7 +183,7 @@ class UpsClient {
 
   async getAccessToken() {
     const now = Date.now();
-    if (this.tokenCache && this.tokenCache.expiresAt > now + 30_000) {
+    if (this.tokenCache && this.tokenCache.baseUrl === this.baseUrl && this.tokenCache.expiresAt > now + 30_000) {
       return this.tokenCache.accessToken;
     }
 
@@ -151,18 +206,15 @@ class UpsClient {
     });
 
     if (response.timeout) {
-      throw new HttpError(504, 'UPS OAuth timed out.', { code: 'ups_timeout' });
+      throw new HttpError(504, 'UPS OAuth timed out.', { code: 'ups_timeout', stage: 'oauth' });
     }
     if (!response.ok || !response.body?.access_token) {
-      throw new HttpError(502, 'Unable to authenticate with UPS.', {
-        code: 'ups_oauth_failed',
-        status: response.status,
-        body: response.body
-      });
+      throw new HttpError(502, 'Unable to authenticate with UPS.', upstreamDetails('ups_oauth_failed', response, { stage: 'oauth' }));
     }
 
     const expiresIn = Number(response.body.expires_in || 14399);
     this.tokenCache = {
+      baseUrl: this.baseUrl,
       accessToken: String(response.body.access_token),
       expiresAt: now + Math.max(60, expiresIn) * 1000
     };
@@ -173,7 +225,7 @@ class UpsClient {
     const token = await this.getAccessToken();
     return {
       Authorization: `Bearer ${token}`,
-      transId: `eden-${Date.now()}`,
+      transId: randomUUID().replace(/-/g, ''),
       transactionSrc: this.transactionSrc,
       ...(this.accountNumber ? { 'x-merchant-id': this.accountNumber } : {})
     };
@@ -211,10 +263,10 @@ class UpsClient {
     };
   }
 
-  async rate({ shipFrom, shipTo, package: pkg, allowedServiceCodes }) {
-    const headers = await this.authHeaders();
+  async rate({ shipFrom, shipTo, package: pkg, allowedServiceCodes, withTransit = false, pickupDate }) {
     const shipper = this.buildAddress({ ...shipFrom, shipperNumber: this.accountNumber });
     const shipToAddress = this.buildAddress(shipTo);
+    const packageBody = this.buildPackage(pkg);
 
     const body = {
       RateRequest: {
@@ -231,14 +283,20 @@ class UpsClient {
               BillShipper: { AccountNumber: this.accountNumber }
             }
           } : undefined,
-          Package: this.buildPackage(pkg)
+          Package: packageBody,
+          ...(withTransit ? {
+            ShipmentTotalWeight: packageBody.PackageWeight,
+            DeliveryTimeInformation: {
+              PackageBillType: '03',
+              Pickup: { Date: upsDate(pickupDate) }
+            }
+          } : {})
         }
       }
     };
 
-    const response = await this.request('/api/rating/v2403/Shop', {
+    const response = await this.request(`/api/rating/v2403/${withTransit ? 'Shoptimeintransit' : 'Shop'}`, {
       method: 'POST',
-      headers,
       jsonBody: body
     });
 
@@ -257,8 +315,52 @@ class UpsClient {
     };
   }
 
+  // UPS Address Validation (XAV). CIE only answers for New York and California addresses.
+  async validateAddress(address = {}) {
+    const zip = String(address.zipcode || '').replace(/\D/g, '');
+    const body = {
+      XAVRequest: {
+        AddressKeyFormat: {
+          AddressLine: [address.street, address.street2].filter(Boolean).map((line) => String(line).slice(0, 35)),
+          PoliticalDivision2: String(address.city || '').slice(0, 30),
+          PoliticalDivision1: String(address.state || '').toUpperCase().slice(0, 2),
+          PostcodePrimaryLow: zip.slice(0, 5),
+          ...(zip.length > 5 ? { PostcodeExtendedLow: zip.slice(5, 9) } : {}),
+          CountryCode: 'US'
+        }
+      }
+    };
+
+    const response = await this.request('/api/addressvalidation/v2/1', {
+      method: 'POST',
+      jsonBody: body
+    });
+
+    const xav = response?.XAVResponse || {};
+    const rawCandidates = xav.Candidate ? (Array.isArray(xav.Candidate) ? xav.Candidate : [xav.Candidate]) : [];
+    const candidates = rawCandidates.map((candidate) => {
+      const key = candidate?.AddressKeyFormat || {};
+      const lines = Array.isArray(key.AddressLine) ? key.AddressLine : [key.AddressLine].filter(Boolean);
+      const extended = String(key.PostcodeExtendedLow || '').trim();
+      return {
+        street: String(lines[0] || '').trim(),
+        street2: String(lines[1] || '').trim(),
+        city: String(key.PoliticalDivision2 || '').trim(),
+        state: String(key.PoliticalDivision1 || '').trim(),
+        zipcode: [String(key.PostcodePrimaryLow || '').trim(), extended].filter(Boolean).join('-')
+      };
+    });
+    let status = 'no_candidates';
+    if (xav.ValidAddressIndicator !== undefined) {
+      status = 'valid';
+    } else if (xav.AmbiguousAddressIndicator !== undefined) {
+      status = 'ambiguous';
+    }
+    return { status, candidates };
+  }
+
   async createShipment({ shipFrom, shipTo, package: pkg, serviceCode }) {
-    const headers = await this.authHeaders();
+    this.ensureCanShip();
     const code = String(serviceCode || '03').trim() || '03';
     const body = {
       ShipmentRequest: {
@@ -293,8 +395,8 @@ class UpsClient {
 
     const response = await this.request('/api/shipments/v2409/ship', {
       method: 'POST',
-      headers,
-      jsonBody: body
+      jsonBody: body,
+      retryOnUnauthorized: false
     });
 
     const results = response?.ShipmentResponse?.ShipmentResults || response?.ShipmentResults || {};
@@ -319,8 +421,7 @@ class UpsClient {
 
     if (!shipmentId || !trackingNumber) {
       throw new HttpError(502, 'UPS shipment response missing tracking number.', {
-        code: 'ups_ship_incomplete',
-        body: response
+        code: 'ups_ship_incomplete'
       });
     }
 
@@ -341,24 +442,21 @@ class UpsClient {
     if (!inquiry) {
       throw new HttpError(400, 'Tracking number is required.', { code: 'invalid_tracking' });
     }
-    const headers = await this.authHeaders();
     const response = await this.request(`/api/track/v1/details/${encodeURIComponent(inquiry)}`, {
       method: 'GET',
-      headers,
       timeoutMs: options.timeoutMs
     });
     return response;
   }
 
   async voidShipment(shipmentIdentificationNumber) {
+    this.ensureCanShip();
     const id = String(shipmentIdentificationNumber || '').trim();
     if (!id) {
       throw new HttpError(400, 'Shipment id is required.', { code: 'invalid_shipment_id' });
     }
-    const headers = await this.authHeaders();
     const response = await this.request(`/api/shipments/v2409/void/cancel/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers
+      method: 'DELETE'
     });
     return response;
   }
@@ -366,6 +464,9 @@ class UpsClient {
 
 module.exports = {
   UpsClient,
+  UPS_BASE_URLS,
+  resolveUpsTarget,
+  mapRatedShipments,
   pickRate,
   serviceLabel,
   SERVICE_LABELS

@@ -13,7 +13,7 @@ Front:
 
 Rota legado WordPress:
 
-- `POST /custom/v1/profile/avatar` — `docs/profile/06-post-profile-avatar.md`
+- `POST /custom/v1/profile/avatar` — `docs/archive/wordpress-migration/profile/06-post-profile-avatar.md`
 
 Alternativa: `PUT /profile/personal` com `avatarUrl` ja hospedada (ou `null` para remover).
 

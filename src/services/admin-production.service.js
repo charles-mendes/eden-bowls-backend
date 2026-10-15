@@ -3,6 +3,7 @@ const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { parseStripeAccountInput, ledgerStripeAccount } = require('../core/stripe-account');
 const { toMysqlDateTime } = require('../core/stripe-subscription-map');
+const { mapDeliverySubscription } = require('../infrastructure/repositories/subscription-deliveries.repository');
 const {
   DEFAULT_TIMEZONE,
   dueBucket,
@@ -35,6 +36,8 @@ function civilBounds({ timezone, windowDays, now = new Date() }) {
   const today = DateTime.fromJSDate(now, { zone: timezone }).startOf('day');
   return {
     startOfToday: today.toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
+    startOfTomorrow: today.plus({ days: 1 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
+    startOfDayAfterTomorrow: today.plus({ days: 2 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     windowEndExclusive: today.plus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     overdueFloor: today.minus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
   };
@@ -61,6 +64,7 @@ function bucketMetrics(rows, { timezone, now, includeOverdue }) {
   const metrics = emptyMetrics();
   for (const row of rows) {
     const item = presentProductionQueueItem({
+      dueAt: row.due_at || row.dueAt,
       currentPeriodEnd: row.current_period_end || row.currentPeriodEnd,
       productionStatus: row.production_status || row.productionStatus
     }, { timezone, now });
@@ -81,6 +85,7 @@ class AdminProductionService {
     this.ledgerRepository = options.ledgerRepository;
     this.productionRepository = options.productionRepository;
     this.auditService = options.auditService || null;
+    this.deliverySchedule = options.deliverySchedule || null;
     this.now = options.now || (() => new Date());
   }
 
@@ -110,12 +115,14 @@ class AdminProductionService {
       account = scoped.stripeAccount || account;
     }
 
+    // Asking for the overdue bucket brings the overdue rows back even when the list would leave them out.
     const listInput = {
       ...bounds,
-      includeOverdue: query.includeOverdue !== false,
+      includeOverdue: query.due === 'overdue' || query.includeOverdue !== false,
       account,
       stripeAccounts,
       productionStatus: query.productionStatus || undefined,
+      due: query.due || undefined,
       q: query.q || undefined,
       offset: pagination.offset,
       perPage: pagination.perPage
@@ -155,21 +162,27 @@ class AdminProductionService {
     if (shouldEnforceMarketScope(actor)) {
       assertStripeAccountMarket(actor, ledgerStripeAccount(row));
     }
-    if (!isQueueEligible(row)) {
-      throw new HttpError(409, 'Subscription is not eligible for the production queue.', {
-        code: 'production_not_eligible'
-      });
-    }
-    if (!periodEndsMatch(body.periodEnd, row.currentPeriodEnd)) {
-      throw new HttpError(409, 'Production cycle period end is stale.', {
-        code: 'production_period_stale'
-      });
+
+    // A paid cycle stays workable whatever happens to the renewals after it. An unpaid cycle is the next
+    // renewal (for past_due, the renewal that failed) and must still be in the queue.
+    const requested = await this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, body.periodEnd);
+    const paid = Boolean(requested && requested.paidAt);
+    const unpaidKey = row.status === 'past_due' ? row.currentPeriodStart : row.currentPeriodEnd;
+    if (!paid) {
+      if (!isQueueEligible(row)) {
+        throw new HttpError(409, 'Subscription is not eligible for the production queue.', {
+          code: 'production_not_eligible'
+        });
+      }
+      if (!periodEndsMatch(body.periodEnd, unpaidKey)) {
+        throw new HttpError(409, 'Production cycle period end is stale.', {
+          code: 'production_period_stale'
+        });
+      }
     }
 
-    const currentCycle = await this.productionRepository.findBySubscriptionAndPeriodEnd(
-      row.id,
-      row.currentPeriodEnd
-    );
+    let periodEnd = paid ? requested.periodEnd : unpaidKey;
+    const currentCycle = paid ? requested : await this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, periodEnd);
     const fromStatus = currentCycle && currentCycle.status ? currentCycle.status : 'to_prepare';
     const allowed = ALLOWED_TRANSITIONS[fromStatus] || new Set();
     if (!allowed.has(body.status)) {
@@ -177,14 +190,58 @@ class AdminProductionService {
         code: 'invalid_production_transition'
       });
     }
+    // Nothing is produced before its invoice is paid; a past_due cycle waits for the late payment.
+    if (body.status === 'in_production' && !paid) {
+      throw new HttpError(409, 'This cycle is awaiting payment.', {
+        code: 'production_awaiting_payment'
+      });
+    }
+
+    // A block moves the current charge, so a following-delivery charge move computed from the old one is dropped.
+    const pending = row.pendingDeliveryChanges;
+    if (body.status === 'blocked' && !paid && pending && pending.charge_move
+      && typeof this.ledgerRepository.setPendingDeliveryChanges === 'function') {
+      const { charge_move: _dropped, ...rest } = pending;
+      await this.ledgerRepository.setPendingDeliveryChanges(row.stripeSubscriptionId, rest.packs ? rest : null);
+    }
 
     await this.productionRepository.upsert({
       subscriptionId: row.id,
-      periodEnd: row.currentPeriodEnd,
+      periodEnd,
       status: body.status,
       note: body.status === 'blocked' ? body.note : (body.note || null),
       updatedByUserId: actor.userId || (actor.adminIdentity && actor.adminIdentity.userId) || null
     });
+
+    if (this.deliverySchedule && typeof this.deliverySchedule.onProductionStatus === 'function') {
+      const delivery = mapDeliverySubscription(row);
+      const plan = await this.deliverySchedule.onProductionStatus({
+        subscription: {
+          market: delivery.market,
+          chargeAt: new Date(periodEnd),
+          transitDays: delivery.transitDays,
+          stripeSubscriptionId: row.stripeSubscriptionId,
+          // Stored on the cycle when it was blocked.
+          originalPreparationDay: currentCycle && currentCycle.preparationDay ? currentCycle.preparationDay : null
+        },
+        toStatus: body.status,
+        fromStatus,
+        alreadyCharged: paid
+      });
+      // An unpaid cycle belongs to its charge. When the block or the return moves that charge, the cycle
+      // moves with it, so the queue keeps showing it and the operator can still return it.
+      const trialEnd = plan && plan.stripeUpdate ? Number(plan.stripeUpdate.trial_end) : NaN;
+      if (Number.isFinite(trialEnd) && trialEnd > 0 && typeof this.productionRepository.moveCycle === 'function') {
+        const movedTo = new Date(trialEnd * 1000);
+        await this.productionRepository.moveCycle({
+          subscriptionId: row.id,
+          from: periodEnd,
+          to: movedTo,
+          preparationDay: body.status === 'blocked' ? plan.originalPreparationDay || null : null
+        });
+        periodEnd = movedTo;
+      }
+    }
 
     if (this.auditService && typeof this.auditService.record === 'function') {
       await this.auditService.record({
@@ -197,12 +254,12 @@ class AdminProductionService {
           stripeSubscriptionId: row.stripeSubscriptionId,
           fromStatus,
           toStatus: body.status,
-          periodEnd: toMysqlDateTime(row.currentPeriodEnd)
+          periodEnd: toMysqlDateTime(periodEnd)
         }
       });
     }
 
-    const updated = await this.ledgerRepository.findQueueRowById(row.id);
+    const updated = await this.ledgerRepository.findQueueRowById(row.id, periodEnd);
     return this.present(updated || { ...row, productionStatus: body.status, note: body.note }, timezone, actor);
   }
 }

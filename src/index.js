@@ -1,3 +1,4 @@
+require('./instrument');
 require('reflect-metadata');
 
 const path = require('path');
@@ -37,7 +38,7 @@ const { NominatimClient } = require('./infrastructure/geo/nominatim-client');
 const { OsrmClient } = require('./infrastructure/geo/osrm-client');
 const { ShippingSettingsRepository } = require('./infrastructure/repositories/shipping-settings.repository');
 const { StripeBillingClient } = require('./infrastructure/stripe/stripe-billing-client');
-const { createStripeAccountsFromEnv } = require('./infrastructure/stripe/stripe-accounts');
+const { createStripeAccountsFromEnv, resolveStripeBilling } = require('./infrastructure/stripe/stripe-accounts');
 const { StripeCustomerStore } = require('./infrastructure/stripe/stripe-customer-store');
 const { SubscriptionsActionsRepository } = require('./infrastructure/repositories/subscriptions-actions.repository');
 const { SubscriptionsDetailRepository } = require('./infrastructure/repositories/subscriptions-detail.repository');
@@ -76,15 +77,27 @@ const { OnboardingSubscriptionCheckoutService } = require('./services/onboarding
 const { OnboardingSubscriptionPreviewService } = require('./services/onboarding-subscription-preview.service');
 const { OnboardingZipcodeLookupService } = require('./services/onboarding-zipcode-lookup.service');
 const { OnboardingZipcodeService } = require('./services/onboarding-zipcode.service');
-const { ShippingService } = require('./services/shipping.service');
+const { createShippingQuoteServices } = require('./config/shipping-quote-services');
+const { DeliveryClosedDaysRepository } = require('./infrastructure/repositories/delivery-closed-days.repository');
+const { AdminDeliveryCalendarService } = require('./services/admin-delivery-calendar.service');
+const { DeliveryCalendarImpactService } = require('./services/delivery-calendar-impact.service');
+const { DeliveryCalendarStripeSyncsRepository } = require('./infrastructure/repositories/delivery-calendar-stripe-syncs.repository');
 const { UpsClient } = require('./infrastructure/shipping/ups-client');
 const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shipment.repository');
 const { UpsShipmentService } = require('./services/ups-shipment.service');
 const { LocalUpsLabelStorage } = require('./infrastructure/storage/local-ups-label-storage');
+const { LocalInvoiceStorage } = require('./infrastructure/storage/local-invoice-storage');
+const { CustomerInvoicesRepository } = require('./infrastructure/repositories/customer-invoices.repository');
+const { CustomerInvoicesService } = require('./services/customer-invoices.service');
+const { renderInvoicePdf } = require('./infrastructure/invoices/invoice-pdf-renderer');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
 const { SubscriptionsEditCommitService } = require('./services/subscriptions-edit-commit.service');
 const { SubscriptionsEditPreviewService } = require('./services/subscriptions-edit-preview.service');
+const { PendingDeliveryChangesService } = require('./services/pending-delivery-changes.service');
+const { PaidCyclesService } = require('./services/paid-cycles.service');
+const { DeliveryEstimator } = require('./services/delivery-estimator.service');
+const { createAdminProductionService } = require('./config/production-services');
 const { SubscriptionsService } = require('./services/subscriptions.service');
 const { StripeWebhookService } = require('./services/stripe-webhook.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
@@ -97,10 +110,14 @@ const { StripeCouponService } = require('./services/stripe-coupon.service');
 const { AdminIdentityService } = require('./services/admin-identity.service');
 const { AdminNutritionService } = require('./services/admin-nutrition.service');
 const { AdminShippingService } = require('./services/admin-shipping.service');
+const { ShippingHeadquartersService } = require('./services/shipping-headquarters.service');
+const { AdminTodayService } = require('./services/admin-today.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
-const { AdminProductionService } = require('./services/admin-production.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
+const { AdminSystemHealthService } = require('./services/admin-system-health.service');
+const { MarketConflictsRepository } = require('./infrastructure/repositories/market-conflicts.repository');
+const { CatalogSyncRunsRepository } = require('./infrastructure/repositories/catalog-sync-runs.repository');
 const { AdminUsersService } = require('./services/admin-users.service');
 const { AdminAuditRepository } = require('./infrastructure/repositories/admin-audit.repository');
 const { AdminAuditService } = require('./services/admin-audit.service');
@@ -191,19 +208,50 @@ async function bootstrap() {
     clientSecret: env.UPS_CLIENT_SECRET,
     accountNumber: env.UPS_ACCOUNT_NUMBER,
     env: env.UPS_ENV,
+    runtime: env.EDEN_RUNTIME,
     timeoutMs: env.UPS_HTTP_TIMEOUT_MS,
     transactionSrc: env.UPS_TRANSACTION_SRC
   });
-  const shippingService = new ShippingService({
-    settings: await shippingSettingsRepository.get(),
-    viaCepClient,
-    nominatimClient,
-    osrmClient,
-    upsClient
+  // The admin freight simulation always quotes on UPS CIE, whatever the runtime.
+  const upsSandboxClient = new UpsClient({
+    clientId: env.UPS_CLIENT_ID,
+    clientSecret: env.UPS_CLIENT_SECRET,
+    accountNumber: env.UPS_ACCOUNT_NUMBER,
+    simulationOnly: true,
+    timeoutMs: env.UPS_HTTP_TIMEOUT_MS,
+    transactionSrc: env.UPS_TRANSACTION_SRC
   });
   const upsLabelStorage = new LocalUpsLabelStorage({ directory: env.UPS_LABEL_DIR });
   const upsShipmentRepository = new UpsShipmentRepository(dataSource);
-  const stripeAccounts = createStripeAccountsFromEnv(env);
+  const stripeAccounts = createStripeAccountsFromEnv(env, { logger });
+  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
+  const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
+  const deliveryCalendar = new DeliveryClosedDaysRepository(dataSource);
+  // One delivery rule for the checkout estimate, the order confirmation email, and the production queue.
+  const deliveryEstimator = new DeliveryEstimator({ calendar: deliveryCalendar });
+  const { shippingQuoteSigner, shippingService, customerDeliveriesService, subscriptionDeliveries } = createShippingQuoteServices({
+    env,
+    logger,
+    shippingSettings: await shippingSettingsRepository.get(),
+    viaCepClient,
+    nominatimClient,
+    osrmClient,
+    upsClient,
+    deliveryCalendar,
+    stripeAccounts,
+    ledgerRepository: subscriptionLedgerRepository,
+    productionRepository: subscriptionProductionRepository
+  });
+  const adminDeliveryCalendarService = new AdminDeliveryCalendarService({
+    calendarRepository: deliveryCalendar,
+    impactService: new DeliveryCalendarImpactService({ subscriptions: subscriptionDeliveries }),
+    syncsRepository: new DeliveryCalendarStripeSyncsRepository(dataSource),
+    ledgerRepository: subscriptionLedgerRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
+    billingFor: (market) => resolveStripeBilling({ stripeAccounts }, String(market || 'us').toLowerCase()),
+    syncDelayMinutes: env.DELIVERY_CALENDAR_SYNC_DELAY_MINUTES,
+    dataSource
+  });
   const stripeBilling = (() => {
     try {
       return stripeAccounts.get('us');
@@ -213,8 +261,7 @@ async function bootstrap() {
         secretKey: env.STRIPE_US_SECRET_KEY,
         apiVersion: env.STRIPE_API_VERSION,
         maxNetworkRetries: env.STRIPE_MAX_RETRIES,
-        automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX,
-        shippingProductId: env.STRIPE_US_SHIPPING_PRODUCT_ID
+        automaticTaxEnabled: env.STRIPE_US_AUTOMATIC_TAX
       });
     }
   })();
@@ -296,8 +343,6 @@ async function bootstrap() {
   const onboardingShippingSelectRepository = new OnboardingShippingSelectRepository(dataSource);
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
   const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
-  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
-  const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository, {
     planSelectionRepository: onboardingPlanSelectionRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -314,14 +359,27 @@ async function bootstrap() {
     opsEmails: env.MAIL_OPS_TO,
     emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
   });
+  // Eden Bowls invoice PDFs (EB-YYYY-NNNNNN): issued on invoice.paid, kept in INVOICE_PDF_DIR, emailed to the customer.
+  const customerInvoicesService = new CustomerInvoicesService({
+    repository: new CustomerInvoicesRepository(dataSource, { postmetaTableName: env.WP_POSTMETA_TABLE_NAME }),
+    storage: new LocalInvoiceStorage({ directory: env.INVOICE_PDF_DIR }),
+    renderPdf: renderInvoicePdf,
+    mailer: otpMailer,
+    ledgerRepository: subscriptionLedgerRepository,
+    stripeAccounts,
+    stripeBilling,
+    storeAppUrl: env.STORE_APP_URL,
+    emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
+    logger
+  });
   const stripeWebhookService = new StripeWebhookService({
     stripeAccounts,
     stripeBilling,
+    customerInvoices: customerInvoicesService,
     webhookSecret: env.STRIPE_US_WEBHOOK_SECRET,
     eventsRepository: stripeWebhookEventsRepository,
     ledgerRepository: subscriptionLedgerRepository,
     customerStore: stripeCustomerStore,
-    shippingProductId: env.STRIPE_US_SHIPPING_PRODUCT_ID,
     transactionalMailer,
     logger
   });
@@ -335,7 +393,8 @@ async function bootstrap() {
     customerStore: stripeCustomerStore,
     ledgerRepository: subscriptionLedgerRepository,
     planPreviewRepository: onboardingPlanPreviewRepository,
-    petsSyncRepository: onboardingPetCreateRepository
+    petsSyncRepository: onboardingPetCreateRepository,
+    shippingQuoteSigner
   });
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository({
     viaCepClient,
@@ -346,7 +405,10 @@ async function bootstrap() {
   const subscriptionsActionsRepository = new SubscriptionsActionsRepository({
     ledgerRepository: subscriptionLedgerRepository,
     stripeAccounts,
-    stripeBilling
+    stripeBilling,
+    deliveries: customerDeliveriesService,
+    transactionalMailer,
+    logger
   });
   const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository, { authService });
   const subscriptionsDetailRepository = new SubscriptionsDetailRepository({
@@ -362,7 +424,8 @@ async function bootstrap() {
     stripeAccounts,
     stripeBilling,
     planPreviewRepository: onboardingPlanPreviewRepository,
-    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection)
+    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection),
+    shippingQuoteSigner
   });
   const subscriptionsEditPreviewService = new SubscriptionsEditPreviewService(subscriptionsEditPreviewRepository, {
     ledgerRepository: subscriptionLedgerRepository
@@ -372,11 +435,26 @@ async function bootstrap() {
     stripeAccounts,
     stripeBilling,
     planPreviewRepository: onboardingPlanPreviewRepository,
-    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection)
+    resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection),
+    shippingQuoteSigner,
+    transactionalMailer,
+    logger
+  });
+  // A cycle enters the production queue when its invoice is paid.
+  stripeWebhookService.paidCycles = new PaidCyclesService({
+    productionRepository: subscriptionProductionRepository,
+    estimator: deliveryEstimator
+  });
+  // The following delivery's changes recorded before the current delivery was paid run on its invoice.paid.
+  stripeWebhookService.pendingDeliveryChanges = new PendingDeliveryChangesService({
+    ledgerRepository: subscriptionLedgerRepository,
+    editCommitRepository: subscriptionsEditCommitRepository,
+    logger
   });
   const subscriptionsEditCommitService = new SubscriptionsEditCommitService(subscriptionsEditCommitRepository, {
     authService,
-    ledgerRepository: subscriptionLedgerRepository
+    ledgerRepository: subscriptionLedgerRepository,
+    deliveryGuard: customerDeliveriesService
   });
   const subscriptionsRepository = new SubscriptionsRepository({
     ledgerRepository: subscriptionLedgerRepository
@@ -461,7 +539,15 @@ async function bootstrap() {
   const adminNutritionService = new AdminNutritionService();
   const adminShippingService = new AdminShippingService({
     shippingService,
-    repository: shippingSettingsRepository
+    repository: shippingSettingsRepository,
+    upsSandboxClient,
+    zippopotamClient,
+    headquartersService: new ShippingHeadquartersService({
+      viaCepClient,
+      nominatimClient,
+      zippopotamClient,
+      upsClient
+    })
   });
   const adminOnboardingRepository = new AdminOnboardingRepository(dataSource, {
     usersTableName: env.WP_USERS_TABLE_NAME,
@@ -499,7 +585,16 @@ async function bootstrap() {
     ledgerRepository: subscriptionLedgerRepository,
     stripeAccounts,
     stripeBilling,
-    stripeBrEnabled: env.STRIPE_BR_ENABLED
+    stripeBrEnabled: env.STRIPE_BR_ENABLED,
+    syncRunsRepository: new CatalogSyncRunsRepository(dataSource),
+    logger
+  });
+  const adminSystemHealthService = new AdminSystemHealthService({
+    marketConflictsRepository: new MarketConflictsRepository(dataSource, {
+      usersTableName: env.WP_USERS_TABLE_NAME,
+      usermetaTableName: env.WP_USERMETA_TABLE_NAME
+    }),
+    webhookEventsRepository: stripeWebhookEventsRepository
   });
   const adminUsersRepository = new AdminUsersRepository(dataSource, {
     usersTableName: env.WP_USERS_TABLE_NAME,
@@ -509,10 +604,16 @@ async function bootstrap() {
     repository: new AdminAuditRepository(dataSource),
     logger
   });
-  const adminProductionService = new AdminProductionService({
+  const adminProductionService = createAdminProductionService({
     ledgerRepository: subscriptionLedgerRepository,
     productionRepository: subscriptionProductionRepository,
-    auditService: adminAuditService
+    auditService: adminAuditService,
+    customerDeliveriesService
+  });
+  const adminTodayService = new AdminTodayService({
+    ledgerRepository: subscriptionLedgerRepository,
+    upsShipmentRepository,
+    calendar: deliveryCalendar
   });
   const adminUsersService = new AdminUsersService({
     usersRepository: adminUsersRepository,
@@ -539,6 +640,7 @@ async function bootstrap() {
   });
   const app = createApp({
     authService,
+    customerDeliveriesService,
     authCookie: {
       name: env.AUTH_REFRESH_COOKIE_NAME,
       path: env.AUTH_REFRESH_COOKIE_PATH,
@@ -575,6 +677,7 @@ async function bootstrap() {
     subscriptionsEditCommitService,
     subscriptionsService,
     stripeWebhookService,
+    deliveryEstimator,
     onboardingPetDeleteService,
     onboardingPetsSyncService,
     profileService,
@@ -585,8 +688,12 @@ async function bootstrap() {
     adminOnboardingService,
     adminBillingService,
     adminProductionService,
+    adminTodayService,
+    adminDeliveryCalendarService,
     upsShipmentService,
+    customerInvoicesService,
     adminCatalogService,
+    adminSystemHealthService,
     adminUsersService,
     stripeCouponService,
     feedbacksService,
@@ -619,10 +726,12 @@ async function bootstrap() {
       stripeBilling,
       ledgerRepository: subscriptionLedgerRepository,
       transactionalMailer,
+      customerInvoicesService,
       upsShipmentRepository,
       upsClient,
       refreshTokenRepository: authRefreshTokenRepository,
-      eventsRepository: stripeWebhookEventsRepository
+      eventsRepository: stripeWebhookEventsRepository,
+      deliveryCalendarSyncMaxAttempts: env.DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS
     })
   });
 }

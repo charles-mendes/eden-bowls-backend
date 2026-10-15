@@ -39,7 +39,20 @@ const { CreateSubscriptionMailClaims1700000000017 } = require('./migrations/1700
 const { CreateSubscriptionProductionCycles1700000000018 } = require('./migrations/1700000000018-create-subscription-production-cycles');
 const { AddOnboardingUserStateMarket1700000000019 } = require('./migrations/1700000000019-add-onboarding-user-state-market');
 const { AddBackgroundJobSchema1700000000020 } = require('./migrations/1700000000020-add-background-job-schema');
+const { CreateDeliveryClosedDays1700000000021 } = require('./migrations/1700000000021-create-delivery-closed-days');
+const { AddLedgerChargedDeliveries1700000000022 } = require('./migrations/1700000000022-add-ledger-charged-deliveries');
+const { AddLedgerPendingDeliveryChanges1700000000023 } = require('./migrations/1700000000023-add-ledger-pending-delivery-changes');
+const { CreateSubscriptionChargedInvoices1700000000024 } = require('./migrations/1700000000024-create-subscription-charged-invoices');
+const { AddProductionCyclePayment1700000000025 } = require('./migrations/1700000000025-add-production-cycle-payment');
+const { SeedUs2027DeliveryClosedDays1700000000026 } = require('./migrations/1700000000026-seed-us-2027-delivery-closed-days');
+const { AddDeliveryClosedDayType1700000000027 } = require('./migrations/1700000000027-add-delivery-closed-day-type');
+const { CreateDeliveryCalendarStripeSyncs1700000000028 } = require('./migrations/1700000000028-create-delivery-calendar-stripe-syncs');
+const { CreateCustomerInvoices1700000000029 } = require('./migrations/1700000000029-create-customer-invoices');
+const { AddUpsShipmentsActiveInvoiceUnique1700000000030 } = require('./migrations/1700000000030-add-ups-shipments-active-invoice-unique');
+const { AddShippingHeadquartersAddressFields1700000000031 } = require('./migrations/1700000000031-add-shipping-headquarters-address-fields');
+const { CreateCatalogSyncRuns1700000000032 } = require('./migrations/1700000000032-create-catalog-sync-runs');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
+const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
 const { buildPrivacyRequestEntitySchema } = require('./entities/privacy-request.entity');
 const { buildAdminAuditEventEntitySchema } = require('./entities/admin-audit-event.entity');
@@ -75,7 +88,8 @@ function buildDataSourceOptions(env) {
       buildAdminAuditEventEntitySchema(),
       buildSubscriptionMailClaimEntitySchema(),
       buildSubscriptionProductionCycleEntitySchema(),
-      buildBackgroundJobCursorEntitySchema()
+      buildBackgroundJobCursorEntitySchema(),
+      buildDeliveryClosedDayEntitySchema()
     ],
     migrations: [
       CreateBreedsTable1700000000000,
@@ -98,7 +112,19 @@ function buildDataSourceOptions(env) {
       CreateSubscriptionMailClaims1700000000017,
       CreateSubscriptionProductionCycles1700000000018,
       AddOnboardingUserStateMarket1700000000019,
-      AddBackgroundJobSchema1700000000020
+      AddBackgroundJobSchema1700000000020,
+      CreateDeliveryClosedDays1700000000021,
+      AddLedgerChargedDeliveries1700000000022,
+      AddLedgerPendingDeliveryChanges1700000000023,
+      CreateSubscriptionChargedInvoices1700000000024,
+      AddProductionCyclePayment1700000000025,
+      SeedUs2027DeliveryClosedDays1700000000026,
+      AddDeliveryClosedDayType1700000000027,
+      CreateDeliveryCalendarStripeSyncs1700000000028,
+      CreateCustomerInvoices1700000000029,
+      AddUpsShipmentsActiveInvoiceUnique1700000000030,
+      AddShippingHeadquartersAddressFields1700000000031,
+      CreateCatalogSyncRuns1700000000032
     ],
     synchronize: false,
     logging: false,

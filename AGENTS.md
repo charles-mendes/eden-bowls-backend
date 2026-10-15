@@ -1,5 +1,19 @@
 # AGENTS.md
 
+## Arquitetura atual
+
+Este repositório faz parte do Eden Bowls. Não é um projeto WordPress e não existe aplicação WordPress para estender.
+
+- Loja: React + TypeScript + Vite (`eden-bowls`).
+- API: Node.js + Express + TypeORM + MySQL (`eden-bowls-backend`). Contrato HTTP em `/api/v1`.
+- Painel: React + TypeScript + Vite (`eden-bowls-admin`).
+
+Funcionalidade nova entra na loja, no painel ou na API. Não criar WordPress, WooCommerce, plugins, hooks, nonces, capabilities, options, `wp-admin` nem REST `/wp-json`.
+
+`docs/archive/` é histórico. Não serve de modelo de implementação.
+
+O prefixo `wp_` em tabela MySQL é legado de schema. Não indica runtime WordPress.
+
 ## Ferramentas de busca (já instaladas)
 
 `rg`, `fd`, `tree` e `ast-grep` já estão instalados no ambiente local. Os comandos já funcionam. Use-os no terminal antes de ler arquivos. Não instale, não peça instalação e não substitua por `grep`, `find` ou `ls -R`.
@@ -25,3 +39,11 @@ npx jest --changedSince=HEAD
 ```
 
 `--findRelatedTests` recebe o arquivo de source. `--changedSince=main` cobre o diff da branch. Integração MySQL só com `RUN_DB_INTEGRATION_TESTS=true` no arquivo afetado. Detalhes em `.github/instructions/testing.instructions.md`.
+
+## Manifesto de rotas `/api/v1`
+
+`docs/api-routes.json` lista toda rota `/api/v1` registrada. O painel guarda uma cópia e falha o Vitest se chamar ou simular uma rota que não esteja lá.
+
+- Rota nova, renomeada ou removida: rode `npm run routes:manifest` e commite o JSON. `tests/api-routes-manifest.test.js` falha se esquecer.
+- Rota removida: registre `{ method, path, reason }` em `docs/api-routes-removed.json`. `tests/api-routes-removal.test.js` compara com `origin/main` e falha sem esse registro.
+- Depois, no painel: `npm run contract:sync` e commite `contracts/backend-routes.json`.

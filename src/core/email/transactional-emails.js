@@ -25,6 +25,13 @@ function petLabel(pt, petName) {
   return String(petName || '').trim() || (pt ? 'seu cão' : 'your dog');
 }
 
+// "EB-2026-000418 (PDF em anexo)" when the letter carries the invoice PDF; empty otherwise.
+function attachedInvoiceLabel(pt, invoiceNumber) {
+  const number = String(invoiceNumber || '').trim();
+  if (!number) return '';
+  return pt ? `${number} (PDF em anexo)` : `${number} (PDF attached)`;
+}
+
 function renderLetter(fields) {
   return wrapEmailHtml(fields);
 }
@@ -77,6 +84,8 @@ function buildOrderConfirmedEmail({
   planName,
   cycleLabel,
   totalLabel,
+  firstDeliveryLabel,
+  invoiceNumber,
   dashboardUrl,
   locale,
   assetBaseUrl,
@@ -87,31 +96,43 @@ function buildOrderConfirmedEmail({
   const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
   const flavorList = joinList(flavors);
+  const invoiceLabel = attachedInvoiceLabel(pt, invoiceNumber);
+  // The first delivery date comes from the same estimate the production queue stores for this payment.
+  const firstDelivery = String(firstDeliveryLabel || '').trim();
+  const opening = pt
+    ? (firstDelivery
+      ? `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. A primeira entrega está prevista para ${firstDelivery}.`
+      : `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. Nossa cozinha já começou a preparar a primeira entrega.`)
+    : (firstDelivery
+      ? `${hello} your payment was approved and ${pet}'s subscription is active. Your first delivery is planned for ${firstDelivery}.`
+      : `${hello} your payment was approved and ${pet}'s subscription is active. Our kitchen has already started preparing the first delivery.`);
   const subject = pt
     ? `A tigela da ${pet} entrou na cozinha`
     : `${pet}'s bowl is in the kitchen`;
   const text = [
-    pt
-      ? `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. Nossa cozinha já começou a preparar a primeira entrega.`
-      : `${hello} your payment was approved and ${pet}'s subscription is active. Our kitchen has already started preparing the first delivery.`,
+    opening,
+    firstDelivery ? `${pt ? 'Primeira entrega' : 'First delivery'}: ${firstDelivery}` : '',
     flavorList ? `${pt ? 'Sabores' : 'Flavors'}: ${flavorList}` : '',
     `${pt ? 'Pet' : 'Pet'}: ${pet}`,
     planName ? `${pt ? 'Plano' : 'Plan'}: ${planName}` : '',
     cycleLabel ? `${pt ? 'Frequência' : 'Frequency'}: ${cycleLabel}` : '',
     totalLabel ? `${pt ? 'Total' : 'Total'}: ${totalLabel}` : '',
+    invoiceLabel ? `${pt ? 'Fatura' : 'Invoice'}: ${invoiceLabel}` : '',
     url
   ].filter(Boolean).join('\n');
 
   const innerHtml = [
     paragraphHtml(pt
-      ? `${hello} O pagamento foi aprovado e a assinatura da ${pet} está ativa. Nossa cozinha já começou a preparar a primeira entrega. Daqui para a frente, você recebe um e-mail sempre que a tigela dela mudar de lugar: cobrada, enviada, pausada ou com o plano ajustado.`
-      : `${hello} your payment was approved and ${pet}'s subscription is active. Our kitchen has already started preparing the first delivery. From now on, you'll get an email whenever the bowl moves: charged, shipped, paused or updated.`),
+      ? `${opening} Daqui para a frente, você recebe um e-mail sempre que a tigela dela mudar de lugar: cobrada, enviada, pausada ou com o plano ajustado.`
+      : `${opening} From now on, you'll get an email whenever the bowl moves: charged, shipped, paused or updated.`),
     pillsHtml(flavors),
     detailsTableHtml([
       { label: 'Pet', value: pet },
+      { label: pt ? 'Primeira entrega' : 'First delivery', value: firstDelivery },
       { label: pt ? 'Plano' : 'Plan', value: planName },
       { label: pt ? 'Frequência' : 'Frequency', value: cycleLabel },
-      { label: 'Total', value: totalLabel }
+      { label: 'Total', value: totalLabel },
+      { label: pt ? 'Fatura' : 'Invoice', value: invoiceLabel }
     ]),
     url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'View my plan' }) : ''
   ].join('');
@@ -123,8 +144,8 @@ function buildOrderConfirmedEmail({
     html: renderLetter({
       locale: locale || 'pt-BR',
       preheader: pt
-        ? 'Assinatura confirmada. A primeira entrega já está sendo preparada.'
-        : 'Subscription confirmed. The first delivery is already being prepared.',
+        ? (firstDelivery ? `Assinatura confirmada. Primeira entrega prevista para ${firstDelivery}.` : 'Assinatura confirmada. A primeira entrega já está sendo preparada.')
+        : (firstDelivery ? `Subscription confirmed. First delivery planned for ${firstDelivery}.` : 'Subscription confirmed. The first delivery is already being prepared.'),
       kicker: pt ? 'Primeiro ciclo' : 'First cycle',
       title: subject,
       innerHtml,
@@ -310,6 +331,7 @@ function buildRenewalEmail({
   flavors,
   totalLabel,
   nextDeliveryLabel,
+  invoiceNumber,
   dashboardUrl,
   locale,
   assetBaseUrl,
@@ -320,6 +342,7 @@ function buildRenewalEmail({
   const pet = petLabel(pt, petName);
   const url = String(dashboardUrl || '').trim();
   const flavorList = joinList(flavors);
+  const invoiceLabel = attachedInvoiceLabel(pt, invoiceNumber);
   const subject = pt
     ? `Mais um ciclo na cozinha: recibo da ${pet}`
     : `Another cycle in the kitchen: ${pet}'s receipt`;
@@ -331,6 +354,7 @@ function buildRenewalEmail({
     `Pet: ${pet}`,
     totalLabel ? `${pt ? 'Valor cobrado' : 'Amount charged'}: ${totalLabel}` : '',
     nextDeliveryLabel ? `${pt ? 'Próxima entrega' : 'Next delivery'}: ${nextDeliveryLabel}` : '',
+    invoiceLabel ? `${pt ? 'Fatura' : 'Invoice'}: ${invoiceLabel}` : '',
     url
   ].filter(Boolean).join('\n');
 
@@ -342,7 +366,8 @@ function buildRenewalEmail({
     detailsTableHtml([
       { label: 'Pet', value: pet },
       { label: pt ? 'Valor cobrado' : 'Amount charged', value: totalLabel },
-      { label: pt ? 'Próxima entrega' : 'Next delivery', value: nextDeliveryLabel }
+      { label: pt ? 'Próxima entrega' : 'Next delivery', value: nextDeliveryLabel },
+      { label: pt ? 'Fatura' : 'Invoice', value: invoiceLabel }
     ]),
     url ? buttonHtml({ href: url, label: pt ? 'Ver detalhes do ciclo' : 'View cycle details' }) : ''
   ].join('');
@@ -531,6 +556,68 @@ function buildCancelledEmail({
   };
 }
 
+// Sent when the customer turns automatic renewal off. The date is the last contracted delivery.
+function autoRenewOffSentence(pt, endsOnLabel) {
+  if (pt) {
+    return endsOnLabel
+      ? `Renovação automática desligada. Seu plano termina depois da última entrega, em ${endsOnLabel}.`
+      : 'Renovação automática desligada. Seu plano termina depois da última entrega contratada.';
+  }
+  return endsOnLabel
+    ? `Automatic renewal is off. Your plan ends after your last delivery, on ${endsOnLabel}.`
+    : 'Automatic renewal is off. Your plan ends after your last contracted delivery.';
+}
+
+function buildAutoRenewOffEmail({
+  firstName,
+  petName,
+  endsOnLabel,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  const url = String(dashboardUrl || '').trim();
+  const sentence = autoRenewOffSentence(pt, endsOnLabel);
+  const subject = pt ? 'Renovação automática desligada' : 'Automatic renewal is off';
+  const text = [
+    `${hello} ${sentence}`,
+    `Pet: ${pet}`,
+    endsOnLabel ? `${pt ? 'Última entrega' : 'Last delivery'}: ${endsOnLabel}` : '',
+    url
+  ].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(`${hello} ${sentence}`),
+    detailsTableHtml([
+      { label: 'Pet', value: pet },
+      { label: pt ? 'Última entrega' : 'Last delivery', value: endsOnLabel }
+    ]),
+    url ? buttonHtml({ href: url, label: pt ? 'Religar renovação' : 'Turn renewal back on' }) : '',
+    mutedHtml(pt
+      ? 'Se mudar de ideia antes da última entrega, é só religar a renovação no Meu Plano.'
+      : 'If you change your mind before the last delivery, just turn renewal back on in My Plan.')
+  ].join('');
+
+  return {
+    id: 'auto-renew-off',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: sentence,
+      kicker: pt ? 'Renovação' : 'Renewal',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
 function buildPlanChangedEmail({
   firstName,
   petName,
@@ -590,8 +677,69 @@ function buildPlanChangedEmail({
   };
 }
 
+// Carries the invoice PDF as an attachment; the body only points to it.
+function buildInvoiceEmail({
+  firstName,
+  invoiceNumber,
+  totalLabel,
+  issuedLabel,
+  paid,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const url = String(dashboardUrl || '').trim();
+  const subject = pt ? `Sua fatura Eden Bowls ${invoiceNumber}` : `Your Eden Bowls invoice ${invoiceNumber}`;
+  const intro = pt
+    ? `${hello} A fatura ${invoiceNumber} está anexada a este e-mail em PDF.`
+    : `${hello} Invoice ${invoiceNumber} is attached to this email as a PDF.`;
+  const statusLabel = pt ? (paid ? 'Paga' : 'Pagamento pendente') : (paid ? 'Paid' : 'Payment due');
+  const text = [
+    intro,
+    `${pt ? 'Fatura' : 'Invoice'}: ${invoiceNumber}`,
+    issuedLabel ? `${pt ? 'Emissão' : 'Issued'}: ${issuedLabel}` : '',
+    totalLabel ? `Total: ${totalLabel}` : '',
+    `Status: ${statusLabel}`,
+    url
+  ].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(intro),
+    detailsTableHtml([
+      { label: pt ? 'Fatura' : 'Invoice', value: invoiceNumber },
+      { label: pt ? 'Emissão' : 'Issued', value: issuedLabel },
+      { label: 'Total', value: totalLabel },
+      { label: 'Status', value: statusLabel }
+    ]),
+    mutedHtml(pt
+      ? 'Guarde este e-mail: o PDF anexado é o seu comprovante.'
+      : 'Keep this email: the attached PDF is your record.'),
+    url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'View my plan' }) : ''
+  ].join('');
+
+  return {
+    id: 'invoice',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: pt ? `Fatura ${invoiceNumber} em anexo.` : `Invoice ${invoiceNumber} attached.`,
+      kicker: pt ? 'Fatura' : 'Invoice',
+      title: pt ? 'Sua fatura chegou' : 'Your invoice is here',
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
 module.exports = {
   buildAdminNewSubscriptionEmail,
+  buildInvoiceEmail,
+  buildAutoRenewOffEmail,
   buildCancelledEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,

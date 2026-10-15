@@ -8,7 +8,7 @@ A origem de negocio (paineis, validacao de endereco, Place Order, Stripe ACK) es
 
 Este diretorio descreve o mesmo fluxo **no Node**. Nao ha sessao de onboarding. Identidade e **JWT**. Persistencia e `onboarding_user_state` por `user_id`.
 
-Analises WP legado: `docs/checkout/`.
+Analise historica: `docs/archive/wordpress-migration/checkout/`. Nao e modelo de implementacao.
 
 Transicao WP → Node (codigo vivo do plugin + o que criar/alterar): [APLICACAO_CHECKOUT.md](./APLICACAO_CHECKOUT.md).
 
@@ -24,7 +24,7 @@ Place Order Stripe (JWT, sem sessao, sem Woo): [../subscription-checkout/README.
 | Envelope | `{ success, data }` com `session_id` | `{ success, data }` **sem** `session_id` |
 | Lookup / autocomplete | exigiam sessao valida | **publicas** (JWT opcional; o front nao envia) |
 | Save address / shipping / payment / checkout / ACK | sessao | JWT **obrigatorio** |
-| Cotacao de frete BR/US | `POST/GET /shipping/v1/*` no WP | **nao implementada** no Node |
+| Cotacao de frete BR/US | legado substituido | `POST /shipping/v1/calculate` e `GET /shipping/v1/settings` em `shipping.routes.js` |
 
 O front (`eden-bowls/src/services/onboardingApi.ts`) ja chama os paths novos, sem `sessionId`.
 

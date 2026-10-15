@@ -140,6 +140,8 @@ class AdminCatalogService {
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.stripeBrEnabled = options.stripeBrEnabled;
+    this.syncRunsRepository = options.syncRunsRepository || null;
+    this.logger = options.logger || null;
     this.lastSync = null;
   }
 
@@ -540,8 +542,21 @@ class AdminCatalogService {
     });
   }
 
-  async sync({ productId, market, currency } = {}) {
+  // Every sync is stored per market touched, failures included, so the status survives restarts.
+  async sync(args = {}) {
     const startedAt = new Date().toISOString();
+    const progress = { countries: new Map() };
+    try {
+      const result = await this.runSync(args, startedAt, progress);
+      await this.recordRuns(this.runsFor(args, startedAt, progress));
+      return result;
+    } catch (error) {
+      await this.recordRuns(this.failedRunsFor(args, startedAt, progress, error));
+      throw error;
+    }
+  }
+
+  async runSync({ productId, market, currency } = {}, startedAt, progress) {
     const products = productId
       ? [await this.getProduct(productId)]
       : (await this.repository.listProducts({ market, offset: 0, perPage: 200 })).items;
@@ -553,10 +568,13 @@ class AdminCatalogService {
     for (const product of products.filter(Boolean)) {
       const country = product.planCountry || (market ? String(market).toUpperCase() : 'BR');
       const mappedCurrency = String(currency || (country === 'US' ? 'USD' : 'BRL')).toLowerCase();
+      const tally = progress.countries.get(country) || { currency: mappedCurrency, created: 0, updated: 0, skipped: [] };
+      progress.countries.set(country, tally);
 
       for (const variant of product.variants) {
         if (!variant.regularPrice) {
           skipped.push({ variationId: variant.id, reason: 'missing_price' });
+          tally.skipped.push({ variationId: variant.id, reason: 'missing_price' });
           continue;
         }
 
@@ -566,6 +584,7 @@ class AdminCatalogService {
         } catch (error) {
           if (error && error.details && error.details.code === 'stripe_br_disabled') {
             skipped.push({ variationId: variant.id, reason: 'stripe_br_disabled' });
+            tally.skipped.push({ variationId: variant.id, reason: 'stripe_br_disabled' });
             continue;
           }
           throw error;
@@ -606,8 +625,10 @@ class AdminCatalogService {
 
         if (!variant.stripePriceId) {
           created += 1;
+          tally.created += 1;
         } else {
           updated += 1;
+          tally.updated += 1;
         }
 
         await this.repository.upsertPostMeta(variant.id, '_stripe_price_id', priceId);
@@ -633,6 +654,64 @@ class AdminCatalogService {
     };
 
     return this.lastSync;
+  }
+
+  runsFor({ productId, market, currency } = {}, startedAt, progress) {
+    const finishedAt = new Date().toISOString();
+    const tallies = [...progress.countries.entries()];
+    const requested = market ? String(market).toUpperCase() : '';
+    if (tallies.length === 0 && (requested === 'BR' || requested === 'US')) {
+      tallies.push([requested, { currency: currency || (requested === 'US' ? 'USD' : 'BRL'), created: 0, updated: 0, skipped: [] }]);
+    }
+    return tallies.map(([country, tally]) => ({
+      market: country,
+      currency: tally.currency,
+      scope: productId ? 'product' : 'market',
+      productId,
+      status: tally.skipped.length && tally.created + tally.updated === 0 ? 'completed_with_skips' : 'completed',
+      summary: { created: tally.created, updated: tally.updated, skipped: tally.skipped },
+      startedAt,
+      finishedAt
+    }));
+  }
+
+  failedRunsFor({ productId, market, currency } = {}, startedAt, progress, error) {
+    const requested = market ? String(market).toUpperCase() : '';
+    const touched = [...progress.countries.keys()];
+    let markets = touched;
+    if (markets.length === 0) {
+      markets = requested === 'BR' || requested === 'US' ? [requested] : ['BR', 'US'];
+    }
+    const finishedAt = new Date().toISOString();
+    return markets.map((country) => {
+      const tally = progress.countries.get(country);
+      return {
+        market: country,
+        currency: tally ? tally.currency : currency,
+        scope: productId ? 'product' : 'market',
+        productId,
+        status: 'failed',
+        summary: tally ? { created: tally.created, updated: tally.updated, skipped: tally.skipped } : null,
+        error: String(error && error.message ? error.message : 'sync_failed'),
+        startedAt,
+        finishedAt
+      };
+    });
+  }
+
+  async recordRuns(runs) {
+    if (!this.syncRunsRepository) {
+      return;
+    }
+    for (const run of runs) {
+      try {
+        await this.syncRunsRepository.insert(run);
+      } catch (error) {
+        if (this.logger) {
+          this.logger.error({ err: error, market: run.market }, 'Could not store the catalog sync run.');
+        }
+      }
+    }
   }
 
   async health(query = {}, actor = {}) {
@@ -668,8 +747,19 @@ class AdminCatalogService {
     };
   }
 
-  status() {
-    return this.lastSync;
+  // Newest run within the caller's markets on top (the shape the panel already reads) plus the
+  // newest run of each market in `byMarket`.
+  async status(marketQuery = {}) {
+    const markets = Array.isArray(marketQuery.markets) && marketQuery.markets.length ? marketQuery.markets : ['BR', 'US'];
+    let byMarket = {};
+    if (this.syncRunsRepository) {
+      byMarket = await this.syncRunsRepository.latestByMarket(markets);
+    } else if (this.lastSync && markets.includes(String(this.lastSync.market || '').toUpperCase())) {
+      byMarket = { [String(this.lastSync.market).toUpperCase()]: this.lastSync };
+    }
+    const newest = Object.values(byMarket)
+      .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0];
+    return newest ? { ...newest, byMarket } : { status: null, byMarket };
   }
 }
 
