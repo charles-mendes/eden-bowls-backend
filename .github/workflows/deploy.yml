@@ -107,7 +107,11 @@ jobs:
             fi
 
             docker compose --env-file .env -f docker-compose.qa.yml up -d --build --no-deps api cron
-            wait_http http://127.0.0.1:3000/health
+            if ! wait_http http://127.0.0.1:3000/health; then
+              echo "Últimas linhas do container da API:"
+              docker compose --env-file .env -f docker-compose.qa.yml logs --no-color --tail 80 api || true
+              exit 1
+            fi
             curl -fsS --max-time 10 http://127.0.0.1:3000/health
             echo
 
