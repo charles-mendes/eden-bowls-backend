@@ -95,5 +95,16 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # Integration tests copy tables from eden_bowls (CREATE TABLE ... LIKE), so the service DB needs the
+      # legacy schema from the dump plus every migration on top of it.
+      - run: mysql -h 127.0.0.1 -P 3306 -uroot -pci eden_bowls < dump/dump-eden_bowls-202608202141.sql
+      - run: npm run migrate
+        env:
+          EDEN_RUNTIME: local
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: ci
+          DB_NAME: eden_bowls
       - run: npm run test:integration -- --json --outputFile=jest-integration.json
       - run: node -e "const report=require('./jest-integration.json'); if (!report.numPassedTests || report.numPendingTests) process.exit(1)"
