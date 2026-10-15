@@ -10,7 +10,9 @@ services:
       FRONTEND_UPSTREAM: ${FRONTEND_UPSTREAM:-127.0.0.1:4173}
       ADMIN_UPSTREAM: ${ADMIN_UPSTREAM:-127.0.0.1:4174}
     volumes:
-      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Mount the directory, not the file: git replaces Caddyfile with a new inode on checkout and a
+      # single-file bind mount would keep serving the old one.
+      - ./infra/caddy:/etc/caddy:ro
       - ./infra/caddy/site:/srv/edenbowls:ro
       - caddy_data:/data
       - caddy_config:/config
