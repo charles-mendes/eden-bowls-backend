@@ -540,6 +540,10 @@
     "path": "/api/v1/privacy/requests"
   },
   {
+    "method": "PATCH",
+    "path": "/api/v1/privacy/requests/:id"
+  },
+  {
     "method": "GET",
     "path": "/api/v1/privacy/requests/:id/export"
   },
@@ -642,5 +646,9 @@
   {
     "method": "POST",
     "path": "/api/v1/subscriptions/:subscriptionId/edit/preview"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/subscriptions/:subscriptionId/invoices/:invoiceId/pdf"
   }
 ]
