@@ -36,20 +36,26 @@
 (legacy_qa_redirects) {
   @old_qa_app path /qa-app /qa-app/*
   handle @old_qa_app {
-    uri strip_prefix /qa-app
-    redir https://qa.edenbowls.com{uri} 308
+    route {
+      uri strip_prefix /qa-app
+      redir https://qa.edenbowls.com{uri} 308
+    }
   }
 
   @old_qa_admin path /qa-admin /qa-admin/*
   handle @old_qa_admin {
-    uri strip_prefix /qa-admin
-    redir https://qa-admin.edenbowls.com{uri} 308
+    route {
+      uri strip_prefix /qa-admin
+      redir https://qa-admin.edenbowls.com{uri} 308
+    }
   }
 
   @old_qa_api path /qa-api /qa-api/*
   handle @old_qa_api {
-    uri strip_prefix /qa-api
-    redir https://qa-api.edenbowls.com{uri} 308
+    route {
+      uri strip_prefix /qa-api
+      redir https://qa-api.edenbowls.com{uri} 308
+    }
   }
 }
 
