@@ -53,8 +53,8 @@ describe('admin users roles', () => {
       roles: [],
       markets: []
     });
-    expect(parseRolesAssignmentInput({ roles: ['nutritionist', 'customer'], market: 'US' })).toEqual({
-      roles: ['nutritionist'],
+    expect(parseRolesAssignmentInput({ roles: ['veterinarian', 'customer'], market: 'US' })).toEqual({
+      roles: ['veterinarian'],
       markets: ['US']
     });
     expect(parseRolesAssignmentInput({ role: 'admin' })).toEqual({
@@ -121,7 +121,7 @@ describe('admin users roles', () => {
   test('blocks changing the stored role of an allowlisted email', async () => {
     const { service, users } = buildService({ adminEmails: 'ops@edenbowls.com' });
     users['2'].storedRoles = '["admin"]';
-    await expect(service.updateRoles('2', ['nutritionist'], { userId: '1' }, { markets: ['BR'] })).rejects.toMatchObject({
+    await expect(service.updateRoles('2', ['veterinarian'], { userId: '1' }, { markets: ['BR'] })).rejects.toMatchObject({
       statusCode: 422,
       details: { code: 'allowlist_role_locked' }
     });

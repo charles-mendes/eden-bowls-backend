@@ -14,7 +14,7 @@ O painel trata Brasil e Estados Unidos como um único conjunto de registros. Ope
 - Cliente e onboarding gravam mercado na **primeira escrita**. Troca depois só por ação explícita do admin.
 - Billing, produção, cupons, faturas e webhooks continuam mandando por `stripe_account`. Identidade na fila/billing vem do snapshot do ledger, não do perfil cruzado. PDF de fatura não tenta o outro Stripe.
 - Script de backfill com `--dry-run` (órfãos e conflitos perfil vs Stripe). Flag `ADMIN_ENFORCE_STAFF_MARKET` para o `403 market_required`.
-- **BREAKING** (depois da atribuição): operator/readonly/nutritionist com mercado deixa de ver o outro país. Com a flag ligada, staff sem mercado toma `403 market_required` em rotas `query`/`record`.
+- **BREAKING** (depois da atribuição): operator/readonly/veterinarian com mercado deixa de ver o outro país. Com a flag ligada, staff sem mercado toma `403 market_required` em rotas `query`/`record`.
 
 ## Capabilities
 

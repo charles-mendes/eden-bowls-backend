@@ -1,9 +1,9 @@
 const ADMIN_ROLES_META_KEY = '_eden_admin_roles';
 
-const OPERATIONAL_ROLES = ['admin', 'operator', 'nutritionist', 'readonly'];
+const OPERATIONAL_ROLES = ['admin', 'operator', 'veterinarian', 'readonly'];
 
 const ROLE_PERMISSIONS = {
-  nutritionist: ['nutrition.simulate'],
+  veterinarian: ['nutrition.simulate'],
   readonly: [
     'nutrition.simulate',
     'onboarding.read',
@@ -42,7 +42,16 @@ const ROLE_PERMISSIONS = {
 
 ROLE_PERMISSIONS.admin = [...ROLE_PERMISSIONS.operator, 'users.roles.write', 'users.access.write', 'system.health.read'];
 
-const VALID_ROLES = new Set(['admin', 'operator', 'nutritionist', 'readonly', 'customer']);
+const VALID_ROLES = new Set(['admin', 'operator', 'veterinarian', 'readonly', 'customer']);
+
+// The veterinarian role was stored as nutritionist before migration 1700000000033. Reading the old
+// key keeps access working while the migration and the admin build roll out.
+const LEGACY_ROLE_ALIASES = { nutritionist: 'veterinarian' };
+
+function normalizeRole(role) {
+  const normalized = String(role || '').trim().toLowerCase();
+  return LEGACY_ROLE_ALIASES[normalized] || normalized;
+}
 
 function unique(values) {
   return [...new Set(values)];
@@ -50,7 +59,7 @@ function unique(values) {
 
 function parseRoles(value) {
   if (Array.isArray(value)) {
-    return unique(value.map((role) => String(role || '').trim().toLowerCase()).filter((role) => VALID_ROLES.has(role)));
+    return unique(value.map(normalizeRole).filter((role) => VALID_ROLES.has(role)));
   }
 
   const raw = String(value || '').trim();
@@ -70,7 +79,7 @@ function parseRoles(value) {
   return unique(
     raw
       .split(/[,\s]+/)
-      .map((role) => role.trim().toLowerCase())
+      .map(normalizeRole)
       .filter((role) => VALID_ROLES.has(role))
   );
 }

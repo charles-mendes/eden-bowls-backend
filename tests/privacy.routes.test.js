@@ -120,7 +120,7 @@ describe('admin privacy routes', () => {
     expect(response.body.details.code).toBe('identity_unverified');
   });
 
-  test('forbids nutritionist from the privacy queue', async () => {
+  test('forbids veterinarian from the privacy queue', async () => {
     const privacyService = { listAdminRequests: jest.fn() };
     const app = createApp({
       corsOrigins: ['http://localhost:5174'],
@@ -130,8 +130,8 @@ describe('admin privacy routes', () => {
         requireOperational: jest.fn().mockResolvedValue({
           userId: '8',
           email: 'nutri@edenbowls.com',
-          roles: ['nutritionist'],
-          permissions: ROLE_PERMISSIONS.nutritionist
+          roles: ['veterinarian'],
+          permissions: ROLE_PERMISSIONS.veterinarian
         })
       }
     });

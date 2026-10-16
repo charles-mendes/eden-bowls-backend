@@ -156,7 +156,7 @@ function listEmailPreviews(options = {}) {
         name: 'Lia',
         email: 'lia@edenbowls.com',
         temporaryPassword: 'TempPassword#12345',
-        roles: ['nutritionist'],
+        roles: ['veterinarian'],
         panelUrl: SAMPLE.panelUrl,
         expiresAt: 1_700_000_000,
         ...shell

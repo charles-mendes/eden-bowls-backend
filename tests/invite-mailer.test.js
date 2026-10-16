@@ -8,14 +8,14 @@ describe('staff invite email', () => {
       name: 'Lia',
       email: 'lia@edenbowls.com',
       temporaryPassword: 'TempPassword#12345',
-      roles: ['nutritionist'],
+      roles: ['veterinarian'],
       panelUrl: 'http://localhost:5174',
       expiresAt: 1_700_000_000
     });
 
     expect(content.subject).toBe('Your access to the Eden Bowls dashboard');
-    expect(content.text).toContain('Nutricionista');
-    expect(content.text).not.toContain('nutritionist');
+    expect(content.text).toContain('Veterinário(a)');
+    expect(content.text).not.toContain('veterinarian');
     expect(content.text).toContain('TempPassword#12345');
     expect(content.text).toContain('http://localhost:5174');
   });

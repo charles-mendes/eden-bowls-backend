@@ -107,13 +107,13 @@ describe('admin users access', () => {
     expect(parseCreateAccessInput({
       name: 'Lia',
       email: 'lia@edenbowls.com',
-      role: 'nutritionist',
+      role: 'veterinarian',
       market: 'US'
     })).toEqual({
       name: 'Lia',
       email: 'lia@edenbowls.com',
       phone: '',
-      roles: ['nutritionist'],
+      roles: ['veterinarian'],
       markets: ['US']
     });
 
@@ -134,7 +134,7 @@ describe('admin users access', () => {
       name: 'Lia',
       email: 'lia@edenbowls.com',
       phone: '11988887777',
-      roles: ['nutritionist'],
+      roles: ['veterinarian'],
       markets: ['US']
     }, adminActor);
 
@@ -144,7 +144,7 @@ describe('admin users access', () => {
       displayName: 'Lia'
     }));
     expect(usersRepository.saveActivationStatus).toHaveBeenCalledWith('9', 'pending');
-    expect(usersRepository.saveStoredRoles).toHaveBeenCalledWith('9', ['nutritionist']);
+    expect(usersRepository.saveStoredRoles).toHaveBeenCalledWith('9', ['veterinarian']);
     expect(usersRepository.saveStoredMarkets).toHaveBeenCalledWith('9', ['US']);
     expect(result.markets).toEqual(['US']);
     expect(inviteMailer.sendInviteEmail).toHaveBeenCalledWith(expect.objectContaining({

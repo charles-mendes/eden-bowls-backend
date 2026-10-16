@@ -1,8 +1,8 @@
 const { ROLE_PERMISSIONS, parseRoles, permissionsForRoles, resolveAdminRoles } = require('../src/core/admin-roles');
 
 describe('admin roles', () => {
-  test('maps nutritionist to simulate only', () => {
-    expect(permissionsForRoles(['nutritionist'])).toEqual(['nutrition.simulate']);
+  test('maps veterinarian to simulate only', () => {
+    expect(permissionsForRoles(['veterinarian'])).toEqual(['nutrition.simulate']);
   });
 
   test('gives operator catalog.sync', () => {
@@ -24,13 +24,13 @@ describe('admin roles', () => {
   test('lets readonly list privacy requests but not write them', () => {
     expect(ROLE_PERMISSIONS.readonly).toContain('privacy.requests.read');
     expect(ROLE_PERMISSIONS.readonly).not.toContain('privacy.requests.write');
-    expect(ROLE_PERMISSIONS.nutritionist).not.toContain('privacy.requests.read');
+    expect(ROLE_PERMISSIONS.veterinarian).not.toContain('privacy.requests.read');
   });
 
   test('lets readonly list production but not write it', () => {
     expect(ROLE_PERMISSIONS.readonly).toContain('production.read');
     expect(ROLE_PERMISSIONS.readonly).not.toContain('production.write');
-    expect(ROLE_PERMISSIONS.nutritionist).not.toContain('production.read');
+    expect(ROLE_PERMISSIONS.veterinarian).not.toContain('production.read');
   });
 
   test('lets readonly list feedbacks but not write them', () => {
@@ -45,7 +45,7 @@ describe('admin roles', () => {
 
   test('reserves system health for admin', () => {
     expect(ROLE_PERMISSIONS.admin).toContain('system.health.read');
-    for (const role of ['operator', 'readonly', 'nutritionist']) {
+    for (const role of ['operator', 'readonly', 'veterinarian']) {
       expect(ROLE_PERMISSIONS[role]).not.toContain('system.health.read');
     }
   });
@@ -64,5 +64,13 @@ describe('admin roles', () => {
 
   test('parses usermeta json roles', () => {
     expect(parseRoles('["operator","readonly"]')).toEqual(['operator', 'readonly']);
+  });
+
+  test('reads a role stored as nutritionist before the migration as veterinarian', () => {
+    expect(parseRoles('["nutritionist"]')).toEqual(['veterinarian']);
+    expect(parseRoles('nutritionist,readonly')).toEqual(['veterinarian', 'readonly']);
+    expect(parseRoles(['nutritionist', 'veterinarian'])).toEqual(['veterinarian']);
+    expect(resolveAdminRoles({ storedRoles: '["nutritionist"]', email: 'lia@edenbowls.com' })).toEqual(['veterinarian']);
+    expect(permissionsForRoles(parseRoles('["nutritionist"]'))).toEqual(['nutrition.simulate']);
   });
 });

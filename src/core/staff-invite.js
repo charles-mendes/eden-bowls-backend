@@ -14,7 +14,7 @@ const INVITE_RESEND_WINDOW_SECONDS = 3600;
 const ROLE_LABELS = {
   admin: 'Admin',
   operator: 'Operador',
-  nutritionist: 'Nutricionista',
+  veterinarian: 'Veterinário(a)',
   readonly: 'Somente leitura',
   customer: 'Sem acesso ao painel'
 };
@@ -50,7 +50,7 @@ function primaryRoleLabel(roles = []) {
   if (roles.includes('admin')) return ROLE_LABELS.admin;
   if (roles.includes('operator')) return ROLE_LABELS.operator;
   if (roles.includes('readonly')) return ROLE_LABELS.readonly;
-  if (roles.includes('nutritionist')) return ROLE_LABELS.nutritionist;
+  if (roles.includes('veterinarian')) return ROLE_LABELS.veterinarian;
   return ROLE_LABELS.customer;
 }
 
