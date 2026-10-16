@@ -30,7 +30,7 @@ describe('admin users access routes', () => {
         id: '9',
         email: 'lia@edenbowls.com',
         status: 'pending',
-        roles: ['nutritionist'],
+        roles: ['veterinarian'],
         inviteMailStatus: 'sent'
       })
     };
@@ -45,14 +45,14 @@ describe('admin users access routes', () => {
     const response = await request(app)
       .post('/api/v1/admin/users')
       .set('Authorization', `Bearer ${tokenFor()}`)
-      .send({ name: 'Lia', email: 'lia@edenbowls.com', role: 'nutritionist', market: 'US' });
+      .send({ name: 'Lia', email: 'lia@edenbowls.com', role: 'veterinarian', market: 'US' });
 
     expect(response.status).toBe(200);
     expect(adminUsersService.createAccess).toHaveBeenCalledWith({
       name: 'Lia',
       email: 'lia@edenbowls.com',
       phone: '',
-      roles: ['nutritionist'],
+      roles: ['veterinarian'],
       markets: ['US']
     }, identity);
     expect(response.body.inviteMailStatus).toBe('sent');
@@ -143,8 +143,8 @@ describe('admin users access routes', () => {
     const identity = {
       userId: '7',
       email: 'lia@edenbowls.com',
-      roles: ['nutritionist'],
-      permissions: ROLE_PERMISSIONS.nutritionist,
+      roles: ['veterinarian'],
+      permissions: ROLE_PERMISSIONS.veterinarian,
       mustChangePassword: true
     };
     const app = appWithIdentity(identity, { adminUsersService });

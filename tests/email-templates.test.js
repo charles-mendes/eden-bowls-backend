@@ -123,7 +123,7 @@ describe('designer email shell', () => {
       name: 'Lia',
       email: 'lia@edenbowls.com',
       temporaryPassword: 'TempPassword#12345',
-      roles: ['nutritionist'],
+      roles: ['veterinarian'],
       panelUrl: 'http://localhost:5174',
       expiresAt: 1_700_000_000,
       locale: 'pt-BR'
@@ -220,7 +220,7 @@ describe('staff invite and privacy HTML', () => {
       name: 'Lia',
       email: 'lia@edenbowls.com',
       temporaryPassword: 'TempPassword#12345',
-      roles: ['nutritionist'],
+      roles: ['veterinarian'],
       panelUrl: 'http://localhost:5174',
       expiresAt: 1_700_000_000
     });

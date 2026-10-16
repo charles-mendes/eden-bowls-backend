@@ -101,7 +101,7 @@ describe('admin shipping and coupon routes', () => {
     expect(stripeCouponService.syncFirstPurchasePromos).toHaveBeenCalled();
   });
 
-  test('nutritionist cannot read shipping', async () => {
+  test('veterinarian cannot read shipping', async () => {
     const app = createApp({
       corsOrigins: ['http://localhost:5174'],
       jwt,
@@ -109,8 +109,8 @@ describe('admin shipping and coupon routes', () => {
         requireOperational: jest.fn().mockResolvedValue({
           userId: '9',
           email: 'nutri@edenbowls.com',
-          roles: ['nutritionist'],
-          permissions: ROLE_PERMISSIONS.nutritionist
+          roles: ['veterinarian'],
+          permissions: ROLE_PERMISSIONS.veterinarian
         })
       }
     });
