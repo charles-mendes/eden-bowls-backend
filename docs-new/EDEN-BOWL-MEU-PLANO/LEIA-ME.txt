@@ -16,7 +16,7 @@ REGRAS
 - O valor é recalculado antes de salvar.
 - Depois da data limite, a entrega fica travada e as ações valem para a seguinte.
 - Mudar data: as entregas seguintes continuam na mesma frequência a partir da nova data (regra proposta, a confirmar).
-- O aviso de porção na tela Ajustar packs depende do aval da nutricionista.
+- O aviso de porção na tela Ajustar packs depende do aval do(a) veterinário(a).
 
 ARQUIVOS
 - styles.css: todos os estilos. Cores e fontes estão em variáveis no :root (fundo #F4EFE3, cards #FFFCF6, botão #6F7C63, dourado #B08F66, texto #2F3A31).
