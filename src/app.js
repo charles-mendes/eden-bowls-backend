@@ -67,7 +67,7 @@ function corsMiddleware(config) {
       response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
       response.setHeader(
         'Access-Control-Allow-Headers',
-        'Accept,Content-Type,Authorization,Origin,X-Requested-With,X-Eden-Country,X-Eden-Domain',
+        'Accept,Content-Type,Authorization,Origin,X-Requested-With,X-Eden-Country,X-Eden-Domain,baggage,sentry-trace',
       );
       response.setHeader('Access-Control-Expose-Headers', 'content-type');
     }
