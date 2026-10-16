@@ -200,4 +200,18 @@ describe('ProductsRepository', () => {
       details: { code: 'catalog_not_initialized' }
     });
   });
+
+  test('accepts the BRL binding a BR catalog sync writes', () => {
+    const repository = new ProductsRepository({ isInitialized: true, query: jest.fn() });
+    const variation = {
+      meta: {
+        _stripe_product_id: 'prod_br_new',
+        _stripe_price_id: 'price_br_new',
+        _stripe_price_ids_by_currency: JSON.stringify({ brl: 'price_br_new' })
+      }
+    };
+
+    expect(repository.hasStrictStripeBinding(variation, 'BRL')).toBe(true);
+    expect(repository.hasStrictStripeBinding(variation, 'USD')).toBe(false);
+  });
 });

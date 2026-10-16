@@ -885,3 +885,67 @@ describe('attachPaymentMethod', () => {
     await expect(silent.client.attachPaymentMethod('cus_1', 'pm_9')).resolves.toBe('pm_9');
   });
 });
+
+describe('StripeBillingClient.ensureRecurringPrice', () => {
+  const priceArgs = {
+    lookupKey: 'eden_100_1001_brl_3000',
+    currency: 'brl',
+    unitAmount: 3000,
+    nickname: 'Flavors BR - Beef 300g'
+  };
+  const missingProduct = () => Object.assign(new Error("No such product: 'prod_LegacyShared'"), {
+    type: 'StripeInvalidRequestError',
+    code: 'resource_missing',
+    param: 'product'
+  });
+
+  test('creates a product in this account when no product id is given', async () => {
+    const { stripe, client } = buildClient({ account: 'br' });
+    stripe.products.create.mockResolvedValue({ id: 'prod_br_new' });
+    stripe.prices.create.mockResolvedValue({ id: 'price_br_new' });
+
+    await expect(client.ensureRecurringPrice(priceArgs)).resolves.toEqual({ priceId: 'price_br_new', productId: 'prod_br_new' });
+    expect(stripe.prices.create).toHaveBeenCalledWith(expect.objectContaining({ product: 'prod_br_new', currency: 'brl' }));
+  });
+
+  test('recreates a missing legacy product only when asked', async () => {
+    const logger = { warn: jest.fn() };
+    const { stripe, client } = buildClient({ account: 'us', logger });
+    stripe.products.create.mockResolvedValue({ id: 'prod_us_new' });
+    stripe.prices.create
+      .mockRejectedValueOnce(missingProduct())
+      .mockResolvedValueOnce({ id: 'price_us_new' });
+
+    await expect(client.ensureRecurringPrice({
+      ...priceArgs,
+      stripeProductId: 'prod_LegacyShared',
+      recreateMissingProduct: true
+    })).resolves.toEqual({ priceId: 'price_us_new', productId: 'prod_us_new' });
+    expect(stripe.products.create).toHaveBeenCalledTimes(1);
+    expect(stripe.prices.create).toHaveBeenLastCalledWith(expect.objectContaining({ product: 'prod_us_new' }));
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ productId: 'prod_LegacyShared' }), expect.stringMatching(/Legacy Stripe product/));
+  });
+
+  test('fails without creating a product when a mapped product is missing, and logs Stripe\'s message', async () => {
+    const logger = { warn: jest.fn() };
+    const { stripe, client } = buildClient({ account: 'br', logger });
+    stripe.prices.create.mockRejectedValue(missingProduct());
+
+    await expect(client.ensureRecurringPrice({ ...priceArgs, stripeProductId: 'prod_br_mapped' })).rejects.toMatchObject({
+      statusCode: 502,
+      details: { code: 'stripe_price_ensure_failed', stripe_account: 'br' }
+    });
+    expect(stripe.products.create).not.toHaveBeenCalled();
+    const [fields, message] = logger.warn.mock.calls[0];
+    expect(message).toBe('Stripe price ensure failed.');
+    expect(fields).toEqual({
+      stripe_account: 'br',
+      lookupKey: 'eden_100_1001_brl_3000',
+      productId: 'prod_br_mapped',
+      type: 'StripeInvalidRequestError',
+      code: 'resource_missing',
+      param: 'product',
+      message: "No such product: 'prod_LegacyShared'"
+    });
+  });
+});

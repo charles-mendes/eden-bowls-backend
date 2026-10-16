@@ -180,7 +180,9 @@ class StripeBillingClient {
     throw this.httpError(503, `${secretName} is not configured.`, { code: 'stripe_secret_missing' });
   }
 
-  async ensureRecurringPrice({ lookupKey, currency, unitAmount, nickname, stripeProductId }) {
+  // recreateMissingProduct is only set for a legacy product id that may belong to another account.
+  // Any other missing product fails, so a wrong key cannot quietly duplicate the catalog.
+  async ensureRecurringPrice({ lookupKey, currency, unitAmount, nickname, stripeProductId, recreateMissingProduct = false }) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
     const key = String(lookupKey || '').trim();
@@ -204,19 +206,37 @@ class StripeBillingClient {
       const reusableProductId = String(stripeProductId || '').startsWith('prod_') && !String(stripeProductId).includes('_seed_')
         ? String(stripeProductId)
         : '';
-      const productId = reusableProductId || (await stripe.products.create({
+      const createProduct = async () => (await stripe.products.create({
         name: nickname || key,
         metadata: { source: 'eden_bowls_admin', lookup_key: key }
       })).id;
-      const price = await stripe.prices.create({
+      const createPrice = (product) => stripe.prices.create({
         currency: currencyCode,
         unit_amount: amount,
         recurring: { interval: 'month' },
-        product: productId,
+        product,
         lookup_key: key,
         nickname: nickname || key,
         tax_behavior: 'exclusive'
       });
+
+      let productId = reusableProductId || await createProduct();
+      let price;
+      try {
+        price = await createPrice(productId);
+      } catch (error) {
+        const productMissing = error && error.code === 'resource_missing' && error.param === 'product';
+        if (!reusableProductId || !recreateMissingProduct || !productMissing) {
+          throw error;
+        }
+        this.logger.warn({
+          stripe_account: this.account,
+          lookupKey: key,
+          productId: reusableProductId
+        }, 'Legacy Stripe product is not in this account. Creating a new product.');
+        productId = await createProduct();
+        price = await createPrice(productId);
+      }
       if (!price || !String(price.id || '').startsWith('price_')) {
         throw this.httpError(502, 'Unable to create Stripe price.', {
           code: 'stripe_price_ensure_failed'
@@ -227,6 +247,16 @@ class StripeBillingClient {
       if (error instanceof HttpError) {
         throw error;
       }
+      // The response keeps a generic message; the log keeps Stripe's own, without the request payload.
+      this.logger.warn({
+        stripe_account: this.account,
+        lookupKey: key,
+        productId: String(stripeProductId || '') || null,
+        type: error && error.type ? String(error.type) : null,
+        code: error && error.code ? String(error.code) : null,
+        param: error && error.param ? String(error.param) : null,
+        message: stripeRawMessage(error) || null
+      }, 'Stripe price ensure failed.');
       try {
         const listed = await stripe.prices.list({ lookup_keys: [key], limit: 1 });
         const existing = listed && Array.isArray(listed.data) ? listed.data[0] : null;

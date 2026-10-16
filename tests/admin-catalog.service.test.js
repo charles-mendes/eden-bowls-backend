@@ -559,4 +559,115 @@ describe('AdminCatalogService', () => {
     }));
     await expect(service.getProduct('91', actor)).rejects.toMatchObject({ statusCode: 404 });
   });
+
+  test('BR sync ignores the legacy product id and stores the BR product for checkout', async () => {
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue({
+        id: '100',
+        namePt: 'Flavors BR',
+        planCountry: 'BR',
+        stripeProductId: 'prod_LegacyParent',
+        variants: [{
+          id: '1001',
+          name: 'Beef 300g',
+          sku: '1001',
+          regularPrice: 30,
+          stripeProductId: 'prod_LegacyShared',
+          stripePriceId: 'price_LegacyShared',
+          stripePriceIdsByCurrency: { brl: 'price_LegacyShared' },
+          stripeProductIdsByCurrency: {}
+        }]
+      }),
+      fingerprint: jest.fn().mockReturnValue('fp-30'),
+      upsertPostMeta: jest.fn()
+    };
+    const brBilling = {
+      ensureRecurringPrice: jest.fn().mockResolvedValue({ priceId: 'price_br_new', productId: 'prod_br_new' })
+    };
+    const usBilling = { ensureRecurringPrice: jest.fn() };
+    const stripeAccounts = {
+      getForCreation: jest.fn((account) => (account === 'br' ? brBilling : usBilling)),
+      get: jest.fn((account) => (account === 'br' ? brBilling : usBilling))
+    };
+    const service = new AdminCatalogService({ repository, stripeAccounts });
+
+    await service.sync({ productId: '100' });
+
+    expect(stripeAccounts.getForCreation).toHaveBeenCalledWith('br');
+    expect(usBilling.ensureRecurringPrice).not.toHaveBeenCalled();
+    const [args] = brBilling.ensureRecurringPrice.mock.calls[0];
+    expect(args).not.toHaveProperty('stripeProductId');
+    expect(args).not.toHaveProperty('recreateMissingProduct');
+    expect(repository.upsertPostMeta).toHaveBeenCalledWith('1001', '_stripe_product_id', 'prod_br_new');
+    expect(repository.upsertPostMeta).toHaveBeenCalledWith('1001', '_stripe_price_ids_by_currency', JSON.stringify({ brl: 'price_br_new' }));
+    expect(repository.upsertPostMeta).toHaveBeenCalledWith('1001', '_stripe_product_ids_by_currency', JSON.stringify({ brl: 'prod_br_new' }));
+  });
+
+  test('BR sync reuses a product already mapped to brl', async () => {
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue({
+        id: '100',
+        namePt: 'Flavors BR',
+        planCountry: 'BR',
+        variants: [{
+          id: '1001',
+          name: 'Beef 300g',
+          sku: '1001',
+          regularPrice: 30,
+          stripeProductId: 'prod_br_mapped',
+          stripeProductIdsByCurrency: { brl: 'prod_br_mapped' }
+        }]
+      }),
+      fingerprint: jest.fn().mockReturnValue('fp-30'),
+      upsertPostMeta: jest.fn()
+    };
+    const brBilling = {
+      ensureRecurringPrice: jest.fn().mockResolvedValue({ priceId: 'price_br_30', productId: 'prod_br_mapped' })
+    };
+    const service = new AdminCatalogService({
+      repository,
+      stripeAccounts: { getForCreation: jest.fn(() => brBilling), get: jest.fn(() => brBilling) }
+    });
+
+    await service.sync({ productId: '100' });
+
+    const [args] = brBilling.ensureRecurringPrice.mock.calls[0];
+    expect(args.stripeProductId).toBe('prod_br_mapped');
+    expect(args).not.toHaveProperty('recreateMissingProduct');
+  });
+
+  test('US sync keeps the legacy product id and only allows recreating it', async () => {
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue({
+        id: '200',
+        namePt: 'Flavors US',
+        planCountry: 'US',
+        variants: [{
+          id: '2001',
+          name: 'Beef 10oz',
+          sku: '2001',
+          regularPrice: 40,
+          stripeProductId: 'prod_LegacyUs',
+          stripePriceIdsByCurrency: { usd: 'price_LegacyUs' }
+        }]
+      }),
+      fingerprint: jest.fn().mockReturnValue('fp-40'),
+      upsertPostMeta: jest.fn()
+    };
+    const usBilling = {
+      ensureRecurringPrice: jest.fn().mockResolvedValue({ priceId: 'price_us_40', productId: 'prod_LegacyUs' })
+    };
+    const service = new AdminCatalogService({
+      repository,
+      stripeAccounts: { getForCreation: jest.fn(() => usBilling), get: jest.fn(() => usBilling) }
+    });
+
+    await service.sync({ productId: '200' });
+
+    expect(usBilling.ensureRecurringPrice).toHaveBeenCalledWith(expect.objectContaining({
+      stripeProductId: 'prod_LegacyUs',
+      recreateMissingProduct: true
+    }));
+    expect(repository.upsertPostMeta).toHaveBeenCalledWith('2001', '_stripe_product_id', 'prod_LegacyUs');
+  });
 });

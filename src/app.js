@@ -244,6 +244,20 @@ function createApp(dependencies = {}) {
     const statusCode = Number(error.statusCode || error.status || 500);
     const message = statusCode >= 500 ? 'Internal server error.' : error.message;
 
+    // The response hides 5xx messages, so the log keeps them. Only the message and error code are
+    // logged: no headers, query string or body, which can carry tokens or Stripe keys.
+    if (statusCode >= 500 && dependencies.logger && typeof dependencies.logger.error === 'function') {
+      const details = error.details && typeof error.details === 'object' ? error.details : {};
+      dependencies.logger.error({
+        statusCode,
+        method: request.method,
+        path: request.path,
+        code: details.code ? String(details.code) : null,
+        stripe_account: details.stripe_account ? String(details.stripe_account) : null,
+        message: String(error.message || '')
+      }, 'Request failed.');
+    }
+
     response.status(statusCode).json({
       success: false,
       message,
