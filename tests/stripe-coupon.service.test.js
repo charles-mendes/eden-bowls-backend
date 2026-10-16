@@ -81,7 +81,7 @@ describe('StripeCouponService', () => {
         retrieve: jest.fn().mockResolvedValue({
           id: 'promo_saved',
           active: true,
-          coupon: { id: 'coupon_saved' }
+          promotion: { type: 'coupon', coupon: { id: 'coupon_saved' } }
         })
       }
     };
@@ -91,7 +91,7 @@ describe('StripeCouponService', () => {
 
     await service.saveMapping({ 1: 'promo_saved' });
 
-    expect(stripe.promotionCodes.retrieve).toHaveBeenCalledWith('promo_saved', { expand: ['coupon'] });
+    expect(stripe.promotionCodes.retrieve).toHaveBeenCalledWith('promo_saved', { expand: ['promotion.coupon'] });
     expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_saved' }, { 1: 'coupon_saved' }, 'us');
   });
 
@@ -117,7 +117,7 @@ describe('StripeCouponService', () => {
               id: 'promo_stripe_3m',
               active: true,
               created: 20,
-              coupon: { id: 'coupon_3', percent_off: 25, duration: 'once' },
+              promotion: { type: 'coupon', coupon: { id: 'coupon_3', percent_off: 25, duration: 'once' } },
               restrictions: { first_time_transaction: true },
               metadata: { pawbowl_purpose: 'first_purchase', pawbowl_term_months: '3' }
             }
@@ -136,6 +136,7 @@ describe('StripeCouponService', () => {
 
     const result = await service.syncFirstPurchasePromos();
 
+    expect(stripe.promotionCodes.list).toHaveBeenCalledWith(expect.objectContaining({ expand: ['data.promotion.coupon'] }));
     expect(repository.saveMapping).toHaveBeenCalledWith(
       { 1: 'promo_stored_1m', 3: 'promo_stripe_3m' },
       { 1: 'coupon_1', 3: 'coupon_3' },
@@ -157,7 +158,7 @@ describe('StripeCouponService', () => {
       promotionCodes: {
         list: jest.fn().mockResolvedValue({
           data: [
-            { id: 'promo_1m', code: 'FIRST_1M', active: true, coupon: 'coupon_1' }
+            { id: 'promo_1m', code: 'FIRST_1M', active: true, promotion: { type: 'coupon', coupon: 'coupon_1' } }
           ]
         })
       },
