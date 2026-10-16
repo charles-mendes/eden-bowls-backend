@@ -131,4 +131,17 @@ describe('breeds routes', () => {
     expect(response.headers['access-control-allow-origin']).toBe('http://localhost:5173');
     expect(breedsService.listBreeds).not.toHaveBeenCalled();
   });
+
+  test('allows Sentry trace headers in CORS preflight', async () => {
+    const app = createApp({ breedsService: { listBreeds: jest.fn() }, corsOrigins });
+    const response = await request(app)
+      .options('/api/v1/breeds')
+      .set('Origin', 'http://localhost:5173')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'content-type,x-eden-country,baggage,sentry-trace');
+
+    expect(response.status).toBe(204);
+    const allowed = response.headers['access-control-allow-headers'].toLowerCase().split(',');
+    expect(allowed).toEqual(expect.arrayContaining(['content-type', 'x-eden-country', 'baggage', 'sentry-trace']));
+  });
 });
