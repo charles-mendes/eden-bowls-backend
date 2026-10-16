@@ -64,7 +64,7 @@
   header @public_media Cache-Control "public, max-age=604800"
 }
 
-http://edenbowls.com, http://www.edenbowls.com, http://edenbowls.com.br, http://www.edenbowls.com.br, http://qa.edenbowls.com, http://qa-admin.edenbowls.com, http://qa-api.edenbowls.com {
+http://edenbowls.com, http://www.edenbowls.com, http://edenbowls.com.br, http://www.edenbowls.com.br, http://qa.edenbowls.com, http://www.qa.edenbowls.com, http://qa-admin.edenbowls.com, http://www.qa-admin.edenbowls.com, http://qa-api.edenbowls.com {
   @not_acme not path /.well-known/acme-challenge/*
   redir @not_acme https://{host}{uri} 301
 }
@@ -91,6 +91,24 @@ edenbowls.com {
     @root_index_com path /
     rewrite @root_index_com /index.html
     file_server
+  }
+}
+
+www.qa.edenbowls.com {
+  import qa_noindex
+  import security_headers
+
+  handle {
+    redir https://qa.edenbowls.com{uri} 301
+  }
+}
+
+www.qa-admin.edenbowls.com {
+  import qa_noindex
+  import security_headers
+
+  handle {
+    redir https://qa-admin.edenbowls.com{uri} 301
   }
 }
 
