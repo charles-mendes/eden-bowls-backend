@@ -674,7 +674,9 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(stripeCouponService.resolveFirstPurchasePromotionForCheckout).toHaveBeenCalledWith(expect.objectContaining({
       account: 'br'
     }));
-    expect(brBilling.createOnboardingSubscription).toHaveBeenCalled();
+    expect(brBilling.createOnboardingSubscription).toHaveBeenCalledWith(expect.objectContaining({
+      items: [expect.objectContaining({ price: 'price_brl' })]
+    }));
     expect(usBilling.createOnboardingSubscription).not.toHaveBeenCalled();
     expect(result.data.stripe_account).toBe('br');
   });

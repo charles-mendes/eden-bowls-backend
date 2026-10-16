@@ -598,10 +598,13 @@ class AdminCatalogService {
         const lookupKey = `eden_${product.id}_${variant.id}_${mappedCurrency}_${unitAmount}`;
         const productMap = variant.stripeProductIdsByCurrency || {};
         const mappedProductId = liveStripeId(productMap[mappedCurrency], 'prod_');
-        const stripeProductId = mappedProductId
-          || (!Object.keys(productMap).length
-            ? (liveStripeId(variant.stripeProductId, 'prod_') || liveStripeId(product.stripeProductId, 'prod_'))
-            : '');
+        // The single _stripe_product_id meta predates the BR/US split and was created under the old
+        // shared key, so only the US account may fall back to it. A BR variant without a brl entry
+        // gets a new product in the BR account.
+        const legacyProductId = !mappedProductId && !Object.keys(productMap).length && country === 'US'
+          ? (liveStripeId(variant.stripeProductId, 'prod_') || liveStripeId(product.stripeProductId, 'prod_'))
+          : '';
+        const stripeProductId = mappedProductId || legacyProductId;
         const priceArgs = {
           lookupKey,
           currency: mappedCurrency,
@@ -610,6 +613,9 @@ class AdminCatalogService {
         };
         if (stripeProductId) {
           priceArgs.stripeProductId = stripeProductId;
+        }
+        if (legacyProductId) {
+          priceArgs.recreateMissingProduct = true;
         }
         const ensured = unwrapStripePrice(await stripeBilling.ensureRecurringPrice(priceArgs));
         const priceId = ensured.priceId;
@@ -635,7 +641,8 @@ class AdminCatalogService {
         await this.repository.upsertPostMeta(variant.id, '_stripe_price_ids_by_currency', JSON.stringify(nextMap));
         await this.repository.upsertPostMeta(variant.id, '_stripe_price_fingerprint', fingerprint);
         await this.repository.upsertPostMeta(variant.id, '_stripe_product_ids_by_currency', JSON.stringify(nextProductMap));
-        if (mappedCurrency === 'usd' && (ensured.productId || stripeProductId)) {
+        // Checkout requires _stripe_product_id, so each variant keeps the product of its own market's account.
+        if (mappedCurrency === requiredCurrency(country) && (ensured.productId || stripeProductId)) {
           await this.repository.upsertPostMeta(variant.id, '_stripe_product_id', ensured.productId || stripeProductId);
         }
       }
