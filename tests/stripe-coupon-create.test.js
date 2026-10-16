@@ -32,9 +32,14 @@ describe('StripeCouponService createFirstPurchaseCoupon', () => {
       percent_off: 10,
       duration: 'once'
     }));
-    expect(stripe.promotionCodes.create).toHaveBeenCalledWith(expect.objectContaining({
+    const [promotionPayload] = stripe.promotionCodes.create.mock.calls[0];
+    expect(promotionPayload).toMatchObject({
+      promotion: { type: 'coupon', coupon: 'coupon_1' },
+      code: 'FIRST_1M',
       restrictions: { first_time_transaction: true }
-    }));
+    });
+    // API 2025-09-30.clover rejects a top-level coupon: "Received unknown parameter: coupon".
+    expect(promotionPayload).not.toHaveProperty('coupon');
     expect(repository.saveMapping).toHaveBeenCalled();
     expect(result.data.promotion_code_id).toBe('promo_created');
   });

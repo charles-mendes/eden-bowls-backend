@@ -13,6 +13,19 @@ function normalizePromoId(value) {
   return isPromoId(promoId) ? promoId : null;
 }
 
+// API 2025-09-30.clover moved a promotion code's coupon under promotion.coupon. The rest of this
+// service reads promo.coupon, so promotion codes are normalized once when they come from Stripe.
+function withPromotionCoupon(promo) {
+  if (!promo || typeof promo !== 'object') {
+    return promo;
+  }
+  const nested = promo.promotion && promo.promotion.coupon;
+  if (!nested || promo.coupon) {
+    return promo;
+  }
+  return { ...promo, coupon: nested };
+}
+
 function stripeDashboardBase(secretKey) {
   return String(secretKey || '').startsWith('sk_test_')
     ? 'https://dashboard.stripe.com/test'
@@ -192,7 +205,7 @@ class StripeCouponService {
   async retrievePromotionCode(promoId, account) {
     const stripe = this.ensureStripe(account);
     try {
-      return await stripe.promotionCodes.retrieve(promoId, { expand: ['coupon'] });
+      return withPromotionCoupon(await stripe.promotionCodes.retrieve(promoId, { expand: ['promotion.coupon'] }));
     } catch (error) {
       throw new HttpError(422, 'Promotion code is invalid.', {
         code: 'invalid_promotion_code_id',
@@ -266,9 +279,9 @@ class StripeCouponService {
     const stripe = this.ensureStripe(account);
     const listed = await stripe.promotionCodes.list({
       limit: Math.min(100, Math.max(1, Number(limit) || 100)),
-      expand: ['data.coupon']
+      expand: ['data.promotion.coupon']
     });
-    return listed && Array.isArray(listed.data) ? listed.data : [];
+    return listed && Array.isArray(listed.data) ? listed.data.map(withPromotionCoupon) : [];
   }
 
   couponNeedsHydration(promo) {
@@ -468,7 +481,7 @@ class StripeCouponService {
     });
 
     const promotionPayload = {
-      coupon: coupon.id,
+      promotion: { type: 'coupon', coupon: coupon.id },
       code,
       restrictions: {
         first_time_transaction: true
