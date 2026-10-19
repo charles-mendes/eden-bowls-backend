@@ -54,6 +54,7 @@ const { CreateCatalogSyncRuns1700000000032 } = require('./migrations/17000000000
 const { RenameNutritionistRoleToVeterinarian1700000000033 } = require('./migrations/1700000000033-rename-nutritionist-role-to-veterinarian');
 const { AddVariationLifeStage1700000000034 } = require('./migrations/1700000000034-add-variation-life-stage');
 const { CreateLifeStageLimits1700000000035 } = require('./migrations/1700000000035-create-life-stage-limits');
+const { AddPetAgeReference1700000000036 } = require('./migrations/1700000000036-add-pet-age-reference');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
@@ -130,7 +131,8 @@ function buildDataSourceOptions(env) {
       CreateCatalogSyncRuns1700000000032,
       RenameNutritionistRoleToVeterinarian1700000000033,
       AddVariationLifeStage1700000000034,
-      CreateLifeStageLimits1700000000035
+      CreateLifeStageLimits1700000000035,
+      AddPetAgeReference1700000000036
     ],
     synchronize: false,
     logging: false,
