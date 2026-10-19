@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { birthDateSchema, normalizeBirthDate } = require('./pet-birth-date.validator');
 
 const onboardingPetUpdatePayloadSchema = z.object({
   name: z.string().trim().min(1).optional(),
@@ -11,6 +12,9 @@ const onboardingPetUpdatePayloadSchema = z.object({
   activity_level: z.enum(['low', 'medium', 'high']).optional(),
   pet_condition: z.enum(['underweight', 'ideal', 'overweight']).optional(),
   neutered: z.boolean().optional(),
+  birth_date: birthDateSchema,
+  birthDate: birthDateSchema,
+  change_source: z.enum(['onboarding', 'dashboard']).optional(),
   ageYears: z.union([z.string(), z.number()]).optional(),
   ageMonths: z.union([z.string(), z.number()]).optional(),
   weightUnit: z.enum(['kg', 'lb']).optional(),
@@ -39,6 +43,9 @@ function parseOnboardingPetUpdateInput(payload = {}) {
   if (parsed.pet_condition !== undefined) normalized.pet_condition = parsed.pet_condition;
   else if (parsed.weightCondition !== undefined) normalized.pet_condition = parsed.weightCondition;
   if (parsed.neutered !== undefined) normalized.neutered = parsed.neutered;
+  const birthDate = normalizeBirthDate(parsed.birth_date !== undefined ? parsed.birth_date : parsed.birthDate);
+  if (birthDate !== undefined) normalized.birth_date = birthDate;
+  if (parsed.change_source !== undefined) normalized.change_source = parsed.change_source;
 
   return normalized;
 }

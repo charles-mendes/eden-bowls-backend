@@ -25,7 +25,8 @@ function normalizeDraftPet(pet = {}) {
     size: String(pet.size || '').trim(),
     activity_level: String(pet.activity_level || '').trim(),
     pet_condition: String(pet.pet_condition || '').trim(),
-    neutered: Boolean(pet.neutered)
+    neutered: Boolean(pet.neutered),
+    birth_date: typeof pet.birth_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(pet.birth_date) ? pet.birth_date : null
   };
 }
 

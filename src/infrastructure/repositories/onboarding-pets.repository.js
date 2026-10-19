@@ -63,5 +63,7 @@ class OnboardingPetsRepository {
 }
 
 module.exports = {
-  OnboardingPetsRepository
+  OnboardingPetsRepository,
+  toIsoDateTime,
+  toIsoDay
 };

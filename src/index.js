@@ -117,6 +117,7 @@ const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
 const { LifeStageService } = require('./services/life-stage.service');
 const { LifeStageLimitsRepository } = require('./infrastructure/repositories/life-stage-limits.repository');
+const { PetAgeChangesRepository } = require('./infrastructure/repositories/pet-age-changes.repository');
 const { AdminSystemHealthService } = require('./services/admin-system-health.service');
 const { MarketConflictsRepository } = require('./infrastructure/repositories/market-conflicts.repository');
 const { CatalogSyncRunsRepository } = require('./infrastructure/repositories/catalog-sync-runs.repository');
@@ -309,9 +310,12 @@ async function bootstrap() {
   const onboardingPetCreateRepository = new OnboardingPetCreateRepository(dataSource);
   const onboardingPetCreateService = new OnboardingPetCreateService(onboardingPetCreateRepository);
   const onboardingPetUpdateRepository = new OnboardingPetUpdateRepository(dataSource);
-  const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository);
-  const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
   const lifeStageService = new LifeStageService({ repository: new LifeStageLimitsRepository(dataSource) });
+  const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository, {
+    ageChangesRepository: new PetAgeChangesRepository(dataSource),
+    lifeStageService
+  });
+  const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
   const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository, { lifeStageService });
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
