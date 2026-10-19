@@ -1,5 +1,8 @@
 const { HttpError } = require('../core/http-error');
 const { MARKETS, formatPetForMarket } = require('../core/market');
+const { allowedLifeStages, isOutsideAllowed, planLinesForPet } = require('../core/life-stage-lines');
+
+const DELIVERING_STATUSES = new Set(['active', 'trialing', 'past_due']);
 
 const AGE_FIELDS = ['age_years', 'age_months', 'birth_date'];
 
@@ -16,7 +19,49 @@ class OnboardingPetUpdateService {
     this.repository = repository;
     this.ageChangesRepository = options.ageChangesRepository || null;
     this.lifeStageService = options.lifeStageService || null;
+    this.ledgerRepository = options.ledgerRepository || null;
+    this.recipeLinesRepository = options.recipeLinesRepository || null;
+    this.noticesRepository = options.noticesRepository || null;
     this.now = options.now || (() => new Date());
+  }
+
+  // Active plans of this pet that the new age moves outside its allowed line, in either direction (L-21).
+  async affectedSubscriptions(userId, petId, before, after) {
+    if (!this.lifeStageService || !this.ledgerRepository || !this.recipeLinesRepository) {
+      return [];
+    }
+    const rows = await this.ledgerRepository.listByUserId(userId);
+    const plans = (Array.isArray(rows) ? rows : []).filter((row) => DELIVERING_STATUSES.has(String(row.status || '')));
+    if (plans.length === 0) {
+      return [];
+    }
+    const catalog = await this.recipeLinesRepository.listRecipeLines();
+    const affected = [];
+    for (const row of plans) {
+      const market = String(row.stripeAccount || '').toLowerCase() === 'br' ? 'BR' : 'US';
+      const { lineByKey = {}, publishedLines = new Set() } = catalog[market] || {};
+      const planLines = planLinesForPet(row.planSelection, petId, lineByKey);
+      if (planLines.length === 0) {
+        continue;
+      }
+      const [stageBefore, stageAfter] = await Promise.all([
+        this.lifeStageService.resolve(before, market),
+        this.lifeStageService.resolve(after, market)
+      ]);
+      const allowedBefore = allowedLifeStages(stageBefore.lifeStage, publishedLines);
+      const allowedAfter = allowedLifeStages(stageAfter.lifeStage, publishedLines);
+      if (isOutsideAllowed(planLines, allowedAfter) && !isOutsideAllowed(planLines, allowedBefore)) {
+        affected.push({
+          id: row.id,
+          subscription_id: String(row.stripeSubscriptionId || ''),
+          market,
+          plan_line: planLines.join(','),
+          life_stage: stageAfter.lifeStage,
+          allowed_life_stages: allowedAfter
+        });
+      }
+    }
+    return affected;
   }
 
   async stageOf(pet, market) {
@@ -36,7 +81,7 @@ class OnboardingPetUpdateService {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
     }
 
-    const { change_source: changeSource, ...fields } = payload || {};
+    const { change_source: changeSource, confirm_life_stage_change: confirmed, ...fields } = payload || {};
     const touchesAge = AGE_FIELDS.some((field) => fields[field] !== undefined);
     const current = touchesAge && typeof this.repository.findPet === 'function'
       ? await this.repository.findPet(userId, petId)
@@ -52,9 +97,35 @@ class OnboardingPetUpdateService {
     // age_recorded_at only moves when the registered age itself changes value (L-02).
     const update = ageChanged ? { ...fields, age_recorded_at: this.now() } : fields;
 
+    const affected = ageChanged || birthDateChanged
+      ? await this.affectedSubscriptions(userId, String(petId), current, { ...current, ...update })
+      : [];
+    if (affected.length > 0 && confirmed !== true) {
+      throw new HttpError(409, 'This age change puts an active plan outside the pet\'s recipe line. Confirm to save.', {
+        code: 'life_stage_change_requires_confirmation',
+        life_stage: affected[0].life_stage,
+        affected_subscriptions: affected.map(({ id: _ledgerId, ...item }) => item)
+      });
+    }
+
     const pet = await this.repository.updatePet(userId, petId, update);
     if (!pet) {
       throw new HttpError(404, 'Pet not found.', { code: 'pet_not_found' });
+    }
+
+    // The confirmation already told the tutor: the notice opens, but no stage-change email goes out.
+    if (affected.length > 0 && this.noticesRepository) {
+      const at = this.now();
+      for (const item of affected) {
+        await this.noticesRepository.upsertNotified({
+          subscriptionId: item.id,
+          petId: String(petId),
+          fromLine: item.plan_line,
+          toLine: item.allowed_life_stages[0],
+          via: 'manual_correction',
+          at
+        });
+      }
     }
 
     if ((ageChanged || birthDateChanged) && this.ageChangesRepository) {

@@ -25,10 +25,12 @@ function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
       response.status(200).json(result);
     } catch (error) {
       if (error instanceof HttpError && error.details && error.details.code) {
-        response.status(error.statusCode).json({
-          success: false,
-          message: error.message
-        });
+        // The confirmation needs the new stage and the affected plans; other errors keep their short body.
+        const body = { success: false, message: error.message };
+        if (error.details.code === 'life_stage_change_requires_confirmation') {
+          body.details = error.details;
+        }
+        response.status(error.statusCode).json(body);
         return;
       }
 

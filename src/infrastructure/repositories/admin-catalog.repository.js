@@ -335,41 +335,67 @@ class AdminCatalogRepository {
     );
   }
 
-  // Short and full recipe names per market and flavor key, for the production queue.
-  async listRecipeNames() {
+  // One row per recipe variation with its market, flavor key, names, line and publication.
+  async recipeVariationRows() {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
       [
         'SELECT v.ID AS variationId, UPPER(COALESCE(pc.meta_value, "")) AS market,',
+        "v.post_status AS variationStatus, p.post_status AS productStatus,",
         `MAX(CASE WHEN vm.meta_key = '${FLAVOR_SLUG_META}' THEN vm.meta_value END) AS flavorSlug,`,
         "MAX(CASE WHEN vm.meta_key = 'attribute_pa_flavor' THEN vm.meta_value END) AS label,",
-        `MAX(CASE WHEN vm.meta_key = '${SHORT_LABEL_META}' THEN vm.meta_value END) AS shortLabel`,
+        `MAX(CASE WHEN vm.meta_key = '${SHORT_LABEL_META}' THEN vm.meta_value END) AS shortLabel,`,
+        `MAX(CASE WHEN vm.meta_key = '${LIFE_STAGE_META}' THEN vm.meta_value END) AS lifeStage`,
         `FROM \`${this.tableNames.posts}\` v`,
         `INNER JOIN \`${this.tableNames.posts}\` p ON p.ID = v.post_parent AND p.post_type = 'product'`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` pc ON pc.post_id = p.ID AND pc.meta_key = '_cmpb_plan_country'`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` vm ON vm.post_id = v.ID`,
         "WHERE v.post_type = 'product_variation'",
-        'GROUP BY v.ID, pc.meta_value',
+        'GROUP BY v.ID, pc.meta_value, v.post_status, p.post_status',
         'ORDER BY v.ID ASC'
       ].join(' ')
     );
-
-    const names = {};
-    for (const row of Array.isArray(rows) ? rows : []) {
-      const market = String(row.market || '').trim();
+    return (Array.isArray(rows) ? rows : []).map((row) => {
       const label = String(row.label || '').trim();
-      const key = flavorKeyFromLabel(row.flavorSlug || '') || canonicalFlavorKey(label);
-      if (!market || !key) {
-        continue;
-      }
-      const byKey = names[market] || (names[market] = {});
-      const current = byKey[key] || { label: '', shortLabel: '' };
-      byKey[key] = {
-        label: current.label || label,
-        shortLabel: current.shortLabel || String(row.shortLabel || '').trim()
+      const lifeStage = String(row.lifeStage || '').trim();
+      return {
+        market: String(row.market || '').trim(),
+        key: flavorKeyFromLabel(row.flavorSlug || '') || canonicalFlavorKey(label),
+        label,
+        shortLabel: String(row.shortLabel || '').trim(),
+        lifeStage: LIFE_STAGES.includes(lifeStage) ? lifeStage : 'adult',
+        published: row.variationStatus === 'publish' && row.productStatus === 'publish'
+      };
+    }).filter((row) => row.market && row.key);
+  }
+
+  // Short and full recipe names per market and flavor key, for the production queue.
+  async listRecipeNames() {
+    const names = {};
+    for (const row of await this.recipeVariationRows()) {
+      const byKey = names[row.market] || (names[row.market] = {});
+      const current = byKey[row.key] || { label: '', shortLabel: '' };
+      byKey[row.key] = {
+        label: current.label || row.label,
+        shortLabel: current.shortLabel || row.shortLabel
       };
     }
     return names;
+  }
+
+  // Line of each flavor key and the lines with a published recipe, per market.
+  async listRecipeLines() {
+    const lines = {};
+    for (const row of await this.recipeVariationRows()) {
+      const market = lines[row.market] || (lines[row.market] = { lineByKey: {}, publishedLines: new Set() });
+      if (!market.lineByKey[row.key]) {
+        market.lineByKey[row.key] = row.lifeStage;
+      }
+      if (row.published) {
+        market.publishedLines.add(row.lifeStage);
+      }
+    }
+    return lines;
   }
 
   async updatePostStatus(postId, status) {

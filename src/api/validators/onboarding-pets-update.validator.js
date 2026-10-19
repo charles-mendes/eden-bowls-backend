@@ -15,6 +15,7 @@ const onboardingPetUpdatePayloadSchema = z.object({
   birth_date: birthDateSchema,
   birthDate: birthDateSchema,
   change_source: z.enum(['onboarding', 'dashboard']).optional(),
+  confirm_life_stage_change: z.boolean().optional(),
   ageYears: z.union([z.string(), z.number()]).optional(),
   ageMonths: z.union([z.string(), z.number()]).optional(),
   weightUnit: z.enum(['kg', 'lb']).optional(),
@@ -46,6 +47,7 @@ function parseOnboardingPetUpdateInput(payload = {}) {
   const birthDate = normalizeBirthDate(parsed.birth_date !== undefined ? parsed.birth_date : parsed.birthDate);
   if (birthDate !== undefined) normalized.birth_date = birthDate;
   if (parsed.change_source !== undefined) normalized.change_source = parsed.change_source;
+  if (parsed.confirm_life_stage_change !== undefined) normalized.confirm_life_stage_change = parsed.confirm_life_stage_change;
 
   return normalized;
 }

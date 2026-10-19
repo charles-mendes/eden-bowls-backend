@@ -72,4 +72,12 @@ describeIntegration('AdminCatalogRepository.listRecipeNames (MySQL)', () => {
     );
     expect(rows.map((row) => [row.status, Number(row.total)])).toEqual([['draft', 1], ['publish', 16]]);
   });
+
+  test('lists the line of each key and the lines with a published recipe, per market', async () => {
+    const lines = await repository.listRecipeLines();
+    expect(lines.BR.lineByKey).toMatchObject({ beef: 'adult', turkey: 'adult', 'senior-beef': 'senior' });
+    expect([...lines.BR.publishedLines]).toEqual(['adult']);
+    await dataSource.query("UPDATE wp_posts SET post_status = 'publish' WHERE post_type = 'product_variation' AND post_status = 'draft'");
+    expect([...(await repository.listRecipeLines()).BR.publishedLines].sort()).toEqual(['adult', 'senior']);
+  });
 });

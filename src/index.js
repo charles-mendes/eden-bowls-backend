@@ -118,6 +118,7 @@ const { AdminCatalogService } = require('./services/admin-catalog.service');
 const { LifeStageService } = require('./services/life-stage.service');
 const { LifeStageLimitsRepository } = require('./infrastructure/repositories/life-stage-limits.repository');
 const { PetAgeChangesRepository } = require('./infrastructure/repositories/pet-age-changes.repository');
+const { PetLifeStageNoticesRepository } = require('./infrastructure/repositories/pet-life-stage-notices.repository');
 const { AdminSystemHealthService } = require('./services/admin-system-health.service');
 const { MarketConflictsRepository } = require('./infrastructure/repositories/market-conflicts.repository');
 const { CatalogSyncRunsRepository } = require('./infrastructure/repositories/catalog-sync-runs.repository');
@@ -313,7 +314,14 @@ async function bootstrap() {
   const lifeStageService = new LifeStageService({ repository: new LifeStageLimitsRepository(dataSource) });
   const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository, {
     ageChangesRepository: new PetAgeChangesRepository(dataSource),
-    lifeStageService
+    lifeStageService,
+    ledgerRepository: subscriptionLedgerRepository,
+    recipeLinesRepository: new AdminCatalogRepository(dataSource, {
+      postsTableName: env.WP_POSTS_TABLE_NAME,
+      postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
+      termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
+    }),
+    noticesRepository: new PetLifeStageNoticesRepository(dataSource)
   });
   const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
   const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository, { lifeStageService });
