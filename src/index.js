@@ -580,6 +580,10 @@ async function bootstrap() {
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
     termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
   });
+  const adminAuditService = new AdminAuditService({
+    repository: new AdminAuditRepository(dataSource),
+    logger
+  });
   const adminCatalogService = new AdminCatalogService({
     repository: adminCatalogRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -587,6 +591,7 @@ async function bootstrap() {
     stripeBilling,
     stripeBrEnabled: env.STRIPE_BR_ENABLED,
     syncRunsRepository: new CatalogSyncRunsRepository(dataSource),
+    auditService: adminAuditService,
     logger
   });
   const adminSystemHealthService = new AdminSystemHealthService({
@@ -599,10 +604,6 @@ async function bootstrap() {
   const adminUsersRepository = new AdminUsersRepository(dataSource, {
     usersTableName: env.WP_USERS_TABLE_NAME,
     usermetaTableName: env.WP_USERMETA_TABLE_NAME
-  });
-  const adminAuditService = new AdminAuditService({
-    repository: new AdminAuditRepository(dataSource),
-    logger
   });
   const adminProductionService = createAdminProductionService({
     ledgerRepository: subscriptionLedgerRepository,

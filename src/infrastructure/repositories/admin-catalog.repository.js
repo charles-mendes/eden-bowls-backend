@@ -10,6 +10,13 @@ const {
   parseFlavorAliases
 } = require('../../core/flavors');
 
+const FINAL_IMAGE_READY_META = '_final_image_ready';
+const LABEL_DATA_READY_META = '_label_data_ready';
+
+function flagMeta(value) {
+  return value ? 'yes' : 'no';
+}
+
 function isMissingTableError(error) {
   const message = String(error && error.message ? error.message : '');
   return Boolean(
@@ -265,6 +272,8 @@ class AdminCatalogRepository {
         flavorSlug: flavorSlug || null,
         flavorAliases: flavorAliases.length > 0 ? flavorAliases.join(',') : '',
         lifeStage: LIFE_STAGES.includes(storedLifeStage) ? storedLifeStage : 'adult',
+        finalImageReady: variation.meta[FINAL_IMAGE_READY_META] === 'yes',
+        labelDataReady: variation.meta[LABEL_DATA_READY_META] === 'yes',
         weight: weight || null,
         active: variation.status === 'publish',
         regularPrice: variationRegularPrice(variation.meta, zoneId),
@@ -392,7 +401,8 @@ class AdminCatalogRepository {
     await this.upsertPostMeta(variationId, '_stripe_price_fingerprint', '');
   }
 
-  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, regularPrice, zoneId, menuOrder }) {
+  // Every new variation starts inactive; the activation route publishes it after its checks.
+  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, finalImageReady, labelDataReady, regularPrice, zoneId, menuOrder }) {
     this.ensureDataSource();
     const id = await this.nextPostId();
     const title = String(name || '').trim();
@@ -403,7 +413,7 @@ class AdminCatalogRepository {
       [
         `INSERT INTO \`${this.tableNames.posts}\``,
         '(`ID`, `post_parent`, `post_type`, `post_status`, `post_title`, `post_name`, `menu_order`)',
-        "VALUES (?, ?, 'product_variation', 'publish', ?, ?, ?)"
+        "VALUES (?, ?, 'product_variation', 'draft', ?, ?, ?)"
       ].join(' '),
       [id, productId, title, slug, menuOrder || 0]
     );
@@ -421,6 +431,12 @@ class AdminCatalogRepository {
       await this.upsertPostMeta(id, FLAVOR_ALIASES_META, String(flavorAliases).trim());
     }
     await this.upsertPostMeta(id, LIFE_STAGE_META, lifeStage || 'adult');
+    if (finalImageReady != null) {
+      await this.upsertPostMeta(id, FINAL_IMAGE_READY_META, flagMeta(finalImageReady));
+    }
+    if (labelDataReady != null) {
+      await this.upsertPostMeta(id, LABEL_DATA_READY_META, flagMeta(labelDataReady));
+    }
     if (regularPrice != null) {
       await this.writeVariationPrice(id, regularPrice, zoneId);
     }
@@ -428,7 +444,7 @@ class AdminCatalogRepository {
     return String(id);
   }
 
-  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, regularPrice, zoneId, priceChanged }) {
+  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, finalImageReady, labelDataReady, regularPrice, zoneId, priceChanged }) {
     this.ensureDataSource();
     const title = name == null ? undefined : String(name).trim();
     const code = sku == null ? undefined : String(sku).trim();
@@ -453,6 +469,12 @@ class AdminCatalogRepository {
     }
     if (lifeStage) {
       await this.upsertPostMeta(id, LIFE_STAGE_META, lifeStage);
+    }
+    if (finalImageReady != null) {
+      await this.upsertPostMeta(id, FINAL_IMAGE_READY_META, flagMeta(finalImageReady));
+    }
+    if (labelDataReady != null) {
+      await this.upsertPostMeta(id, LABEL_DATA_READY_META, flagMeta(labelDataReady));
     }
     if (regularPrice != null && priceChanged !== false) {
       await this.writeVariationPrice(id, regularPrice, zoneId);

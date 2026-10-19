@@ -290,6 +290,21 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.post('/api/v1/admin/catalog/products/:productId/variations/:variationId/activation', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminCatalogService) {
+        throw new HttpError(503, 'Catalog service is not available.');
+      }
+      const body = request.body || {};
+      return dependencies.adminCatalogService.setVariationActive(
+        request.params.productId,
+        request.params.variationId,
+        body.active,
+        request.adminIdentity
+      );
+    });
+  });
+
   app.delete('/api/v1/admin/catalog/products/:productId', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminCatalogService) {

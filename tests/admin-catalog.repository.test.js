@@ -237,6 +237,37 @@ describe('AdminCatalogRepository', () => {
     expect(lineWrites(updated).flat()).toContain('puppy');
   });
 
+  test('creates every new variation as draft', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValueOnce([{ nextId: 3001 }]).mockResolvedValue([]) };
+    await new AdminCatalogRepository(dataSource).createVariation({ productId: 100, name: 'Senior Beef 300g', zoneId: 'br' });
+
+    const insert = dataSource.query.mock.calls.find((call) => String(call[0]).includes("'product_variation'"));
+    expect(insert[0]).toContain("'product_variation', 'draft'");
+  });
+
+  test('stores and reads the final-image and label-data confirmations', async () => {
+    const written = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    await new AdminCatalogRepository(written).updateVariation({ id: 3001, finalImageReady: true, labelDataReady: false, zoneId: 'us' });
+    const flags = written.query.mock.calls
+      .filter((call) => Array.isArray(call[1]) && call[1].some((value) => String(value).endsWith('_ready')))
+      .map((call) => call[1].filter((value) => value !== 3001));
+    expect(flags).toEqual(expect.arrayContaining([['_final_image_ready', 'yes'], ['_label_data_ready', 'no']].map((pair) => expect.arrayContaining(pair))));
+
+    const read = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([{ total: 1 }])
+        .mockResolvedValueOnce([{ id: 200, name: 'Flavors US', slug: 'flavors-us', status: 'publish', createdAt: '2026-08-01 10:00:00', planCountry: 'US', planDays: '30' }])
+        .mockResolvedValueOnce([
+          { variationId: 3001, name: 'Senior Beef 10.6oz', status: 'draft', meta_key: '_final_image_ready', meta_value: 'yes' },
+          { variationId: 3002, name: 'Senior Chicken 10.6oz', status: 'draft', meta_key: '_label_data_ready', meta_value: 'no' }
+        ])
+    };
+    const result = await new AdminCatalogRepository(read).listProducts({ market: 'US', offset: 0, perPage: 20 });
+    const byId = Object.fromEntries(result.items[0].variants.map((item) => [item.id, [item.active, item.finalImageReady, item.labelDataReady]]));
+    expect(byId).toEqual({ 3001: [false, true, false], 3002: [false, false, false] });
+  });
+
   test('returns an empty catalog when the table does not exist', async () => {
     const dataSource = {
       isInitialized: true,

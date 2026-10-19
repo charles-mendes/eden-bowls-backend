@@ -83,6 +83,28 @@ function parseVariationLifeStage(value) {
   return lifeStage;
 }
 
+function parseReadinessFlag(value) {
+  if (value == null || value === '') {
+    return undefined;
+  }
+  if (value === true || value === 'true') {
+    return true;
+  }
+  if (value === false || value === 'false') {
+    return false;
+  }
+  throw new HttpError(422, 'Variation readiness flags must be true or false.');
+}
+
+const READINESS_FLAGS = [
+  ['finalImageReady', 'final_image'],
+  ['labelDataReady', 'label_data']
+];
+
+function pluralSubscriptions(count) {
+  return count === 1 ? '1 active subscription' : `${count} active subscriptions`;
+}
+
 function parseVariationPrice(value) {
   if (value == null || value === '') {
     return null;
@@ -156,6 +178,7 @@ class AdminCatalogService {
     this.stripeBrEnabled = options.stripeBrEnabled;
     this.syncRunsRepository = options.syncRunsRepository || null;
     this.logger = options.logger || null;
+    this.auditService = options.auditService || null;
     this.lastSync = null;
   }
 
@@ -398,7 +421,7 @@ class AdminCatalogService {
       const country = payload.planCountry
         ? String(payload.planCountry).trim().toUpperCase()
         : product.planCountry;
-      await this.saveVariants(product, payload.variants, country);
+      await this.saveVariants(product, payload.variants, country, actor);
       if (!(payload.active === true && !product.active)) {
         try {
           await this.sync({
@@ -456,11 +479,25 @@ class AdminCatalogService {
     return this.getProduct(productId, actor);
   }
 
-  async saveVariants(product, variants, country) {
+  async saveVariants(product, variants, country, actor = {}) {
     const zoneId = zoneIdFromCountry(country);
     const existingIds = new Set((product.variants || []).map((item) => String(item.id)));
     const existingById = new Map((product.variants || []).map((item) => [String(item.id), item]));
     let menuOrder = (product.variants || []).length;
+
+    // A published product keeps its active variations as they are; only inactive ones change.
+    if (product.active) {
+      const locked = variants
+        .map((item) => (item && item.id != null ? existingById.get(String(item.id).trim()) : null))
+        .filter((current) => current && current.active)
+        .map((current) => String(current.id));
+      if (locked.length > 0) {
+        throw new HttpError(409, 'Active variations of a published product cannot be edited.', {
+          code: 'variation_active_locked',
+          variationIds: locked
+        });
+      }
+    }
 
     for (const item of variants) {
       if (!item || typeof item !== 'object') {
@@ -480,6 +517,7 @@ class AdminCatalogService {
         : parseVariationFlavorAliases(item.flavorAliases, flavorSlug);
       const regularPrice = parseVariationPrice(item.regularPrice);
       const lifeStage = parseVariationLifeStage(item.lifeStage);
+      const flags = Object.fromEntries(READINESS_FLAGS.map(([key]) => [key, parseReadinessFlag(item[key])]));
 
       if (isNewVariationId(id, existingIds)) {
         if (!String(name || '').trim() && !String(sku || '').trim()) {
@@ -487,7 +525,7 @@ class AdminCatalogService {
         }
 
         menuOrder += 1;
-        await this.repository.createVariation({
+        const createdId = await this.repository.createVariation({
           productId: product.id,
           name: String(name || '').trim(),
           sku: String(sku || '').trim(),
@@ -495,10 +533,12 @@ class AdminCatalogService {
           flavorSlug,
           flavorAliases,
           lifeStage: lifeStage || 'adult',
+          ...flags,
           regularPrice,
           zoneId,
           menuOrder
         });
+        await this.recordFlagChanges(actor, product, { id: createdId }, flags);
         continue;
       }
 
@@ -511,11 +551,112 @@ class AdminCatalogService {
         flavorSlug,
         flavorAliases,
         lifeStage,
+        ...flags,
         regularPrice,
         zoneId,
         priceChanged: regularPrice != null && currentPrice !== regularPrice
       });
+      await this.recordFlagChanges(actor, product, current || { id }, flags);
     }
+  }
+
+  async recordAudit(actor, action, product, variationId, metadata = {}) {
+    if (!this.auditService || typeof this.auditService.record !== 'function') {
+      return;
+    }
+    await this.auditService.record({
+      actor,
+      action,
+      metadata: {
+        productId: String(product.id),
+        variationId: String(variationId),
+        market: product.planCountry || null,
+        ...metadata
+      }
+    });
+  }
+
+  async recordFlagChanges(actor, product, current, flags) {
+    for (const [key] of READINESS_FLAGS) {
+      const next = flags[key];
+      const previous = Boolean(current && current[key]);
+      if (next === undefined || next === previous) {
+        continue;
+      }
+      await this.recordAudit(actor, 'catalog.variation.flag', product, current.id, { flag: key, from: previous, to: next });
+    }
+  }
+
+  // Activates or deactivates one variation without touching the product or its other variations.
+  async setVariationActive(productId, variationId, active, actor = {}) {
+    if (typeof active !== 'boolean') {
+      throw new HttpError(422, 'active must be true or false.');
+    }
+    let product = await this.getProduct(productId, actor);
+    let variant = (product.variants || []).find((item) => String(item.id) === String(variationId));
+    if (!variant) {
+      throw new HttpError(404, 'Variation not found.');
+    }
+    if (variant.active === active) {
+      return product;
+    }
+
+    if (active) {
+      const country = product.planCountry;
+      if (!country) {
+        throw new HttpError(422, 'Plan country is required before activating a variation.', { code: 'product_incomplete' });
+      }
+      const currency = requiredCurrency(country);
+      try {
+        await this.sync({ productId: product.id, market: country, currency: currency.toUpperCase() });
+      } catch (_error) {
+        // A failed sync leaves the Stripe price missing, which the checks below report.
+      }
+      product = await this.getProduct(productId, actor);
+      variant = product.variants.find((item) => String(item.id) === String(variationId));
+
+      const missing = [];
+      if (!(Number(variant.regularPrice) > 0)) {
+        missing.push('price');
+      }
+      const mapped = (variant.stripePriceIdsByCurrency || {})[currency] || variant.stripePriceId;
+      if (!String(mapped || '').startsWith('price_')) {
+        missing.push('stripe_price');
+      }
+      if (!variant.finalImageReady) {
+        missing.push('final_image');
+      }
+      if (country === 'US' && !variant.labelDataReady) {
+        missing.push('label_data');
+      }
+      if (missing.length > 0) {
+        throw new HttpError(422, `Variation cannot be activated: missing ${missing.join(', ')}.`, {
+          code: 'recipe_publish_refused',
+          missing
+        });
+      }
+
+      await this.repository.updatePostStatus(variant.id, 'publish');
+      await this.recordAudit(actor, 'catalog.variation.activate', product, variant.id);
+      return this.getProduct(productId, actor);
+    }
+
+    const count = this.ledgerRepository && typeof this.ledgerRepository.countActiveSubscriptionsForCatalog === 'function'
+      ? await this.ledgerRepository.countActiveSubscriptionsForCatalog({
+        variationIds: [String(variant.id)],
+        priceIds: priceIdsOf(variant)
+      })
+      : 0;
+    if (count > 0) {
+      throw new HttpError(409, `Variation is used by ${pluralSubscriptions(count)} and cannot be deactivated.`, {
+        code: 'variation_in_active_subscriptions',
+        activeSubscriptions: count
+      });
+    }
+
+    await this.repository.updatePostStatus(variant.id, 'draft');
+    await this.recordAudit(actor, 'catalog.variation.deactivate', product, variant.id);
+    return this.getProduct(productId, actor);
   }
 
   async listPricing(query, pagination, actor = {}) {

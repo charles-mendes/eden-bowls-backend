@@ -89,6 +89,10 @@
   },
   {
     "method": "POST",
+    "path": "/api/v1/admin/catalog/products/:productId/variations/:variationId/activation"
+  },
+  {
+    "method": "POST",
     "path": "/api/v1/admin/catalog/sync"
   },
   {
