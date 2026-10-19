@@ -71,6 +71,11 @@ class OnboardingPlanPreviewRepository {
 
       selectedPets.push({
         pet_id: petId,
+        life_stage: matchedPet.life_stage ?? null,
+        life_stage_next_at: matchedPet.life_stage_next_at ?? null,
+        size_class: matchedPet.size_class ?? null,
+        current_age_years: matchedPet.current_age_years ?? null,
+        current_age_months: matchedPet.current_age_months ?? null,
         pet_name: petName,
         enabled: true,
         selected_flavors: [...flavorQuantities.keys()],

@@ -115,6 +115,8 @@ const { AdminTodayService } = require('./services/admin-today.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
+const { LifeStageService } = require('./services/life-stage.service');
+const { LifeStageLimitsRepository } = require('./infrastructure/repositories/life-stage-limits.repository');
 const { AdminSystemHealthService } = require('./services/admin-system-health.service');
 const { MarketConflictsRepository } = require('./infrastructure/repositories/market-conflicts.repository');
 const { CatalogSyncRunsRepository } = require('./infrastructure/repositories/catalog-sync-runs.repository');
@@ -309,7 +311,8 @@ async function bootstrap() {
   const onboardingPetUpdateRepository = new OnboardingPetUpdateRepository(dataSource);
   const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository);
   const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
-  const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository);
+  const lifeStageService = new LifeStageService({ repository: new LifeStageLimitsRepository(dataSource) });
+  const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository, { lifeStageService });
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
     recommendationRepository: onboardingRecommendationRepository,
@@ -344,6 +347,7 @@ async function bootstrap() {
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
   const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
   const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository, {
+    lifeStageService,
     planSelectionRepository: onboardingPlanSelectionRepository,
     ledgerRepository: subscriptionLedgerRepository,
     petsSyncRepository: onboardingPetCreateRepository
@@ -418,7 +422,10 @@ async function bootstrap() {
     upsShipmentRepository,
     productsRepository
   });
-  const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository);
+  const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository, {
+    lifeStageService,
+    petsRepository: onboardingPetsRepository
+  });
   const subscriptionsEditPreviewRepository = new SubscriptionsEditPreviewRepository({
     ledgerRepository: subscriptionLedgerRepository,
     stripeAccounts,
@@ -459,7 +466,10 @@ async function bootstrap() {
   const subscriptionsRepository = new SubscriptionsRepository({
     ledgerRepository: subscriptionLedgerRepository
   });
-  const subscriptionsService = new SubscriptionsService(subscriptionsRepository);
+  const subscriptionsService = new SubscriptionsService(subscriptionsRepository, {
+    lifeStageService,
+    petsRepository: onboardingPetsRepository
+  });
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository(dataSource);
   const onboardingPetsSyncService = new OnboardingPetsSyncService(onboardingPetCreateRepository);
   const profileRepository = new ProfileRepository(dataSource, {
