@@ -3,6 +3,8 @@ const { MARKETS } = require('./market');
 const FLAVOR_KEYS = ['beef', 'fish', 'pork', 'turkey'];
 const FLAVOR_SLUG_META = '_flavor_slug';
 const FLAVOR_ALIASES_META = '_flavor_aliases';
+const LIFE_STAGE_META = '_life_stage';
+const LIFE_STAGES = ['adult', 'puppy', 'senior'];
 
 const SEED_FLAVOR_ALIASES = {
   beef: ['bovino', 'carne'],
@@ -315,6 +317,8 @@ module.exports = {
   FLAVOR_CATALOG,
   FLAVOR_SLUG_META,
   FLAVOR_ALIASES_META,
+  LIFE_STAGE_META,
+  LIFE_STAGES,
   SEED_FLAVOR_ALIASES,
   allowFlavorCatalogFallback,
   canonicalFlavorKey,
