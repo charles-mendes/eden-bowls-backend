@@ -136,6 +136,28 @@ describe('AdminProductionService', () => {
     expect(result.metrics).toEqual({ today: 1, tomorrow: 0, upcoming: 1, overdue: 0 });
   });
 
+  test('names queue recipes from the current catalog, and still lists when the names fail to load', async () => {
+    const ledgerRepository = {
+      listQueue: jest.fn().mockResolvedValue({ total: 1, items: [queueItem()] }),
+      listQueueMetricRows: jest.fn().mockResolvedValue([])
+    };
+    const named = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository,
+      recipeNamesRepository: { listRecipeNames: jest.fn().mockResolvedValue({ BR: { beef: { label: 'Bovino', shortLabel: '' } } }) }
+    });
+    const result = await named.listQueue({ windowDays: 7 }, { page: 1, perPage: 20, offset: 0 });
+    expect(result.items[0].flavorMix).toBe('Bovino × 2');
+
+    const failing = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository,
+      recipeNamesRepository: { listRecipeNames: jest.fn().mockRejectedValue(new Error('db down')) }
+    });
+    const fallback = await failing.listQueue({ windowDays: 7 }, { page: 1, perPage: 20, offset: 0 });
+    expect(fallback.items[0].flavorMix).toBe('beef × 2');
+  });
+
   test('passes the due bucket and brings overdue rows back when that bucket is asked for', async () => {
     const listQueue = jest.fn().mockResolvedValue({ total: 0, items: [] });
     const listQueueMetricRows = jest.fn().mockResolvedValue([]);

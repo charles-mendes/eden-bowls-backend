@@ -83,6 +83,17 @@ function parseVariationLifeStage(value) {
   return lifeStage;
 }
 
+function parseShortLabel(value) {
+  if (value == null) {
+    return undefined;
+  }
+  const shortLabel = String(value).trim();
+  if (shortLabel.length > 64) {
+    throw new HttpError(422, 'Variation short name must be at most 64 characters.');
+  }
+  return shortLabel;
+}
+
 function parseReadinessFlag(value) {
   if (value == null || value === '') {
     return undefined;
@@ -518,6 +529,7 @@ class AdminCatalogService {
       const regularPrice = parseVariationPrice(item.regularPrice);
       const lifeStage = parseVariationLifeStage(item.lifeStage);
       const flags = Object.fromEntries(READINESS_FLAGS.map(([key]) => [key, parseReadinessFlag(item[key])]));
+      const shortLabel = parseShortLabel(item.shortLabel);
 
       if (isNewVariationId(id, existingIds)) {
         if (!String(name || '').trim() && !String(sku || '').trim()) {
@@ -533,6 +545,7 @@ class AdminCatalogService {
           flavorSlug,
           flavorAliases,
           lifeStage: lifeStage || 'adult',
+          shortLabel,
           ...flags,
           regularPrice,
           zoneId,
@@ -551,6 +564,7 @@ class AdminCatalogService {
         flavorSlug,
         flavorAliases,
         lifeStage,
+        shortLabel,
         ...flags,
         regularPrice,
         zoneId,

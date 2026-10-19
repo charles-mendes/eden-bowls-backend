@@ -153,3 +153,22 @@ describe('AdminCatalogService variations of a published product', () => {
     ]);
   });
 });
+
+describe('AdminCatalogService short name', () => {
+  test('saves a short name and does not require it to activate', async () => {
+    const { service, repository } = serviceFor({ product: published('BR', [variant()]) });
+
+    await service.patchProduct('100', { variants: [{ id: '3001', shortLabel: '  Bovino · Sênior ' }] }, actor);
+    expect(repository.updateVariation.mock.calls[0][0].shortLabel).toBe('Bovino · Sênior');
+
+    await service.setVariationActive('100', '3001', true, actor);
+    expect(repository.updatePostStatus).toHaveBeenCalledWith('3001', 'publish');
+  });
+
+  test('rejects a short name longer than 64 characters', async () => {
+    const { service } = serviceFor({ product: published('BR', [variant()]) });
+
+    await expect(service.patchProduct('100', { variants: [{ id: '3001', shortLabel: 'x'.repeat(65) }] }, actor))
+      .rejects.toMatchObject({ statusCode: 422 });
+  });
+});

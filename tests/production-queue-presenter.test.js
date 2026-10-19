@@ -26,8 +26,8 @@ function baseRow(overrides = {}) {
         subtotal: 189.9,
         currency: 'BRL',
         line_items: [
-          { flavor: 'beef', quantity: 2, pack_size_label: '500 g', pet_name: 'Luna' },
-          { flavor: 'turkey', quantity: 1, pack_size_label: '500 g', pet_name: 'Luna' }
+          { flavor: 'beef', flavor_label: 'Bovino', quantity: 2, pack_size_label: '500 g', pet_name: 'Luna' },
+          { flavor: 'turkey', flavor_label: 'Frango', quantity: 1, pack_size_label: '500 g', pet_name: 'Luna' }
         ]
       }
     },
@@ -42,15 +42,59 @@ describe('presentProductionQueueItem', () => {
       now: new Date('2026-09-20T15:00:00.000Z')
     });
 
-    expect(item.flavorMix).toBe('beef × 2, turkey × 1');
+    expect(item.flavorMix).toBe('Bovino × 2, Frango × 1');
     expect(item.packCount).toBe(3);
     expect(item.packSizeLabel).toBe('500 g');
     expect(item.subtotal).toBe(189.9);
     expect(item.dense).toBe(false);
     expect(item.lineItems).toEqual([
-      { flavor: 'beef', quantity: 2, packSize: '500 g', petName: 'Luna' },
-      { flavor: 'turkey', quantity: 1, packSize: '500 g', petName: 'Luna' }
+      { flavor: 'Bovino', flavorKey: 'beef', quantity: 2, packSize: '500 g', petName: 'Luna' },
+      { flavor: 'Frango', flavorKey: 'turkey', quantity: 1, packSize: '500 g', petName: 'Luna' }
     ]);
+  });
+
+  test('shows the catalog short name first, then the full name, then the key', () => {
+    const recipeNames = {
+      BR: { 'senior-beef': { label: 'Receita de Carne para Cães Sênior', shortLabel: 'Bovino · Sênior' }, turkey: { label: 'Frango', shortLabel: '' } },
+      US: { 'senior-chicken': { label: 'Chicken Recipe for Senior Dogs', shortLabel: '' } }
+    };
+    const br = presentProductionQueueItem(baseRow({
+      planSelection: {
+        catalog_pricing: {
+          line_items: [
+            { flavor: 'senior-beef', flavor_label: 'Receita de Carne para Cães Sênior', quantity: 4, pack_size_label: '300 g', pet_name: 'Thor' },
+            { flavor: 'turkey', quantity: 1, pack_size_label: '300 g', pet_name: 'Thor' },
+            { flavor: 'mystery', quantity: 1, pack_size_label: '300 g', pet_name: 'Thor' }
+          ]
+        }
+      }
+    }), { recipeNames });
+    expect(br.flavorMix).toBe('Bovino · Sênior × 4, Frango × 1, mystery × 1');
+
+    const us = presentProductionQueueItem(baseRow({
+      stripeAccount: 'us',
+      planSelection: {
+        catalog_pricing: {
+          line_items: [{ flavor: 'senior-chicken', flavor_label: 'Chicken Recipe for Senior Dogs', quantity: 2, pack_size_label: '10.6 oz', pet_name: 'Luna' }]
+        }
+      }
+    }), { recipeNames });
+    expect(us.flavorMix).toBe('Chicken Recipe for Senior Dogs × 2');
+  });
+
+  test('uses the market of the subscription to pick the short name', () => {
+    const item = presentProductionQueueItem(baseRow({
+      stripeAccount: 'us',
+      planSelection: { catalog_pricing: { line_items: [{ flavor: 'senior-beef', flavor_label: 'Beef Recipe for Senior Dogs', quantity: 1 }] } }
+    }), { recipeNames: { BR: { 'senior-beef': { label: 'x', shortLabel: 'Bovino · Sênior' } }, US: { 'senior-beef': { label: 'Beef Recipe for Senior Dogs', shortLabel: 'Beef · Senior' } } } });
+    expect(item.flavorMix).toBe('Beef · Senior × 1');
+  });
+
+  test('names plans without catalog lines from their selected flavor keys', () => {
+    const item = presentProductionQueueItem(baseRow({
+      planSelection: { pets: [{ pet_name: 'Luna', selected_flavors: ['turkey'], flavor_weights: [3] }] }
+    }), { recipeNames: { BR: { turkey: { label: 'Frango', shortLabel: '' } } } });
+    expect(item.flavorMix).toBe('Frango × 3');
   });
 
   test('marks mixed pack sizes as dense misto', () => {

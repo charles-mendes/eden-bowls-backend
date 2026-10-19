@@ -22,12 +22,12 @@ const connection = {
 
 function variationSnapshot(dataSource) {
   return dataSource.query(
-    `SELECT v.ID AS id, v.post_parent AS parent,
+    `SELECT v.ID AS id, v.post_parent AS parent, v.post_status AS status,
        MAX(CASE WHEN m.meta_key = '_regular_price' THEN m.meta_value END) AS price,
        MAX(CASE WHEN m.meta_key = '_flavor_slug' THEN m.meta_value END) AS flavor
      FROM wp_posts v LEFT JOIN wp_postmeta m ON m.post_id = v.ID
      WHERE v.post_type = 'product_variation'
-     GROUP BY v.ID, v.post_parent ORDER BY v.ID`
+     GROUP BY v.ID, v.post_parent, v.post_status ORDER BY v.ID`
   );
 }
 
@@ -73,8 +73,9 @@ describeIntegration('migration 1700000000034 tags current recipes as adult (MySQ
     }
   });
 
-  test('variation IDs, parents, flavors and prices do not change', async () => {
+  test('variation IDs, parents, statuses, flavors and prices do not change', async () => {
     expect(before).toHaveLength(16);
+    expect(before.every((row) => row.status === 'publish')).toBe(true);
     expect(await variationSnapshot(dataSource)).toEqual(before);
   });
 

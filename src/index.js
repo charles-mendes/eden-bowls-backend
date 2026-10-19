@@ -607,6 +607,7 @@ async function bootstrap() {
   });
   const adminProductionService = createAdminProductionService({
     ledgerRepository: subscriptionLedgerRepository,
+    recipeNamesRepository: adminCatalogRepository,
     productionRepository: subscriptionProductionRepository,
     auditService: adminAuditService,
     customerDeliveriesService
