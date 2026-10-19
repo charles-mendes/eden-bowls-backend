@@ -4,6 +4,8 @@ const { appendInFilter } = require('../../core/admin-market-scope');
 const {
   FLAVOR_ALIASES_META,
   FLAVOR_SLUG_META,
+  LIFE_STAGE_META,
+  LIFE_STAGES,
   flavorKeyFromLabel,
   parseFlavorAliases
 } = require('../../core/flavors');
@@ -252,6 +254,7 @@ class AdminCatalogRepository {
       const flavorSlug = flavorKeyFromLabel(pickMeta(variation.meta, [FLAVOR_SLUG_META]));
       const flavorAliases = parseFlavorAliases(variation.meta[FLAVOR_ALIASES_META]);
       const weight = variationWeight(variation.meta);
+      const storedLifeStage = String(variation.meta[LIFE_STAGE_META] || '').trim();
       const sku = pickMeta(variation.meta, ['_sku']) || variation.id;
 
       return {
@@ -261,6 +264,7 @@ class AdminCatalogRepository {
         flavor: flavor || null,
         flavorSlug: flavorSlug || null,
         flavorAliases: flavorAliases.length > 0 ? flavorAliases.join(',') : '',
+        lifeStage: LIFE_STAGES.includes(storedLifeStage) ? storedLifeStage : 'adult',
         weight: weight || null,
         active: variation.status === 'publish',
         regularPrice: variationRegularPrice(variation.meta, zoneId),
@@ -388,7 +392,7 @@ class AdminCatalogRepository {
     await this.upsertPostMeta(variationId, '_stripe_price_fingerprint', '');
   }
 
-  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, regularPrice, zoneId, menuOrder }) {
+  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, regularPrice, zoneId, menuOrder }) {
     this.ensureDataSource();
     const id = await this.nextPostId();
     const title = String(name || '').trim();
@@ -416,6 +420,7 @@ class AdminCatalogRepository {
     if (flavorAliases != null && String(flavorAliases).trim()) {
       await this.upsertPostMeta(id, FLAVOR_ALIASES_META, String(flavorAliases).trim());
     }
+    await this.upsertPostMeta(id, LIFE_STAGE_META, lifeStage || 'adult');
     if (regularPrice != null) {
       await this.writeVariationPrice(id, regularPrice, zoneId);
     }
@@ -423,7 +428,7 @@ class AdminCatalogRepository {
     return String(id);
   }
 
-  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, regularPrice, zoneId, priceChanged }) {
+  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, regularPrice, zoneId, priceChanged }) {
     this.ensureDataSource();
     const title = name == null ? undefined : String(name).trim();
     const code = sku == null ? undefined : String(sku).trim();
@@ -445,6 +450,9 @@ class AdminCatalogRepository {
     }
     if (flavorAliases != null) {
       await this.upsertPostMeta(id, FLAVOR_ALIASES_META, String(flavorAliases).trim());
+    }
+    if (lifeStage) {
+      await this.upsertPostMeta(id, LIFE_STAGE_META, lifeStage);
     }
     if (regularPrice != null && priceChanged !== false) {
       await this.writeVariationPrice(id, regularPrice, zoneId);

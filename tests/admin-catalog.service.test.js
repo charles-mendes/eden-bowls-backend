@@ -94,10 +94,57 @@ describe('AdminCatalogService', () => {
       flavor: 'Lamb',
       flavorSlug: 'lamb',
       flavorAliases: undefined,
+      lifeStage: 'adult',
       regularPrice: 40,
       zoneId: 'br',
       menuOrder: 2
     });
+  });
+
+  test('patchProduct saves the life stage line of a new and an existing variation', async () => {
+    const product = {
+      id: '100',
+      active: false,
+      planCountry: 'BR',
+      planDays: 30,
+      variants: [{ id: '1001', name: 'Beef 300g', sku: 'Beef-300g', regularPrice: 25 }]
+    };
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue(product),
+      upsertPostMeta: jest.fn(),
+      createVariation: jest.fn().mockResolvedValue('3001'),
+      updateVariation: jest.fn()
+    };
+    const service = new AdminCatalogService({ repository });
+
+    await service.patchProduct('100', {
+      planCountry: 'BR',
+      planDays: 30,
+      variants: [
+        { id: '1001', name: 'Beef 300g', sku: 'Beef-300g', lifeStage: 'Senior' },
+        { name: 'Senior Beef 300g', sku: 'SENIOR-BEEF-300', flavor: 'Receita de Carne para Cães Sênior', flavorSlug: 'senior-beef', lifeStage: 'senior', regularPrice: 40 }
+      ]
+    });
+
+    expect(repository.updateVariation.mock.calls[0][0].lifeStage).toBe('senior');
+    expect(repository.createVariation.mock.calls[0][0]).toMatchObject({ flavorSlug: 'senior-beef', lifeStage: 'senior' });
+  });
+
+  test('patchProduct rejects an unknown life stage line', async () => {
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue({ id: '100', active: false, planCountry: 'BR', planDays: 30, variants: [] }),
+      upsertPostMeta: jest.fn(),
+      createVariation: jest.fn(),
+      updateVariation: jest.fn()
+    };
+    const service = new AdminCatalogService({ repository });
+
+    await expect(service.patchProduct('100', {
+      planCountry: 'BR',
+      planDays: 30,
+      variants: [{ name: 'Kitten 300g', sku: 'KITTEN-300', lifeStage: 'kitten' }]
+    })).rejects.toMatchObject({ statusCode: 422 });
+    expect(repository.createVariation).not.toHaveBeenCalled();
   });
 
   test('patchProduct with only one variation leaves plan fields and sibling variations untouched', async () => {

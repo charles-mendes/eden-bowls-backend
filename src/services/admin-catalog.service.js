@@ -8,6 +8,7 @@ const {
   shouldEnforceMarketScope
 } = require('../core/admin-market-scope');
 const {
+  LIFE_STAGES,
   SEED_FLAVOR_ALIASES,
   canonicalFlavorKey,
   flavorKeyFromLabel,
@@ -67,6 +68,19 @@ function parseVariationFlavorAliases(value, flavorSlug) {
 
   const aliases = parseFlavorAliases(value);
   return aliases.join(',');
+}
+
+function parseVariationLifeStage(value) {
+  if (value == null || value === '') {
+    return undefined;
+  }
+
+  const lifeStage = String(value).trim().toLowerCase();
+  if (!LIFE_STAGES.includes(lifeStage)) {
+    throw new HttpError(422, `Variation life stage must be one of ${LIFE_STAGES.join(', ')}.`);
+  }
+
+  return lifeStage;
 }
 
 function parseVariationPrice(value) {
@@ -465,6 +479,7 @@ class AdminCatalogService {
         ? undefined
         : parseVariationFlavorAliases(item.flavorAliases, flavorSlug);
       const regularPrice = parseVariationPrice(item.regularPrice);
+      const lifeStage = parseVariationLifeStage(item.lifeStage);
 
       if (isNewVariationId(id, existingIds)) {
         if (!String(name || '').trim() && !String(sku || '').trim()) {
@@ -479,6 +494,7 @@ class AdminCatalogService {
           flavor,
           flavorSlug,
           flavorAliases,
+          lifeStage: lifeStage || 'adult',
           regularPrice,
           zoneId,
           menuOrder
@@ -494,6 +510,7 @@ class AdminCatalogService {
         flavor,
         flavorSlug,
         flavorAliases,
+        lifeStage,
         regularPrice,
         zoneId,
         priceChanged: regularPrice != null && currentPrice !== regularPrice
