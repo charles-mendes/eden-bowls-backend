@@ -1,0 +1,449 @@
+id,name_pt,name_en,size,life_stage_class,adult_from_months,senior_from_years
+1,Labrador Retriever,Labrador Retriever,large,large,15,7
+2,Pastor Alemão,German Shepherd,large,large,15,7
+3,Golden Retriever,Golden Retriever,large,large,15,7
+4,Buldogue Inglês,Bulldog / English Bulldog,medium,medium,12,8
+5,Poodle (Standard),Poodle (Standard),medium,medium,12,8
+6,Poodle (Miniatura),Poodle (Miniature),small,small,10,10
+7,Poodle (Toy),Poodle (Toy),small,small,10,10
+8,Chihuahua,Chihuahua,small,small,10,10
+9,Rottweiler,Rottweiler,large,large,15,7
+10,Beagle,Beagle,medium,medium,12,8
+11,Dachshund,Dachshund,small,small,10,10
+12,Shih Tzu,Shih Tzu,small,small,10,10
+13,Boxer,Boxer,large,large,15,7
+14,Doberman,Doberman Pinscher,large,large,15,7
+15,Husky Siberiano,Siberian Husky,medium,medium,12,8
+16,Malamute do Alasca,Alaskan Malamute,large,large,15,7
+17,Akita,Akita,large,large,15,7
+18,Border Collie,Border Collie,medium,medium,12,8
+19,Cocker Spaniel Inglês,English Cocker Spaniel,medium,medium,12,8
+20,Cocker Spaniel Americano,American Cocker Spaniel,medium,medium,12,8
+21,Yorkshire Terrier,Yorkshire Terrier,small,small,10,10
+22,Maltês,Maltese,small,small,10,10
+23,Pug,Pug,small,small,10,10
+24,Boston Terrier,Boston Terrier,small,small,10,10
+25,Buldogue Francês,French Bulldog,small,small,10,10
+26,Dogue Alemão,Great Dane,large,giant,18,6
+27,São Bernardo,Saint Bernard,large,giant,18,6
+28,Boiadeiro de Berna,Bernese Mountain Dog,large,giant,18,6
+29,Newfoundland,Newfoundland,large,giant,18,6
+30,Chow Chow,Chow Chow,medium,medium,12,8
+31,Shar Pei,Shar Pei,medium,medium,12,8
+32,Dálmata,Dalmatian,large,large,15,7
+33,Weimaraner,Weimaraner,large,large,15,7
+34,Vizsla,Vizsla,medium,medium,12,8
+35,Pointer Inglês,English Pointer,large,large,15,7
+36,Setter Irlandês,Irish Setter,large,large,15,7
+37,Setter Inglês,English Setter,large,large,15,7
+38,Galgo Inglês,Greyhound,large,large,15,7
+39,Whippet,Whippet,medium,medium,12,8
+40,Galgo Italiano,Italian Greyhound,small,small,10,10
+41,Basenji,Basenji,small,small,10,10
+42,Basset Hound,Basset Hound,medium,medium,12,8
+43,Sabujo,Bloodhound,large,large,15,7
+44,Foxhound Inglês,English Foxhound,large,large,15,7
+45,Foxhound Americano,American Foxhound,large,large,15,7
+46,Bull Terrier,Bull Terrier,medium,medium,12,8
+47,Staffordshire Bull Terrier,Staffordshire Bull Terrier,medium,medium,12,8
+48,American Staffordshire Terrier,American Staffordshire Terrier,medium,medium,12,8
+49,Pit Bull Terrier,Pit Bull Terrier,medium,medium,12,8
+50,Jack Russell Terrier,Jack Russell Terrier,small,small,10,10
+51,Parson Russell Terrier,Parson Russell Terrier,small,small,10,10
+52,Airedale Terrier,Airedale Terrier,medium,medium,12,8
+53,Scottish Terrier,Scottish Terrier,small,small,10,10
+54,West Highland White Terrier,West Highland White Terrier,small,small,10,10
+55,Cairn Terrier,Cairn Terrier,small,small,10,10
+56,Norfolk Terrier,Norfolk Terrier,small,small,10,10
+57,Norwich Terrier,Norwich Terrier,small,small,10,10
+58,Schnauzer Miniatura,Miniature Schnauzer,small,small,10,10
+59,Schnauzer Médio,Standard Schnauzer,medium,medium,12,8
+60,Schnauzer Gigante,Giant Schnauzer,large,large,15,7
+61,Komondor,Komondor,large,giant,18,6
+62,Puli,Puli,medium,medium,12,8
+63,Kuvasz,Kuvasz,large,large,15,7
+64,Mastim Tibetano,Tibetan Mastiff,large,giant,18,6
+65,Lhasa Apso,Lhasa Apso,small,small,10,10
+66,Spaniel Tibetano,Tibetan Spaniel,small,small,10,10
+67,Terrier Tibetano,Tibetan Terrier,medium,medium,12,8
+68,Galgo Afegão,Afghan Hound,large,large,15,7
+69,Saluki,Saluki,large,large,15,7
+70,Borzoi,Borzoi,large,large,15,7
+71,Lobeiro Irlandês,Irish Wolfhound,large,giant,18,6
+72,Deerhound Escocês,Scottish Deerhound,large,giant,18,6
+73,Pastor Australiano,Australian Shepherd,medium,medium,12,8
+74,Boiadeiro Australiano,Australian Cattle Dog,medium,medium,12,8
+75,Kelpie Australiano,Australian Kelpie,medium,medium,12,8
+76,Bobtail,Old English Sheepdog,large,large,15,7
+77,Spitz dos Shetland,Shetland Sheepdog,small,small,10,10
+78,Collie,Collie,large,large,15,7
+79,Malinois Belga,Belgian Malinois,large,large,15,7
+80,Tervuren Belga,Belgian Tervuren,large,large,15,7
+81,Pastor Belga Groenendael,Belgian Sheepdog,large,large,15,7
+82,Pastor Belga Laekenois,Belgian Laekenois,large,large,15,7
+83,Papillon,Papillon,small,small,10,10
+84,Phalène,Phalene,small,small,10,10
+85,Pequinês,Pekingese,small,small,10,10
+86,Chin Japonês,Japanese Chin,small,small,10,10
+87,Havanês,Havanese,small,small,10,10
+88,Bichon Frisé,Bichon Frise,small,small,10,10
+89,Coton de Tuléar,Coton de Tulear,small,small,10,10
+90,Crestado Chinês,Chinese Crested,small,small,10,10
+91,Xoloitzcuintli,Xoloitzcuintli,medium,medium,12,8
+92,Cão Pelado Peruano,Peruvian Hairless Dog,medium,medium,12,8
+93,Alaskan Klee Kai,Alaskan Klee Kai,small,small,10,10
+94,Shiba Inu,Shiba Inu,small,small,10,10
+95,Kishu Ken,Kishu Ken,medium,medium,12,8
+96,Hokkaido,Hokkaido,medium,medium,12,8
+97,Kai Ken,Kai Ken,medium,medium,12,8
+98,Thai Ridgeback,Thai Ridgeback,medium,medium,12,8
+99,Rhodesian Ridgeback,Rhodesian Ridgeback,large,large,15,7
+100,Boerboel,Boerboel,large,giant,18,6
+101,Dogo Argentino,Dogo Argentino,large,large,15,7
+102,Fila Brasileiro,Brazilian Mastiff,large,giant,18,6
+103,Cane Corso,Cane Corso,large,giant,18,6
+104,Mastim Napolitano,Neapolitan Mastiff,large,giant,18,6
+105,Bullmastiff,Bullmastiff,large,giant,18,6
+106,Mastim Inglês,English Mastiff,large,giant,18,6
+107,Tosa Inu,Tosa Inu,large,giant,18,6
+108,Leonberger,Leonberger,large,giant,18,6
+109,Kangal,Kangal,large,giant,18,6
+110,Pastor da Anatólia,Anatolian Shepherd,large,giant,18,6
+111,Cão de Montanha dos Pireneus,Pyrenean Mountain Dog,large,giant,18,6
+112,Spitz Finlandês,Finnish Spitz,medium,medium,12,8
+113,Elkhound Norueguês,Norwegian Elkhound,medium,medium,12,8
+114,Vallhund Sueco,Swedish Vallhund,small,small,10,10
+115,Sheepdog Islandês,Icelandic Sheepdog,medium,medium,12,8
+116,Samoieda,Samoyed,large,large,15,7
+117,Eurasier,Eurasier,medium,medium,12,8
+118,Chinook,Chinook,large,large,15,7
+119,Affenpinscher,Affenpinscher,small,small,10,10
+120,Buldogue Americano,American Bulldog,large,large,15,7
+121,Spitz Americano,American Eskimo Dog,medium,medium,12,8
+123,Terrier Americano Sem Pelo,American Hairless Terrier,small,small,10,10
+124,Spaniel de Água Americano,American Water Spaniel,medium,medium,12,8
+125,Karabash da Anatólia,Anatolian Karabash,large,giant,18,6
+126,Appenzeller Sennenhund,Appenzeller Sennenhund,medium,medium,12,8
+127,Terrier Australiano,Australian Terrier,small,small,10,10
+128,Azawakh,Azawakh,large,large,15,7
+129,Barbet,Barbet,medium,medium,12,8
+130,Pastor Basco,Basque Shepherd Dog,medium,medium,12,8
+131,Sabujo da Montanha da Baviera,Bavarian Mountain Hound,medium,medium,12,8
+132,Bedlington Terrier,Bedlington Terrier,medium,medium,12,8
+133,Grifão Belga,Belgian Griffon,small,small,10,10
+134,Bergamasco,Bergamasco Sheepdog,large,large,15,7
+135,Berger Picard,Berger Picard,medium,medium,12,8
+136,Terrier Preto Russo,Black Russian Terrier,large,giant,18,6
+137,Black Mouth Cur,Black Mouth Cur,medium,medium,12,8
+138,Blue Lacy,Blue Lacy,medium,medium,12,8
+139,Pastor Boêmio,Bohemian Shepherd,medium,medium,12,8
+140,Bolonhês,Bolognese,small,small,10,10
+141,Border Terrier,Border Terrier,small,small,10,10
+142,Terrier Brasileiro,Brazilian Terrier,small,small,10,10
+143,Broholmer,Broholmer,large,giant,18,6
+144,Grifão de Bruxelas,Brussels Griffon,small,small,10,10
+145,Pastor da Bucovina,Bucovina Shepherd,large,giant,18,6
+146,Bull Arab,Bull Arab,large,large,15,7
+147,Bullenbeisser,Bullenbeisser,large,large,15,7
+148,Cão de Canaã,Canaan Dog,medium,medium,12,8
+149,Cão Esquimó Canadense,Canadian Eskimo Dog,large,large,15,7
+150,Carolina Dog,Carolina Dog,medium,medium,12,8
+151,Sheepdog Catalão,Catalan Sheepdog,medium,medium,12,8
+152,Pastor da Ásia Central,Central Asian Shepherd,large,giant,18,6
+153,Cesky Terrier,Cesky Terrier,small,small,10,10
+154,Chart Polski,Chart Polski,large,large,15,7
+155,Chesapeake Bay Retriever,Chesapeake Bay Retriever,large,large,15,7
+156,Chien Français Blanc et Noir,Chien Français Blanc et Noir,large,large,15,7
+157,Cão Chinook,Chinook Dog,large,large,15,7
+158,Chortai,Chortai,large,large,15,7
+159,Clumber Spaniel,Clumber Spaniel,large,large,15,7
+160,Cão Lobo Tchecoslovaco,Czechoslovakian Wolfdog,large,large,15,7
+161,Dandie Dinmont Terrier,Dandie Dinmont Terrier,small,small,10,10
+162,Farmdog Dinamarquês-Sueco,Danish-Swedish Farmdog,small,small,10,10
+163,Deutsche Bracke,Deutsche Bracke,medium,medium,12,8
+164,Pastor Holandês,Dutch Shepherd,large,large,15,7
+165,Laika da Sibéria Oriental,East Siberian Laika,large,large,15,7
+166,Entlebucher Sennenhund,Entlebucher Mountain Dog,medium,medium,12,8
+167,Cão da Serra da Estrela,Estrela Mountain Dog,large,giant,18,6
+168,Eton Terrier,Eton Terrier,small,small,10,10
+169,Field Spaniel,Field Spaniel,medium,medium,12,8
+170,Lapphund Finlandês,Finnish Lapphund,medium,medium,12,8
+171,Flat-Coated Retriever,Flat-Coated Retriever,large,large,15,7
+172,Cão da Montanha Formosano,Formosan Mountain Dog,medium,medium,12,8
+173,Fox Terrier (Pelo Liso),Fox Terrier (Smooth),small,small,10,10
+174,Fox Terrier (Pelo Áspero),Fox Terrier (Wire),small,small,10,10
+175,Épagneul Français,French Spaniel,medium,medium,12,8
+176,Pinscher Alemão,German Pinscher,medium,medium,12,8
+177,Spitz Alemão,German Spitz,medium,medium,12,8
+178,Pointer Alemão de Pelo Duro,German Wirehaired Pointer,large,large,15,7
+179,Glen of Imaal Terrier,Glen of Imaal Terrier,medium,medium,12,8
+180,Goldendoodle,Goldendoodle,large,large,15,7
+181,Gordon Setter,Gordon Setter,large,large,15,7
+182,Grand Bleu de Gascogne,Grand Bleu de Gascogne,large,large,15,7
+183,Cão de Montanha dos Pireneus,Great Pyrenees,large,giant,18,6
+184,Greater Swiss Mountain Dog,Greater Swiss Mountain Dog,large,giant,18,6
+185,Cão da Groenlândia,Greenland Dog,large,large,15,7
+186,Hamiltonstövare,Hamiltonstövare,large,large,15,7
+187,Sabujo de Hanôver,Hanover Hound,large,large,15,7
+188,Harrier,Harrier,medium,medium,12,8
+189,Hokkaido Inu,Hokkaido Inu,medium,medium,12,8
+190,Hovawart,Hovawart,large,large,15,7
+191,Galgo Húngaro,Hungarian Greyhound,large,large,15,7
+192,Kuvasz Húngaro,Hungarian Kuvasz,large,large,15,7
+193,Podengo de Ibiza,Ibizan Hound,medium,medium,12,8
+194,Cão Pariah Indiano,Indian Pariah Dog,medium,medium,12,8
+195,Setter Irlandês Vermelho e Branco,Irish Red and White Setter,large,large,15,7
+196,Terrier Irlandês,Irish Terrier,medium,medium,12,8
+197,Spaniel de Água Irlandês,Irish Water Spaniel,large,large,15,7
+198,Spinone Italiano,Italian Spinone,large,large,15,7
+199,Jagdterrier,Jagdterrier,small,small,10,10
+200,Jindo Coreano,Korean Jindo,medium,medium,12,8
+201,Kai Dog,Kai Dog,medium,medium,12,8
+202,Cão de Urso da Carélia,Karelian Bear Dog,medium,medium,12,8
+203,Keeshond,Keeshond,medium,medium,12,8
+204,Kerry Blue Terrier,Kerry Blue Terrier,medium,medium,12,8
+205,Kishu Inu,Kishu Inu,medium,medium,12,8
+206,Kooikerhondje,Kooikerhondje,medium,medium,12,8
+207,Kromfohrländer,Kromfohrländer,medium,medium,12,8
+208,Labradoodle,Labradoodle,large,large,15,7
+209,Lagotto Romagnolo,Lagotto Romagnolo,medium,medium,12,8
+210,Lancashire Heeler,Lancashire Heeler,small,small,10,10
+211,Landseer,Landseer,large,giant,18,6
+212,Lapphund da Lapônia,Lapponian Herder,medium,medium,12,8
+213,Munsterlander Grande,Large Munsterlander,large,large,15,7
+214,Leonberger,Leonberger,large,giant,18,6
+215,Löwchen,Löwchen,small,small,10,10
+216,Cão de Pastor de Maremma,Maremma Sheepdog,large,large,15,7
+217,Bull Terrier Miniatura,Miniature Bull Terrier,small,small,10,10
+218,Pastor Americano Miniatura,Miniature American Shepherd,small,small,10,10
+219,Mountain Cur,Mountain Cur,medium,medium,12,8
+220,Mudhol Hound,Mudhol Hound,large,large,15,7
+221,Mudi,Mudi,medium,medium,12,8
+222,Buldogue Napolitano,Neapolitan Bulldog,medium,medium,12,8
+223,Cão Cantor da Nova Guiné,New Guinea Singing Dog,medium,medium,12,8
+224,Buhund Norueguês,Norwegian Buhund,medium,medium,12,8
+225,Lundehund Norueguês,Norwegian Lundehund,small,small,10,10
+226,Pointer Dinamarquês Antigo,Old Danish Pointer,large,large,15,7
+227,Otterhound,Otterhound,large,large,15,7
+228,Patterdale Terrier,Patterdale Terrier,small,small,10,10
+229,Dogue de Canário,Perro de Presa Canario,large,giant,18,6
+230,Basset Grifão Vendeu Pequeno,Petit Basset Griffon Vendéen,medium,medium,12,8
+231,Cão do Faraó,Pharaoh Hound,medium,medium,12,8
+232,Plott Hound,Plott Hound,medium,medium,12,8
+233,Sheepdog das Planícies Polacas,Polish Lowland Sheepdog,medium,medium,12,8
+234,Podengo Português,Portuguese Podengo,medium,medium,12,8
+235,Cão de Água Português,Portuguese Water Dog,medium,medium,12,8
+236,Pumi,Pumi,medium,medium,12,8
+237,Pastor dos Pireneus,Pyrenean Shepherd,medium,medium,12,8
+238,Rafeiro do Alentejo,Rafeiro do Alentejo,large,giant,18,6
+239,Redbone Coonhound,Redbone Coonhound,large,large,15,7
+240,Toy Russo,Russian Toy,small,small,10,10
+241,Bolonka Russa,Russian Tsvetnaya Bolonka,small,small,10,10
+242,Cão de Gado de São Miguel,Saint Miguel Cattle Dog,medium,medium,12,8
+243,Schapendoes,Schapendoes,medium,medium,12,8
+244,Schillerstövare,Schillerstövare,large,large,15,7
+245,Sealyham Terrier,Sealyham Terrier,small,small,10,10
+246,Sabujo Italiano,Segugio Italiano,medium,medium,12,8
+247,Sabujo Sérvio,Serbian Hound,medium,medium,12,8
+248,Skye Terrier,Skye Terrier,small,small,10,10
+249,Sloughi,Sloughi,large,large,15,7
+250,Cuvac Eslovaco,Slovak Cuvac,large,large,15,7
+251,Pointer Eslovaco de Pelo Duro,Slovakian Rough-Haired Pointer,large,large,15,7
+252,Munsterlander Pequeno,Small Munsterlander,medium,medium,12,8
+253,Soft Coated Wheaten Terrier,Soft Coated Wheaten Terrier,medium,medium,12,8
+254,Mastim Espanhol,Spanish Mastiff,large,giant,18,6
+255,Cão de Água Espanhol,Spanish Water Dog,medium,medium,12,8
+256,Spinone Italiano,Spinone Italiano,large,large,15,7
+257,Stabyhoun,Stabyhoun,medium,medium,12,8
+258,Staffordshire Terrier,Staffordshire Terrier,medium,medium,12,8
+259,Sussex Spaniel,Sussex Spaniel,medium,medium,12,8
+260,Lapphund Sueco,Swedish Lapphund,medium,medium,12,8
+261,Cão de Taiwan,Taiwan Dog,medium,medium,12,8
+262,Tornjak,Tornjak,large,large,15,7
+263,Tweed Water Spaniel,Tweed Water Spaniel,medium,medium,12,8
+264,Sabujo do Tirol,Tyrolean Hound,medium,medium,12,8
+265,Vizsla de Pelo Duro,Wirehaired Vizsla,medium,medium,12,8
+266,Volpino Italiano,Volpino Italiano,small,small,10,10
+267,Dachsbracke da Vestfália,Westphalian Dachsbracke,small,small,10,10
+268,Grifão Pointer de Pelo Duro,Wirehaired Pointing Griffon,large,large,15,7
+269,Laika Yakut,Yakutian Laika,medium,medium,12,8
+270,Yorkipoo,Yorkipoo,small,small,10,10
+271,Aidi,Aidi,large,large,15,7
+272,Aksaray Malaklisi,Aksaray Malaklisi,large,giant,18,6
+273,Alano Espanhol,Spanish Alano,large,large,15,7
+274,Dachsbracke Alpino,Alpine Dachsbracke,small,small,10,10
+275,Mastim Americano,American Mastiff,large,giant,18,6
+276,Sabujo Leopardo Americano,American Leopard Hound,large,large,15,7
+277,Anglo-Français de Petite Vénerie,Anglo-Français de Petite Vénerie,medium,medium,12,8
+278,Pointer de Ariège,Ariege Pointer,large,large,15,7
+279,Sabujo de Artois,Artois Hound,medium,medium,12,8
+280,Pastor do Atlas,Atlas Shepherd Dog,large,large,15,7
+281,Sabujo Austríaco Preto e Castanho,Austrian Black and Tan Hound,medium,medium,12,8
+282,Pinscher Austríaco,Austrian Pinscher,medium,medium,12,8
+283,Sabujo Barak,Barak Hound,large,large,15,7
+284,Smoushond Belga,Belgian Smoushond,medium,medium,12,8
+285,Briard,Briard,large,large,15,7
+286,Briquet Grifão Vendeu,Briquet Griffon Vendéen,medium,medium,12,8
+287,Pastor Búlgaro,Bulgarian Shepherd Dog,large,large,15,7
+288,Lobeiro Buriato-Mongol,Buryat-Mongolian Wolfhound,large,giant,18,6
+289,Cimarrón Uruguaio,Cimarrón Uruguayo,large,large,15,7
+290,Cirneco dell'Etna,Cirneco dell'Etna,medium,medium,12,8
+291,Sabujo Cretense,Cretan Hound,medium,medium,12,8
+292,Sheepdog Croata,Croatian Sheepdog,medium,medium,12,8
+293,Cursinu,Cursinu,medium,medium,12,8
+294,Vlcak Tchecoslovaco,Czechoslovak Vlcak,large,large,15,7
+295,Dogo Cubano,Dogo Cubano,large,large,15,7
+296,Drentsche Patrijshond,Drentsche Patrijshond,large,large,15,7
+297,Dunker,Dunker,medium,medium,12,8
+298,Pastor da Europa Oriental,East European Shepherd,large,large,15,7
+299,Elo,Elo,medium,medium,12,8
+300,Épagneul Bleu de Picardie,Epagneul Bleu de Picardie,medium,medium,12,8
+301,Sabujo Estoniano,Estonian Hound,medium,medium,12,8
+302,Cão Lobo Eurasiático,Eurasian Wolfdog,large,large,15,7
+303,Sheepdog das Ilhas Faroé,Faroese Sheepdog,medium,medium,12,8
+304,Fila de São Miguel,Fila de São Miguel,large,large,15,7
+305,Buldogue Francês (Mini),French Bulldog (Mini),small,small,10,10
+306,Sabujo Tricolor Francês,French Tricolour Hound,large,large,15,7
+307,Galgo Espanhol,Spanish Greyhound,large,large,15,7
+308,Gascon Saintongeois,Gascon Saintongeois,large,large,15,7
+309,Sabujo Alemão,German Hound,medium,medium,12,8
+310,Pointer Alemão de Pelo Comprido,German Longhaired Pointer,large,large,15,7
+311,Spaniel Alemão,German Spaniel,medium,medium,12,8
+312,Gonczy Polski,Gonczy Polski,medium,medium,12,8
+313,Grand Anglo-Français Blanc et Noir,Grand Anglo-Français Blanc et Noir,large,large,15,7
+314,Grand Anglo-Français Blanc et Orange,Grand Anglo-Français Blanc et Orange,large,large,15,7
+315,Grand Anglo-Français Tricolore,Grand Anglo-Français Tricolore,large,large,15,7
+316,Grand Grifão Vendeu,Grand Griffon Vendéen,large,large,15,7
+317,Sabujo Grego,Greek Harehound,medium,medium,12,8
+318,Sabujo de Halden,Halden Hound,large,large,15,7
+319,Pastor Helênico,Hellenic Shepherd,large,large,15,7
+320,Sheepdog do Himalaia,Himalayan Sheepdog,large,large,15,7
+321,Hortaya Borzaya,Hortaya Borzaya,large,large,15,7
+322,Sabujo de Hygen,Hygen Hound,medium,medium,12,8
+323,Sabujo Istriano de Pelo Áspero,Istrian Coarse-haired Hound,medium,medium,12,8
+324,Sabujo Istriano de Pelo Curto,Istrian Short-haired Hound,medium,medium,12,8
+325,Jamthund,Jamthund,large,large,15,7
+326,Spitz Japonês,Japanese Spitz,small,small,10,10
+327,Jonangi,Jonangi,medium,medium,12,8
+328,Kangal Shepherd Dog,Kangal Shepherd Dog,large,giant,18,6
+329,Karakachan,Karakachan Dog,large,large,15,7
+330,Cão de Kars,Kars Dog,large,large,15,7
+331,Kintamani,Kintamani,medium,medium,12,8
+332,Jindo Coreano,Korean Jindo Dog,medium,medium,12,8
+333,Cão Kuchi,Kuchi Dog,large,large,15,7
+334,Lapphund,Lapphund,medium,medium,12,8
+335,Sabujo Letão,Latvian Hound,medium,medium,12,8
+336,Sabujo Lituano,Lithuanian Hound,medium,medium,12,8
+337,Husky do Rio Mackenzie,Mackenzie River Husky,large,large,15,7
+338,Magyar Agár,Magyar Agár,large,large,15,7
+339,Cão de Pastor de Maiorca,Majorca Shepherd Dog,large,large,15,7
+340,Mastim Mallorquino,Mallorquin Mastiff,large,large,15,7
+341,Maltês Shih Tzu,Maltese Shih Tzu,small,small,10,10
+342,Maneto,Maneto,small,small,10,10
+343,McNab,McNab,medium,medium,12,8
+344,Cão Pelado Mexicano,Mexican Hairless Dog,medium,medium,12,8
+345,Fox Terrier Miniatura,Miniature Fox Terrier,small,small,10,10
+346,Sabujo da Montanha de Montenegro,Montenegrin Mountain Hound,medium,medium,12,8
+347,Cão de Guarda de Moscou,Moscow Watchdog,large,giant,18,6
+348,Mountain Feist,Mountain Feist,small,small,10,10
+349,Pointer de Navarra,Navarre Pointer,large,large,15,7
+350,Norrbottenspets,Norrbottenspets,medium,medium,12,8
+351,Northern Inuit Dog,Northern Inuit Dog,large,large,15,7
+352,Galgo Croata Antigo,Old Croatian Sighthound,large,large,15,7
+353,Pointer Espanhol Antigo,Old Spanish Pointer,large,large,15,7
+354,Pachon Navarro,Pachon Navarro,large,large,15,7
+355,Pandikona,Pandikona,medium,medium,12,8
+356,Pastore della Lessinia,Pastore della Lessinia,large,large,15,7
+357,Orquídea Inca Peruana,Peruvian Inca Orchid,medium,medium,12,8
+358,Petit Bleu de Gascogne,Petit Bleu de Gascogne,medium,medium,12,8
+359,Spaniel de Pont-Audemer,Pont-Audemer Spaniel,medium,medium,12,8
+360,Sabujo do Posavac,Posavac Hound,medium,medium,12,8
+361,Pražský Krysařík,Prague Ratter,small,small,10,10
+362,Presa Mallorquino,Presa Mallorquin,large,large,15,7
+363,Pudelpointer,Pudelpointer,medium,medium,12,8
+364,Rajapalayam,Rajapalayam,large,large,15,7
+365,Galgo de Rampur,Rampur Greyhound,large,large,15,7
+366,Rastreador Brasileiro,Brazilian Tracker,large,large,15,7
+367,Ratonero Bodeguero Andaluz,Ratonero Bodeguero Andaluz,small,small,10,10
+368,Pastor Carpático Romeno,Romanian Carpathian Shepherd,large,large,15,7
+369,Pastor Mioritic Romeno,Romanian Mioritic Shepherd,large,large,15,7
+370,Spaniel Russo,Russian Spaniel,medium,medium,12,8
+371,Cão Lobo de Saarloos,Saarloos Wolfdog,large,large,15,7
+372,Sabueso Español,Sabueso Español,large,large,15,7
+373,Spaniel de Saint-Usuge,Saint Usuge Spaniel,medium,medium,12,8
+374,Sapsali,Sapsali,medium,medium,12,8
+375,Sarplaninac,Sarplaninac,large,giant,18,6
+376,Schweizer Laufhund,Schweizer Laufhund,medium,medium,12,8
+377,Sabujo Maremmano,Segugio Maremmano,medium,medium,12,8
+378,Cão de Sharplanina,Sharplanina Dog,large,giant,18,6
+379,Shikoku,Shikoku,medium,medium,12,8
+380,Sabujo Siciliano,Sicilian Hound,medium,medium,12,8
+381,Silken Windhound,Silken Windhound,medium,medium,12,8
+382,Smålandsstövare,Smålandsstövare,medium,medium,12,8
+383,Ovcharka do Sul da Rússia,South Russian Ovcharka,large,giant,18,6
+384,Galgo Espanhol,Spanish Greyhound,large,large,15,7
+385,Sabujo St. Hubert do Jura,St. Hubert Jura Hound,large,large,15,7
+386,Sabujo Estírio de Pelo Áspero,Styrian Coarse-haired Hound,medium,medium,12,8
+387,Taigan,Taigan,large,large,15,7
+388,Pastor de Tatra,Tatra Shepherd Dog,large,large,15,7
+389,Telomian,Telomian,small,small,10,10
+390,Cão de Bangkaew Tailandês,Thai Bangkaew Dog,medium,medium,12,8
+391,Sabujo da Transilvânia,Transylvanian Hound,medium,medium,12,8
+392,Treeing Walker Coonhound,Treeing Walker Coonhound,large,large,15,7
+393,Bolonka Tsvetnaya,Tsvetnaya Bolonka,small,small,10,10
+394,Utonagan,Utonagan,large,large,15,7
+395,Ratonero Valenciano,Valencian Ratter,small,small,10,10
+396,Laika da Sibéria Ocidental,West Siberian Laika,large,large,15,7
+397,Wetterhoun,Wetterhoun,medium,medium,12,8
+398,Pastor Branco Suíço,White Swiss Shepherd,large,large,15,7
+399,Kelpie de Trabalho,Working Kelpie,medium,medium,12,8
+400,Alopekis,Alopekis,small,small,10,10
+401,American Bully,American Bully,medium,medium,12,8
+402,Pit Bull Terrier Americano,American Pit Bull Terrier,medium,medium,12,8
+403,Terrier Andaluz,Andalusian Terrier,small,small,10,10
+404,Boiadeiro Australiano sem Rabo,Australian Stumpy Tail Cattle Dog,medium,medium,12,8
+405,Sabujo dos Bálcãs,Balkan Hound,medium,medium,12,8
+406,Cão de Banjar,Banjar Dog,medium,medium,12,8
+407,Biewer Terrier,Biewer Terrier,small,small,10,10
+408,Sabujo Bósnio de Pelo Áspero,Bosnian Coarse-haired Hound,medium,medium,12,8
+409,Fila Brasileiro,Brazilian Mastiff,large,giant,18,6
+410,Bully Kutta,Bully Kutta,large,giant,18,6
+411,Campeiro Bulldog,Campeiro Bulldog,large,large,15,7
+412,Cão de Castro Laboreiro,Castro Laboreiro Dog,large,large,15,7
+413,Fila de São Miguel,Fila de São Miguel,large,large,15,7
+414,Cão da Serra da Estrela (Pelo Curto),Estrela Mountain Dog (Short Hair),large,giant,18,6
+415,Cão da Serra da Estrela (Pelo Comprido),Estrela Mountain Dog (Long Hair),large,giant,18,6
+416,Cão de Gado Transmontano,Transmontano Cattle Dog,large,giant,18,6
+417,Cão de Água Espanhol,Spanish Water Dog,medium,medium,12,8
+418,Cão de Água Frísio,Frisian Water Dog,medium,medium,12,8
+419,Cão de Pastor Catalão,Catalan Sheepdog,medium,medium,12,8
+420,Cão de Pastor Polonês,Polish Lowland Sheepdog,medium,medium,12,8
+421,Briard,Briard,large,large,15,7
+422,Pastor Belga Groenendael,Belgian Sheepdog (Groenendael),large,large,15,7
+423,Pastor Belga Malinois,Belgian Malinois,large,large,15,7
+424,Pastor Belga Tervuren,Belgian Tervuren,large,large,15,7
+425,Pastor Belga Laekenois,Belgian Laekenois,large,large,15,7
+426,Pastor Branco Suíço,White Swiss Shepherd,large,large,15,7
+427,Cão de Urso da Carélia,Karelian Bear Dog,medium,medium,12,8
+428,Cão do Faraó,Pharaoh Hound,medium,medium,12,8
+429,Cão Lobo Tchecoslovaco,Czechoslovakian Wolfdog,large,large,15,7
+430,Cão Lobo de Saarloos,Saarloos Wolfdog,large,large,15,7
+431,Cão Nu do Peru (Grande),Peruvian Hairless Dog (Large),large,large,15,7
+432,Cão Nu do Peru (Pequeno),Peruvian Hairless Dog (Small),small,small,10,10
+433,Cão Nu do México (Toy),Xoloitzcuintli (Toy),small,small,10,10
+434,Cão Nu do México (Standard),Xoloitzcuintli (Standard),medium,medium,12,8
+435,Pastor da Ásia Central,Central Asian Shepherd,large,giant,18,6
+436,Pastor do Cáucaso,Caucasian Shepherd,large,giant,18,6
+437,Pastor da Anatólia,Anatolian Shepherd,large,giant,18,6
+438,Pastor de Karst,Karst Shepherd,large,large,15,7
+439,Pastor de Tatra,Tatra Shepherd Dog,large,large,15,7
+440,Pastor de Maremma,Maremma Sheepdog,large,large,15,7
+441,Pastor da Rússia Meridional,South Russian Ovcharka,large,giant,18,6
+442,Pastor de Bucovina,Bucovina Shepherd,large,giant,18,6
+443,Pastor de Sharplanina,Sharplanina Shepherd,large,giant,18,6
+444,Pastor Grego,Greek Shepherd,large,large,15,7
+445,Cão de Caça Finlandês,Finnish Spitz,medium,medium,12,8
+446,Cão de Caça Polonês,Polish Hunting Dog,medium,medium,12,8
+447,Cão de Caça Austríaco,Austrian Hound,medium,medium,12,8
+448,Elkhound Norueguês,Norwegian Elkhound,medium,medium,12,8
+449,Cão de Caça Sueco,Swedish Hound,medium,medium,12,8
