@@ -2,6 +2,7 @@ const { buildSizeClassSeedRows } = require('../../src/core/life-stage-seed');
 const { LifeStageService } = require('../../src/services/life-stage.service');
 const { LifeStageAnnouncementService } = require('../../src/services/life-stage-announcement.service');
 const { LifeStageAnnouncementsRepository } = require('../../src/infrastructure/repositories/life-stage-announcements.repository');
+const { PetLifeStageNoticesRepository } = require('../../src/infrastructure/repositories/pet-life-stage-notices.repository');
 const { createScratchDatabase } = require('./helpers/scratch-database');
 
 const runIntegration = process.env.RUN_DB_INTEGRATION_TESTS === 'true';
@@ -39,7 +40,7 @@ describeIntegration('launch announcement candidates (MySQL)', () => {
   }
 
   beforeAll(async () => {
-    scratch = await createScratchDatabase('announce', ['stripe_subscriptions', 'onboarding_pets', 'wp_users', 'wp_usermeta']);
+    scratch = await createScratchDatabase('announce', ['stripe_subscriptions', 'onboarding_pets', 'wp_users', 'wp_usermeta', 'life_stage_announcements', 'pet_life_stage_notices']);
     repository = new LifeStageAnnouncementsRepository(scratch.dataSource);
 
     await user(1, '1');
@@ -126,5 +127,37 @@ describeIntegration('launch announcement candidates (MySQL)', () => {
       [4, [['41', 'senior']]],
       [6, [['62', 'senior']]]
     ]);
+  });
+
+  test('a real send marks pets, notices, the daily count and the market state', async () => {
+    const at = new Date('2026-10-20T12:00:00Z');
+    expect(await repository.findMarket('BR')).toBeNull();
+
+    await repository.markStarted('BR', at);
+    await repository.markStarted('BR', new Date('2026-10-21T12:00:00Z'));
+    expect(new Date((await repository.findMarket('BR')).started_at).toISOString()).toBe(at.toISOString());
+    expect((await repository.findMarket('BR')).sent_at).toBeNull();
+
+    const notices = new PetLifeStageNoticesRepository(scratch.dataSource);
+    await notices.ensureDetected({ subscriptionId: 601, petId: '62', fromLine: 'adult', toLine: 'senior', at });
+    await notices.ensureDetected({ subscriptionId: 601, petId: '61', fromLine: 'adult', toLine: 'puppy', at });
+
+    await repository.markPetsAnnounced([{ petId: '62', stage: 'senior' }], at);
+    await notices.markAnnounced('62', 'senior', at);
+    await repository.markPetsAnnounced([{ petId: '62', stage: 'puppy' }], new Date('2026-10-22T12:00:00Z'));
+
+    const [bob] = await scratch.query("SELECT life_stage_announced_at, life_stage_announced_stage FROM onboarding_pets WHERE id = '62'");
+    expect(bob.life_stage_announced_stage).toBe('senior');
+    expect(new Date(bob.life_stage_announced_at).toISOString()).toBe(at.toISOString());
+    const rows = await scratch.query('SELECT pet_id, notified_via, dismissed_at FROM pet_life_stage_notices WHERE subscription_id = 601 ORDER BY pet_id');
+    expect(rows.map((row) => [row.pet_id, row.notified_via])).toEqual([['61', null], ['62', 'announcement']]);
+
+    expect(await repository.countAnnouncedCustomersSince('br', new Date('2026-10-20T00:00:00Z'))).toBe(1);
+    expect(await repository.countAnnouncedCustomersSince('br', new Date('2026-10-21T00:00:00Z'))).toBe(0);
+    expect(await repository.countAnnouncedCustomersSince('us', new Date('2026-10-20T00:00:00Z'))).toBe(0);
+    expect((await repository.listCandidates('br')).find((plan) => plan.id === 601).pets.map((pet) => pet.id)).toEqual(['61']);
+
+    await repository.markSent('BR', new Date('2026-10-21T12:00:00Z'));
+    expect(new Date((await repository.findMarket('BR')).sent_at).toISOString()).toBe('2026-10-21T12:00:00.000Z');
   });
 });

@@ -94,6 +94,16 @@ PetLifeStageNoticesRepository.prototype.markEmailed = async function markEmailed
   );
 };
 
+// The launch announcement named the pet for this stage: its open notices count as notified (they still show).
+PetLifeStageNoticesRepository.prototype.markAnnounced = async function markAnnounced(petId, stage, at) {
+  this.ensureDataSource();
+  await this.dataSource.query(
+    `UPDATE \`${this.tableName}\` SET notified_at = ?, notified_via = 'announcement'
+     WHERE pet_id = ? AND to_line = ? AND notified_at IS NULL AND dismissed_at IS NULL AND resolved_at IS NULL`,
+    [at, petId, stage]
+  );
+};
+
 module.exports = {
   PetLifeStageNoticesRepository
 };

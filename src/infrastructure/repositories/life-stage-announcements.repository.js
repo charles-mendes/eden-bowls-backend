@@ -33,6 +33,50 @@ class LifeStageAnnouncementsRepository {
     return Array.isArray(rows) && rows[0] ? rows[0] : null;
   }
 
+  // First real send of the market; a later run keeps the first date.
+  async markStarted(market, at) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `INSERT INTO life_stage_announcements (market, started_at) VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE started_at = COALESCE(started_at, VALUES(started_at))`,
+      [String(market).toUpperCase(), at]
+    );
+  }
+
+  // Last batch done: turns on the stage-change email of the market.
+  async markSent(market, at) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      'UPDATE life_stage_announcements SET sent_at = COALESCE(sent_at, ?) WHERE market = ?',
+      [at, String(market).toUpperCase()]
+    );
+  }
+
+  // Customers of the market whose pets were marked as announced since `since` (the daily cap).
+  async countAnnouncedCustomersSince(stripeAccount, since) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT COUNT(DISTINCT p.user_id) AS total
+       FROM \`${this.tables.pets}\` p
+       WHERE p.life_stage_announced_at >= ?
+         AND p.user_id IN (SELECT s.user_id FROM \`${this.tables.subscriptions}\` s WHERE s.stripe_account = ?)`,
+      [since, String(stripeAccount || '').toLowerCase()]
+    );
+    return Number(rows && rows[0] && rows[0].total) || 0;
+  }
+
+  // Named pets keep the stage they were announced for.
+  async markPetsAnnounced(dogs, at) {
+    this.ensureDataSource();
+    for (const dog of dogs) {
+      await this.dataSource.query(
+        `UPDATE \`${this.tables.pets}\` SET life_stage_announced_at = ?, life_stage_announced_stage = ?
+         WHERE id = ? AND life_stage_announced_at IS NULL`,
+        [at, dog.stage, dog.petId]
+      );
+    }
+  }
+
   // Delivering plans of a Stripe account whose owner opted in to marketing (`hsr_marketing_opt_in` = '1'),
   // each with the owner's pets not yet named in an announcement.
   async listCandidates(stripeAccount) {
