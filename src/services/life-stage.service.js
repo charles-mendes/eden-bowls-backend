@@ -69,7 +69,8 @@ class LifeStageService {
       const outside = current.some((key) => !allowed.includes(lineOf(key)));
       let rejected = keys.filter((key) => !allowed.includes(lineOf(key)));
       // A plan already outside the line may keep its own recipes with new quantities, or switch to the allowed
-      // line, never both (L-04). Keeping cannot add a previous-line recipe that was not in the plan.
+      // line, never both (L-04). Keeping cannot add a previous-line recipe that was not in the plan. For a puppy
+      // turned adult this is provisional until the nutritionist answers (doc section 7); a deadline is a new change.
       if (outside && rejected.length > 0) {
         const keeps = keys.every((key) => current.includes(key));
         const switching = keys.some((key) => allowed.includes(lineOf(key)));
