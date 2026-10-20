@@ -76,6 +76,7 @@ class OnboardingPlanPreviewRepository {
         size_class: matchedPet.size_class ?? null,
         current_age_years: matchedPet.current_age_years ?? null,
         current_age_months: matchedPet.current_age_months ?? null,
+        allowed_life_stages: Array.isArray(matchedPet.allowed_life_stages) ? matchedPet.allowed_life_stages : ['adult'],
         pet_name: petName,
         enabled: true,
         selected_flavors: [...flavorQuantities.keys()],

@@ -311,16 +311,20 @@ async function bootstrap() {
   const onboardingPetCreateRepository = new OnboardingPetCreateRepository(dataSource);
   const onboardingPetCreateService = new OnboardingPetCreateService(onboardingPetCreateRepository);
   const onboardingPetUpdateRepository = new OnboardingPetUpdateRepository(dataSource);
-  const lifeStageService = new LifeStageService({ repository: new LifeStageLimitsRepository(dataSource) });
+  const recipeLinesRepository = new AdminCatalogRepository(dataSource, {
+    postsTableName: env.WP_POSTS_TABLE_NAME,
+    postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
+    termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
+  });
+  const lifeStageService = new LifeStageService({
+    repository: new LifeStageLimitsRepository(dataSource),
+    recipeLinesRepository
+  });
   const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository, {
     ageChangesRepository: new PetAgeChangesRepository(dataSource),
     lifeStageService,
     ledgerRepository: subscriptionLedgerRepository,
-    recipeLinesRepository: new AdminCatalogRepository(dataSource, {
-      postsTableName: env.WP_POSTS_TABLE_NAME,
-      postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
-      termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
-    }),
+    recipeLinesRepository,
     noticesRepository: new PetLifeStageNoticesRepository(dataSource)
   });
   const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);

@@ -62,8 +62,16 @@ OnboardingRecommendationRepository.prototype.annotateLifeStages = async function
     if (!match) {
       return entry;
     }
-    const { life_stage, life_stage_next_at, size_class, current_age_years, current_age_months } = match;
-    return { ...entry, life_stage, life_stage_next_at, size_class, current_age_years, current_age_months };
+    const { life_stage, life_stage_next_at, size_class, current_age_years, current_age_months, allowed_life_stages } = match;
+    return {
+      ...entry,
+      life_stage,
+      life_stage_next_at,
+      size_class,
+      current_age_years,
+      current_age_months,
+      ...(allowed_life_stages ? { allowed_life_stages } : {})
+    };
   });
 };
 
