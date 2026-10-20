@@ -347,3 +347,45 @@ describe('stage-change email (customer-life-stage-notice)', () => {
     expect(en.content.text).toContain('Based on the age you gave, Luna is entering the Senior stage.');
   });
 });
+
+describe('recipe names in customer emails (2.15)', () => {
+  const { createTransactionalMailer } = require('../src/infrastructure/mailers/transactional-mailer');
+  const NAMES = {
+    BR: { beef: { label: 'Bovino' }, 'senior-beef': { label: 'Receita de Carne para Cães Sênior', shortLabel: 'Bovino · Sênior' } },
+    US: { beef: { label: 'Beef' }, 'senior-beef': { label: 'Beef Recipe for Senior Dogs', shortLabel: 'Beef · Senior' } }
+  };
+
+  function mailerWith(recipeNamesRepository) {
+    const otpMailer = { sendMail: jest.fn(async () => ({})) };
+    const claimsRepository = { claimMailSend: jest.fn(async () => ({ claimed: true, id: 1 })), markSent: jest.fn() };
+    return { otpMailer, mailer: createTransactionalMailer({ otpMailer, claimsRepository, recipeNamesRepository }) };
+  }
+
+  function ledger(account) {
+    return {
+      stripeSubscriptionId: 'sub_1',
+      stripeAccount: account,
+      customerEmail: 'ana@example.com',
+      address: { name: 'Ana Mendes', country: account === 'br' ? 'BR' : 'US' },
+      planSelection: { pets: [{ pet_id: 'p-thor', pet_name: 'Thor', selected_flavors: ['senior-beef', 'beef'] }] }
+    };
+  }
+
+  test.each([
+    ['br', 'Receita de Carne para Cães Sênior', 'Bovino'],
+    ['us', 'Beef Recipe for Senior Dogs', 'Beef']
+  ])('%s order confirmation prints the full catalog names', async (account, full, adult) => {
+    const { mailer, otpMailer } = mailerWith({ listRecipeNames: async () => NAMES });
+    await mailer.notifyOrderConfirmed({ invoice: { id: 'in_1', amount_paid: 1000, currency: account === 'br' ? 'brl' : 'usd' }, ledger: ledger(account), subscriptionId: 'sub_1' });
+    const payload = otpMailer.sendMail.mock.calls[0][0];
+    expect(payload.html).toContain(full);
+    expect(payload.html).toContain(adult);
+    expect(payload.html).not.toContain('senior-beef');
+  });
+
+  test('when the catalog cannot be read, the email prints the keys', async () => {
+    const { mailer, otpMailer } = mailerWith({ listRecipeNames: async () => { throw new Error('db down'); } });
+    await mailer.notifyRenewal({ invoice: { id: 'in_2', amount_paid: 1000, currency: 'brl' }, ledger: ledger('br'), subscriptionId: 'sub_1' });
+    expect(otpMailer.sendMail.mock.calls[0][0].html).toContain('senior-beef');
+  });
+});

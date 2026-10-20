@@ -162,9 +162,11 @@ function taxMinor(invoice) {
   return Number(invoice.tax || 0) || 0;
 }
 
+// The four first recipes keep the approved invoice wording; any other recipe prints its full catalog name
+// (the variation's flavor name in that market), else its key.
 function recipeDescription(variant, locale, country) {
   const copy = FLAVOR_RECIPE_LABELS[locale] || FLAVOR_RECIPE_LABELS['en-US'];
-  const recipe = copy[variant.flavorKey];
+  const recipe = copy[variant.flavorKey] || String(variant.label || '').trim() || variant.flavorKey;
   if (!recipe) return '';
   const size = variant.grams > 0 ? ` ${formatPackSizeLabel(variant.grams, country)}` : '';
   return `${INVOICE_COPY[locale].productLine} · ${recipe}${size}`;

@@ -387,7 +387,8 @@ async function bootstrap() {
     storeAppUrl: env.STORE_APP_URL,
     adminAppUrl: env.ADMIN_APP_URL,
     opsEmails: env.MAIL_OPS_TO,
-    emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
+    emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
+    recipeNamesRepository: recipeLinesRepository
   });
   const lifeStageChangeEmailService = new LifeStageChangeEmailService({
     ledgerRepository: subscriptionLedgerRepository,

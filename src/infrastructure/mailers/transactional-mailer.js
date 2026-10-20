@@ -110,6 +110,21 @@ function createTransactionalMailer(options = {}) {
   const emailAssetBaseUrl = options.emailAssetBaseUrl || '';
   const adminAppUrl = options.adminAppUrl || 'http://localhost:5174';
   const opsEmails = Array.isArray(options.opsEmails) ? options.opsEmails.filter(Boolean) : [];
+  const recipeNamesRepository = options.recipeNamesRepository || null;
+
+  // Recipe names of the subscription's market from the catalog (full name); the plan's keys when unavailable.
+  async function recipeFlavors(ledger) {
+    let names = null;
+    if (recipeNamesRepository && typeof recipeNamesRepository.listRecipeNames === 'function') {
+      try {
+        const byMarket = await recipeNamesRepository.listRecipeNames();
+        names = byMarket && byMarket[String(ledger.stripeAccount || '').toLowerCase() === 'br' ? 'BR' : 'US'];
+      } catch (error) {
+        logger.warn({ code: error && error.code }, 'Recipe names unavailable; emails show recipe keys.');
+      }
+    }
+    return flavorsFrom(ledger, names);
+  }
 
   function canSend() {
     return Boolean(
@@ -229,7 +244,7 @@ function createTransactionalMailer(options = {}) {
     const content = buildOrderConfirmedEmail({
       firstName: firstNameFrom(ledger),
       petName: petNameFrom(ledger),
-      flavors: flavorsFrom(ledger),
+      flavors: await recipeFlavors(ledger),
       planName: ledger.planLabel || '',
       cycleLabel: ledger.subscriptionTermMonths
         ? (localeFrom(ledger) === 'pt-BR'
@@ -432,7 +447,7 @@ function createTransactionalMailer(options = {}) {
     const content = buildRenewalEmail({
       firstName: firstNameFrom(ledger),
       petName: petNameFrom(ledger),
-      flavors: flavorsFrom(ledger),
+      flavors: await recipeFlavors(ledger),
       totalLabel: formatMoney(invoice.amount_paid || invoice.total, invoice.currency),
       nextDeliveryLabel: formatLetterDate(ledger.currentPeriodEnd, locale),
       invoiceNumber: invoiceAttachment ? invoiceAttachment.invoiceNumber : '',
@@ -559,7 +574,7 @@ function createTransactionalMailer(options = {}) {
       firstName: firstNameFrom(ledger),
       petName: petNameFrom(ledger),
       planName: ledger.planLabel || '',
-      flavors: flavorsFrom(ledger),
+      flavors: await recipeFlavors(ledger),
       totalLabel: amount ? formatMoney(amount, invoice.currency) : '',
       dashboardUrl: dashboardPlansUrl(storeAppUrl),
       locale,

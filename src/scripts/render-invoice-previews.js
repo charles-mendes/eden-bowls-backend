@@ -4,14 +4,18 @@
 const fs = require('fs/promises');
 const path = require('path');
 const { buildInvoiceDocument } = require('../core/invoice/invoice-document');
-const { PREVIEW_CASES } = require('../core/invoice/preview-fixtures');
+const { LIFE_STAGE_PREVIEW_CASES, PREVIEW_CASES } = require('../core/invoice/preview-fixtures');
 const { renderInvoicePdf } = require('../infrastructure/invoices/invoice-pdf-renderer');
 
 async function main() {
   const outputDir = path.resolve(process.argv[2] || path.join('docs-new', 'FEATURE_CUSTOMIZED_INVOICE', 'previews'));
   await fs.mkdir(outputDir, { recursive: true });
-  for (const [locale, sample] of Object.entries(PREVIEW_CASES)) {
-    for (const status of ['open', 'paid']) {
+  const cases = [
+    ...Object.entries(PREVIEW_CASES).map(([locale, sample]) => [locale, sample, ['open', 'paid']]),
+    ...Object.entries(LIFE_STAGE_PREVIEW_CASES).map(([locale, sample]) => [`${locale}-life-stage`, sample, ['open']])
+  ];
+  for (const [locale, sample, statuses] of cases) {
+    for (const status of statuses) {
       const model = buildInvoiceDocument({
         invoice: sample.invoice(status),
         invoiceNumber: 'EB-2026-000418',

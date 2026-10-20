@@ -29,15 +29,18 @@ function petNameFrom(source = {}) {
   return '';
 }
 
-function flavorsFrom(source = {}) {
+// `names` maps a recipe key to its catalog names in the subscription's market: emails print the full name, else the key.
+function flavorsFrom(source = {}, names = null) {
   const plan = parseJsonColumn(source.planSelection || source.plan_selection) || {};
   const pets = Array.isArray(plan.pets) ? plan.pets : [];
   const labels = [];
   for (const pet of pets) {
     for (const flavor of Array.isArray(pet.selected_flavors) ? pet.selected_flavors : []) {
-      const label = typeof flavor === 'string'
+      const raw = typeof flavor === 'string'
         ? flavor
         : (flavor && (flavor.label || flavor.key || flavor.name)) || '';
+      const catalog = names && typeof flavor === 'string' ? names[flavor] : null;
+      const label = (catalog && String(catalog.label || '').trim()) || raw;
       if (label && !labels.includes(label)) {
         labels.push(String(label));
       }
