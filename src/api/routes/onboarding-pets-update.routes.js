@@ -14,7 +14,7 @@ function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
       }
 
       const market = parseRequestMarket(request, request.body || {});
-      const payload = parseOnboardingPetUpdateInput(request.body || {});
+      const payload = parseOnboardingPetUpdateInput(request.body || {}, market);
       const result = await dependencies.onboardingPetUpdateService.updatePet({
         userId: request.currentUser.id,
         petId: request.params.petId,

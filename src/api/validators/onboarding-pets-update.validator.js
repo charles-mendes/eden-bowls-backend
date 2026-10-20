@@ -1,5 +1,6 @@
 const { z } = require('zod');
-const { birthDateSchema, normalizeBirthDate } = require('./pet-birth-date.validator');
+const { assertBirthDateInRange, birthDateSchema, normalizeBirthDate } = require('./pet-birth-date.validator');
+const { MARKETS } = require('../../core/market');
 
 const onboardingPetUpdatePayloadSchema = z.object({
   name: z.string().trim().min(1).optional(),
@@ -25,7 +26,7 @@ const onboardingPetUpdatePayloadSchema = z.object({
   domain: z.enum(['com', 'com.br']).optional()
 });
 
-function parseOnboardingPetUpdateInput(payload = {}) {
+function parseOnboardingPetUpdateInput(payload = {}, market = MARKETS.US, now = new Date()) {
   const parsed = onboardingPetUpdatePayloadSchema.parse(payload || {});
   const normalized = {};
 
@@ -45,7 +46,10 @@ function parseOnboardingPetUpdateInput(payload = {}) {
   else if (parsed.weightCondition !== undefined) normalized.pet_condition = parsed.weightCondition;
   if (parsed.neutered !== undefined) normalized.neutered = parsed.neutered;
   const birthDate = normalizeBirthDate(parsed.birth_date !== undefined ? parsed.birth_date : parsed.birthDate);
-  if (birthDate !== undefined) normalized.birth_date = birthDate;
+  if (birthDate !== undefined) {
+    assertBirthDateInRange(birthDate, market, now);
+    normalized.birth_date = birthDate;
+  }
   if (parsed.change_source !== undefined) normalized.change_source = parsed.change_source;
   if (parsed.confirm_life_stage_change !== undefined) normalized.confirm_life_stage_change = parsed.confirm_life_stage_change;
 

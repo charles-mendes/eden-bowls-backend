@@ -1,5 +1,5 @@
 const { z } = require('zod');
-const { birthDateSchema, normalizeBirthDate } = require('./pet-birth-date.validator');
+const { assertBirthDateInRange, birthDateSchema, normalizeBirthDate } = require('./pet-birth-date.validator');
 const { MARKETS } = require('../../core/market');
 
 const petSchema = z.object({
@@ -18,12 +18,16 @@ const petSchema = z.object({
   birth_date: birthDateSchema
 });
 
-function parseOnboardingPetsSyncInput(payload = {}, market = MARKETS.US) {
+function parseOnboardingPetsSyncInput(payload = {}, market = MARKETS.US, now = new Date()) {
   const parsed = z.object({
     pets: z.array(petSchema).min(1).max(20),
     country: z.enum(['US', 'BR']).optional(),
     domain: z.enum(['com', 'com.br']).optional()
   }).parse(payload || {});
+
+  for (const pet of parsed.pets) {
+    assertBirthDateInRange(normalizeBirthDate(pet.birth_date), market, now);
+  }
 
   return {
     pets: parsed.pets.map((pet) => ({
