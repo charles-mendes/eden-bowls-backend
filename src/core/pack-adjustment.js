@@ -1,5 +1,6 @@
 const { HttpError } = require('./http-error');
 const { catalogPricesAt, roundMoney } = require('./plan-catalog-pricing');
+const { planFlavorsForPet } = require('./life-stage-lines');
 
 // Designer copy. The percent is the chosen pack count divided by the suggested count.
 const PORTION_WARNING = {
@@ -99,7 +100,8 @@ function buildPackAdjustment({
   currentSelection = null,
   catalogItems = [],
   language = 'en',
-  currency
+  currency,
+  lineByKey = null
 }) {
   const lineItems = resolved.catalog_pricing && Array.isArray(resolved.catalog_pricing.line_items)
     ? resolved.catalog_pricing.line_items
@@ -126,15 +128,26 @@ function buildPackAdjustment({
           : null
       };
     }
-    const recipes = catalogPricesAt(catalogItems, positive(pet.pack_size_grams)).map((recipe) => ({
-      ...recipe,
-      quantity: lineItems
-        .filter((item) => samePet(item, pet) && item.flavor === recipe.flavor)
-        .reduce((sum, item) => sum + positive(item.quantity), 0)
-    }));
+    // The pet's allowed line, plus its current recipes when the plan is outside that line (keep option, L-04).
+    const allowed = Array.isArray(pet.allowed_life_stages) ? pet.allowed_life_stages : ['adult'];
+    const current = planFlavorsForPet(currentSelection, pet.pet_id);
+    const lineOf = (flavor) => (lineByKey && lineByKey[flavor]) || 'adult';
+    const outside = Boolean(lineByKey) && current.some((flavor) => !allowed.includes(lineOf(flavor)));
+    const recipes = catalogPricesAt(catalogItems, positive(pet.pack_size_grams))
+      .filter((recipe) => !lineByKey || allowed.includes(lineOf(recipe.flavor)) || (outside && current.includes(recipe.flavor)))
+      .map((recipe) => ({
+        ...recipe,
+        life_stage: lineOf(recipe.flavor),
+        quantity: lineItems
+          .filter((item) => samePet(item, pet) && item.flavor === recipe.flavor)
+          .reduce((sum, item) => sum + positive(item.quantity), 0)
+      }));
     return {
       pet_id: String(pet.pet_id || ''),
       pet_name: String(pet.pet_name || ''),
+      allowed_life_stages: allowed,
+      outside_line: outside,
+      current_recipes: current,
       recipes,
       suggested_count: suggested > 0 ? suggested : null,
       suggested_split: suggested > 0 ? suggestedSplit(suggested, pet, payloadPet, currentSelection) : null,

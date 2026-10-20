@@ -59,11 +59,22 @@ class LifeStageService {
     if (!lines) {
       return;
     }
+    const lineOf = (key) => lines.lineByKey[key] || 'adult';
+    const keysOf = (flavors) => [...new Set((flavors || []).map((flavor) => canonicalFlavorKey(flavor) || String(flavor)))].filter(Boolean);
     const failing = [];
     for (const entry of Array.isArray(entries) ? entries : []) {
       const allowed = Array.isArray(entry.allowed_life_stages) ? entry.allowed_life_stages : ['adult'];
-      const rejected = [...new Set((entry.flavors || []).map((flavor) => canonicalFlavorKey(flavor) || String(flavor)))]
-        .filter((key) => key && !allowed.includes(lines.lineByKey[key] || 'adult'));
+      const keys = keysOf(entry.flavors);
+      const current = keysOf(entry.current_flavors);
+      const outside = current.some((key) => !allowed.includes(lineOf(key)));
+      let rejected = keys.filter((key) => !allowed.includes(lineOf(key)));
+      // A plan already outside the line may keep its own recipes with new quantities, or switch to the allowed
+      // line, never both (L-04). Keeping cannot add a previous-line recipe that was not in the plan.
+      if (outside && rejected.length > 0) {
+        const keeps = keys.every((key) => current.includes(key));
+        const switching = keys.some((key) => allowed.includes(lineOf(key)));
+        rejected = keeps ? [] : (switching ? rejected : keys.filter((key) => !current.includes(key)));
+      }
       if (rejected.length > 0) {
         failing.push({
           pet_id: String(entry.pet_id || ''),

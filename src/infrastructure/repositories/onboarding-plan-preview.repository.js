@@ -1,4 +1,5 @@
 const { resolveMarket } = require('../../core/market');
+const { planFlavorsForPet } = require('../../core/life-stage-lines');
 const { allowFlavorCatalogFallback } = require('../../core/flavors');
 const { normalizeDraftPets, petHasNutritionalProfile } = require('../../core/onboarding-draft-pets');
 const {
@@ -25,7 +26,7 @@ class OnboardingPlanPreviewRepository {
     return allowFlavorCatalogFallback();
   }
 
-  async previewPlan(userId, payload = {}, marketInput) {
+  async previewPlan(userId, payload = {}, marketInput, options = {}) {
     const market = marketInput && marketInput.country ? marketInput : resolveMarket(marketInput);
     const draftPets = normalizeDraftPets(payload.pets).filter(petHasNutritionalProfile);
     const recommendation = this.recommendationRepository
@@ -96,7 +97,9 @@ class OnboardingPlanPreviewRepository {
           pet_id: petId,
           life_stage: matchedPet.life_stage ?? null,
           allowed_life_stages: matchedPet.allowed_life_stages,
-          flavors: [...flavorQuantities.keys()]
+          flavors: [...flavorQuantities.keys()],
+          // Editing a plan: its current recipes allow keeping the previous line (L-04).
+          current_flavors: options.currentSelection ? planFlavorsForPet(options.currentSelection, petId) : null
         });
       }
 
