@@ -1,6 +1,8 @@
 const { resolveLifeStage } = require('../core/life-stage');
 const { allowedLifeStages } = require('../core/life-stage-lines');
 const { TtlCache } = require('../infrastructure/cache/ttl-cache');
+const { HttpError } = require('../core/http-error');
+const { canonicalFlavorKey } = require('../core/flavors');
 
 const PUBLISHED_LINES_TTL_MS = 60 * 1000;
 
@@ -33,8 +35,8 @@ class LifeStageService {
     this.now = options.now || (() => new Date());
   }
 
-  // Lines with at least one published recipe in the market, read from the catalog and kept for a minute.
-  async publishedLines(market) {
+  // Line of each recipe key and the lines with a published recipe, per market, kept for a minute.
+  async recipeLines(market) {
     if (!this.recipeLinesRepository || typeof this.recipeLinesRepository.listRecipeLines !== 'function') {
       return null;
     }
@@ -42,8 +44,66 @@ class LifeStageService {
     if (!lines) {
       lines = this.cache.set('recipe-lines', await this.recipeLinesRepository.listRecipeLines(), PUBLISHED_LINES_TTL_MS);
     }
-    const entry = lines[String(market || '').toUpperCase()];
-    return entry ? entry.publishedLines : new Set();
+    return lines[String(market || '').toUpperCase()] || { lineByKey: {}, publishedLines: new Set() };
+  }
+
+  async publishedLines(market) {
+    const lines = await this.recipeLines(market);
+    return lines ? lines.publishedLines : null;
+  }
+
+  // Refuses a selection where a pet holds a recipe outside its allowed line, or mixes lines, listing only the
+  // failing pets (design decision 4). Each entry: { pet_id, life_stage, allowed_life_stages, flavors }.
+  async assertWithinLines(entries, market) {
+    const lines = await this.recipeLines(market);
+    if (!lines) {
+      return;
+    }
+    const failing = [];
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const allowed = Array.isArray(entry.allowed_life_stages) ? entry.allowed_life_stages : ['adult'];
+      const rejected = [...new Set((entry.flavors || []).map((flavor) => canonicalFlavorKey(flavor) || String(flavor)))]
+        .filter((key) => key && !allowed.includes(lines.lineByKey[key] || 'adult'));
+      if (rejected.length > 0) {
+        failing.push({
+          pet_id: String(entry.pet_id || ''),
+          life_stage: entry.life_stage ?? null,
+          allowed_life_stages: allowed,
+          rejected_flavors: rejected
+        });
+      }
+    }
+    if (failing.length > 0) {
+      throw new HttpError(422, 'Some recipes are outside the life-stage line of their pet.', {
+        code: 'recipe_life_stage_mismatch',
+        pets: failing
+      });
+    }
+  }
+
+  // Checkout check over a saved plan: account pets age from their records.
+  async assertPlanWithinLines({ planSelection, market, userId, petsRepository }) {
+    if (!(await this.recipeLines(market))) {
+      return;
+    }
+    const plan = planSelection && typeof planSelection === 'object' ? planSelection : {};
+    const pets = (Array.isArray(plan.pets) ? plan.pets : []).filter((pet) => pet && pet.enabled !== false);
+    const stages = await this.stagesById(petsRepository, userId, market);
+    const unknown = pets.filter((pet) => !stages.has(petId(pet)));
+    const annotated = unknown.length > 0 ? await this.annotate(unknown, market) : [];
+    const fromPlan = new Map(annotated.map((pet) => [petId(pet), pet]));
+    const entries = pets.map((pet) => {
+      const stage = stages.get(petId(pet)) || fromPlan.get(petId(pet)) || {};
+      const flavors = Array.isArray(pet.selected_flavors) ? pet.selected_flavors : [];
+      const weights = Array.isArray(pet.flavor_weights) ? pet.flavor_weights : [];
+      return {
+        pet_id: petId(pet),
+        life_stage: stage.life_stage,
+        allowed_life_stages: stage.allowed_life_stages,
+        flavors: flavors.filter((_flavor, index) => weights[index] == null || Number(weights[index]) > 0)
+      };
+    });
+    await this.assertWithinLines(entries, market);
   }
 
   // The lines a dog may buy (design decision 4), or undefined when the catalog is not wired.

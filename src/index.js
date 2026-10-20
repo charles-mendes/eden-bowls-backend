@@ -414,7 +414,9 @@ async function bootstrap() {
     ledgerRepository: subscriptionLedgerRepository,
     planPreviewRepository: onboardingPlanPreviewRepository,
     petsSyncRepository: onboardingPetCreateRepository,
-    shippingQuoteSigner
+    shippingQuoteSigner,
+    lifeStageService,
+    petsRepository: onboardingPetsRepository
   });
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository({
     viaCepClient,

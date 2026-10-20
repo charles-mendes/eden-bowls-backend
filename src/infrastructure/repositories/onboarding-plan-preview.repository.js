@@ -43,6 +43,7 @@ class OnboardingPlanPreviewRepository {
     const catalogLineRequests = [];
     const flavorsByPet = [];
     const selectedPets = [];
+    const lineChecks = [];
 
     for (const petInput of Array.isArray(payload.pets) ? payload.pets : []) {
       if (!petInput || typeof petInput !== 'object' || petInput.enabled === false) {
@@ -90,6 +91,14 @@ class OnboardingPlanPreviewRepository {
         pet_name: petName,
         flavors: Object.fromEntries(flavorQuantities)
       });
+      if (Array.isArray(matchedPet.allowed_life_stages)) {
+        lineChecks.push({
+          pet_id: petId,
+          life_stage: matchedPet.life_stage ?? null,
+          allowed_life_stages: matchedPet.allowed_life_stages,
+          flavors: [...flavorQuantities.keys()]
+        });
+      }
 
       for (const [flavor, quantity] of flavorQuantities) {
         catalogLineRequests.push({
@@ -100,6 +109,11 @@ class OnboardingPlanPreviewRepository {
           target_pack_size_grams: targetPackSizeGrams
         });
       }
+    }
+
+    const lifeStageService = this.recommendationRepository && this.recommendationRepository.lifeStageService;
+    if (lineChecks.length > 0 && lifeStageService) {
+      await lifeStageService.assertWithinLines(lineChecks, market.country);
     }
 
     if (catalogLineRequests.length === 0) {

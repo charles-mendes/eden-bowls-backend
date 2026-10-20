@@ -4,6 +4,19 @@ const { LifeStageService } = require('../src/services/life-stage.service');
 const { OnboardingRecommendationRepository } = require('../src/infrastructure/repositories/onboarding-recommendation.repository');
 const { OnboardingPlanSnapshotRepository } = require('../src/infrastructure/repositories/onboarding-plan-snapshot.repository');
 const { OnboardingPlanPreviewRepository } = require('../src/infrastructure/repositories/onboarding-plan-preview.repository');
+const { listFallbackCatalogItems } = require('../src/core/plan-catalog-pricing');
+
+const LINE_BY_KEY = { beef: 'adult', pork: 'adult', fish: 'adult', turkey: 'adult', 'puppy-chicken-pork': 'puppy', 'senior-beef': 'senior' };
+
+// The seeded BR catalog plus one puppy and one senior recipe priced like beef.
+function catalogWithNewRecipes() {
+  const base = listFallbackCatalogItems('BR');
+  const extra = base.filter((item) => item.flavor === 'beef').flatMap((item, index) => [
+    { ...item, flavor: 'puppy-chicken-pork', flavor_label: 'Receita de Frango e Porco para Filhotes', aliases: [], variation_id: 9000 + index },
+    { ...item, flavor: 'senior-beef', flavor_label: 'Receita de Carne para Cães Sênior', aliases: [], variation_id: 9100 + index }
+  ]);
+  return [...base, ...extra];
+}
 
 const NOW = new Date('2026-10-19T12:00:00Z');
 
@@ -14,7 +27,7 @@ function serviceWith(publishedByMarket) {
   }
   const recipeLinesRepository = {
     listRecipeLines: jest.fn(async () => Object.fromEntries(Object.entries(publishedByMarket)
-      .map(([market, lines]) => [market, { lineByKey: {}, publishedLines: new Set(lines) }])))
+      .map(([market, lines]) => [market, { lineByKey: LINE_BY_KEY, publishedLines: new Set(lines) }])))
   };
   const service = new LifeStageService({
     repository: { forMarket: async () => ({ limits, breedClasses: new Map() }) },
@@ -75,11 +88,13 @@ describe('allowed lines in plan snapshot and preview', () => {
   });
 
   test('the preview returns allowed_life_stages per selected pet', async () => {
-    const preview = await new OnboardingPlanPreviewRepository({ recommendationRepository: recommendationRepository(), allowCatalogFallback: true })
-      .previewPlan(null, {
-        subscription_term_months: 1,
-        pets: dogs.map((dog) => ({ ...dog, pet_name: dog.name, enabled: true, selected_flavors: ['beef'], flavor_weights: [2] }))
-      }, MARKETS.BR);
+    const repository = new OnboardingPlanPreviewRepository({ recommendationRepository: recommendationRepository(), allowCatalogFallback: true });
+    repository.loadCatalogItems = jest.fn().mockResolvedValue(catalogWithNewRecipes());
+    const recipeFor = { puppy: 'puppy-chicken-pork', adult: 'beef', senior: 'senior-beef' };
+    const preview = await repository.previewPlan(null, {
+      subscription_term_months: 1,
+      pets: dogs.map((dog) => ({ ...dog, pet_name: dog.name, enabled: true, selected_flavors: [recipeFor[dog.pet_id]], flavor_weights: [2] }))
+    }, MARKETS.BR);
     expect(preview.pets.map((pet) => [pet.pet_id, pet.allowed_life_stages])).toEqual([
       ['puppy', ['puppy']], ['adult', ['adult']], ['senior', ['senior']]
     ]);

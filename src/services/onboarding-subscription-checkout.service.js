@@ -126,6 +126,8 @@ class OnboardingSubscriptionCheckoutService {
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.petsSyncRepository = options.petsSyncRepository || null;
     this.shippingQuoteSigner = options.shippingQuoteSigner || null;
+    this.lifeStageService = options.lifeStageService || null;
+    this.petsRepository = options.petsRepository || null;
   }
 
   async checkout({ userId, payload = {} }) {
@@ -169,6 +171,15 @@ class OnboardingSubscriptionCheckoutService {
     assertVerifiedDeliveryArea(this.shippingQuoteSigner, deliveryMarket, context.shipping || {}, {
       zipcode: deliveryAddress.zipcode
     });
+    // A saved plan may predate a stage change or a publication: check each pet's line before any charge.
+    if (this.lifeStageService) {
+      await this.lifeStageService.assertPlanWithinLines({
+        planSelection: context.planSelection,
+        market: deliveryMarket,
+        userId,
+        petsRepository: this.petsRepository
+      });
+    }
 
     const eligibility = await this.discountEligibilityRepository.getEligibility(userId);
     const planSelection = context.planSelection || (
