@@ -1,7 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const { parseSubscriptionsEditCommitInput } = require('../api/validators/subscriptions-edit.validator');
 const { validatePreviewPayload, validateSubscriptionTerm } = require('./onboarding-plan-preview.service');
-const { assertSomePacks } = require('../core/pack-adjustment');
+const { assertSomePacks, planStepChanged } = require('../core/pack-adjustment');
 
 class SubscriptionsEditCommitService {
   constructor(repository, options = {}) {
@@ -66,6 +66,8 @@ class SubscriptionsEditCommitService {
     }
 
     await this.assertPetsNotBlocked(userId, subscriptionId, parsed.pets);
+    // Only a save through the recipes and packs step resolves a stage-change notice.
+    const resolvesNotices = Boolean(parsed.delivery_id) || planStepChanged(parsed, row.planSelection);
     let guard = null;
     if (parsed.delivery_id) {
       guard = await this.assertDeliveryEditable(userId, subscriptionId, parsed.delivery_id);
@@ -79,7 +81,7 @@ class SubscriptionsEditCommitService {
         packs_per_month: prepared.packs_per_month,
         subtotal: prepared.subtotal
       });
-      await this.resolveLifeStageNotices(row);
+      await this.resolveLifeStageNotices(row, resolvesNotices);
       return {
         success: true,
         data: { ...prepared, pending_until_current_charge: true }
@@ -87,7 +89,7 @@ class SubscriptionsEditCommitService {
     }
 
     const data = await this.repository.commit(userId, subscriptionId, parsed, row);
-    await this.resolveLifeStageNotices(row);
+    await this.resolveLifeStageNotices(row, resolvesNotices);
 
     return {
       success: true,
@@ -95,9 +97,9 @@ class SubscriptionsEditCommitService {
     };
   }
 
-  // A saved adjustment closes the open stage-change notices of this plan (customer-life-stage-notice).
-  async resolveLifeStageNotices(row) {
-    if (this.lifeStageNoticesService && row) {
+  // A saved recipes or packs adjustment closes the open stage-change notices of this plan (customer-life-stage-notice).
+  async resolveLifeStageNotices(row, resolvesNotices) {
+    if (resolvesNotices && this.lifeStageNoticesService && row) {
       await this.lifeStageNoticesService.resolveAfterCommit(row);
     }
   }

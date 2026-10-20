@@ -183,18 +183,51 @@ describe('notice endpoints and wiring', () => {
     expect(detail.data.subscription.pets[0]).toMatchObject({ id: 'p-thor', name: 'Thor', life_stage_mismatch: true, life_stage_notice: { open: true } });
   });
 
-  test('a successful edit commit resolves the open notices of that plan', async () => {
-    const row = { id: 11, status: 'active', editPaymentPending: false };
-    const lifeStageNoticesService = { resolveAfterCommit: jest.fn() };
-    const service = new SubscriptionsEditCommitService({ commit: jest.fn().mockResolvedValue({ ok: true }) }, {
-      authService: { assertCriticalOperationAllowed: jest.fn() },
-      ledgerRepository: { findByUserIdAndSubscriptionId: jest.fn().mockResolvedValue(row), listByUserId: jest.fn().mockResolvedValue([]) },
-      lifeStageNoticesService
+  describe('only a save through the recipes and packs step resolves the notice', () => {
+    const planSelection = { flavors_by_pet: [{ pet_id: 'p-thor', pet_name: 'Thor', flavors: { beef: 4 } }] };
+    const thor = (flavors, weights) => ({ pet_id: 'p-thor', pet_name: 'Thor', enabled: true, selected_flavors: flavors, flavor_weights: weights });
+
+    function commitWith(payload) {
+      const row = { id: 11, status: 'active', editPaymentPending: false, planSelection };
+      const lifeStageNoticesService = { resolveAfterCommit: jest.fn() };
+      const deliveryGuard = {
+        loadSubscription: jest.fn().mockResolvedValue({ id: 'sub_1' }),
+        commitPacks: jest.fn().mockResolvedValue({ deferred: false })
+      };
+      const service = new SubscriptionsEditCommitService({ commit: jest.fn().mockResolvedValue({ ok: true }) }, {
+        authService: { assertCriticalOperationAllowed: jest.fn() },
+        ledgerRepository: { findByUserIdAndSubscriptionId: jest.fn().mockResolvedValue(row), listByUserId: jest.fn().mockResolvedValue([]) },
+        lifeStageNoticesService,
+        deliveryGuard
+      });
+      service.assertPetsNotBlocked = jest.fn();
+      return service.commit({ subscriptionId: 'sub_1', userId: 7, payload: { subscription_term_months: 1, expected_current_hash: 'h', ...payload } })
+        .then(() => ({ row, resolve: lifeStageNoticesService.resolveAfterCommit }));
+    }
+
+    test('an edit of only the address keeps the notice open', async () => {
+      const { resolve } = await commitWith({ pets: [thor(['beef'], [4])], address: { country: 'BR', line1: 'Rua Nova, 10', postal_code: '01000-000' } });
+      expect(resolve).not.toHaveBeenCalled();
     });
-    service.assertPetsNotBlocked = jest.fn();
 
-    await service.commit({ subscriptionId: 'sub_1', userId: 7, payload: { subscription_term_months: 1, expected_current_hash: 'h', pets: [{ pet_name: 'Thor', enabled: true, selected_flavors: ['beef'], flavor_weights: [4] }] } });
+    test('an edit of only the payment method keeps the notice open', async () => {
+      const { resolve } = await commitWith({ pets: [thor(['beef'], [4])], payment_method_id: 'pm_new' });
+      expect(resolve).not.toHaveBeenCalled();
+    });
 
-    expect(lifeStageNoticesService.resolveAfterCommit).toHaveBeenCalledWith(row);
+    test('an edit that switches the recipes in the plan step resolves the notice', async () => {
+      const { row, resolve } = await commitWith({ pets: [thor(['senior-beef'], [4])] });
+      expect(resolve).toHaveBeenCalledWith(row);
+    });
+
+    test('an edit that keeps the recipes with new quantities resolves the notice', async () => {
+      const { row, resolve } = await commitWith({ pets: [thor(['beef'], [6])] });
+      expect(resolve).toHaveBeenCalledWith(row);
+    });
+
+    test('a pack adjustment resolves the notice even with the same packs', async () => {
+      const { row, resolve } = await commitWith({ pets: [thor(['beef'], [4])], delivery_id: 'dlv_1' });
+      expect(resolve).toHaveBeenCalledWith(row);
+    });
   });
 });

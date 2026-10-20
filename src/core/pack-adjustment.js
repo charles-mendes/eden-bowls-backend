@@ -1,5 +1,5 @@
 const { HttpError } = require('./http-error');
-const { catalogPricesAt, roundMoney } = require('./plan-catalog-pricing');
+const { catalogPricesAt, roundMoney, sanitizeFlavorSlug } = require('./plan-catalog-pricing');
 const { planFlavorsForPet } = require('./life-stage-lines');
 
 // Designer copy. The percent is the chosen pack count divided by the suggested count.
@@ -81,6 +81,37 @@ function withStoredPets(payload = {}, currentSelection = null) {
     }))
     .filter((pet) => pet.pet_name && pet.flavor_weights.some((quantity) => quantity > 0));
   return missing.length ? { ...payload, pets: [...sent, ...missing] } : payload;
+}
+
+function petQuantities(flavors, quantities) {
+  const map = {};
+  (Array.isArray(flavors) ? flavors : []).forEach((flavor, index) => {
+    const slug = sanitizeFlavorSlug(flavor);
+    const quantity = Math.round(positive(Array.isArray(quantities) ? quantities[index] : 0));
+    if (slug && quantity > 0) map[slug] = (map[slug] || 0) + quantity;
+  });
+  return map;
+}
+
+function sameQuantities(left, right) {
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
+}
+
+// True when an edit changes the plan step: which pets are on the plan, their recipes or their packs.
+// An edit of only address, payment method or date keeps the stored selection.
+function planStepChanged(payload = {}, currentSelection = null) {
+  const stored = Array.isArray(currentSelection && currentSelection.flavors_by_pet) ? currentSelection.flavors_by_pet : [];
+  const sent = enabledPets(payload);
+  if (stored.length === 0 || sent.length !== stored.length) return true;
+  return sent.some((pet) => {
+    const entry = stored.find((candidate) => samePet(candidate, pet));
+    if (!entry || !entry.flavors) return true;
+    return !sameQuantities(
+      petQuantities(pet.selected_flavors, pet.flavor_weights),
+      petQuantities(Object.keys(entry.flavors), Object.values(entry.flavors))
+    );
+  });
 }
 
 function assertPackOnlyChange(payload = {}, row = {}) {
@@ -178,6 +209,7 @@ module.exports = {
   assertPackOnlyChange,
   assertSomePacks,
   buildPackAdjustment,
+  planStepChanged,
   withStoredPets,
   distributeEqual
 };
