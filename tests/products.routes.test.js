@@ -89,6 +89,19 @@ describe('products routes', () => {
     });
   });
 
+  test('passes the life stage filter, and refuses an unknown one', async () => {
+    const productsService = { listProducts: jest.fn().mockResolvedValue({ success: true, data: { products: [] } }) };
+    const app = createApp({ productsService, corsOrigins });
+
+    const filtered = await request(app).get('/api/v1/products').query({ category_slug: 'flavors', country: 'BR', life_stage: 'Senior' });
+    expect(filtered.status).toBe(200);
+    expect(productsService.listProducts).toHaveBeenCalledWith({ categorySlug: 'flavors', country: 'BR', currency: 'BRL', lifeStage: 'senior' });
+
+    const refused = await request(app).get('/api/v1/products').query({ category_slug: 'flavors', country: 'BR', life_stage: 'kitten' });
+    expect(refused.status).toBe(422);
+    expect(refused.body).toEqual({ code: 'invalid_life_stage', message: 'Life stage must be adult, puppy or senior.', data: { status: 422 } });
+  });
+
   test('returns 422 wp-style error for invalid country', async () => {
     const productsService = {
       listProducts: jest.fn()

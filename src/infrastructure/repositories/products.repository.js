@@ -3,6 +3,8 @@ const { PRODUCTS_ERROR } = require('../../api/contracts/products-errors');
 const {
   FLAVOR_ALIASES_META,
   FLAVOR_SLUG_META,
+  LIFE_STAGE_META,
+  LIFE_STAGES,
   canonicalFlavorKey,
   flavorKeyFromLabel,
   parseFlavorAliases
@@ -22,7 +24,7 @@ class ProductsRepository {
     };
   }
 
-  async listByCategory({ categorySlug, country, currency }) {
+  async listByCategory({ categorySlug, country, currency, lifeStage }) {
     this.ensureDataSourceReady();
     try {
       const category = await this.findCategoryBySlug(categorySlug);
@@ -39,7 +41,8 @@ class ProductsRepository {
 
       for (const productRow of productRows) {
         const variations = await this.findVariationRowsByProductId(productRow.id);
-        const productVariations = this.mapVariations(variations, zoneId, currency, categorySlug);
+        const productVariations = this.mapVariations(variations, zoneId, currency, categorySlug)
+          .filter((variation) => !lifeStage || variation.life_stage === lifeStage);
 
         if (productVariations.length === 0) {
           continue;
@@ -219,6 +222,7 @@ class ProductsRepository {
         flavor: flavorLabel,
         flavor_key: flavorKey || flavorLabel,
         flavor_aliases: this.extractVariationFlavorAliases(variation),
+        life_stage: this.extractVariationLifeStage(variation),
         weight: this.extractVariationWeight(variation),
         price: Number(price.toFixed(2)),
         currency
@@ -226,6 +230,12 @@ class ProductsRepository {
     }
 
     return output;
+  }
+
+  // Variations without a stored line are adult (migration 034).
+  extractVariationLifeStage(variation) {
+    const stored = String((variation.meta || {})[LIFE_STAGE_META] || '').trim();
+    return LIFE_STAGES.includes(stored) ? stored : 'adult';
   }
 
   resolveVariationPrice(variation, zoneId) {

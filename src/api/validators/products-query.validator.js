@@ -1,12 +1,14 @@
 const { z } = require('zod');
 const { HttpError } = require('../../core/http-error');
 const { PRODUCTS_ERROR } = require('../contracts/products-errors');
+const { LIFE_STAGES } = require('../../core/flavors');
 
 const rawProductsQuerySchema = z
   .object({
     category_slug: z.union([z.string(), z.number()]).optional(),
     country: z.union([z.string(), z.number()]).optional(),
-    currency: z.union([z.string(), z.number()]).optional()
+    currency: z.union([z.string(), z.number()]).optional(),
+    life_stage: z.union([z.string(), z.number()]).optional()
   })
   .strip();
 
@@ -65,10 +67,18 @@ function parseProductsQuery(input) {
     );
   }
 
+  const lifeStage = sanitizeText(parsed.life_stage).toLowerCase();
+  if (lifeStage && !LIFE_STAGES.includes(lifeStage)) {
+    throw new HttpError(PRODUCTS_ERROR.INVALID_LIFE_STAGE.status, PRODUCTS_ERROR.INVALID_LIFE_STAGE.message, {
+      code: PRODUCTS_ERROR.INVALID_LIFE_STAGE.code
+    });
+  }
+
   return {
     categorySlug,
     country,
-    currency
+    currency,
+    ...(lifeStage ? { lifeStage } : {})
   };
 }
 

@@ -9,6 +9,11 @@ const PRODUCTS_ERROR = {
     code: 'invalid_country',
     message: 'Country is not supported.'
   },
+  INVALID_LIFE_STAGE: {
+    status: 422,
+    code: 'invalid_life_stage',
+    message: 'Life stage must be adult, puppy or senior.'
+  },
   COUNTRY_CURRENCY_MISMATCH: {
     status: 422,
     code: 'country_currency_mismatch',
