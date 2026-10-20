@@ -83,6 +83,7 @@ class LifeStageNoticesService {
               open: !notice.dismissed_at && !notice.resolved_at,
               from_line: notice.from_line,
               to_line: notice.to_line,
+              detected_at: notice.detected_at ? new Date(notice.detected_at).toISOString() : null,
               notified_via: notice.notified_via || null
             };
           }

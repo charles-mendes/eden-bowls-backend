@@ -12,6 +12,7 @@ const {
   buildResumedEmail,
   buildShippedEmail
 } = require('../../core/email/transactional-emails');
+const { buildLifeStageChangeEmail, formatDeadline, packsUrl } = require('../../core/email/life-stage-emails');
 const {
   dashboardPlansUrl,
   firstNameFrom,
@@ -32,7 +33,8 @@ const TEMPLATES = {
   resumed: 'resumed',
   cancelled: 'cancelled',
   autoRenewOff: 'auto_renew_off',
-  planChanged: 'plan_changed'
+  planChanged: 'plan_changed',
+  lifeStageChange: 'life_stage_change'
 };
 
 const RESEND_TEMPLATES = [
@@ -656,6 +658,35 @@ function createTransactionalMailer(options = {}) {
     logger.error({ template, claimId, outcome: 'failed' }, 'Transactional email failed.');
   }
 
+  // One letter per pet transition: the claim key is the pet and its transition (customer-life-stage-notice).
+  async function notifyLifeStageChange({ ledger = {}, petId, petName, fromLine, toLine, suggestedRecipes = [], editableUntil }) {
+    const target = customerTarget({
+      ledger,
+      referenceId: petId && toLine ? `${petId}:${fromLine || ''}>${toLine}` : ''
+    });
+    if (!target.id || !target.reference || !target.to || !editableUntil) {
+      return missingContext(TEMPLATES.lifeStageChange);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildLifeStageChangeEmail({
+      firstName: firstNameFrom(ledger),
+      petName,
+      stage: toLine,
+      suggestedRecipes,
+      adjustUrl: packsUrl(storeAppUrl, target.id, petId),
+      deadlineLabel: formatDeadline(editableUntil, locale === 'pt-BR' ? 'BR' : 'US'),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.lifeStageChange,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
   return {
     notifyOrderConfirmed,
     notifyAdminNewSubscription,
@@ -667,6 +698,7 @@ function createTransactionalMailer(options = {}) {
     notifyCancelled,
     notifyAutoRenewOff,
     notifyPlanChanged,
+    notifyLifeStageChange,
     hasSentClaim,
     sendClaimed,
     resendUnsent

@@ -73,6 +73,27 @@ PetLifeStageNoticesRepository.prototype.resolveOpen = async function resolveOpen
   );
 };
 
+// Whether any subscription already notified this pet of this transition (one email per pet transition).
+PetLifeStageNoticesRepository.prototype.transitionNotified = async function transitionNotified(petId, fromLine, toLine) {
+  this.ensureDataSource();
+  const rows = await this.dataSource.query(
+    `SELECT 1 FROM \`${this.tableName}\`
+     WHERE pet_id = ? AND from_line = ? AND to_line = ? AND notified_at IS NOT NULL LIMIT 1`,
+    [petId, fromLine, toLine]
+  );
+  return Array.isArray(rows) && rows.length > 0;
+};
+
+// The stage-change email went out: the transition is never emailed again.
+PetLifeStageNoticesRepository.prototype.markEmailed = async function markEmailed({ subscriptionId, petId, fromLine, toLine, at }) {
+  this.ensureDataSource();
+  await this.dataSource.query(
+    `UPDATE \`${this.tableName}\` SET notified_at = ?, notified_via = 'email'
+     WHERE subscription_id = ? AND pet_id = ? AND from_line = ? AND to_line = ? AND notified_at IS NULL`,
+    [at, subscriptionId, petId, fromLine, toLine]
+  );
+};
+
 module.exports = {
   PetLifeStageNoticesRepository
 };

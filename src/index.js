@@ -116,7 +116,9 @@ const { AdminOnboardingService } = require('./services/admin-onboarding.service'
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
 const { LifeStageService } = require('./services/life-stage.service');
+const { LifeStageChangeEmailService } = require('./services/life-stage-change-email.service');
 const { LifeStageNoticesService } = require('./services/life-stage-notices.service');
+const { LifeStageAnnouncementsRepository } = require('./infrastructure/repositories/life-stage-announcements.repository');
 const { LifeStageLimitsRepository } = require('./infrastructure/repositories/life-stage-limits.repository');
 const { PetAgeChangesRepository } = require('./infrastructure/repositories/pet-age-changes.repository');
 const { PetLifeStageNoticesRepository } = require('./infrastructure/repositories/pet-life-stage-notices.repository');
@@ -386,6 +388,16 @@ async function bootstrap() {
     adminAppUrl: env.ADMIN_APP_URL,
     opsEmails: env.MAIL_OPS_TO,
     emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
+  });
+  const lifeStageChangeEmailService = new LifeStageChangeEmailService({
+    ledgerRepository: subscriptionLedgerRepository,
+    noticesService: lifeStageNoticesService,
+    noticesRepository: petLifeStageNoticesRepository,
+    announcementsRepository: new LifeStageAnnouncementsRepository(dataSource),
+    deliveriesService: customerDeliveriesService,
+    petsRepository: onboardingPetsRepository,
+    mailer: transactionalMailer,
+    logger
   });
   // Eden Bowls invoice PDFs (EB-YYYY-NNNNNN): issued on invoice.paid, kept in INVOICE_PDF_DIR, emailed to the customer.
   const customerInvoicesService = new CustomerInvoicesService({
@@ -775,7 +787,8 @@ async function bootstrap() {
       upsClient,
       refreshTokenRepository: authRefreshTokenRepository,
       eventsRepository: stripeWebhookEventsRepository,
-      deliveryCalendarSyncMaxAttempts: env.DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS
+      deliveryCalendarSyncMaxAttempts: env.DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS,
+      lifeStageChangeEmailService
     })
   });
 }

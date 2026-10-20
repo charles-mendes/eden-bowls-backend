@@ -23,6 +23,16 @@ class LifeStageAnnouncementsRepository {
     }
   }
 
+  // The market's announcement state: `sent_at` turns on the stage-change email there.
+  async findMarket(market) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      'SELECT market, started_at, sent_at FROM life_stage_announcements WHERE market = ? LIMIT 1',
+      [String(market || '').toUpperCase()]
+    );
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  }
+
   // Delivering plans of a Stripe account whose owner opted in to marketing (`hsr_marketing_opt_in` = '1'),
   // each with the owner's pets not yet named in an announcement.
   async listCandidates(stripeAccount) {

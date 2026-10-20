@@ -132,7 +132,7 @@ describe('notice state', () => {
     const notices = memoryNotices();
     notices.rows.push({ subscription_id: 11, pet_id: 'p-thor', from_line: 'adult', to_line: 'senior', dismissed_at: null, resolved_at: null, notified_at: NOW, notified_via: 'manual_correction' });
     const { entry } = await reportFor([senior], ['beef'], { notices });
-    expect(entry.life_stage_notice).toEqual({ open: true, from_line: 'adult', to_line: 'senior', notified_via: 'manual_correction' });
+    expect(entry.life_stage_notice).toEqual({ open: true, from_line: 'adult', to_line: 'senior', detected_at: null, notified_via: 'manual_correction' });
   });
 
   test('a pet announced for this stage gets its notice already notified by the announcement', async () => {

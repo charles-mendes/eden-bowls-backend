@@ -64,4 +64,21 @@ describeIntegration('stage-change notice rows (MySQL)', () => {
     expect(list.get(41)[0].life_stage_notice).toMatchObject({ open: true });
     expect(detail.get(41)[0].life_stage_notice).toMatchObject({ open: true });
   });
+
+  test('an emailed transition is marked once and blocks the same pet on another plan', async () => {
+    const repository = new PetLifeStageNoticesRepository(scratch.dataSource);
+    const at = new Date('2026-10-20T12:00:00Z');
+    await repository.ensureDetected({ subscriptionId: 51, petId: 'p-bob', fromLine: 'adult', toLine: 'senior', at });
+    await repository.ensureDetected({ subscriptionId: 52, petId: 'p-bob', fromLine: 'adult', toLine: 'senior', at });
+    expect(await repository.transitionNotified('p-bob', 'adult', 'senior')).toBe(false);
+
+    await repository.markEmailed({ subscriptionId: 51, petId: 'p-bob', fromLine: 'adult', toLine: 'senior', at });
+    await repository.markEmailed({ subscriptionId: 51, petId: 'p-bob', fromLine: 'adult', toLine: 'senior', at: new Date('2026-10-21T12:00:00Z') });
+
+    expect(await repository.transitionNotified('p-bob', 'adult', 'senior')).toBe(true);
+    expect(await repository.transitionNotified('p-bob', 'puppy', 'adult')).toBe(false);
+    const rows = await scratch.query("SELECT subscription_id, notified_at, notified_via FROM pet_life_stage_notices WHERE pet_id = 'p-bob' ORDER BY subscription_id");
+    expect(rows.map((row) => [Number(row.subscription_id), row.notified_via])).toEqual([[51, 'email'], [52, null]]);
+    expect(new Date(rows[0].notified_at).toISOString()).toBe('2026-10-20T12:00:00.000Z');
+  });
 });
