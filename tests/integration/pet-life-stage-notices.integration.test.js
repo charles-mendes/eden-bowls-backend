@@ -62,4 +62,29 @@ describeIntegration('PetLifeStageNoticesRepository.upsertNotified (MySQL)', () =
       resolved_at: null
     }]);
   });
+
+  test('detects once, lists, closes and resolves only open notices', async () => {
+    const at = new Date('2026-11-05T12:00:00Z');
+    const base = { subscriptionId: 21, petId: 'pet-2', fromLine: 'adult', toLine: 'senior', at };
+    await repository.ensureDetected(base);
+    await repository.ensureDetected({ ...base, at: new Date('2026-11-06T12:00:00Z'), notified: { at, via: 'announcement' } });
+    await repository.ensureDetected({ ...base, subscriptionId: 22 });
+
+    const rows = await repository.listForSubscriptions([21, 22]);
+    expect(rows.map((row) => [row.subscription_id, row.detected_at, row.notified_via])).toEqual([
+      [21, '2026-11-05 12:00:00', null],
+      [22, '2026-11-05 12:00:00', null]
+    ]);
+
+    expect(await repository.dismissOpen(21, 'pet-2', new Date('2026-11-07T12:00:00Z'))).toBe(1);
+    expect(await repository.dismissOpen(21, 'pet-2', new Date('2026-11-08T12:00:00Z'))).toBe(0);
+    await repository.resolveOpen(21, new Date('2026-11-09T12:00:00Z'));
+    await repository.resolveOpen(22, new Date('2026-11-09T12:00:00Z'));
+
+    const after = await dataSource.query('SELECT subscription_id, dismissed_at, resolved_at FROM pet_life_stage_notices WHERE pet_id = ? ORDER BY subscription_id', ['pet-2']);
+    expect(after).toEqual([
+      { subscription_id: 21, dismissed_at: '2026-11-07 12:00:00', resolved_at: null },
+      { subscription_id: 22, dismissed_at: null, resolved_at: '2026-11-09 12:00:00' }
+    ]);
+  });
 });

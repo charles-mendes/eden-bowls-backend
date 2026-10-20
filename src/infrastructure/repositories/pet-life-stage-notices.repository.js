@@ -27,6 +27,52 @@ class PetLifeStageNoticesRepository {
   }
 }
 
+// First detection of a mismatch. An existing row is left as it is; `notified` copies a launch announcement.
+PetLifeStageNoticesRepository.prototype.ensureDetected = async function ensureDetected({ subscriptionId, petId, fromLine, toLine, at, notified = null }) {
+  this.ensureDataSource();
+  await this.dataSource.query(
+    `INSERT INTO \`${this.tableName}\` (subscription_id, pet_id, from_line, to_line, detected_at, notified_at, notified_via)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE id = id`,
+    [subscriptionId, petId, fromLine, toLine, at, notified ? notified.at : null, notified ? notified.via : null]
+  );
+};
+
+PetLifeStageNoticesRepository.prototype.listForSubscriptions = async function listForSubscriptions(subscriptionIds) {
+  const ids = [...new Set((subscriptionIds || []).map(Number).filter((id) => id > 0))];
+  if (ids.length === 0) {
+    return [];
+  }
+  this.ensureDataSource();
+  const rows = await this.dataSource.query(
+    `SELECT subscription_id, pet_id, from_line, to_line, detected_at, dismissed_at, resolved_at, notified_at, notified_via
+     FROM \`${this.tableName}\` WHERE subscription_id IN (${ids.map(() => '?').join(', ')})`,
+    ids
+  );
+  return Array.isArray(rows) ? rows : [];
+};
+
+// Closing a notice: it does not come back for the same transition.
+PetLifeStageNoticesRepository.prototype.dismissOpen = async function dismissOpen(subscriptionId, petId, at) {
+  this.ensureDataSource();
+  const result = await this.dataSource.query(
+    `UPDATE \`${this.tableName}\` SET dismissed_at = ?
+     WHERE subscription_id = ? AND pet_id = ? AND dismissed_at IS NULL AND resolved_at IS NULL`,
+    [at, subscriptionId, petId]
+  );
+  return Number(result && result.affectedRows) || 0;
+};
+
+// A saved adjustment of the plan, keeping the previous line or switching, closes its open notices.
+PetLifeStageNoticesRepository.prototype.resolveOpen = async function resolveOpen(subscriptionId, at) {
+  this.ensureDataSource();
+  await this.dataSource.query(
+    `UPDATE \`${this.tableName}\` SET resolved_at = ?
+     WHERE subscription_id = ? AND dismissed_at IS NULL AND resolved_at IS NULL`,
+    [at, subscriptionId]
+  );
+};
+
 module.exports = {
   PetLifeStageNoticesRepository
 };

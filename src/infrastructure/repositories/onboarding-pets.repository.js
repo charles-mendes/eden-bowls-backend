@@ -32,7 +32,8 @@ class OnboardingPetsRepository {
 
     const sql = [
       'SELECT `id`, `name`, `breed`, `age_years`, `age_months`, `weight_input`, `weight_unit`,',
-      '`size`, `activity_level`, `pet_condition`, `neutered`, `image_url`, `age_recorded_at`, `birth_date`',
+      '`size`, `activity_level`, `pet_condition`, `neutered`, `image_url`, `age_recorded_at`, `birth_date`,',
+      '`life_stage_announced_at`, `life_stage_announced_stage`',
       `FROM \`${this.tableName}\``,
       'WHERE `user_id` = ? AND `deleted_at` IS NULL',
       'ORDER BY `created_at` ASC'
@@ -56,7 +57,9 @@ class OnboardingPetsRepository {
         neutered: Boolean(pet.neutered),
         image_url: String(pet.image_url || ''),
         age_recorded_at: toIsoDateTime(pet.age_recorded_at),
-        birth_date: toIsoDay(pet.birth_date)
+        birth_date: toIsoDay(pet.birth_date),
+        life_stage_announced_at: toIsoDateTime(pet.life_stage_announced_at),
+        life_stage_announced_stage: pet.life_stage_announced_stage ? String(pet.life_stage_announced_stage) : null
       }))
     };
   }

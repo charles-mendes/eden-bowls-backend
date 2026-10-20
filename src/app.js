@@ -31,6 +31,7 @@ const { registerOnboardingZipcodeRoutes } = require('./api/routes/onboarding-zip
 const { registerShippingRoutes } = require('./api/routes/shipping.routes');
 const { registerSubscriptionsActionsRoutes } = require('./api/routes/subscriptions-actions.routes');
 const { registerSubscriptionsDetailRoutes } = require('./api/routes/subscriptions-detail.routes');
+const { registerSubscriptionsLifeStageNoticesRoutes } = require('./api/routes/subscriptions-life-stage-notices.routes');
 const { registerSubscriptionsEditCommitRoutes } = require('./api/routes/subscriptions-edit-commit.routes');
 const { registerCustomerDeliveriesRoutes } = require('./api/routes/customer-deliveries.routes');
 const { registerCustomerInvoicesRoutes } = require('./api/routes/customer-invoices.routes');
@@ -204,6 +205,7 @@ function createApp(dependencies = {}) {
   registerShippingRoutes(app, dependencies);
   registerSubscriptionsActionsRoutes(app, dependencies);
   registerSubscriptionsDetailRoutes(app, dependencies);
+  registerSubscriptionsLifeStageNoticesRoutes(app, dependencies);
   registerSubscriptionsEditPreviewRoutes(app, dependencies);
   registerSubscriptionsEditCommitRoutes(app, dependencies);
   registerCustomerDeliveriesRoutes(app, dependencies);

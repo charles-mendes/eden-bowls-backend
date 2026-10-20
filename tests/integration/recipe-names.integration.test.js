@@ -79,5 +79,8 @@ describeIntegration('AdminCatalogRepository.listRecipeNames (MySQL)', () => {
     expect([...lines.BR.publishedLines]).toEqual(['adult']);
     await dataSource.query("UPDATE wp_posts SET post_status = 'publish' WHERE post_type = 'product_variation' AND post_status = 'draft'");
     expect([...(await repository.listRecipeLines()).BR.publishedLines].sort()).toEqual(['adult', 'senior']);
+    const published = (await repository.listRecipeLines()).BR.publishedRecipes;
+    expect(published.find((recipe) => recipe.key === 'senior-beef')).toEqual({ key: 'senior-beef', label: 'Receita de Carne para Cães Sênior', life_stage: 'senior' });
+    expect(published.filter((recipe) => recipe.key === 'beef')).toHaveLength(1);
   });
 });

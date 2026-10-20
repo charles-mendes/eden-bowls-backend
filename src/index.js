@@ -116,6 +116,7 @@ const { AdminOnboardingService } = require('./services/admin-onboarding.service'
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
 const { LifeStageService } = require('./services/life-stage.service');
+const { LifeStageNoticesService } = require('./services/life-stage-notices.service');
 const { LifeStageLimitsRepository } = require('./infrastructure/repositories/life-stage-limits.repository');
 const { PetAgeChangesRepository } = require('./infrastructure/repositories/pet-age-changes.repository');
 const { PetLifeStageNoticesRepository } = require('./infrastructure/repositories/pet-life-stage-notices.repository');
@@ -320,14 +321,21 @@ async function bootstrap() {
     repository: new LifeStageLimitsRepository(dataSource),
     recipeLinesRepository
   });
+  const petLifeStageNoticesRepository = new PetLifeStageNoticesRepository(dataSource);
   const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository, {
     ageChangesRepository: new PetAgeChangesRepository(dataSource),
     lifeStageService,
     ledgerRepository: subscriptionLedgerRepository,
     recipeLinesRepository,
-    noticesRepository: new PetLifeStageNoticesRepository(dataSource)
+    noticesRepository: petLifeStageNoticesRepository
   });
   const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
+  const lifeStageNoticesService = new LifeStageNoticesService({
+    lifeStageService,
+    noticesRepository: petLifeStageNoticesRepository,
+    ledgerRepository: subscriptionLedgerRepository,
+    petsRepository: onboardingPetsRepository
+  });
   const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository, { lifeStageService });
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
@@ -442,7 +450,9 @@ async function bootstrap() {
   });
   const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository, {
     lifeStageService,
-    petsRepository: onboardingPetsRepository
+    petsRepository: onboardingPetsRepository,
+    lifeStageNoticesService,
+    ledgerRepository: subscriptionLedgerRepository
   });
   const subscriptionsEditPreviewRepository = new SubscriptionsEditPreviewRepository({
     ledgerRepository: subscriptionLedgerRepository,
@@ -477,6 +487,7 @@ async function bootstrap() {
     logger
   });
   const subscriptionsEditCommitService = new SubscriptionsEditCommitService(subscriptionsEditCommitRepository, {
+    lifeStageNoticesService,
     authService,
     ledgerRepository: subscriptionLedgerRepository,
     deliveryGuard: customerDeliveriesService
@@ -486,7 +497,9 @@ async function bootstrap() {
   });
   const subscriptionsService = new SubscriptionsService(subscriptionsRepository, {
     lifeStageService,
-    petsRepository: onboardingPetsRepository
+    petsRepository: onboardingPetsRepository,
+    lifeStageNoticesService,
+    ledgerRepository: subscriptionLedgerRepository
   });
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository(dataSource);
   const onboardingPetsSyncService = new OnboardingPetsSyncService(onboardingPetCreateRepository);
@@ -703,6 +716,7 @@ async function bootstrap() {
     shippingService,
     subscriptionsActionsService,
     subscriptionsDetailService,
+    lifeStageNoticesService,
     subscriptionsEditPreviewService,
     subscriptionsEditCommitService,
     subscriptionsService,

@@ -383,16 +383,20 @@ class AdminCatalogRepository {
     return names;
   }
 
-  // Line of each flavor key and the lines with a published recipe, per market.
+  // Line of each flavor key, the lines with a published recipe and the published recipes, per market.
   async listRecipeLines() {
     const lines = {};
     for (const row of await this.recipeVariationRows()) {
-      const market = lines[row.market] || (lines[row.market] = { lineByKey: {}, publishedLines: new Set() });
+      const market = lines[row.market]
+        || (lines[row.market] = { lineByKey: {}, publishedLines: new Set(), publishedRecipes: [] });
       if (!market.lineByKey[row.key]) {
         market.lineByKey[row.key] = row.lifeStage;
       }
       if (row.published) {
         market.publishedLines.add(row.lifeStage);
+        if (!market.publishedRecipes.some((recipe) => recipe.key === row.key)) {
+          market.publishedRecipes.push({ key: row.key, label: row.label, life_stage: row.lifeStage });
+        }
       }
     }
     return lines;

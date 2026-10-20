@@ -654,5 +654,9 @@
   {
     "method": "GET",
     "path": "/api/v1/subscriptions/:subscriptionId/invoices/:invoiceId/pdf"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/subscriptions/:subscriptionId/life-stage-notices/:petId/dismiss"
   }
 ]
