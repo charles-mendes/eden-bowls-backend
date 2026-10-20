@@ -193,8 +193,12 @@ describe('launch announcement command (2.14)', () => {
   test('an announcement already concluded is not sent again', async () => {
     const { service, repository, mailer } = setup({ customers: [customer(1, 'p-thor', 'Thor')] });
     repository.state.sent_at = new Date('2026-10-19T12:00:00Z');
-    await expect(service.run({ market: 'BR', send: true })).rejects.toMatchObject({ code: 'already_sent' });
+    await expect(service.run({ market: 'BR', send: true })).rejects.toMatchObject({
+      code: 'already_sent',
+      message: 'O anúncio de BR já foi concluído em 2026-10-19T12:00:00.000Z. Nada foi enviado.'
+    });
     expect(mailer.sendClaimed).not.toHaveBeenCalled();
+    expect(repository.writes).toEqual([]);
   });
 
   test('an announced pet still shows its notice, and the stage-change job skips it', async () => {
