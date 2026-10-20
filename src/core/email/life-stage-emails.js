@@ -1,8 +1,11 @@
 const { DateTime } = require('luxon');
 const { TIMEZONE_BR, TIMEZONE_US } = require('../delivery-closed-days');
 const {
+  BRAND,
+  FONT_BODY,
   buttonHtml,
   detailsTableHtml,
+  escapeHtml,
   isPortuguese,
   mutedHtml,
   paragraphHtml,
@@ -140,8 +143,97 @@ function buildLifeStageChangeEmail({
   };
 }
 
+function announcementAudience(pt, stages) {
+  const puppy = stages.includes('puppy');
+  const senior = stages.includes('senior');
+  if (puppy && senior) return pt ? 'filhotes e cães sênior' : 'puppies and senior dogs';
+  if (puppy) return pt ? 'filhotes' : 'puppies';
+  return pt ? 'cães sênior' : 'senior dogs';
+}
+
+// Launch announcement (marketing): one letter per customer naming each puppy or senior with its plan's Ajustar packs.
+function buildLifeStageAnnouncementEmail({
+  firstName,
+  dogs,
+  profileUrl,
+  companyLine,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const named = (Array.isArray(dogs) ? dogs : []).filter((dog) => dog && dog.stage);
+  const audience = announcementAudience(pt, named.map((dog) => dog.stage));
+  const subject = pt
+    ? `Novidade na Eden Bowls: receitas para ${audience}`
+    : `New at Eden Bowls: recipes for ${audience}`;
+  const intro = pt
+    ? `Temos novidade: a Eden Bowls agora tem receitas feitas para cada fase da vida, e chegaram as receitas para ${audience}.`
+    : `We have news: Eden Bowls now has recipes made for each life stage, and the recipes for ${audience} are here.`;
+  const keep = pt
+    ? 'Os planos não mudam sozinhos: as receitas, os packs e o preço continuam os mesmos até você ajustar. Você pode trocar para as receitas novas ou manter as atuais.'
+    : 'Plans do not change on their own: recipes, packs and price stay the same until you adjust them. You can switch to the new recipes or keep the current ones.';
+  const optOut = pt
+    ? 'Você recebe este e-mail porque aceitou receber novidades da Eden Bowls. Para não receber mais, desmarque essa opção no seu perfil.'
+    : 'You are getting this email because you chose to hear Eden Bowls news. To stop, turn that option off in your profile.';
+  const profile = String(profileUrl || '').trim();
+
+  const dogLine = (dog) => {
+    const pet = petLabel(pt, dog.petName);
+    const stageName = stageLabel(pt, dog.stage);
+    return pt ? `${pet} · fase ${stageName}` : `${pet} · ${stageName} stage`;
+  };
+  const adjustLabel = (dog) => (pt ? `Ajustar packs de ${petLabel(pt, dog.petName)}` : `Adjust ${petLabel(pt, dog.petName)}'s packs`);
+
+  const text = [
+    hello,
+    intro,
+    ...named.map((dog) => [
+      dogLine(dog),
+      (dog.recipes || []).length ? `${pt ? 'Receitas' : 'Recipes'}: ${dog.recipes.join(', ')}` : '',
+      dog.adjustUrl ? `${adjustLabel(dog)}: ${dog.adjustUrl}` : ''
+    ].filter(Boolean).join('\n')),
+    keep,
+    profile ? `${optOut} ${profile}` : optOut,
+    companyLine
+  ].filter(Boolean).join('\n\n');
+
+  const innerHtml = [
+    paragraphHtml(hello),
+    paragraphHtml(intro),
+    ...named.map((dog) => [
+      detailsTableHtml([{ label: 'Pet', value: dogLine(dog) }]),
+      (dog.recipes || []).length ? pillsHtml(dog.recipes) : '',
+      dog.adjustUrl ? buttonHtml({ href: dog.adjustUrl, label: adjustLabel(dog) }) : ''
+    ].join('')),
+    paragraphHtml(keep),
+    profile
+      ? `<p style="margin:0 0 14px;font-family:${FONT_BODY};font-size:14px;line-height:1.6;color:${BRAND.muted};">${escapeHtml(optOut)} <a href="${escapeHtml(profile)}" style="color:${BRAND.muted};text-decoration:underline;">${pt ? 'Abrir meu perfil' : 'Open my profile'}</a></p>`
+      : mutedHtml(optOut)
+  ].join('');
+
+  return {
+    id: 'life-stage-announcement',
+    subject,
+    text,
+    html: wrapEmailHtml({
+      locale: locale || 'pt-BR',
+      preheader: intro,
+      kicker: pt ? 'Novidade' : 'New',
+      title: pt ? `Receitas para ${audience}` : `Recipes for ${audience}`,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets,
+      securityNote: false,
+      footerLines: [companyLine]
+    })
+  };
+}
+
 module.exports = {
   STAGE_LABELS,
+  buildLifeStageAnnouncementEmail,
   buildLifeStageChangeEmail,
   firstEditableDeadline,
   formatDeadline,

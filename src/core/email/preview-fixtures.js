@@ -14,7 +14,9 @@ const {
   buildResumedEmail,
   buildShippedEmail
 } = require('./transactional-emails');
+const { formatCompanyAddress } = require('./company-address');
 const {
+  buildLifeStageAnnouncementEmail,
   buildLifeStageChangeEmail,
   formatDeadline,
   packsUrl
@@ -176,6 +178,29 @@ function listEmailPreviews(options = {}) {
           deadlineLabel: formatDeadline('2026-10-27T02:59:59Z', 'BR'),
           ...shell
         })
+    },
+    {
+      id: 'life-stage-announcement',
+      group: 'P1 · fase da vida',
+      label: 'Anúncio das receitas por fase (marketing)',
+      wired: false,
+      content: buildLifeStageAnnouncementEmail({
+        firstName: 'Ana',
+        profileUrl: 'https://edenbowls.com/dashboard/profile',
+        companyLine: en
+          ? formatCompanyAddress('US', { name: 'EZER ONE INC (Eden Bowls)', street: '6200 NW 2nd Ave', city: 'Boca Raton', state: 'FL', postalCode: '33487-3021', country: 'USA' })
+          : formatCompanyAddress('BR', { name: 'C. C. J. Lovato Ltda', taxId: '65.291.985/0001-05', street: 'Rua Delmiro Fetter dos Santos, 94', complement: 'Cajuru', city: 'Curitiba', state: 'PR', postalCode: '82950-130' }),
+        dogs: en
+          ? [
+            { petName: 'Luna', stage: 'puppy', recipes: ['Chicken & Pork Recipe for Puppies', 'Beef & Chicken Recipe for Puppies'], adjustUrl: packsUrl('https://edenbowls.com', 'sub_preview', 'pet_luna') },
+            { petName: 'Thor', stage: 'senior', recipes: ['Beef Recipe for Senior Dogs', 'Chicken Recipe for Senior Dogs'], adjustUrl: packsUrl('https://edenbowls.com', 'sub_preview', 'pet_thor') }
+          ]
+          : [
+            { petName: 'Luna', stage: 'puppy', recipes: ['Receita de Frango e Porco para Filhotes', 'Receita de Carne e Frango para Filhotes'], adjustUrl: packsUrl('https://edenbowls.com', 'sub_preview', 'pet_luna') },
+            { petName: 'Thor', stage: 'senior', recipes: ['Receita de Carne para Cães Sênior', 'Receita de Frango para Cães Sênior'], adjustUrl: packsUrl('https://edenbowls.com', 'sub_preview', 'pet_thor') }
+          ],
+        ...shell
+      })
     },
     {
       id: 'invite',

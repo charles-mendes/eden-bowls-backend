@@ -28,6 +28,21 @@ function planLinesForPet(planSelection, petId, lineByKey = {}) {
   return [...new Set(planFlavorsForPet(planSelection, petId).map((key) => lineByKey[key] || 'adult'))];
 }
 
+// Pets on a plan: enabled plan pets and every priced line's pet.
+function planPetIds(planSelection) {
+  const plan = planSelection && typeof planSelection === 'object' ? planSelection : {};
+  const ids = new Set();
+  for (const pet of Array.isArray(plan.pets) ? plan.pets : []) {
+    const id = pet ? String(pet.pet_id || pet.id || '').trim() : '';
+    if (pet && pet.enabled !== false && id) ids.add(id);
+  }
+  const catalog = plan.catalog_pricing && typeof plan.catalog_pricing === 'object' ? plan.catalog_pricing : {};
+  for (const item of Array.isArray(catalog.line_items) ? catalog.line_items : []) {
+    if (item && item.pet_id) ids.add(String(item.pet_id));
+  }
+  return [...ids];
+}
+
 function isOutsideAllowed(planLines, allowed) {
   return planLines.length > 0 && planLines.some((line) => !allowed.includes(line));
 }
@@ -36,5 +51,6 @@ module.exports = {
   allowedLifeStages,
   isOutsideAllowed,
   planFlavorsForPet,
-  planLinesForPet
+  planLinesForPet,
+  planPetIds
 };

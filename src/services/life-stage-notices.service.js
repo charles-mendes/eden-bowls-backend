@@ -1,5 +1,5 @@
 const { HttpError } = require('../core/http-error');
-const { allowedLifeStages, isOutsideAllowed, planLinesForPet } = require('../core/life-stage-lines');
+const { allowedLifeStages, isOutsideAllowed, planLinesForPet, planPetIds } = require('../core/life-stage-lines');
 const { lifeStagePayload, marketFromStripeAccount } = require('./life-stage.service');
 
 function petId(pet = {}) {
@@ -31,8 +31,8 @@ class LifeStageNoticesService {
     for (const row of rows) {
       const market = marketFromStripeAccount(row.stripeAccount);
       const lines = (await this.lifeStageService.recipeLines(market)) || { lineByKey: {}, publishedLines: new Set(), publishedRecipes: [] };
-      const planPetIds = this.planPetIds(row.planSelection);
-      const pets = planPetIds.map((id) => accountPets.get(id)).filter(Boolean);
+      const petIds = planPetIds(row.planSelection);
+      const pets = petIds.map((id) => accountPets.get(id)).filter(Boolean);
       const results = await this.lifeStageService.resolveMany(pets, market);
       const entries = [];
       for (const [index, pet] of pets.entries()) {
@@ -90,19 +90,6 @@ class LifeStageNoticesService {
       }
     }
     return reports;
-  }
-
-  planPetIds(planSelection) {
-    const plan = planSelection && typeof planSelection === 'object' ? planSelection : {};
-    const ids = new Set();
-    for (const pet of Array.isArray(plan.pets) ? plan.pets : []) {
-      if (pet && pet.enabled !== false && petId(pet)) ids.add(petId(pet));
-    }
-    const catalog = plan.catalog_pricing && typeof plan.catalog_pricing === 'object' ? plan.catalog_pricing : {};
-    for (const item of Array.isArray(catalog.line_items) ? catalog.line_items : []) {
-      if (item && item.pet_id) ids.add(String(item.pet_id));
-    }
-    return [...ids];
   }
 
   async dismiss({ userId, subscriptionId, petId: dismissedPetId }) {
