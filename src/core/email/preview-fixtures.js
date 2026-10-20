@@ -14,6 +14,11 @@ const {
   buildResumedEmail,
   buildShippedEmail
 } = require('./transactional-emails');
+const {
+  buildLifeStageChangeEmail,
+  formatDeadline,
+  packsUrl
+} = require('./life-stage-emails');
 
 const SAMPLE = {
   firstName: 'Ana',
@@ -146,6 +151,31 @@ function listEmailPreviews(options = {}) {
       label: 'Mudança de plano',
       wired: false,
       content: buildPlanChangedEmail({ ...sample, ...shell })
+    },
+    {
+      id: 'life-stage-change',
+      group: 'P1 · fase da vida',
+      label: 'Mudança de fase do pet',
+      wired: false,
+      content: en
+        ? buildLifeStageChangeEmail({
+          firstName: 'Ana',
+          petName: 'Luna',
+          stage: 'senior',
+          suggestedRecipes: ['Beef Recipe for Senior Dogs', 'Chicken Recipe for Senior Dogs'],
+          adjustUrl: packsUrl('https://edenbowls.com', 'sub_preview', 'pet_luna'),
+          deadlineLabel: formatDeadline('2026-10-27T03:59:59Z', 'US'),
+          ...shell
+        })
+        : buildLifeStageChangeEmail({
+          firstName: 'Ana',
+          petName: 'Thor',
+          stage: 'senior',
+          suggestedRecipes: ['Receita de Carne para Cães Sênior', 'Receita de Frango para Cães Sênior'],
+          adjustUrl: packsUrl('https://edenbowls.com', 'sub_preview', 'pet_thor'),
+          deadlineLabel: formatDeadline('2026-10-27T02:59:59Z', 'BR'),
+          ...shell
+        })
     },
     {
       id: 'invite',
