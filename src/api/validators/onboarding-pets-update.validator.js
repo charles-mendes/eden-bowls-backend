@@ -1,4 +1,5 @@
 const { z } = require('zod');
+const { HttpError } = require('../../core/http-error');
 const { assertBirthDateInRange, birthDateSchema, normalizeBirthDate } = require('./pet-birth-date.validator');
 const { MARKETS } = require('../../core/market');
 
@@ -15,7 +16,7 @@ const onboardingPetUpdatePayloadSchema = z.object({
   neutered: z.boolean().optional(),
   birth_date: birthDateSchema,
   birthDate: birthDateSchema,
-  change_source: z.enum(['onboarding', 'dashboard']).optional(),
+  change_source: z.enum(['onboarding', 'dashboard']),
   confirm_life_stage_change: z.boolean().optional(),
   ageYears: z.union([z.string(), z.number()]).optional(),
   ageMonths: z.union([z.string(), z.number()]).optional(),
@@ -27,6 +28,10 @@ const onboardingPetUpdatePayloadSchema = z.object({
 });
 
 function parseOnboardingPetUpdateInput(payload = {}, market = MARKETS.US, now = new Date()) {
+  // The age history records where each edit came from: the onboarding form or Meus pets (customer-pet-age-edit).
+  if (!payload || payload.change_source === undefined || payload.change_source === null || payload.change_source === '') {
+    throw new HttpError(422, 'change_source is required (onboarding or dashboard).', { code: 'change_source_required' });
+  }
   const parsed = onboardingPetUpdatePayloadSchema.parse(payload || {});
   const normalized = {};
 
@@ -50,7 +55,7 @@ function parseOnboardingPetUpdateInput(payload = {}, market = MARKETS.US, now = 
     assertBirthDateInRange(birthDate, market, now);
     normalized.birth_date = birthDate;
   }
-  if (parsed.change_source !== undefined) normalized.change_source = parsed.change_source;
+  normalized.change_source = parsed.change_source;
   if (parsed.confirm_life_stage_change !== undefined) normalized.confirm_life_stage_change = parsed.confirm_life_stage_change;
 
   return normalized;

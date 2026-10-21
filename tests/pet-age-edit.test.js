@@ -38,14 +38,14 @@ describe('birth date input', () => {
   test('create, update and sync accept an optional birth date and clear it with an empty value', () => {
     expect(parseOnboardingPetCreateInput({ name: 'Luna', birth_date: '2021-07-10' }, MARKETS.BR).birth_date).toBe('2021-07-10');
     expect(parseOnboardingPetCreateInput({ name: 'Luna' }, MARKETS.BR).birth_date).toBeNull();
-    expect(parseOnboardingPetUpdateInput({ birth_date: '' }).birth_date).toBeNull();
-    expect(parseOnboardingPetUpdateInput({ name: 'Luna' })).not.toHaveProperty('birth_date');
+    expect(parseOnboardingPetUpdateInput({ birth_date: '', change_source: 'dashboard' }).birth_date).toBeNull();
+    expect(parseOnboardingPetUpdateInput({ name: 'Luna', change_source: 'onboarding' })).not.toHaveProperty('birth_date');
     expect(parseOnboardingPetsSyncInput({ pets: [{ local_id: 'l-1', name: 'Luna', birth_date: '2021-07-10' }] }).pets[0].birth_date).toBe('2021-07-10');
   });
 
   test('rejects an impossible date', () => {
-    expect(() => parseOnboardingPetUpdateInput({ birth_date: '2021-02-30' })).toThrow();
-    expect(() => parseOnboardingPetUpdateInput({ birth_date: '10/07/2021' })).toThrow();
+    expect(() => parseOnboardingPetUpdateInput({ birth_date: '2021-02-30', change_source: 'dashboard' })).toThrow();
+    expect(() => parseOnboardingPetUpdateInput({ birth_date: '10/07/2021', change_source: 'dashboard' })).toThrow();
   });
 });
 
@@ -86,10 +86,10 @@ describe('PATCH age change', () => {
     expect(ageChangesRepository.record).not.toHaveBeenCalled();
   });
 
-  test('a birth date change is recorded without moving age_recorded_at, with source onboarding by default', async () => {
+  test('a birth date change is recorded without moving age_recorded_at, with the source sent', async () => {
     const { service, repository, ageChangesRepository } = serviceFor(storedPet({ age_years: 5, age_months: 0 }));
 
-    await service.updatePet({ userId: 7, petId: 'pet-1', payload: { birth_date: '2021-07-10' }, market: MARKETS.BR });
+    await service.updatePet({ userId: 7, petId: 'pet-1', payload: { birth_date: '2021-07-10', change_source: 'onboarding' }, market: MARKETS.BR });
 
     expect(repository.updatePet.mock.calls[0][2]).toEqual({ birth_date: '2021-07-10' });
     expect(ageChangesRepository.record.mock.calls[0][0]).toMatchObject({ oldBirthDate: null, newBirthDate: '2021-07-10', source: 'onboarding' });

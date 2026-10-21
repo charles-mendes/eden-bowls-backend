@@ -164,9 +164,9 @@ describe('PATCH /api/v1/onboarding/pets/:petId confirmation body', () => {
     const app = createApp({ onboardingPetUpdateService, corsOrigins: ['http://localhost:5173'], jwt });
     const auth = `Bearer ${issueJwtToken({ data: { user: { id: 7 } } }, { ...jwt, ttlSeconds: 900, now: Math.floor(Date.now() / 1000) })}`;
 
-    const refused = await request(app).patch('/api/v1/onboarding/pets/pet-1').set('Authorization', auth).send({ age_years: 8 });
+    const refused = await request(app).patch('/api/v1/onboarding/pets/pet-1').set('Authorization', auth).send({ age_years: 8, change_source: 'dashboard' });
     expect(refused.status).toBe(409);
-    expect(refused.body).toEqual({ success: false, message: 'Confirm to save.', details });
+    expect(refused.body).toEqual({ success: false, code: 'life_stage_change_requires_confirmation', message: 'Confirm to save.', details });
 
     const confirmed = await request(app).patch('/api/v1/onboarding/pets/pet-1').set('Authorization', auth)
       .send({ age_years: 8, confirm_life_stage_change: true, change_source: 'dashboard' });

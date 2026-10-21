@@ -11,7 +11,7 @@ const NOW = new Date('2026-10-19T12:00:00Z');
 const parsers = {
   create: (birthDate, market) => parseOnboardingPetCreateInput({ name: 'Luna', birth_date: birthDate }, market, NOW),
   sync: (birthDate, market) => parseOnboardingPetsSyncInput({ pets: [{ local_id: 'l-1', name: 'Luna', birth_date: birthDate }] }, market, NOW),
-  update: (birthDate, market) => parseOnboardingPetUpdateInput({ birth_date: birthDate }, market, NOW)
+  update: (birthDate, market) => parseOnboardingPetUpdateInput({ birth_date: birthDate, change_source: 'dashboard' }, market, NOW)
 };
 
 describe.each(Object.entries(parsers))('birth date range on %s', (_name, parse) => {
@@ -48,7 +48,7 @@ describe('POST /api/v1/onboarding/pets with an out-of-range birth date', () => {
     const response = await request(app)
       .post('/api/v1/onboarding/pets?country=BR')
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Luna', birth_date: '2999-01-01' });
+      .send({ name: 'Luna', birth_date: '2999-01-01', change_source: 'dashboard' });
 
     expect(response.status).toBe(422);
     expect(response.body).toEqual({ success: false, message: 'A data de nascimento não pode estar no futuro.' });

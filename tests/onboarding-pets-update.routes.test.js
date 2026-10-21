@@ -26,14 +26,14 @@ describe('onboarding pets update routes', () => {
     const response = await request(app)
       .patch('/api/v1/onboarding/pets/pet-1')
       .set('Authorization', `Bearer ${issueAccessToken(7)}`)
-      .send({ name: 'Milo', ageYears: 3, weightUnit: 'kg' });
+      .send({ name: 'Milo', ageYears: 3, weightUnit: 'kg', change_source: 'dashboard' });
 
     expect(response.status).toBe(200);
     expect(response.body.data.pet.id).toBe('pet-1');
     expect(onboardingPetUpdateService.updatePet).toHaveBeenCalledWith({
       userId: 7,
       petId: 'pet-1',
-      payload: { name: 'Milo', age_years: 3, weight_unit: 'kg' },
+      payload: { name: 'Milo', age_years: 3, weight_unit: 'kg', change_source: 'dashboard' },
       market: MARKETS.US
     });
   });
@@ -60,14 +60,41 @@ describe('onboarding pets update routes', () => {
     const response = await request(app)
       .patch('/api/v1/onboarding/pets/pet-1')
       .set('Authorization', `Bearer ${issueAccessToken(7)}`)
-      .send({ name: 'Milo', image_url: 'https://evil.example/photo.jpg' });
+      .send({ name: 'Milo', image_url: 'https://evil.example/photo.jpg', change_source: 'onboarding' });
 
     expect(response.status).toBe(200);
     expect(onboardingPetUpdateService.updatePet).toHaveBeenCalledWith({
       userId: 7,
       petId: 'pet-1',
-      payload: { name: 'Milo' },
+      payload: { name: 'Milo', change_source: 'onboarding' },
       market: MARKETS.US
     });
+  });
+
+  test('refuses an edit without change_source with 422 change_source_required and saves nothing', async () => {
+    const onboardingPetUpdateService = { updatePet: jest.fn() };
+    const app = createApp({ onboardingPetUpdateService, corsOrigins, jwt });
+
+    const response = await request(app)
+      .patch('/api/v1/onboarding/pets/pet-1')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .send({ age_years: 8 });
+
+    expect(response.status).toBe(422);
+    expect(response.body).toMatchObject({ success: false, code: 'change_source_required' });
+    expect(onboardingPetUpdateService.updatePet).not.toHaveBeenCalled();
+  });
+
+  test('refuses an unknown change_source', async () => {
+    const onboardingPetUpdateService = { updatePet: jest.fn() };
+    const app = createApp({ onboardingPetUpdateService, corsOrigins, jwt });
+
+    const response = await request(app)
+      .patch('/api/v1/onboarding/pets/pet-1')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .send({ age_years: 8, change_source: 'admin' });
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(onboardingPetUpdateService.updatePet).not.toHaveBeenCalled();
   });
 });
