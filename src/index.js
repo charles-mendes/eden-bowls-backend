@@ -398,6 +398,7 @@ async function bootstrap() {
     deliveriesService: customerDeliveriesService,
     petsRepository: onboardingPetsRepository,
     mailer: transactionalMailer,
+    enabled: { BR: env.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR, US: env.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US },
     logger
   });
   // Eden Bowls invoice PDFs (EB-YYYY-NNNNNN): issued on invoice.paid, kept in INVOICE_PDF_DIR, emailed to the customer.

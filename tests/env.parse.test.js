@@ -28,6 +28,16 @@ function productionEnv(overrides = {}) {
 }
 
 describe('parseEnv', () => {
+  test('stage-change email switches are on unless set to false, per market (2.16)', () => {
+    const unset = parseEnv(productionEnv());
+    expect(unset.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR).toBe(true);
+    expect(unset.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US).toBe(true);
+
+    const paused = parseEnv(productionEnv({ LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR: 'false', LIFE_STAGE_CHANGE_EMAIL_ENABLED_US: 'true' }));
+    expect(paused.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR).toBe(false);
+    expect(paused.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US).toBe(true);
+  });
+
   test('rejects a missing runtime label', () => {
     expect(() => parseEnv({ NODE_ENV: 'development' })).toThrow(/EDEN_RUNTIME/);
     expect(() => parseEnv(productionEnv({ EDEN_RUNTIME: '' }))).toThrow(/EDEN_RUNTIME/);

@@ -4,7 +4,9 @@ const MARKETS = ['BR', 'US'];
 
 // Daily stage-change email (customer-life-stage-notice, design decision 7). Per market, only after that market's
 // launch announcement was sent. A transition is emailed once, 7 days before the cutoff of the delivery the
-// adjustment still applies to, or at the first run inside that window.
+// adjustment still applies to, or at the first run inside that window. Each market has an emergency switch
+// (LIFE_STAGE_CHANGE_EMAIL_ENABLED_<BR|US>): off, the market is skipped before any read or write, so turning it
+// on again sends the emails whose time came during the pause at the next run, by the late-detection rule.
 class LifeStageChangeEmailService {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository;
@@ -14,6 +16,8 @@ class LifeStageChangeEmailService {
     this.deliveriesService = options.deliveriesService;
     this.petsRepository = options.petsRepository;
     this.mailer = options.mailer;
+    // Per market; a market missing here is on.
+    this.enabled = options.enabled || {};
     this.logger = options.logger || { warn() {}, error() {} };
     this.now = options.now || (() => new Date());
   }
@@ -27,6 +31,10 @@ class LifeStageChangeEmailService {
   }
 
   async runMarket(market) {
+    if (this.enabled[market] === false) {
+      this.logger.warn({ market }, `Stage-change email paused in this market (LIFE_STAGE_CHANGE_EMAIL_ENABLED_${market}=false).`);
+      return { skipped: 'paused' };
+    }
     const state = await this.announcementsRepository.findMarket(market);
     if (!state || !state.sent_at) {
       return { skipped: 'announcement_not_sent' };

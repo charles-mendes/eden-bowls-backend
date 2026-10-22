@@ -57,7 +57,7 @@ function ledgerRow(id, petIds, overrides = {}) {
   };
 }
 
-function setup({ pets, rows, sentAt = '2026-10-18T12:00:00Z', deadlines = [CUTOFF, FOLLOWING_CUTOFF], mailer } = {}) {
+function setup({ pets, rows, usRows = [], sentAt = '2026-10-18T12:00:00Z', usSentAt = null, deadlines = [CUTOFF, FOLLOWING_CUTOFF], mailer, enabled, logger } = {}) {
   const clock = { now: new Date('2026-10-12T12:00:00Z') };
   const now = () => clock.now;
   const limits = {};
@@ -67,13 +67,11 @@ function setup({ pets, rows, sentAt = '2026-10-18T12:00:00Z', deadlines = [CUTOF
   const lifeStageService = new LifeStageService({
     repository: { forMarket: async () => ({ limits, breedClasses: new Map() }) },
     recipeLinesRepository: {
-      listRecipeLines: async () => ({
-        BR: {
-          lineByKey: Object.fromEntries(RECIPES.map((recipe) => [recipe.key, recipe.life_stage])),
-          publishedLines: new Set(['adult', 'senior']),
-          publishedRecipes: RECIPES
-        }
-      })
+      listRecipeLines: async () => Object.fromEntries(['BR', 'US'].map((market) => [market, {
+        lineByKey: Object.fromEntries(RECIPES.map((recipe) => [recipe.key, recipe.life_stage])),
+        publishedLines: new Set(['adult', 'senior']),
+        publishedRecipes: RECIPES
+      }]))
     },
     now
   });
@@ -101,16 +99,18 @@ function setup({ pets, rows, sentAt = '2026-10-18T12:00:00Z', deadlines = [CUTOF
     })
   };
   const service = new LifeStageChangeEmailService({
-    ledgerRepository: { listDeliverableByAccount: jest.fn(async (account) => (account === 'br' ? rows : [])) },
+    ledgerRepository: { listDeliverableByAccount: jest.fn(async (account) => (account === 'br' ? rows : usRows)) },
     noticesService,
     noticesRepository: notices,
-    announcementsRepository: { findMarket: jest.fn(async (market) => (market === 'BR' ? { market, sent_at: sentAt } : { market, sent_at: null })) },
+    announcementsRepository: { findMarket: jest.fn(async (market) => ({ market, sent_at: market === 'BR' ? sentAt : usSentAt })) },
     deliveriesService,
     petsRepository,
     mailer: mailer || fakeMailer,
+    ...(enabled ? { enabled } : {}),
+    ...(logger ? { logger } : {}),
     now
   });
-  return { service, clock, notices, sent, noticesService };
+  return { service, clock, notices, sent, noticesService, deliveriesService };
 }
 
 const registered = { breed: '', size: 'medium', age_recorded_at: '2026-10-12T09:00:00.000Z', birth_date: null };
@@ -244,6 +244,85 @@ describe('stage-change email job (2.12)', () => {
     expect(payload.text).toContain('Pela idade informada, Thor está entrando na fase Sênior.');
     expect(payload.text).toContain('Ajuste até: segunda-feira, 26 de outubro, às 23h59 (horário de Brasília)');
     expect(payload.text).toContain('https://edenbowls.com/dashboard/plans/sub_1/packs?pet=p-thor');
+  });
+
+  describe('per-market switch (2.16)', () => {
+    const logger = () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() });
+
+    test('a paused market sends nothing, logs it, and keeps sent_at and the notice rows', async () => {
+      const log = logger();
+      const { service, clock, sent, notices, noticesService } = setup({
+        pets: [thor], rows: [ledgerRow(1, ['p-thor'])], enabled: { BR: false, US: true }, logger: log
+      });
+      await noticesService.reportForUser(7, [ledgerRow(1, ['p-thor'])]);
+      const before = notices.rows.map((row) => ({ ...row }));
+      clock.now = new Date(new Date(CUTOFF).getTime() - 2 * DAY);
+
+      const summary = await service.runDaily();
+
+      expect(summary.BR).toEqual({ skipped: 'paused' });
+      expect(sent).toHaveLength(0);
+      expect(notices.rows).toEqual(before);
+      expect(log.warn).toHaveBeenCalledWith({ market: 'BR' }, 'Stage-change email paused in this market (LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR=false).');
+      expect(service.announcementsRepository.findMarket).not.toHaveBeenCalledWith('BR');
+      expect(service.ledgerRepository.listDeliverableByAccount).not.toHaveBeenCalledWith('br');
+    });
+
+    test('pausing BR does not stop US', async () => {
+      const max = { ...thor, id: 'p-max', name: 'Max' };
+      const usRow = ledgerRow(2, ['p-max'], { userId: 8, stripeAccount: 'us', address: { name: 'Ann Lee', country: 'US' } });
+      const { service, clock, sent } = setup({
+        pets: [thor, max], rows: [ledgerRow(1, ['p-thor'])], usRows: [usRow], usSentAt: '2026-10-18T12:00:00Z',
+        enabled: { BR: false, US: true }, logger: logger()
+      });
+      clock.now = new Date(new Date(CUTOFF).getTime() - 2 * DAY);
+
+      const summary = await service.runDaily();
+
+      expect(summary.BR).toEqual({ skipped: 'paused' });
+      expect(summary.US).toMatchObject({ sent: 1 });
+      expect(sent.map((item) => item.petId)).toEqual(['p-max']);
+    });
+
+    test('turned on again before the cutoff: the next run sends once with that cutoff', async () => {
+      const enabled = { BR: false, US: true };
+      const { service, clock, sent, noticesService } = setup({ pets: [thor], rows: [ledgerRow(1, ['p-thor'])], enabled, logger: logger() });
+      await noticesService.reportForUser(7, [ledgerRow(1, ['p-thor'])]);
+      clock.now = new Date(new Date(CUTOFF).getTime() - 5 * DAY);
+      await service.runDaily();
+      expect(sent).toHaveLength(0);
+
+      enabled.BR = true;
+      clock.now = new Date(clock.now.getTime() + DAY);
+      expect((await service.runDaily()).BR).toMatchObject({ sent: 1 });
+      expect(sent[0].editableUntil).toBe(CUTOFF);
+
+      clock.now = new Date(clock.now.getTime() + DAY);
+      await service.runDaily();
+      expect(sent).toHaveLength(1);
+    });
+
+    test('cutoff passed during the pause: the next run sends once with the following delivery', async () => {
+      const enabled = { BR: false, US: true };
+      const { service, clock, sent, noticesService } = setup({ pets: [thor], rows: [ledgerRow(1, ['p-thor'])], enabled, logger: logger() });
+      await noticesService.reportForUser(7, [ledgerRow(1, ['p-thor'])]);
+      clock.now = new Date(new Date(CUTOFF).getTime() - 2 * DAY);
+      await service.runDaily();
+
+      enabled.BR = true;
+      clock.now = new Date(new Date(CUTOFF).getTime() + DAY);
+      expect((await service.runDaily()).BR).toMatchObject({ sent: 1 });
+      expect(sent[0].editableUntil).toBe(FOLLOWING_CUTOFF);
+      await service.runDaily();
+      expect(sent).toHaveLength(1);
+    });
+
+    test('both markets on when the switch is not given', async () => {
+      const { service, clock, sent } = setup({ pets: [thor], rows: [ledgerRow(1, ['p-thor'])] });
+      clock.now = new Date(new Date(CUTOFF).getTime() - 2 * DAY);
+      expect((await service.runDaily()).BR).toMatchObject({ sent: 1 });
+      expect(sent).toHaveLength(1);
+    });
   });
 
   test('runs daily in the background scheduler', () => {
