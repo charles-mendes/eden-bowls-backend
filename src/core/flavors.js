@@ -10,7 +10,13 @@ const SEED_FLAVOR_ALIASES = {
   beef: ['bovino', 'carne'],
   fish: ['peixe'],
   pork: ['porco'],
-  turkey: ['chicken', 'frango', 'peru']
+  turkey: ['chicken', 'frango', 'peru'],
+  // Life-stage lines (life-stage-recipe-catalog): one key in both markets, with its pt alias. Not in FLAVOR_KEYS,
+  // so the seed and the fallback catalog keep only the four adult recipes; the admin creates these variations.
+  'puppy-chicken-pork': ['filhote-frango-porco'],
+  'puppy-beef-chicken': ['filhote-carne-frango'],
+  'senior-beef': ['senior-carne'],
+  'senior-chicken': ['senior-frango']
 };
 
 const FLAVOR_KEY_ALIASES = {};
