@@ -319,6 +319,7 @@ describe('stage-change email (customer-life-stage-notice)', () => {
       deadlineLabel: formatDeadline(deadline, 'US'),
       locale: 'en-US'
     });
+    expect(email.subject).toBe('Luna is entering the Senior stage');
     expect(email.text).toContain('Based on the age you gave, Luna is entering the Senior stage.');
     expect(email.text).toContain('Adjust by: Monday, October 26, at 11:59 PM ET');
     expect(email.html).toContain('Adjust packs');
