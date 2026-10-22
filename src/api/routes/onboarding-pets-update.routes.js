@@ -1,6 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const { parseRequestMarket } = require('../validators/market.validator');
-const { parseOnboardingPetUpdateInput } = require('../validators/onboarding-pets-update.validator');
+const { isMissingChangeSource, parseOnboardingPetUpdateInput } = require('../validators/onboarding-pets-update.validator');
 
 function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
   app.patch('/api/v1/onboarding/pets/:petId', async (request, response, next) => {
@@ -14,6 +14,10 @@ function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
       }
 
       const market = parseRequestMarket(request, request.body || {});
+      if (isMissingChangeSource(request.body) && dependencies.logger && typeof dependencies.logger.warn === 'function') {
+        // Only the previous storefront omits it; task 7.6 turns this into 422 change_source_required.
+        dependencies.logger.warn({ userId: request.currentUser.id, petId: request.params.petId }, 'Pet edit without change_source, recorded as onboarding.');
+      }
       const payload = parseOnboardingPetUpdateInput(request.body || {}, market);
       const result = await dependencies.onboardingPetUpdateService.updatePet({
         userId: request.currentUser.id,

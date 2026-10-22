@@ -1,5 +1,4 @@
 const { z } = require('zod');
-const { HttpError } = require('../../core/http-error');
 const { assertBirthDateInRange, birthDateSchema, normalizeBirthDate } = require('./pet-birth-date.validator');
 const { MARKETS } = require('../../core/market');
 
@@ -16,7 +15,7 @@ const onboardingPetUpdatePayloadSchema = z.object({
   neutered: z.boolean().optional(),
   birth_date: birthDateSchema,
   birthDate: birthDateSchema,
-  change_source: z.enum(['onboarding', 'dashboard']),
+  change_source: z.enum(['onboarding', 'dashboard']).optional(),
   confirm_life_stage_change: z.boolean().optional(),
   ageYears: z.union([z.string(), z.number()]).optional(),
   ageMonths: z.union([z.string(), z.number()]).optional(),
@@ -27,10 +26,17 @@ const onboardingPetUpdatePayloadSchema = z.object({
   domain: z.enum(['com', 'com.br']).optional()
 });
 
+// The age history records where each edit came from: the onboarding form or Meus pets (customer-pet-age-edit).
+// Until task 7.6, an edit without it (the previous storefront) is recorded as onboarding, so the API can deploy first.
+const LEGACY_CHANGE_SOURCE = 'onboarding';
+
+function isMissingChangeSource(payload) {
+  return !payload || payload.change_source === undefined || payload.change_source === null || payload.change_source === '';
+}
+
 function parseOnboardingPetUpdateInput(payload = {}, market = MARKETS.US, now = new Date()) {
-  // The age history records where each edit came from: the onboarding form or Meus pets (customer-pet-age-edit).
-  if (!payload || payload.change_source === undefined || payload.change_source === null || payload.change_source === '') {
-    throw new HttpError(422, 'change_source is required (onboarding or dashboard).', { code: 'change_source_required' });
+  if (isMissingChangeSource(payload)) {
+    payload = { ...(payload || {}), change_source: LEGACY_CHANGE_SOURCE };
   }
   const parsed = onboardingPetUpdatePayloadSchema.parse(payload || {});
   const normalized = {};
@@ -62,5 +68,7 @@ function parseOnboardingPetUpdateInput(payload = {}, market = MARKETS.US, now = 
 }
 
 module.exports = {
+  LEGACY_CHANGE_SOURCE,
+  isMissingChangeSource,
   parseOnboardingPetUpdateInput
 };

@@ -71,18 +71,41 @@ describe('onboarding pets update routes', () => {
     });
   });
 
-  test('refuses an edit without change_source with 422 change_source_required and saves nothing', async () => {
-    const onboardingPetUpdateService = { updatePet: jest.fn() };
-    const app = createApp({ onboardingPetUpdateService, corsOrigins, jwt });
+  test('accepts an edit without change_source from the previous storefront, as onboarding, and logs a warning', async () => {
+    const onboardingPetUpdateService = {
+      updatePet: jest.fn().mockResolvedValue({ success: true, data: { pet: { id: 'pet-1', age_years: 8 } } })
+    };
+    const logger = { warn: jest.fn(), error: jest.fn(), info: jest.fn() };
+    const app = createApp({ onboardingPetUpdateService, corsOrigins, jwt, logger });
 
     const response = await request(app)
       .patch('/api/v1/onboarding/pets/pet-1')
       .set('Authorization', `Bearer ${issueAccessToken(7)}`)
       .send({ age_years: 8 });
 
-    expect(response.status).toBe(422);
-    expect(response.body).toMatchObject({ success: false, code: 'change_source_required' });
-    expect(onboardingPetUpdateService.updatePet).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(onboardingPetUpdateService.updatePet).toHaveBeenCalledWith({
+      userId: 7,
+      petId: 'pet-1',
+      payload: { age_years: 8, change_source: 'onboarding' },
+      market: MARKETS.US
+    });
+    expect(logger.warn).toHaveBeenCalledWith({ userId: 7, petId: 'pet-1' }, 'Pet edit without change_source, recorded as onboarding.');
+  });
+
+  test('logs no warning when the storefront sends change_source', async () => {
+    const onboardingPetUpdateService = {
+      updatePet: jest.fn().mockResolvedValue({ success: true, data: { pet: { id: 'pet-1' } } })
+    };
+    const logger = { warn: jest.fn(), error: jest.fn(), info: jest.fn() };
+    const app = createApp({ onboardingPetUpdateService, corsOrigins, jwt, logger });
+
+    await request(app)
+      .patch('/api/v1/onboarding/pets/pet-1')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+      .send({ age_years: 8, change_source: 'dashboard' });
+
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   test('refuses an unknown change_source', async () => {
@@ -94,7 +117,7 @@ describe('onboarding pets update routes', () => {
       .set('Authorization', `Bearer ${issueAccessToken(7)}`)
       .send({ age_years: 8, change_source: 'admin' });
 
-    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBe(400);
     expect(onboardingPetUpdateService.updatePet).not.toHaveBeenCalled();
   });
 });

@@ -77,6 +77,22 @@ describe('PATCH age change', () => {
     });
   });
 
+  test('the previous storefront body, without change_source, is saved with history source onboarding (until task 7.6)', async () => {
+    const { service, repository, ageChangesRepository } = serviceFor(storedPet());
+    // Exactly what buildPetPayload sent before this change: strings for age and weight, no change_source.
+    const previousStorefrontBody = {
+      age_years: '0', age_months: '6', weight: '8', weight_unit: 'kg', neutered: false,
+      name: 'Luna', size: 'medium', activity_level: 'medium', pet_condition: 'ideal'
+    };
+
+    const payload = parseOnboardingPetUpdateInput(previousStorefrontBody, MARKETS.BR, NOW);
+    await service.updatePet({ userId: 7, petId: 'pet-1', payload, market: MARKETS.BR });
+
+    expect(payload.change_source).toBe('onboarding');
+    expect(repository.updatePet.mock.calls[0][2]).toMatchObject({ age_years: 0, age_months: 6, age_recorded_at: NOW });
+    expect(ageChangesRepository.record.mock.calls[0][0]).toMatchObject({ newAgeMonths: 6, source: 'onboarding' });
+  });
+
   test('the same age keeps age_recorded_at and writes no history', async () => {
     const { service, repository, ageChangesRepository } = serviceFor(storedPet());
 

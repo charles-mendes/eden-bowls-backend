@@ -140,7 +140,7 @@ class OnboardingPetUpdateService {
         newBirthDate: after.birth_date,
         oldLifeStage: await this.stageOf(current, market),
         newLifeStage: await this.stageOf(pet, market),
-        source: changeSource
+        source: changeSource || 'onboarding'
       });
     }
 
