@@ -3,6 +3,12 @@ const { mapLedgerToDashboardDetail } = require('../../core/subscription-dashboar
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 
+// Moving the next charge date sets trial_end, and Stripe answers with a paid R$ 0 subscription_update invoice.
+// Nothing was charged or ordered, so it stays out of the billing history.
+function isTrialMoveInvoice(invoice) {
+  return String(invoice.billing_reason || '') === 'subscription_update' && !(Number(invoice.total) > 0);
+}
+
 class SubscriptionsDetailRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
@@ -78,7 +84,8 @@ class SubscriptionsDetailRepository {
 
     if (stripeBilling && stripeBilling.listInvoicesForSubscription) {
       try {
-        const invoices = await stripeBilling.listInvoicesForSubscription(subscriptionId);
+        const invoices = (await stripeBilling.listInvoicesForSubscription(subscriptionId))
+          .filter((invoice) => !isTrialMoveInvoice(invoice));
         let shipmentByInvoice = new Map();
         if (this.upsShipmentRepository && typeof this.upsShipmentRepository.listByInvoiceIds === 'function') {
           const shipments = await this.upsShipmentRepository.listByInvoiceIds(
