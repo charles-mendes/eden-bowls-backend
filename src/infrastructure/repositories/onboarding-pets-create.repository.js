@@ -12,7 +12,7 @@ class OnboardingPetCreateRepository {
     }
 
     await this.dataSource.query(
-      `INSERT INTO \`${this.tableName}\` (\`id\`, \`user_id\`, \`name\`, \`breed\`, \`age_years\`, \`age_months\`, \`weight_input\`, \`weight_unit\`, \`size\`, \`activity_level\`, \`pet_condition\`, \`neutered\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO \`${this.tableName}\` (\`id\`, \`user_id\`, \`name\`, \`breed\`, \`age_years\`, \`age_months\`, \`weight_input\`, \`weight_unit\`, \`size\`, \`activity_level\`, \`pet_condition\`, \`neutered\`, \`birth_date\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         petId,
         userId,
@@ -25,7 +25,8 @@ class OnboardingPetCreateRepository {
         payload.size,
         payload.activity_level,
         payload.pet_condition,
-        payload.neutered ? 1 : 0
+        payload.neutered ? 1 : 0,
+        payload.birth_date || null
       ]
     );
 
@@ -54,12 +55,13 @@ class OnboardingPetCreateRepository {
       throw new HttpError(503, 'Database connection is not initialized.');
     }
 
+    // An existing pet keeps its age and birth date: only the pet edit changes them (L-02, L-21).
     const results = [];
     for (const payload of pets) {
       const petId = payload.pet_id || require('crypto').randomUUID();
       const localId = payload.local_id || payload.pet_id || petId;
       await this.dataSource.query(
-        `INSERT INTO \`${this.tableName}\` (\`id\`, \`user_id\`, \`local_id\`, \`name\`, \`breed\`, \`age_years\`, \`age_months\`, \`weight_input\`, \`weight_unit\`, \`size\`, \`activity_level\`, \`pet_condition\`, \`neutered\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE \`name\` = VALUES(\`name\`), \`breed\` = VALUES(\`breed\`), \`age_years\` = VALUES(\`age_years\`), \`age_months\` = VALUES(\`age_months\`), \`weight_input\` = VALUES(\`weight_input\`), \`weight_unit\` = VALUES(\`weight_unit\`), \`size\` = VALUES(\`size\`), \`activity_level\` = VALUES(\`activity_level\`), \`pet_condition\` = VALUES(\`pet_condition\`), \`neutered\` = VALUES(\`neutered\`), \`deleted_at\` = NULL`,
+        `INSERT INTO \`${this.tableName}\` (\`id\`, \`user_id\`, \`local_id\`, \`name\`, \`breed\`, \`age_years\`, \`age_months\`, \`weight_input\`, \`weight_unit\`, \`size\`, \`activity_level\`, \`pet_condition\`, \`neutered\`, \`birth_date\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE \`name\` = VALUES(\`name\`), \`breed\` = VALUES(\`breed\`), \`weight_input\` = VALUES(\`weight_input\`), \`weight_unit\` = VALUES(\`weight_unit\`), \`size\` = VALUES(\`size\`), \`activity_level\` = VALUES(\`activity_level\`), \`pet_condition\` = VALUES(\`pet_condition\`), \`neutered\` = VALUES(\`neutered\`), \`deleted_at\` = NULL`,
         [
           petId,
           userId,
@@ -73,7 +75,8 @@ class OnboardingPetCreateRepository {
           payload.size || 'medium',
           payload.activity_level || 'medium',
           payload.pet_condition || 'ideal',
-          payload.neutered ? 1 : 0
+          payload.neutered ? 1 : 0,
+          payload.birth_date || null
         ]
       );
       results.push({ local_id: localId, id: petId });

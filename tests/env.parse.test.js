@@ -28,6 +28,16 @@ function productionEnv(overrides = {}) {
 }
 
 describe('parseEnv', () => {
+  test('stage-change email switches are on unless set to false, per market (2.16)', () => {
+    const unset = parseEnv(productionEnv());
+    expect(unset.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR).toBe(true);
+    expect(unset.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US).toBe(true);
+
+    const paused = parseEnv(productionEnv({ LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR: 'false', LIFE_STAGE_CHANGE_EMAIL_ENABLED_US: 'true' }));
+    expect(paused.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR).toBe(false);
+    expect(paused.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US).toBe(true);
+  });
+
   test('rejects a missing runtime label', () => {
     expect(() => parseEnv({ NODE_ENV: 'development' })).toThrow(/EDEN_RUNTIME/);
     expect(() => parseEnv(productionEnv({ EDEN_RUNTIME: '' }))).toThrow(/EDEN_RUNTIME/);
@@ -45,6 +55,21 @@ describe('parseEnv', () => {
     expect(env.AUTH_OTP_PEPPER).toBe('hsr-default-salt');
     expect(env.STRIPE_BR_ENABLED).toBe(false);
     expect(env.AUTH_REFRESH_COOKIE_DOMAIN).toBe('');
+  });
+
+  test('stores recipe images under a configurable directory', () => {
+    const unset = parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local' });
+    expect(unset.RECIPE_IMAGE_DIR).toBe('./public/recipe-images');
+    expect(unset.RECIPE_IMAGE_PUBLIC_BASE_URL).toBe('');
+
+    const set = parseEnv({
+      NODE_ENV: 'development',
+      EDEN_RUNTIME: 'local',
+      RECIPE_IMAGE_DIR: '/app/public/recipe-images',
+      RECIPE_IMAGE_PUBLIC_BASE_URL: 'https://qa-api.edenbowls.com/recipe-images'
+    });
+    expect(set.RECIPE_IMAGE_DIR).toBe('/app/public/recipe-images');
+    expect(set.RECIPE_IMAGE_PUBLIC_BASE_URL).toBe('https://qa-api.edenbowls.com/recipe-images');
   });
 
   test('keeps the UPS client id outside production', () => {

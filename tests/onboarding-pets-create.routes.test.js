@@ -58,7 +58,7 @@ describe('onboarding pets create routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.data.pet.id).toBe('pet-1');
     expect(response.body.data.session).toBeUndefined();
-    expect(onboardingPetCreateService.createPet).toHaveBeenCalledWith({ userId: 7, payload, market: MARKETS.US });
+    expect(onboardingPetCreateService.createPet).toHaveBeenCalledWith({ userId: 7, payload: { ...payload, birth_date: null }, market: MARKETS.US });
   });
 
   test('defaults weight_unit to lb for the US market', async () => {

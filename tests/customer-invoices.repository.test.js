@@ -79,8 +79,22 @@ describe('CustomerInvoicesRepository', () => {
 
     const variants = await repository.findVariantsByPriceIds(['price_beef', 'price_fish', 'not_a_price']);
 
-    expect(variants.get('price_beef')).toEqual({ flavorKey: 'beef', grams: 300 });
-    expect(variants.get('price_fish')).toEqual({ flavorKey: 'fish', grams: 500 });
+    expect(variants.get('price_beef')).toEqual({ flavorKey: 'beef', label: 'Bovino', grams: 300 });
+    expect(variants.get('price_fish')).toEqual({ flavorKey: 'fish', label: '', grams: 500 });
+  });
+
+  test('a new recipe keeps its key from the slug and its full catalog name', async () => {
+    const dataSource = {
+      query: jest.fn()
+        .mockResolvedValueOnce([{ post_id: 401, meta_value: 'price_senior_beef' }])
+        .mockResolvedValueOnce([
+          { post_id: 401, meta_key: '_flavor_slug', meta_value: 'senior-beef' },
+          { post_id: 401, meta_key: 'attribute_pa_flavor', meta_value: 'Receita de Carne para Cães Sênior' },
+          { post_id: 401, meta_key: 'attribute_pa_weight', meta_value: '300g' }
+        ])
+    };
+    const variants = await new CustomerInvoicesRepository(dataSource).findVariantsByPriceIds(['price_senior_beef']);
+    expect(variants.get('price_senior_beef')).toEqual({ flavorKey: 'senior-beef', label: 'Receita de Carne para Cães Sênior', grams: 300 });
   });
 
   test('email retries back off from five minutes up to six hours', () => {

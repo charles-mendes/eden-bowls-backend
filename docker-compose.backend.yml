@@ -20,6 +20,7 @@ services:
       - eden-bowls-avatars:/app/public/avatars
       - eden-bowls-feedback-photos:/app/public/feedback-photos
       - eden-bowls-pet-photos:/app/public/pet-photos
+      - eden-bowls-recipe-images:/app/public/recipe-images
       - eden-bowls-ups-labels:/app/ups-labels
       - eden-bowls-invoices:/app/invoices
       - ./data:/app/data:ro
@@ -40,5 +41,6 @@ volumes:
   eden-bowls-avatars:
   eden-bowls-feedback-photos:
   eden-bowls-pet-photos:
+  eden-bowls-recipe-images:
   eden-bowls-ups-labels:
   eden-bowls-invoices:

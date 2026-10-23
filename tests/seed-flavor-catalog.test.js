@@ -46,4 +46,36 @@ describe('seedFlavorCatalog', () => {
     expect(metaByKey.get('2008:_us_regular_price')).toBe('42.50');
     expect(metaByKey.get('2008:attribute_pa_weight')).toBe('17.6oz');
   });
+
+  // Subscriptions and Stripe prices point at these IDs. New recipes are created in the admin, never by
+  // appending to FLAVOR_KEYS, which would renumber every 500g and 17.6oz variation below.
+  test('keeps the seeded variation IDs of every flavor and pack size', async () => {
+    const queryRunner = {
+      query: jest.fn().mockResolvedValue(undefined)
+    };
+
+    await seedFlavorCatalog(queryRunner);
+
+    const metaInsert = queryRunner.query.mock.calls
+      .map(([sql, params]) => ({ sql, params: params || [] }))
+      .find((statement) => statement.sql.includes('INSERT INTO `wp_postmeta`'));
+    const slugById = {};
+    const weightById = {};
+    for (let index = 0; index < metaInsert.params.length; index += 3) {
+      const [postId, key, value] = metaInsert.params.slice(index, index + 3);
+      if (key === '_flavor_slug') slugById[postId] = value;
+      if (key === 'attribute_pa_weight') weightById[postId] = value;
+    }
+    const seeded = Object.keys(slugById)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map((id) => `${id}:${slugById[id]}:${weightById[id]}`);
+
+    expect(seeded).toEqual([
+      '1001:beef:300g', '1002:fish:300g', '1003:pork:300g', '1004:turkey:300g',
+      '1005:beef:500g', '1006:fish:500g', '1007:pork:500g', '1008:turkey:500g',
+      '2001:beef:10.6oz', '2002:fish:10.6oz', '2003:pork:10.6oz', '2004:turkey:10.6oz',
+      '2005:beef:17.6oz', '2006:fish:17.6oz', '2007:pork:17.6oz', '2008:turkey:17.6oz'
+    ]);
+  });
 });

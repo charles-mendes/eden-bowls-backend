@@ -1,6 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const { parseRequestMarket } = require('../validators/market.validator');
-const { parseOnboardingPetUpdateInput } = require('../validators/onboarding-pets-update.validator');
+const { isMissingChangeSource, parseOnboardingPetUpdateInput } = require('../validators/onboarding-pets-update.validator');
 
 function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
   app.patch('/api/v1/onboarding/pets/:petId', async (request, response, next) => {
@@ -14,7 +14,11 @@ function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
       }
 
       const market = parseRequestMarket(request, request.body || {});
-      const payload = parseOnboardingPetUpdateInput(request.body || {});
+      if (isMissingChangeSource(request.body) && dependencies.logger && typeof dependencies.logger.warn === 'function') {
+        // Only the previous storefront omits it; task 7.6 turns this into 422 change_source_required.
+        dependencies.logger.warn({ userId: request.currentUser.id, petId: request.params.petId }, 'Pet edit without change_source, recorded as onboarding.');
+      }
+      const payload = parseOnboardingPetUpdateInput(request.body || {}, market);
       const result = await dependencies.onboardingPetUpdateService.updatePet({
         userId: request.currentUser.id,
         petId: request.params.petId,
@@ -25,10 +29,12 @@ function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
       response.status(200).json(result);
     } catch (error) {
       if (error instanceof HttpError && error.details && error.details.code) {
-        response.status(error.statusCode).json({
-          success: false,
-          message: error.message
-        });
+        // The confirmation needs the new stage and the affected plans; other errors keep their short body.
+        const body = { success: false, code: error.details.code, message: error.message };
+        if (error.details.code === 'life_stage_change_requires_confirmation') {
+          body.details = error.details;
+        }
+        response.status(error.statusCode).json(body);
         return;
       }
 

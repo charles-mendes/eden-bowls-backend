@@ -16,7 +16,11 @@ const MARKETS = {
       beef: 'Beef',
       fish: 'Fish',
       pork: 'Pork',
-      turkey: 'Chicken'
+      turkey: 'Chicken',
+      'puppy-chicken-pork': 'Chicken & Pork Recipe for Puppies',
+      'puppy-beef-chicken': 'Beef & Chicken Recipe for Puppies',
+      'senior-beef': 'Beef Recipe for Senior Dogs',
+      'senior-chicken': 'Chicken Recipe for Senior Dogs'
     }
   },
   BR: {
@@ -34,7 +38,11 @@ const MARKETS = {
       beef: 'Bovino',
       fish: 'Peixe',
       pork: 'Porco',
-      turkey: 'Frango'
+      turkey: 'Frango',
+      'puppy-chicken-pork': 'Receita de Frango e Porco para Filhotes',
+      'puppy-beef-chicken': 'Receita de Carne e Frango para Filhotes',
+      'senior-beef': 'Receita de Carne para Cães Sênior',
+      'senior-chicken': 'Receita de Frango para Cães Sênior'
     }
   }
 };

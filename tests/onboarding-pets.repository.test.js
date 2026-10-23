@@ -31,4 +31,22 @@ describe('OnboardingPetsRepository', () => {
       [7]
     );
   });
+
+  test('reads the age reference and birth date of each pet', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn().mockResolvedValue([
+        { id: 'pet-1', name: 'Luna', age_years: 0, age_months: 5, weight_unit: 'kg', age_recorded_at: new Date('2026-10-18T09:00:00Z'), birth_date: null },
+        { id: 'pet-2', name: 'Thor', age_years: 5, age_months: 0, weight_unit: 'kg', age_recorded_at: '2026-03-01 10:00:00', birth_date: new Date('2021-07-10T00:00:00Z') }
+      ])
+    };
+
+    const result = await new OnboardingPetsRepository(dataSource).listPets(7);
+
+    expect(dataSource.query.mock.calls[0][0]).toContain('`age_recorded_at`, `birth_date`');
+    expect(result.pets.map((pet) => [pet.age_recorded_at, pet.birth_date])).toEqual([
+      ['2026-10-18T09:00:00.000Z', null],
+      ['2026-03-01T10:00:00.000Z', '2021-07-10']
+    ]);
+  });
 });

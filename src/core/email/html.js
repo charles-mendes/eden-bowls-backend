@@ -140,7 +140,10 @@ function wrapEmailHtml({
   title,
   innerHtml,
   assetBaseUrl,
-  allowRelativeAssets
+  allowRelativeAssets,
+  // Marketing letters drop the account security note and add the company line.
+  securityNote = true,
+  footerLines = []
 }) {
   const pt = isPortuguese(locale);
   const preview = escapeHtml(preheader || '');
@@ -200,7 +203,7 @@ function wrapEmailHtml({
             <td style="background:${BRAND.parchment};border:1px solid ${BRAND.border};border-top:0;padding:24px 36px 28px;">
               ${horizontal || `<p style="margin:0 0 12px;font-family:${FONT_DISPLAY};font-size:13px;letter-spacing:0.2em;text-transform:uppercase;color:${BRAND.ink};">${escapeHtml(BRAND.name)}</p>`}
               <p style="margin:0 0 8px;font-family:${FONT_BODY};font-size:13px;line-height:1.6;color:${BRAND.muted};">${footerNote}<a href="mailto:${BRAND.support}" style="color:${BRAND.moss};text-decoration:none;">${BRAND.support}</a></p>
-              <p style="margin:0;font-family:${FONT_BODY};font-size:12px;line-height:1.55;color:${BRAND.muted};">${escapeHtml(legal)}</p>
+              ${[securityNote ? legal : '', ...(footerLines || [])].filter(Boolean).map((line) => `<p style="margin:0;font-family:${FONT_BODY};font-size:12px;line-height:1.55;color:${BRAND.muted};">${escapeHtml(line)}</p>`).join('')}
             </td>
           </tr>
         </table>

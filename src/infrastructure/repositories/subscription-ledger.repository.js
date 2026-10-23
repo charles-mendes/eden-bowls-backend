@@ -950,6 +950,58 @@ class SubscriptionLedgerRepository {
     }
   }
 
+  // Counts subscriptions still delivering (the production queue statuses) that reference a catalog
+  // variation by id in plan_selection, or by one of its Stripe prices.
+  async countActiveSubscriptionsForCatalog({ variationIds = [], priceIds = [] } = {}) {
+    const variations = [...new Set(variationIds.map((id) => String(id).trim()).filter(Boolean))];
+    const prices = [...new Set(priceIds.map((id) => String(id).trim()).filter((id) => id.startsWith('price_')))];
+    if (!variations.length && !prices.length) {
+      return 0;
+    }
+
+    this.ensureDataSource();
+    const where = [];
+    const params = [];
+    const inList = (column, values) => {
+      where.push(`${column} IN (${values.map(() => '?').join(', ')})`);
+      params.push(...values);
+    };
+    if (prices.length) {
+      inList('s.stripe_price_id', prices);
+      inList('jt.price_id', prices);
+      inList('jt.alt_price', prices);
+    }
+    if (variations.length) {
+      inList('jt.variation_id', variations);
+    }
+
+    try {
+      const rows = await this.dataSource.query(
+        [
+          'SELECT COUNT(DISTINCT s.id) AS total',
+          `FROM \`${this.tableName}\` s`,
+          'LEFT JOIN JSON_TABLE(',
+          'CASE WHEN JSON_VALID(s.plan_selection) THEN s.plan_selection ELSE JSON_OBJECT() END,',
+          "'$.catalog_pricing.line_items[*]' COLUMNS (",
+          "price_id VARCHAR(64) PATH '$.stripe_price_id',",
+          "alt_price VARCHAR(64) PATH '$.price_id',",
+          "variation_id VARCHAR(32) PATH '$.variation_id'",
+          ')',
+          ') jt ON TRUE',
+          "WHERE s.status IN ('active', 'trialing', 'past_due')",
+          `AND (${where.join(' OR ')})`
+        ].join(' '),
+        params
+      );
+      return Number(rows && rows[0] && rows[0].total) || 0;
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return 0;
+      }
+      throw error;
+    }
+  }
+
   // Subscriptions that still have a delivery to make: the same statuses the production queue keeps.
   async listDeliverableByAccount(stripeAccount) {
     this.ensureDataSource();

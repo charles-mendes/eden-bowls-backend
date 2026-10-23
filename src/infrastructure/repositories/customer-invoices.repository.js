@@ -223,7 +223,11 @@ class CustomerInvoicesRepository {
       const meta = metaByPost.get(postId) || {};
       const flavorKey = canonicalFlavorKey(firstMeta(meta, FLAVOR_META));
       if (!flavorKey) continue;
-      result.set(priceId, { flavorKey, grams: parseWeightToGrams(firstMeta(meta, WEIGHT_META)) });
+      result.set(priceId, {
+        flavorKey,
+        label: firstMeta(meta, FLAVOR_META.filter((key) => key !== '_flavor_slug')) || '',
+        grams: parseWeightToGrams(firstMeta(meta, WEIGHT_META))
+      });
     }
     return result;
   }

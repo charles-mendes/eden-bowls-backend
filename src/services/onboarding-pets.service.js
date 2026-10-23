@@ -98,6 +98,7 @@ class OnboardingPetsService {
   constructor(repository, options = {}) {
     this.repository = repository;
     this.planSelectionRepository = options.planSelectionRepository || null;
+    this.lifeStageService = options.lifeStageService || null;
     this.ledgerRepository = options.ledgerRepository || null;
     this.petsSyncRepository = options.petsSyncRepository || null;
   }
@@ -159,12 +160,17 @@ class OnboardingPetsService {
       pets = await this.persistFallbackPets(userId, fallbackPets);
     }
 
+    let formatted = pets.map((pet) => formatPetForMarket(pet, market));
+    if (this.lifeStageService) {
+      formatted = await this.lifeStageService.annotate(formatted, market.country, (_pet, index) => pets[index]);
+    }
+
     return {
       success: true,
       data: {
         country: market.country,
         currency: market.currency,
-        pets: pets.map((pet) => formatPetForMarket(pet, market))
+        pets: formatted
       }
     };
   }

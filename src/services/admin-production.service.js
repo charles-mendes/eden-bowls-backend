@@ -86,14 +86,29 @@ class AdminProductionService {
     this.productionRepository = options.productionRepository;
     this.auditService = options.auditService || null;
     this.deliverySchedule = options.deliverySchedule || null;
+    this.recipeNamesRepository = options.recipeNamesRepository || null;
     this.now = options.now || (() => new Date());
   }
 
-  present(row, timezone, actor = {}) {
+  // Current catalog names per market and flavor key, so older subscriptions also show the short name.
+  async loadRecipeNames() {
+    const repository = this.recipeNamesRepository;
+    if (!repository || typeof repository.listRecipeNames !== 'function') {
+      return null;
+    }
+    try {
+      return await repository.listRecipeNames();
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  present(row, timezone, actor = {}, recipeNames = null) {
     return presentProductionQueueItem(row, {
       timezone,
       now: this.now(),
-      actor
+      actor,
+      recipeNames
     });
   }
 
@@ -128,19 +143,20 @@ class AdminProductionService {
       perPage: pagination.perPage
     };
 
-    const [result, metricRows] = await Promise.all([
+    const [result, metricRows, recipeNames] = await Promise.all([
       this.ledgerRepository.listQueue(listInput),
       this.ledgerRepository.listQueueMetricRows({
         ...bounds,
         includeOverdue: query.includeOverdue !== false,
         account,
         stripeAccounts
-      })
+      }),
+      this.loadRecipeNames()
     ]);
 
     return {
       ...paginatedEnvelope({
-        items: result.items.map((item) => this.present(item, timezone, actor)),
+        items: result.items.map((item) => this.present(item, timezone, actor, recipeNames)),
         total: result.total,
         page: pagination.page,
         perPage: pagination.perPage
@@ -260,7 +276,7 @@ class AdminProductionService {
     }
 
     const updated = await this.ledgerRepository.findQueueRowById(row.id, periodEnd);
-    return this.present(updated || { ...row, productionStatus: body.status, note: body.note }, timezone, actor);
+    return this.present(updated || { ...row, productionStatus: body.status, note: body.note }, timezone, actor, await this.loadRecipeNames());
   }
 }
 

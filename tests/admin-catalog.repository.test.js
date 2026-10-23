@@ -197,6 +197,77 @@ describe('AdminCatalogRepository', () => {
     expect(flavorInsert[1]).toEqual([3001, 'attribute_pa_flavor', 'Lamb']);
   });
 
+  test('reads the life stage line of each variation, adult when the meta is missing', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([{ total: 1 }])
+        .mockResolvedValueOnce([{ id: 100, name: 'Flavors BR', slug: 'flavors-br', status: 'draft', createdAt: '2026-08-01 10:00:00', planCountry: 'BR', planDays: '30' }])
+        .mockResolvedValueOnce([
+          { variationId: 1001, name: 'Beef 300g', status: 'publish', meta_key: 'attribute_pa_flavor', meta_value: 'Beef' },
+          { variationId: 3001, name: 'Senior Beef 300g', status: 'publish', meta_key: '_life_stage', meta_value: 'senior' }
+        ])
+    };
+    const repository = new AdminCatalogRepository(dataSource);
+    const result = await repository.listProducts({ market: 'BR', offset: 0, perPage: 20 });
+
+    const lines = Object.fromEntries(result.items[0].variants.map((variant) => [variant.id, variant.lifeStage]));
+    expect(lines).toEqual({ 1001: 'adult', 3001: 'senior' });
+  });
+
+  test('stores the life stage line on create, adult by default, and on update only when given', async () => {
+    const lineWrites = (dataSource) => dataSource.query.mock.calls
+      .filter((call) => Array.isArray(call[1]) && call[1].includes('_life_stage'))
+      .map((call) => call[1].filter((value) => value !== '_life_stage'));
+
+    const created = { isInitialized: true, query: jest.fn().mockResolvedValueOnce([{ nextId: 3001 }]).mockResolvedValue([]) };
+    await new AdminCatalogRepository(created).createVariation({ productId: 100, name: 'Senior Beef 300g', lifeStage: 'senior', zoneId: 'br' });
+    expect(lineWrites(created).flat()).toContain('senior');
+
+    const defaulted = { isInitialized: true, query: jest.fn().mockResolvedValueOnce([{ nextId: 3002 }]).mockResolvedValue([]) };
+    await new AdminCatalogRepository(defaulted).createVariation({ productId: 100, name: 'Lamb 300g', zoneId: 'br' });
+    expect(lineWrites(defaulted).flat()).toContain('adult');
+
+    const untouched = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    await new AdminCatalogRepository(untouched).updateVariation({ id: 1001, name: 'Beef 300g', zoneId: 'br' });
+    expect(lineWrites(untouched)).toEqual([]);
+
+    const updated = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    await new AdminCatalogRepository(updated).updateVariation({ id: 1001, lifeStage: 'puppy', zoneId: 'br' });
+    expect(lineWrites(updated).flat()).toContain('puppy');
+  });
+
+  test('creates every new variation as draft', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValueOnce([{ nextId: 3001 }]).mockResolvedValue([]) };
+    await new AdminCatalogRepository(dataSource).createVariation({ productId: 100, name: 'Senior Beef 300g', zoneId: 'br' });
+
+    const insert = dataSource.query.mock.calls.find((call) => String(call[0]).includes("'product_variation'"));
+    expect(insert[0]).toContain("'product_variation', 'draft'");
+  });
+
+  test('stores and reads the final-image and label-data confirmations', async () => {
+    const written = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    await new AdminCatalogRepository(written).updateVariation({ id: 3001, finalImageReady: true, labelDataReady: false, zoneId: 'us' });
+    const flags = written.query.mock.calls
+      .filter((call) => Array.isArray(call[1]) && call[1].some((value) => String(value).endsWith('_ready')))
+      .map((call) => call[1].filter((value) => value !== 3001));
+    expect(flags).toEqual(expect.arrayContaining([['_final_image_ready', 'yes'], ['_label_data_ready', 'no']].map((pair) => expect.arrayContaining(pair))));
+
+    const read = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([{ total: 1 }])
+        .mockResolvedValueOnce([{ id: 200, name: 'Flavors US', slug: 'flavors-us', status: 'publish', createdAt: '2026-08-01 10:00:00', planCountry: 'US', planDays: '30' }])
+        .mockResolvedValueOnce([
+          { variationId: 3001, name: 'Senior Beef 10.6oz', status: 'draft', meta_key: '_final_image_ready', meta_value: 'yes' },
+          { variationId: 3002, name: 'Senior Chicken 10.6oz', status: 'draft', meta_key: '_label_data_ready', meta_value: 'no' }
+        ])
+    };
+    const result = await new AdminCatalogRepository(read).listProducts({ market: 'US', offset: 0, perPage: 20 });
+    const byId = Object.fromEntries(result.items[0].variants.map((item) => [item.id, [item.active, item.finalImageReady, item.labelDataReady]]));
+    expect(byId).toEqual({ 3001: [false, true, false], 3002: [false, false, false] });
+  });
+
   test('returns an empty catalog when the table does not exist', async () => {
     const dataSource = {
       isInitialized: true,
@@ -212,5 +283,40 @@ describe('AdminCatalogRepository', () => {
       total: 0,
       items: []
     });
+  });
+
+  test('lists the variations of one recipe in a market by their stored recipe key only', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn().mockResolvedValue([
+        { variationId: 1001, name: 'Beef 300g', sku: '1001', productId: 100, productName: 'Flavors BR', market: 'BR', variationStatus: 'draft', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' },
+        { variationId: 1005, name: 'Beef 500g', sku: '1005', productId: 100, productName: 'Flavors BR', market: 'BR', variationStatus: 'publish', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' },
+        { variationId: 3000, name: 'Bovino', sku: '3000', productId: 300, productName: 'Plano antigo', market: 'BR', variationStatus: 'publish', productStatus: 'publish', flavorSlug: null, recipeKey: '', label: 'Bovino', shortLabel: null, lifeStage: 'adult' },
+        { variationId: 2001, name: 'Beef 300g', sku: '2001', productId: 200, productName: 'Flavors US', market: 'US', variationStatus: 'publish', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' }
+      ])
+    };
+    const repository = new AdminCatalogRepository(dataSource);
+
+    expect(await repository.listRecipeVariations('br', 'beef')).toEqual([
+      { id: '1001', name: 'Beef 300g', sku: '1001', active: false, productId: '100', productName: 'Flavors BR' },
+      { id: '1005', name: 'Beef 500g', sku: '1005', active: true, productId: '100', productName: 'Flavors BR' }
+    ]);
+    const byKey = await repository.listMarketRecipeVariations('BR');
+    expect([...byKey.keys()]).toEqual(['beef']);
+    expect(dataSource.query.mock.calls[0][0]).toContain("vm.meta_key = '_recipe_key'");
+  });
+
+  test('stores, keeps or clears the recipe key of a variation', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    const repository = new AdminCatalogRepository(dataSource);
+    repository.upsertPostMeta = jest.fn();
+    repository.updatePost = jest.fn();
+
+    await repository.updateVariation({ id: '1001', recipeKey: 'beef' });
+    await repository.updateVariation({ id: '1002', recipeKey: null });
+    await repository.updateVariation({ id: '1003' });
+
+    const keyWrites = repository.upsertPostMeta.mock.calls.filter(([, key]) => key === '_recipe_key');
+    expect(keyWrites).toEqual([['1001', '_recipe_key', 'beef'], ['1002', '_recipe_key', '']]);
   });
 });

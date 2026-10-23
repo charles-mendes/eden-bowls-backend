@@ -115,7 +115,26 @@ const PREVIEW_CASES = {
   }
 };
 
+// The new life-stage recipes print their full catalog name (2.15).
+const LIFE_STAGE_PREVIEW_CASES = {
+  'en-US': {
+    ...PREVIEW_CASES['en-US'],
+    variants: new Map([
+      ['price_first', { flavorKey: 'senior-beef', label: 'Beef Recipe for Senior Dogs', grams: 300 }],
+      ['price_second', { flavorKey: 'puppy-chicken-pork', label: 'Chicken & Pork Recipe for Puppies', grams: 300 }]
+    ])
+  },
+  'pt-BR': {
+    ...PREVIEW_CASES['pt-BR'],
+    variants: new Map([
+      ['price_first', { flavorKey: 'senior-beef', label: 'Receita de Carne para Cães Sênior', grams: 300 }],
+      ['price_second', { flavorKey: 'puppy-chicken-pork', label: 'Receita de Frango e Porco para Filhotes', grams: 300 }]
+    ])
+  }
+};
+
 module.exports = {
+  LIFE_STAGE_PREVIEW_CASES,
   PREVIEW_CASES,
   sampleInvoice
 };

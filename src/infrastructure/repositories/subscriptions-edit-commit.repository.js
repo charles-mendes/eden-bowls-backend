@@ -83,7 +83,8 @@ class SubscriptionsEditCommitRepository {
 
     const proposed = await resolveProposedPlan(this.planPreviewRepository, this.resolveSubscriptionItems, {
       userId,
-      payload
+      payload,
+      currentSelection: row.planSelection
     });
     const itemUpdates = diffSubscriptionItems(currentItems, proposed.items);
     if (options.defer) {

@@ -55,6 +55,7 @@ const { ProfileRepository } = require('./infrastructure/repositories/profile.rep
 const { LocalAvatarStorage } = require('./infrastructure/storage/local-avatar-storage');
 const { LocalFeedbackPhotoStorage } = require('./infrastructure/storage/local-feedback-photo-storage');
 const { LocalPetPhotoStorage } = require('./infrastructure/storage/local-pet-photo-storage');
+const { LocalRecipeImageStorage } = require('./infrastructure/storage/local-recipe-image-storage');
 const { AuthService } = require('./services/auth.service');
 const { createOtpMailer } = require('./infrastructure/mailers/otp-mailer');
 const { BreedsService } = require('./services/breeds.service');
@@ -115,6 +116,15 @@ const { AdminTodayService } = require('./services/admin-today.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
+const { RecipeContentService } = require('./services/recipe-content.service');
+const { RecipeContentRepository } = require('./infrastructure/repositories/recipe-content.repository');
+const { LifeStageService } = require('./services/life-stage.service');
+const { LifeStageChangeEmailService } = require('./services/life-stage-change-email.service');
+const { LifeStageNoticesService } = require('./services/life-stage-notices.service');
+const { LifeStageAnnouncementsRepository } = require('./infrastructure/repositories/life-stage-announcements.repository');
+const { LifeStageLimitsRepository } = require('./infrastructure/repositories/life-stage-limits.repository');
+const { PetAgeChangesRepository } = require('./infrastructure/repositories/pet-age-changes.repository');
+const { PetLifeStageNoticesRepository } = require('./infrastructure/repositories/pet-life-stage-notices.repository');
 const { AdminSystemHealthService } = require('./services/admin-system-health.service');
 const { MarketConflictsRepository } = require('./infrastructure/repositories/market-conflicts.repository');
 const { CatalogSyncRunsRepository } = require('./infrastructure/repositories/catalog-sync-runs.repository');
@@ -307,9 +317,31 @@ async function bootstrap() {
   const onboardingPetCreateRepository = new OnboardingPetCreateRepository(dataSource);
   const onboardingPetCreateService = new OnboardingPetCreateService(onboardingPetCreateRepository);
   const onboardingPetUpdateRepository = new OnboardingPetUpdateRepository(dataSource);
-  const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository);
+  const recipeLinesRepository = new AdminCatalogRepository(dataSource, {
+    postsTableName: env.WP_POSTS_TABLE_NAME,
+    postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
+    termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
+  });
+  const lifeStageService = new LifeStageService({
+    repository: new LifeStageLimitsRepository(dataSource),
+    recipeLinesRepository
+  });
+  const petLifeStageNoticesRepository = new PetLifeStageNoticesRepository(dataSource);
+  const onboardingPetUpdateService = new OnboardingPetUpdateService(onboardingPetUpdateRepository, {
+    ageChangesRepository: new PetAgeChangesRepository(dataSource),
+    lifeStageService,
+    ledgerRepository: subscriptionLedgerRepository,
+    recipeLinesRepository,
+    noticesRepository: petLifeStageNoticesRepository
+  });
   const onboardingPetsRepository = new OnboardingPetsRepository(dataSource);
-  const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository);
+  const lifeStageNoticesService = new LifeStageNoticesService({
+    lifeStageService,
+    noticesRepository: petLifeStageNoticesRepository,
+    ledgerRepository: subscriptionLedgerRepository,
+    petsRepository: onboardingPetsRepository
+  });
+  const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository, { lifeStageService });
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
     recommendationRepository: onboardingRecommendationRepository,
@@ -344,6 +376,7 @@ async function bootstrap() {
   const onboardingShippingSelectService = new OnboardingShippingSelectService(onboardingShippingSelectRepository);
   const onboardingSubscriptionCheckoutRepository = new OnboardingSubscriptionCheckoutRepository(dataSource);
   const onboardingPetsService = new OnboardingPetsService(onboardingPetsRepository, {
+    lifeStageService,
     planSelectionRepository: onboardingPlanSelectionRepository,
     ledgerRepository: subscriptionLedgerRepository,
     petsSyncRepository: onboardingPetCreateRepository
@@ -357,7 +390,19 @@ async function bootstrap() {
     storeAppUrl: env.STORE_APP_URL,
     adminAppUrl: env.ADMIN_APP_URL,
     opsEmails: env.MAIL_OPS_TO,
-    emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
+    emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
+    recipeNamesRepository: recipeLinesRepository
+  });
+  const lifeStageChangeEmailService = new LifeStageChangeEmailService({
+    ledgerRepository: subscriptionLedgerRepository,
+    noticesService: lifeStageNoticesService,
+    noticesRepository: petLifeStageNoticesRepository,
+    announcementsRepository: new LifeStageAnnouncementsRepository(dataSource),
+    deliveriesService: customerDeliveriesService,
+    petsRepository: onboardingPetsRepository,
+    mailer: transactionalMailer,
+    enabled: { BR: env.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR, US: env.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US },
+    logger
   });
   // Eden Bowls invoice PDFs (EB-YYYY-NNNNNN): issued on invoice.paid, kept in INVOICE_PDF_DIR, emailed to the customer.
   const customerInvoicesService = new CustomerInvoicesService({
@@ -394,7 +439,9 @@ async function bootstrap() {
     ledgerRepository: subscriptionLedgerRepository,
     planPreviewRepository: onboardingPlanPreviewRepository,
     petsSyncRepository: onboardingPetCreateRepository,
-    shippingQuoteSigner
+    shippingQuoteSigner,
+    lifeStageService,
+    petsRepository: onboardingPetsRepository
   });
   const onboardingZipcodeLookupRepository = new OnboardingZipcodeLookupRepository({
     viaCepClient,
@@ -418,7 +465,12 @@ async function bootstrap() {
     upsShipmentRepository,
     productsRepository
   });
-  const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository);
+  const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository, {
+    lifeStageService,
+    petsRepository: onboardingPetsRepository,
+    lifeStageNoticesService,
+    ledgerRepository: subscriptionLedgerRepository
+  });
   const subscriptionsEditPreviewRepository = new SubscriptionsEditPreviewRepository({
     ledgerRepository: subscriptionLedgerRepository,
     stripeAccounts,
@@ -452,6 +504,7 @@ async function bootstrap() {
     logger
   });
   const subscriptionsEditCommitService = new SubscriptionsEditCommitService(subscriptionsEditCommitRepository, {
+    lifeStageNoticesService,
     authService,
     ledgerRepository: subscriptionLedgerRepository,
     deliveryGuard: customerDeliveriesService
@@ -459,7 +512,12 @@ async function bootstrap() {
   const subscriptionsRepository = new SubscriptionsRepository({
     ledgerRepository: subscriptionLedgerRepository
   });
-  const subscriptionsService = new SubscriptionsService(subscriptionsRepository);
+  const subscriptionsService = new SubscriptionsService(subscriptionsRepository, {
+    lifeStageService,
+    petsRepository: onboardingPetsRepository,
+    lifeStageNoticesService,
+    ledgerRepository: subscriptionLedgerRepository
+  });
   const onboardingPetDeleteRepository = new OnboardingPetDeleteRepository(dataSource);
   const onboardingPetsSyncService = new OnboardingPetsSyncService(onboardingPetCreateRepository);
   const profileRepository = new ProfileRepository(dataSource, {
@@ -523,6 +581,13 @@ async function bootstrap() {
     publicBaseUrl: petPhotoPublicBaseUrl
   });
   const onboardingPetImageService = new OnboardingPetImageService(onboardingPetUpdateRepository, petPhotoStorage);
+  const recipeImagePublicDir = path.resolve(env.RECIPE_IMAGE_DIR);
+  const recipeImagePublicBaseUrl = env.RECIPE_IMAGE_PUBLIC_BASE_URL
+    || `${String(env.JWT_AUTH_ISSUER || '').replace(/\/+$/, '')}/recipe-images`;
+  const recipeImageStorage = new LocalRecipeImageStorage({
+    directory: recipeImagePublicDir,
+    publicBaseUrl: recipeImagePublicBaseUrl
+  });
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository, {
     findPet: (userId, petId) => onboardingPetUpdateRepository.findPet(userId, petId),
     petPhotoStorage
@@ -580,6 +645,11 @@ async function bootstrap() {
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
     termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
   });
+  const adminAuditService = new AdminAuditService({
+    repository: new AdminAuditRepository(dataSource),
+    logger
+  });
+  const recipeContentRepository = new RecipeContentRepository(dataSource);
   const adminCatalogService = new AdminCatalogService({
     repository: adminCatalogRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -587,6 +657,15 @@ async function bootstrap() {
     stripeBilling,
     stripeBrEnabled: env.STRIPE_BR_ENABLED,
     syncRunsRepository: new CatalogSyncRunsRepository(dataSource),
+    auditService: adminAuditService,
+    recipeContentRepository,
+    logger
+  });
+  const recipeContentService = new RecipeContentService({
+    repository: recipeContentRepository,
+    catalogRepository: adminCatalogRepository,
+    imageStorage: recipeImageStorage,
+    auditService: adminAuditService,
     logger
   });
   const adminSystemHealthService = new AdminSystemHealthService({
@@ -600,12 +679,9 @@ async function bootstrap() {
     usersTableName: env.WP_USERS_TABLE_NAME,
     usermetaTableName: env.WP_USERMETA_TABLE_NAME
   });
-  const adminAuditService = new AdminAuditService({
-    repository: new AdminAuditRepository(dataSource),
-    logger
-  });
   const adminProductionService = createAdminProductionService({
     ledgerRepository: subscriptionLedgerRepository,
+    recipeNamesRepository: adminCatalogRepository,
     productionRepository: subscriptionProductionRepository,
     auditService: adminAuditService,
     customerDeliveriesService
@@ -673,6 +749,7 @@ async function bootstrap() {
     shippingService,
     subscriptionsActionsService,
     subscriptionsDetailService,
+    lifeStageNoticesService,
     subscriptionsEditPreviewService,
     subscriptionsEditCommitService,
     subscriptionsService,
@@ -693,6 +770,7 @@ async function bootstrap() {
     upsShipmentService,
     customerInvoicesService,
     adminCatalogService,
+    recipeContentService,
     adminSystemHealthService,
     adminUsersService,
     stripeCouponService,
@@ -700,6 +778,7 @@ async function bootstrap() {
     avatarPublicDir,
     feedbackPhotoPublicDir,
     petPhotoPublicDir,
+    recipeImagePublicDir,
     dataSource,
     logger,
     nodeEnv: env.NODE_ENV,
@@ -731,7 +810,8 @@ async function bootstrap() {
       upsClient,
       refreshTokenRepository: authRefreshTokenRepository,
       eventsRepository: stripeWebhookEventsRepository,
-      deliveryCalendarSyncMaxAttempts: env.DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS
+      deliveryCalendarSyncMaxAttempts: env.DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS,
+      lifeStageChangeEmailService
     })
   });
 }

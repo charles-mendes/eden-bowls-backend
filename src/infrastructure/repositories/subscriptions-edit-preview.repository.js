@@ -33,6 +33,17 @@ class SubscriptionsEditPreviewRepository {
     this.shippingQuoteSigner = options.shippingQuoteSigner || null;
   }
 
+  // Line of each recipe key, when the life-stage rule is wired through the plan preview.
+  async recipeLineByKey(market) {
+    const recommendation = this.planPreviewRepository && this.planPreviewRepository.recommendationRepository;
+    const lifeStageService = recommendation && recommendation.lifeStageService;
+    if (!lifeStageService || typeof lifeStageService.recipeLines !== 'function') {
+      return null;
+    }
+    const lines = await lifeStageService.recipeLines(market);
+    return lines ? lines.lineByKey : null;
+  }
+
   async preview(userId, subscriptionId, requestPayload = {}, ledgerRow = null) {
     if (!this.ledgerRepository) {
       throw new HttpError(503, 'Subscription edit preview dependencies are not available.');
@@ -60,7 +71,8 @@ class SubscriptionsEditPreviewRepository {
 
     const proposed = await resolveProposedPlan(this.planPreviewRepository, this.resolveSubscriptionItems, {
       userId,
-      payload
+      payload,
+      currentSelection: row.planSelection
     });
     const itemUpdates = diffSubscriptionItems(currentItems, proposed.items);
     const hash = buildCurrentHash({
@@ -130,7 +142,8 @@ class SubscriptionsEditPreviewRepository {
             currentSelection: row.planSelection,
             catalogItems: await this.loadCatalogItems(proposed.country),
             language: ledgerStripeAccount(row) === 'br' ? 'pt' : 'en',
-            currency
+            currency,
+            lineByKey: await this.recipeLineByKey(ledgerStripeAccount(row) === 'br' ? 'BR' : 'US')
           })
         }
         : {}),

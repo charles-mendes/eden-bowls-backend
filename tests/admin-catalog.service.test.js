@@ -50,6 +50,130 @@ describe('AdminCatalogService', () => {
     });
   });
 
+  test('product detail reports each variation stored recipe key, its image and label state in its market', async () => {
+    const product = {
+      id: '100',
+      active: true,
+      planCountry: 'US',
+      planDays: 30,
+      variants: [
+        { id: '11', name: 'Chicken 300g', flavor: 'Chicken', flavorSlug: 'turkey', recipeKey: 'turkey' },
+        { id: '12', name: 'Beef 300g', flavor: 'Beef', flavorSlug: 'beef', recipeKey: 'beef' },
+        { id: '13', name: 'Bovino', flavor: 'Bovino', flavorSlug: null, recipeKey: null }
+      ]
+    };
+    const recipeContentRepository = {
+      findByMarketAndSlugs: jest.fn().mockResolvedValue(new Map([
+        ['beef', { imageUrl: '/recipe-images/recipe-us-beef-1.webp', label: null }]
+      ]))
+    };
+    const service = new AdminCatalogService({ repository: { getProduct: jest.fn().mockResolvedValue(product) }, recipeContentRepository });
+
+    const detail = await service.getProduct('100');
+
+    expect(recipeContentRepository.findByMarketAndSlugs).toHaveBeenCalledWith('US', ['turkey', 'beef', null]);
+    expect(detail.variants.map(({ id, recipeKey, recipeImageUrl, recipeLabelStatus }) => ({ id, recipeKey, recipeImageUrl, recipeLabelStatus }))).toEqual([
+      { id: '11', recipeKey: 'turkey', recipeImageUrl: null, recipeLabelStatus: 'missing' },
+      { id: '12', recipeKey: 'beef', recipeImageUrl: '/recipe-images/recipe-us-beef-1.webp', recipeLabelStatus: 'missing' },
+      { id: '13', recipeKey: null, recipeImageUrl: null, recipeLabelStatus: 'missing' }
+    ]);
+  });
+
+  describe('variation recipe key', () => {
+    function serviceWith(variants, { active = false, registered = ['beef', 'senior-beef'] } = {}) {
+      const repository = {
+        getProduct: jest.fn().mockResolvedValue({ id: '100', active, planCountry: 'BR', planDays: 30, variants }),
+        upsertPostMeta: jest.fn(),
+        createVariation: jest.fn().mockResolvedValue('3001'),
+        updateVariation: jest.fn(),
+        updatePostStatus: jest.fn()
+      };
+      const auditService = { record: jest.fn() };
+      const recipeContentRepository = {
+        findByMarketAndSlug: jest.fn(async (market, key) => (market === 'BR' && registered.includes(key) ? { flavorSlug: key } : null))
+      };
+      return { service: new AdminCatalogService({ repository, auditService, recipeContentRepository }), repository, auditService, recipeContentRepository };
+    }
+
+    const bovino = { id: '3000', name: 'Bovino', sku: '3000', regularPrice: 25, active: false, recipeKey: 'beef' };
+
+    test('an empty key unlinks the variation and the change is audited', async () => {
+      const { service, repository, auditService } = serviceWith([bovino]);
+
+      await service.patchProduct('100', { variants: [{ id: '3000', recipeKey: '' }] }, { userId: '7' });
+
+      expect(repository.updateVariation).toHaveBeenCalledWith(expect.objectContaining({ id: '3000', recipeKey: null }));
+      expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'catalog.variation.recipe_key',
+        metadata: expect.objectContaining({ variationId: '3000', from: 'beef', to: null })
+      }));
+    });
+
+    test('an absent key keeps the link and records nothing', async () => {
+      const { service, repository, auditService } = serviceWith([bovino]);
+
+      await service.patchProduct('100', { variants: [{ id: '3000', name: 'Bovino' }] });
+
+      expect(repository.updateVariation).toHaveBeenCalledWith(expect.objectContaining({ id: '3000', recipeKey: undefined }));
+      expect(auditService.record).not.toHaveBeenCalledWith(expect.objectContaining({ action: 'catalog.variation.recipe_key' }));
+    });
+
+    test('a new variation without a key has no recipe', async () => {
+      const { service, repository } = serviceWith([]);
+
+      await service.patchProduct('100', { variants: [{ name: 'Cordeiro 300g', sku: 'LAMB-300' }] });
+
+      expect(repository.createVariation).toHaveBeenCalledWith(expect.objectContaining({ recipeKey: null }));
+    });
+
+    test('a new variation keeps the key sent', async () => {
+      const { service, repository } = serviceWith([]);
+
+      await service.patchProduct('100', { variants: [{ name: 'Sênior Carne 300g', sku: 'SB-300', recipeKey: 'senior-beef' }] });
+
+      expect(repository.createVariation).toHaveBeenCalledWith(expect.objectContaining({ recipeKey: 'senior-beef' }));
+    });
+
+    test('refuses a key that is not registered in the product market', async () => {
+      const { service, repository, recipeContentRepository } = serviceWith([bovino]);
+
+      await expect(service.patchProduct('100', { variants: [{ id: '3000', recipeKey: 'senoir-beef' }] })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'recipe_not_registered', recipeKey: 'senoir-beef' }
+      });
+      expect(recipeContentRepository.findByMarketAndSlug).toHaveBeenCalledWith('BR', 'senoir-beef');
+      expect(repository.updateVariation).not.toHaveBeenCalled();
+    });
+
+    test('accepts a registered key of the product market', async () => {
+      const { service, repository } = serviceWith([{ ...bovino, recipeKey: null }]);
+
+      await service.patchProduct('100', { variants: [{ id: '3000', recipeKey: 'beef' }] });
+
+      expect(repository.updateVariation).toHaveBeenCalledWith(expect.objectContaining({ id: '3000', recipeKey: 'beef' }));
+    });
+
+    test('refuses an invalid key without saving', async () => {
+      const { service, repository } = serviceWith([bovino]);
+
+      await expect(service.patchProduct('100', { variants: [{ id: '3000', recipeKey: 'Beef Recipe' }] })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'recipe_key_invalid' }
+      });
+      expect(repository.updateVariation).not.toHaveBeenCalled();
+    });
+
+    test('an active variation of a published product keeps its key', async () => {
+      const { service, repository } = serviceWith([{ ...bovino, active: true }], { active: true });
+
+      await expect(service.patchProduct('100', { variants: [{ id: '3000', recipeKey: '' }] })).rejects.toMatchObject({
+        statusCode: 409,
+        details: { code: 'variation_active_locked' }
+      });
+      expect(repository.updateVariation).not.toHaveBeenCalled();
+    });
+  });
+
   test('patchProduct updates existing variations and creates new ones', async () => {
     const product = {
       id: '100',
@@ -94,10 +218,58 @@ describe('AdminCatalogService', () => {
       flavor: 'Lamb',
       flavorSlug: 'lamb',
       flavorAliases: undefined,
+      lifeStage: 'adult',
+      recipeKey: null,
       regularPrice: 40,
       zoneId: 'br',
       menuOrder: 2
     });
+  });
+
+  test('patchProduct saves the life stage line of a new and an existing variation', async () => {
+    const product = {
+      id: '100',
+      active: false,
+      planCountry: 'BR',
+      planDays: 30,
+      variants: [{ id: '1001', name: 'Beef 300g', sku: 'Beef-300g', regularPrice: 25 }]
+    };
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue(product),
+      upsertPostMeta: jest.fn(),
+      createVariation: jest.fn().mockResolvedValue('3001'),
+      updateVariation: jest.fn()
+    };
+    const service = new AdminCatalogService({ repository });
+
+    await service.patchProduct('100', {
+      planCountry: 'BR',
+      planDays: 30,
+      variants: [
+        { id: '1001', name: 'Beef 300g', sku: 'Beef-300g', lifeStage: 'Senior' },
+        { name: 'Senior Beef 300g', sku: 'SENIOR-BEEF-300', flavor: 'Receita de Carne para Cães Sênior', flavorSlug: 'senior-beef', lifeStage: 'senior', regularPrice: 40 }
+      ]
+    });
+
+    expect(repository.updateVariation.mock.calls[0][0].lifeStage).toBe('senior');
+    expect(repository.createVariation.mock.calls[0][0]).toMatchObject({ flavorSlug: 'senior-beef', lifeStage: 'senior' });
+  });
+
+  test('patchProduct rejects an unknown life stage line', async () => {
+    const repository = {
+      getProduct: jest.fn().mockResolvedValue({ id: '100', active: false, planCountry: 'BR', planDays: 30, variants: [] }),
+      upsertPostMeta: jest.fn(),
+      createVariation: jest.fn(),
+      updateVariation: jest.fn()
+    };
+    const service = new AdminCatalogService({ repository });
+
+    await expect(service.patchProduct('100', {
+      planCountry: 'BR',
+      planDays: 30,
+      variants: [{ name: 'Kitten 300g', sku: 'KITTEN-300', lifeStage: 'kitten' }]
+    })).rejects.toMatchObject({ statusCode: 422 });
+    expect(repository.createVariation).not.toHaveBeenCalled();
   });
 
   test('patchProduct with only one variation leaves plan fields and sibling variations untouched', async () => {

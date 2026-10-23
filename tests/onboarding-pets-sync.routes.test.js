@@ -25,7 +25,7 @@ describe('onboarding pets sync routes', () => {
     expect(response.status).toBe(200);
     expect(onboardingPetsSyncService.syncPets).toHaveBeenCalledWith({
       userId: 7,
-      payload: { pets: [{ local_id: 'local-1', name: 'Luna', weight_unit: 'lb' }] },
+      payload: { pets: [{ local_id: 'local-1', name: 'Luna', weight_unit: 'lb', birth_date: null }] },
       market: MARKETS.US
     });
   });

@@ -1,4 +1,6 @@
 const { z } = require('zod');
+const { assertBirthDateInRange, birthDateSchema, normalizeBirthDate } = require('./pet-birth-date.validator');
+const { MARKETS } = require('../../core/market');
 
 const onboardingPetUpdatePayloadSchema = z.object({
   name: z.string().trim().min(1).optional(),
@@ -11,6 +13,10 @@ const onboardingPetUpdatePayloadSchema = z.object({
   activity_level: z.enum(['low', 'medium', 'high']).optional(),
   pet_condition: z.enum(['underweight', 'ideal', 'overweight']).optional(),
   neutered: z.boolean().optional(),
+  birth_date: birthDateSchema,
+  birthDate: birthDateSchema,
+  change_source: z.enum(['onboarding', 'dashboard']).optional(),
+  confirm_life_stage_change: z.boolean().optional(),
   ageYears: z.union([z.string(), z.number()]).optional(),
   ageMonths: z.union([z.string(), z.number()]).optional(),
   weightUnit: z.enum(['kg', 'lb']).optional(),
@@ -20,7 +26,18 @@ const onboardingPetUpdatePayloadSchema = z.object({
   domain: z.enum(['com', 'com.br']).optional()
 });
 
-function parseOnboardingPetUpdateInput(payload = {}) {
+// The age history records where each edit came from: the onboarding form or Meus pets (customer-pet-age-edit).
+// Until task 7.6, an edit without it (the previous storefront) is recorded as onboarding, so the API can deploy first.
+const LEGACY_CHANGE_SOURCE = 'onboarding';
+
+function isMissingChangeSource(payload) {
+  return !payload || payload.change_source === undefined || payload.change_source === null || payload.change_source === '';
+}
+
+function parseOnboardingPetUpdateInput(payload = {}, market = MARKETS.US, now = new Date()) {
+  if (isMissingChangeSource(payload)) {
+    payload = { ...(payload || {}), change_source: LEGACY_CHANGE_SOURCE };
+  }
   const parsed = onboardingPetUpdatePayloadSchema.parse(payload || {});
   const normalized = {};
 
@@ -39,10 +56,19 @@ function parseOnboardingPetUpdateInput(payload = {}) {
   if (parsed.pet_condition !== undefined) normalized.pet_condition = parsed.pet_condition;
   else if (parsed.weightCondition !== undefined) normalized.pet_condition = parsed.weightCondition;
   if (parsed.neutered !== undefined) normalized.neutered = parsed.neutered;
+  const birthDate = normalizeBirthDate(parsed.birth_date !== undefined ? parsed.birth_date : parsed.birthDate);
+  if (birthDate !== undefined) {
+    assertBirthDateInRange(birthDate, market, now);
+    normalized.birth_date = birthDate;
+  }
+  normalized.change_source = parsed.change_source;
+  if (parsed.confirm_life_stage_change !== undefined) normalized.confirm_life_stage_change = parsed.confirm_life_stage_change;
 
   return normalized;
 }
 
 module.exports = {
+  LEGACY_CHANGE_SOURCE,
+  isMissingChangeSource,
   parseOnboardingPetUpdateInput
 };

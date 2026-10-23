@@ -22,7 +22,8 @@ function registerOnboardingPlanSelectionRoutes(app, dependencies = {}) {
           success: false,
           message: error.message,
           code: error.details.code,
-          errors: error.details.errors || undefined
+          errors: error.details.errors || undefined,
+          ...(error.details.code === 'recipe_life_stage_mismatch' ? { details: error.details } : {})
         });
         return;
       }

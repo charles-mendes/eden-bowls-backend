@@ -1,5 +1,6 @@
 const { z } = require('zod');
 const { MARKETS } = require('../../core/market');
+const { assertBirthDateInRange, birthDateSchema, normalizeBirthDate } = require('./pet-birth-date.validator');
 
 const onboardingPetCreatePayloadSchema = z.object({
   name: z.string().trim().min(1).optional(),
@@ -12,12 +13,16 @@ const onboardingPetCreatePayloadSchema = z.object({
   activity_level: z.enum(['low', 'medium', 'high']).optional(),
   pet_condition: z.enum(['underweight', 'ideal', 'overweight']).optional(),
   neutered: z.boolean().optional(),
+  birth_date: birthDateSchema,
+  birthDate: birthDateSchema,
   country: z.enum(['US', 'BR']).optional(),
   domain: z.enum(['com', 'com.br']).optional()
 });
 
-function parseOnboardingPetCreateInput(payload = {}, market = MARKETS.US) {
+function parseOnboardingPetCreateInput(payload = {}, market = MARKETS.US, now = new Date()) {
   const parsed = onboardingPetCreatePayloadSchema.parse(payload || {});
+  const birthDate = normalizeBirthDate(parsed.birth_date !== undefined ? parsed.birth_date : parsed.birthDate) ?? null;
+  assertBirthDateInRange(birthDate, market, now);
   return {
     name: parsed.name || '',
     breed: parsed.breed || '',
@@ -28,7 +33,8 @@ function parseOnboardingPetCreateInput(payload = {}, market = MARKETS.US) {
     size: parsed.size || 'medium',
     activity_level: parsed.activity_level || 'medium',
     pet_condition: parsed.pet_condition || 'ideal',
-    neutered: parsed.neutered ?? false
+    neutered: parsed.neutered ?? false,
+    birth_date: birthDate
   };
 }
 

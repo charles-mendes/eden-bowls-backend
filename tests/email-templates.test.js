@@ -63,7 +63,7 @@ describe('transactional email catalog', () => {
 
   test('lists every preview fixture with subject, text and html', () => {
     const previews = listEmailPreviews();
-    expect(previews).toHaveLength(14);
+    expect(previews).toHaveLength(16);
     for (const item of previews) {
       expect(item.content.subject).toBeTruthy();
       expect(item.content.text).toBeTruthy();
@@ -269,5 +269,124 @@ describe('staff invite and privacy HTML', () => {
       confirmUrl: 'https://example.com/confirm',
       locale: 'pt-BR'
     }).text).toContain('pedido relacionado aos dados');
+  });
+});
+
+describe('stage-change email (customer-life-stage-notice)', () => {
+  const {
+    buildLifeStageChangeEmail,
+    firstEditableDeadline,
+    formatDeadline,
+    packsUrl
+  } = require('../src/core/email/life-stage-emails');
+
+  // BR deliveries charged on 2026-10-27 and 2026-11-10: cutoffs at 23:59:59 of the day before, Brasília time.
+  const brDeliveries = [
+    { editableUntil: '2026-10-27T02:59:59.000Z' },
+    { editableUntil: '2026-11-10T02:59:59.000Z' }
+  ];
+
+  function brEmailAt(now) {
+    const deadline = firstEditableDeadline(brDeliveries, new Date(now));
+    return buildLifeStageChangeEmail({
+      firstName: 'Ana',
+      petName: 'Thor',
+      stage: 'senior',
+      suggestedRecipes: ['Receita de Carne para Cães Sênior'],
+      adjustUrl: packsUrl('https://edenbowls.com', 'sub_1', 'p-thor'),
+      deadlineLabel: formatDeadline(deadline, 'BR'),
+      locale: 'pt-BR'
+    });
+  }
+
+  test('pt-BR: no article before the name, the stage, a link to Ajustar packs of that plan', () => {
+    const email = brEmailAt('2026-10-19T12:00:00Z');
+    expect(email.subject).toBe('Thor está entrando na fase Sênior');
+    expect(email.text).toContain('Pela idade informada, Thor está entrando na fase Sênior.');
+    expect(email.text).not.toMatch(/\bo Thor\b/);
+    expect(email.html).toContain('https://edenbowls.com/dashboard/plans/sub_1/packs?pet=p-thor');
+    expect(email.html).toContain('Ajustar packs');
+    expect(email.html).toContain('Receita de Carne para Cães Sênior');
+  });
+
+  test('en-US: "Based on the age you gave, Luna is entering the Senior stage."', () => {
+    const deadline = firstEditableDeadline([{ editableUntil: '2026-10-27T03:59:59.000Z' }], new Date('2026-10-20T12:00:00Z'));
+    const email = buildLifeStageChangeEmail({
+      firstName: 'Ana',
+      petName: 'Luna',
+      stage: 'senior',
+      adjustUrl: packsUrl('https://edenbowls.com', 'sub_2', 'p-luna'),
+      deadlineLabel: formatDeadline(deadline, 'US'),
+      locale: 'en-US'
+    });
+    expect(email.subject).toBe('Luna is entering the Senior stage');
+    expect(email.text).toContain('Based on the age you gave, Luna is entering the Senior stage.');
+    expect(email.text).toContain('Adjust by: Monday, October 26, at 11:59 PM ET');
+    expect(email.html).toContain('Adjust packs');
+    expect(email.html).toContain('/dashboard/plans/sub_2/packs?pet=p-luna');
+  });
+
+  test('sent 7 days before the next cutoff: shows that delivery\'s editable_until in Brasília time', () => {
+    const email = brEmailAt('2026-10-20T03:00:00Z');
+    expect(email.text).toContain('Ajuste até: segunda-feira, 26 de outubro, às 23h59 (horário de Brasília)');
+  });
+
+  test('sent 2 days before the next cutoff: still that delivery\'s editable_until', () => {
+    const email = brEmailAt('2026-10-25T03:00:00Z');
+    expect(email.text).toContain('Ajuste até: segunda-feira, 26 de outubro, às 23h59 (horário de Brasília)');
+  });
+
+  test('sent after the next cutoff: shows the following delivery\'s editable_until', () => {
+    const email = brEmailAt('2026-10-27T03:00:00Z');
+    expect(email.text).toContain('Ajuste até: segunda-feira, 9 de novembro, às 23h59 (horário de Brasília)');
+  });
+
+  test('the preview catalog has the stage-change letter in both locales', () => {
+    const pt = listEmailPreviews({ locale: 'pt-BR' }).find((item) => item.id === 'life-stage-change');
+    const en = listEmailPreviews({ locale: 'en-US' }).find((item) => item.id === 'life-stage-change');
+    expect(pt.content.text).toContain('Pela idade informada, Thor está entrando na fase Sênior.');
+    expect(en.content.text).toContain('Based on the age you gave, Luna is entering the Senior stage.');
+  });
+});
+
+describe('recipe names in customer emails (2.15)', () => {
+  const { createTransactionalMailer } = require('../src/infrastructure/mailers/transactional-mailer');
+  const NAMES = {
+    BR: { beef: { label: 'Bovino' }, 'senior-beef': { label: 'Receita de Carne para Cães Sênior', shortLabel: 'Bovino · Sênior' } },
+    US: { beef: { label: 'Beef' }, 'senior-beef': { label: 'Beef Recipe for Senior Dogs', shortLabel: 'Beef · Senior' } }
+  };
+
+  function mailerWith(recipeNamesRepository) {
+    const otpMailer = { sendMail: jest.fn(async () => ({})) };
+    const claimsRepository = { claimMailSend: jest.fn(async () => ({ claimed: true, id: 1 })), markSent: jest.fn() };
+    return { otpMailer, mailer: createTransactionalMailer({ otpMailer, claimsRepository, recipeNamesRepository }) };
+  }
+
+  function ledger(account) {
+    return {
+      stripeSubscriptionId: 'sub_1',
+      stripeAccount: account,
+      customerEmail: 'ana@example.com',
+      address: { name: 'Ana Mendes', country: account === 'br' ? 'BR' : 'US' },
+      planSelection: { pets: [{ pet_id: 'p-thor', pet_name: 'Thor', selected_flavors: ['senior-beef', 'beef'] }] }
+    };
+  }
+
+  test.each([
+    ['br', 'Receita de Carne para Cães Sênior', 'Bovino'],
+    ['us', 'Beef Recipe for Senior Dogs', 'Beef']
+  ])('%s order confirmation prints the full catalog names', async (account, full, adult) => {
+    const { mailer, otpMailer } = mailerWith({ listRecipeNames: async () => NAMES });
+    await mailer.notifyOrderConfirmed({ invoice: { id: 'in_1', amount_paid: 1000, currency: account === 'br' ? 'brl' : 'usd' }, ledger: ledger(account), subscriptionId: 'sub_1' });
+    const payload = otpMailer.sendMail.mock.calls[0][0];
+    expect(payload.html).toContain(full);
+    expect(payload.html).toContain(adult);
+    expect(payload.html).not.toContain('senior-beef');
+  });
+
+  test('when the catalog cannot be read, the email prints the keys', async () => {
+    const { mailer, otpMailer } = mailerWith({ listRecipeNames: async () => { throw new Error('db down'); } });
+    await mailer.notifyRenewal({ invoice: { id: 'in_2', amount_paid: 1000, currency: 'brl' }, ledger: ledger('br'), subscriptionId: 'sub_1' });
+    expect(otpMailer.sendMail.mock.calls[0][0].html).toContain('senior-beef');
   });
 });
