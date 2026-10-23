@@ -56,6 +56,9 @@ const { AddVariationLifeStage1700000000034 } = require('./migrations/17000000000
 const { CreateLifeStageLimits1700000000035 } = require('./migrations/1700000000035-create-life-stage-limits');
 const { AddPetAgeReference1700000000036 } = require('./migrations/1700000000036-add-pet-age-reference');
 const { CreatePetLifeStageTracking1700000000037 } = require('./migrations/1700000000037-create-pet-life-stage-tracking');
+const { CreateRecipeContents1700000000038 } = require('./migrations/1700000000038-create-recipe-contents');
+const { BackfillVariationRecipeKey1700000000039 } = require('./migrations/1700000000039-backfill-variation-recipe-key');
+const { AddRecipeRegistry1700000000040 } = require('./migrations/1700000000040-add-recipe-registry');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
@@ -134,7 +137,10 @@ function buildDataSourceOptions(env) {
       AddVariationLifeStage1700000000034,
       CreateLifeStageLimits1700000000035,
       AddPetAgeReference1700000000036,
-      CreatePetLifeStageTracking1700000000037
+      CreatePetLifeStageTracking1700000000037,
+      CreateRecipeContents1700000000038,
+      BackfillVariationRecipeKey1700000000039,
+      AddRecipeRegistry1700000000040
     ],
     synchronize: false,
     logging: false,

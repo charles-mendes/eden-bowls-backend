@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { labelCompleteness, normalizeRecipeMarket, parseRecipeKey } = require('../core/recipe-content');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
@@ -190,6 +191,7 @@ class AdminCatalogService {
     this.syncRunsRepository = options.syncRunsRepository || null;
     this.logger = options.logger || null;
     this.auditService = options.auditService || null;
+    this.recipeContentRepository = options.recipeContentRepository || null;
     this.lastSync = null;
   }
 
@@ -277,7 +279,28 @@ class AdminCatalogService {
       assertRecordMarket(actor, product.planCountry);
     }
     const [annotated] = await this.annotateDeleteFlags([product]);
-    return annotated;
+    return this.annotateRecipeContent(annotated);
+  }
+
+  // Each variation's recipe content key, stored image and label state in the product's market (recipe-content).
+  async annotateRecipeContent(product) {
+    const market = normalizeRecipeMarket(product.planCountry);
+    const variants = (product.variants || []).map((variant) => ({ ...variant, recipeKey: variant.recipeKey || null }));
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlugs;
+    const contents = market && typeof lookup === 'function'
+      ? await lookup.call(this.recipeContentRepository, market, variants.map((variant) => variant.recipeKey))
+      : new Map();
+    return {
+      ...product,
+      variants: variants.map((variant) => {
+        const content = variant.recipeKey ? contents.get(variant.recipeKey) : null;
+        return {
+          ...variant,
+          recipeImageUrl: content ? content.imageUrl : null,
+          recipeLabelStatus: labelCompleteness(content ? content.label : null, market).status
+        };
+      })
+    };
   }
 
   async createProduct(payload = {}) {
@@ -530,6 +553,11 @@ class AdminCatalogService {
       const lifeStage = parseVariationLifeStage(item.lifeStage);
       const flags = Object.fromEntries(READINESS_FLAGS.map(([key]) => [key, parseReadinessFlag(item[key])]));
       const shortLabel = parseShortLabel(item.shortLabel);
+      // Explicit link to a recipe: absent keeps it, blank unlinks, a new variation without one has none.
+      const recipeKey = item.recipeKey === undefined ? undefined : parseRecipeKey(item.recipeKey);
+      if (recipeKey) {
+        await this.assertRecipeRegistered(country || product.planCountry, recipeKey);
+      }
 
       if (isNewVariationId(id, existingIds)) {
         if (!String(name || '').trim() && !String(sku || '').trim()) {
@@ -546,12 +574,14 @@ class AdminCatalogService {
           flavorAliases,
           lifeStage: lifeStage || 'adult',
           shortLabel,
+          recipeKey: recipeKey || null,
           ...flags,
           regularPrice,
           zoneId,
           menuOrder
         });
         await this.recordFlagChanges(actor, product, { id: createdId }, flags);
+        await this.recordRecipeKeyChange(actor, product, { id: createdId }, recipeKey || null);
         continue;
       }
 
@@ -565,12 +595,16 @@ class AdminCatalogService {
         flavorAliases,
         lifeStage,
         shortLabel,
+        recipeKey,
         ...flags,
         regularPrice,
         zoneId,
         priceChanged: regularPrice != null && currentPrice !== regularPrice
       });
       await this.recordFlagChanges(actor, product, current || { id }, flags);
+      if (recipeKey !== undefined) {
+        await this.recordRecipeKeyChange(actor, product, current || { id }, recipeKey);
+      }
     }
   }
 
@@ -599,6 +633,30 @@ class AdminCatalogService {
       }
       await this.recordAudit(actor, 'catalog.variation.flag', product, current.id, { flag: key, from: previous, to: next });
     }
+  }
+
+  // A variation links only to a recipe registered in its product's market (recipe-content).
+  async assertRecipeRegistered(country, recipeKey) {
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlug;
+    if (typeof lookup !== 'function') {
+      return;
+    }
+    const market = normalizeRecipeMarket(country);
+    const registered = market ? await lookup.call(this.recipeContentRepository, market, recipeKey) : null;
+    if (!registered) {
+      throw new HttpError(422, `Recipe ${recipeKey} is not registered in the product market.`, {
+        code: 'recipe_not_registered',
+        recipeKey
+      });
+    }
+  }
+
+  async recordRecipeKeyChange(actor, product, current, next) {
+    const previous = (current && current.recipeKey) || null;
+    if (previous === next) {
+      return;
+    }
+    await this.recordAudit(actor, 'catalog.variation.recipe_key', product, current.id, { from: previous, to: next });
   }
 
   // Activates or deactivates one variation without touching the product or its other variations.
@@ -637,10 +695,11 @@ class AdminCatalogService {
       if (!String(mapped || '').startsWith('price_')) {
         missing.push('stripe_price');
       }
-      if (!variant.finalImageReady) {
+      // Stored content or the manual confirmation, while flavors still keep content in the store code.
+      if (!variant.finalImageReady && !variant.recipeImageUrl) {
         missing.push('final_image');
       }
-      if (country === 'US' && !variant.labelDataReady) {
+      if (country === 'US' && !variant.labelDataReady && variant.recipeLabelStatus !== 'complete') {
         missing.push('label_data');
       }
       if (missing.length > 0) {

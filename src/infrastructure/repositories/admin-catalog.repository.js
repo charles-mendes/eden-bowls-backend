@@ -13,6 +13,7 @@ const {
 
 const FINAL_IMAGE_READY_META = '_final_image_ready';
 const LABEL_DATA_READY_META = '_label_data_ready';
+const { RECIPE_KEY_META } = require('../../core/recipe-content');
 const SHORT_LABEL_META = '_short_label';
 
 function flagMeta(value) {
@@ -277,6 +278,7 @@ class AdminCatalogRepository {
         finalImageReady: variation.meta[FINAL_IMAGE_READY_META] === 'yes',
         labelDataReady: variation.meta[LABEL_DATA_READY_META] === 'yes',
         shortLabel: String(variation.meta[SHORT_LABEL_META] || '').trim() || null,
+        recipeKey: String(variation.meta[RECIPE_KEY_META] || '').trim() || null,
         weight: weight || null,
         active: variation.status === 'publish',
         regularPrice: variationRegularPrice(variation.meta, zoneId),
@@ -340,8 +342,11 @@ class AdminCatalogRepository {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
       [
-        'SELECT v.ID AS variationId, UPPER(COALESCE(pc.meta_value, "")) AS market,',
+        'SELECT v.ID AS variationId, v.post_title AS name, p.ID AS productId, p.post_title AS productName,',
+        'UPPER(COALESCE(pc.meta_value, "")) AS market,',
         "v.post_status AS variationStatus, p.post_status AS productStatus,",
+        "MAX(CASE WHEN vm.meta_key = '_sku' THEN vm.meta_value END) AS sku,",
+        `MAX(CASE WHEN vm.meta_key = '${RECIPE_KEY_META}' THEN vm.meta_value END) AS recipeKey,`,
         `MAX(CASE WHEN vm.meta_key = '${FLAVOR_SLUG_META}' THEN vm.meta_value END) AS flavorSlug,`,
         "MAX(CASE WHEN vm.meta_key = 'attribute_pa_flavor' THEN vm.meta_value END) AS label,",
         `MAX(CASE WHEN vm.meta_key = '${SHORT_LABEL_META}' THEN vm.meta_value END) AS shortLabel,`,
@@ -351,22 +356,60 @@ class AdminCatalogRepository {
         `LEFT JOIN \`${this.tableNames.postmeta}\` pc ON pc.post_id = p.ID AND pc.meta_key = '_cmpb_plan_country'`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` vm ON vm.post_id = v.ID`,
         "WHERE v.post_type = 'product_variation'",
-        'GROUP BY v.ID, pc.meta_value, v.post_status, p.post_status',
+        'GROUP BY v.ID, v.post_title, p.ID, p.post_title, pc.meta_value, v.post_status, p.post_status',
         'ORDER BY v.ID ASC'
       ].join(' ')
     );
     return (Array.isArray(rows) ? rows : []).map((row) => {
       const label = String(row.label || '').trim();
       const lifeStage = String(row.lifeStage || '').trim();
+      const market = String(row.market || '').trim();
       return {
-        market: String(row.market || '').trim(),
+        variationId: String(row.variationId),
+        name: String(row.name || '').trim(),
+        sku: String(row.sku || '').trim(),
+        market,
         key: flavorKeyFromLabel(row.flavorSlug || '') || canonicalFlavorKey(label),
+        recipeKey: String(row.recipeKey || '').trim() || null,
+        productId: row.productId == null ? null : String(row.productId),
+        productName: String(row.productName || '').trim(),
+        active: row.variationStatus === 'publish',
         label,
         shortLabel: String(row.shortLabel || '').trim(),
         lifeStage: LIFE_STAGES.includes(lifeStage) ? lifeStage : 'adult',
         published: row.variationStatus === 'publish' && row.productStatus === 'publish'
       };
     }).filter((row) => row.market && row.key);
+  }
+
+  // Variations of one recipe in a market, by content key (recipe-content).
+  async listRecipeVariations(market, recipeKey) {
+    const normalized = String(market || '').trim().toUpperCase();
+    return (await this.recipeVariationRows())
+      .filter((row) => row.market === normalized && row.recipeKey === recipeKey)
+      .map((row) => ({
+        id: row.variationId,
+        name: row.name,
+        sku: row.sku,
+        active: row.active,
+        productId: row.productId,
+        productName: row.productName
+      }));
+  }
+
+  // Every recipe key of a market with the variations that use it (recipe-content).
+  async listMarketRecipeVariations(market) {
+    const normalized = String(market || '').trim().toUpperCase();
+    const byKey = new Map();
+    for (const row of await this.recipeVariationRows()) {
+      if (row.market !== normalized || !row.recipeKey) {
+        continue;
+      }
+      const list = byKey.get(row.recipeKey) || [];
+      list.push({ id: row.variationId, name: row.name, sku: row.sku, active: row.active, productId: row.productId, productName: row.productName });
+      byKey.set(row.recipeKey, list);
+    }
+    return byKey;
   }
 
   // Short and full recipe names per market and flavor key, for the production queue.
@@ -472,7 +515,7 @@ class AdminCatalogRepository {
   }
 
   // Every new variation starts inactive; the activation route publishes it after its checks.
-  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, finalImageReady, labelDataReady, regularPrice, zoneId, menuOrder }) {
+  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, regularPrice, zoneId, menuOrder }) {
     this.ensureDataSource();
     const id = await this.nextPostId();
     const title = String(name || '').trim();
@@ -504,6 +547,10 @@ class AdminCatalogRepository {
     if (shortLabel != null) {
       await this.upsertPostMeta(id, SHORT_LABEL_META, String(shortLabel).trim());
     }
+    // undefined keeps the link; null stores an empty key, which means no recipe.
+    if (recipeKey !== undefined) {
+      await this.upsertPostMeta(id, RECIPE_KEY_META, recipeKey || '');
+    }
     if (finalImageReady != null) {
       await this.upsertPostMeta(id, FINAL_IMAGE_READY_META, flagMeta(finalImageReady));
     }
@@ -517,7 +564,7 @@ class AdminCatalogRepository {
     return String(id);
   }
 
-  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, finalImageReady, labelDataReady, regularPrice, zoneId, priceChanged }) {
+  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, regularPrice, zoneId, priceChanged }) {
     this.ensureDataSource();
     const title = name == null ? undefined : String(name).trim();
     const code = sku == null ? undefined : String(sku).trim();
@@ -545,6 +592,10 @@ class AdminCatalogRepository {
     }
     if (shortLabel != null) {
       await this.upsertPostMeta(id, SHORT_LABEL_META, String(shortLabel).trim());
+    }
+    // undefined keeps the link; null stores an empty key, which means no recipe.
+    if (recipeKey !== undefined) {
+      await this.upsertPostMeta(id, RECIPE_KEY_META, recipeKey || '');
     }
     if (finalImageReady != null) {
       await this.upsertPostMeta(id, FINAL_IMAGE_READY_META, flagMeta(finalImageReady));

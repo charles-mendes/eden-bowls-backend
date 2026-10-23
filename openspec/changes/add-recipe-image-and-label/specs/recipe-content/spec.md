@@ -2,19 +2,104 @@
 
 ## Purpose
 
-Stores each recipe's banner image and label data per market and flavor, validates them, exposes them to the admin and the store, and lets them satisfy the variation activation checks in place of the manual confirmations.
+Registers recipes per market with a name and a key, stores each recipe's banner image and label data, links variations to a registered recipe through an explicit key, validates them, exposes them to the admin and the store, and lets them satisfy the variation activation checks in place of the manual confirmations.
 
 ## ADDED Requirements
 
-### Requirement: Recipe content belongs to a market and a flavor
+### Requirement: Recipes are registered with a name and a key
 
-Recipe content (image and label) MUST be stored once per market and flavor slug. Every variation of that flavor in that market's product MUST read the same content. The admin read of a recipe's content MUST list the variations that share it, with id, name, SKU and active state.
+The admin MUST register a recipe per market with a name (1 to 120 characters) and a key of lowercase letters, digits and single hyphens, up to 64 characters. A key already registered in the market MUST be refused with HTTP 409 `recipe_key_taken`, a malformed key with 422 `recipe_key_invalid` and a blank or longer name with 422 `recipe_name_invalid`. The key MUST NOT change after registration; the name MAY be renamed. A registered recipe MAY hold an image and a label before any variation uses it. Registering, renaming and deleting a recipe MUST be recorded in the admin audit log with the market and the key.
+
+#### Scenario: Register a recipe before its variations
+
+- **WHEN** an operator registers `senior-lamb` named "Sênior Cordeiro" in BR and no variation uses it
+- **THEN** the recipe can be read, can receive an image and a label, and lists no variations
+
+#### Scenario: Key already registered
+
+- **WHEN** an operator registers `beef` in BR and BR already has `beef`
+- **THEN** the API returns 409 `recipe_key_taken` and the existing recipe is unchanged
+
+#### Scenario: Rename keeps the key
+
+- **WHEN** an operator renames `beef` in BR to "Carne bovina"
+- **THEN** the recipe keeps the key `beef` and its variations, and the name is "Carne bovina"
+
+### Requirement: A recipe is deleted only without variations
+
+The API MUST refuse to delete a recipe with HTTP 409 `recipe_in_use`, listing the variations that use it, while any variation of the market uses its key. Deleting an unused recipe MUST remove its image file, its label and its registration.
+
+#### Scenario: Delete a recipe in use
+
+- **WHEN** an operator deletes `beef` in BR and the variation SKU 1005 uses `beef`
+- **THEN** the API returns 409 `recipe_in_use` naming SKU 1005, and the recipe is kept
+
+#### Scenario: Delete an unused recipe
+
+- **WHEN** an operator deletes `senior-lamb` in BR, which no variation uses and which has an image
+- **THEN** the recipe, its label and its image file are removed
+
+### Requirement: Recipe content belongs to a market and a recipe key
+
+Recipe content (image and label) MUST be stored once per registered recipe of a market. A variation MUST use the content of the recipe key stored on it, and every variation of the market with the same key, in any product, MUST read the same content. Reading or changing a key that is not registered in the market MUST answer 404 `recipe_not_found`. The admin read of a recipe MUST give its name and list the variations that use it, with id, name, SKU, active state, product id and product name.
 
 #### Scenario: Two sizes share one image
 
 - **WHEN** an operator uploads the image of `senior-beef` in BR
-- **THEN** the product detail of Flavors BR reports that image for both the 300 g and the 500 g `senior-beef` variations
+- **THEN** the product detail of Flavors BR reports that image for both the 300 g and the 500 g variations whose recipe key is `senior-beef`
 - **AND** the `senior-beef` variations of Flavors US are unchanged
+
+#### Scenario: A flavor alias does not link a variation
+
+- **WHEN** a BR variation has the flavor "Bovino" and no recipe key
+- **THEN** it does not use the `beef` content and is not listed among the `beef` variations
+
+#### Scenario: Unregistered key
+
+- **WHEN** an operator reads `bovino` in BR and BR has no recipe `bovino`
+- **THEN** the API returns 404 `recipe_not_found`
+
+### Requirement: Variation recipe key is chosen explicitly
+
+The admin MUST let an operator set or clear a variation's recipe key when creating or editing it, under the same lock as the other variation fields. The key MUST be a recipe registered in the product's market; anything else MUST be refused with HTTP 422 `recipe_not_registered`. An empty key MUST unlink the variation. A new variation sent without a key MUST have none. Every change of the key MUST be recorded in the admin audit log with the previous and the new key.
+
+#### Scenario: Operator unlinks a variation
+
+- **WHEN** an operator saves the inactive variation SKU 3000 with an empty recipe key
+- **THEN** it no longer appears among the `beef` variations and its product detail reports no recipe key, no image and label status `missing`
+
+#### Scenario: Unregistered key
+
+- **WHEN** an operator saves a BR variation with the recipe key `senoir-beef` and BR has no such recipe
+- **THEN** the API returns 422 `recipe_not_registered` and the variation is unchanged
+
+### Requirement: Existing variations keep the recipe they use today
+
+Deploying the explicit key MUST store, on every existing variation without a recipe key, the key it was derived to before: its flavor slug, or its flavor label when it has no slug, resolved through the flavor aliases. Variations that already have a recipe key MUST keep it. It MUST then register, in each market, every key used by a variation and not yet registered, named after the flavor label of the first variation that uses it, or after the key when there is no label. Rolling the migrations back MUST remove the stored keys and the registrations they created.
+
+#### Scenario: Backfill of an adult chicken variation
+
+- **WHEN** the migration runs on a BR variation with flavor slug `turkey`
+- **THEN** the variation gets the recipe key `turkey`
+
+#### Scenario: Backfill through the label alias
+
+- **WHEN** the migration runs on a BR variation with no flavor slug and the flavor label "Bovino"
+- **THEN** the variation gets the recipe key `beef`, which the operator can change or clear afterwards
+
+#### Scenario: Registration of the keys in use
+
+- **WHEN** the migrations run and BR variations use `beef` and `senior-beef`, with flavor labels "Carne" and "Receita de Carne para Cães Sênior"
+- **THEN** BR has the recipes `beef` named "Carne" and `senior-beef` named "Receita de Carne para Cães Sênior"
+
+### Requirement: Admin lists the recipes of a market
+
+The admin MUST list every recipe registered in a market, each with its key, name, the variations that use it (possibly none), stored image URL and label status.
+
+#### Scenario: Recipes of BR
+
+- **WHEN** an operator lists the recipes of BR, where `beef` and `senior-beef` are used by variations and `senior-lamb` is registered without variations
+- **THEN** the list has the three recipes, each with its name, variations and content state, and `senior-lamb` with no variations
 
 ### Requirement: Recipe image must match the store banner size
 
@@ -108,11 +193,11 @@ Variation activation MUST treat `final_image` as met when the flavor has a store
 
 ### Requirement: Product detail reports each variation's content
 
-The admin product detail MUST give each variation its flavor's stored image URL (or null) and label status (`missing`, `incomplete` or `complete`) in that product's market.
+The admin product detail MUST give each variation its recipe key (or null), the stored image URL of that key (or null) and its label status (`missing`, `incomplete` or `complete`) in that product's market.
 
 #### Scenario: Flavor with stored image and no label
 
-- **WHEN** the admin loads a product whose `beef` variation has a stored image and no label
+- **WHEN** the admin loads a product whose variation with recipe key `beef` has a stored image and no label
 - **THEN** that variation reports the image URL and label status `missing`
 
 ### Requirement: Content changes follow catalog permissions and market scope
@@ -131,11 +216,11 @@ Reading recipe content MUST require `catalog.read` and changing it MUST require 
 
 ### Requirement: Public route serves launched recipe content
 
-`GET /api/v1/recipes/:key?market=BR|US` MUST resolve flavor aliases (for example `chicken` to `turkey`) and return the stored image URL and label, each null when not stored. It MUST answer 404 when the flavor has no active variation in that market, and 400 for an unknown market. It MUST NOT require authentication.
+`GET /api/v1/recipes/:key?market=BR|US` MUST look up the recipe key as sent and, when no variation of the market uses it, the key its flavor alias resolves to (for example the store key `chicken` to `turkey`). It MUST return the stored image URL and label, each null when not stored. It MUST answer 404 when no active variation of the market uses the key, and 400 for an unknown market. It MUST NOT require authentication.
 
 #### Scenario: Alias resolves
 
-- **WHEN** the store requests `chicken` in US and `turkey` has an active variation and a stored image in Flavors US
+- **WHEN** the store requests `chicken` in US, no variation uses the key `chicken`, and an active Flavors US variation uses `turkey` with a stored image
 - **THEN** the route returns that image URL
 
 #### Scenario: Unlaunched recipe is not exposed

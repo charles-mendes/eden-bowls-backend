@@ -9,7 +9,9 @@ A imagem do banner e os dados de rótulo de cada receita moram no código da loj
 Duas fases, cada uma pode ir para produção sozinha.
 
 **Fase 1: imagem**
-- Tabela nova `recipe_contents`, com um registro por (mercado, slug do sabor), compartilhado pelas variações daquele sabor no produto do mercado.
+- Tabela nova `recipe_contents`, com um registro por (mercado, chave da receita).
+- Vínculo explícito: cada variação guarda a sua chave de receita no meta `_recipe_key`, escolhida pelo operador (campo "Receita (conteúdo)" no painel). O alias do sabor deixa de vincular variações. Uma migração grava nas variações atuais a chave que elas usam hoje (slug ou rótulo do sabor resolvido pelo alias), para nada mudar no deploy, e o operador corrige onde precisar. Uma rota lista as receitas do mercado com as variações e o estado do conteúdo.
+- Cadastro de receitas: cada receita é cadastrada por mercado com nome e chave (a chave não muda depois), pode ter imagem e rótulo antes de qualquer variação e só pode ser excluída quando nenhuma variação a usa. A variação só aceita chave de receita cadastrada no mercado. A migração 040 cadastra as chaves que já estão em uso.
 - Rotas admin para ler o conteúdo e enviar ou remover a imagem (`catalog.read` / `catalog.write`, escopo de mercado). A imagem precisa ser PNG, JPEG ou WebP de exatamente 1024 × 636 e ter no máximo 5 MB. A API recusa o resto com 422 `recipe_image_invalid` e guarda a imagem aceita como WebP.
 - A remoção da imagem é recusada com 409 `recipe_content_in_use` enquanto houver variação ativa do sabor no mercado.
 - A checagem `final_image` da ativação aceita a imagem cadastrada **ou** a confirmação manual atual.
@@ -26,7 +28,7 @@ Duas fases, cada uma pode ir para produção sozinha.
 
 ### New Capabilities
 
-- `recipe-content`: imagem e rótulo de cada receita por mercado e sabor (validação, guarda, travas com variação ativa, permissões, auditoria e rota pública), e como esse conteúdo conta na ativação da variação.
+- `recipe-content`: cadastro de receitas por mercado, vínculo explícito da variação com a receita cadastrada, imagem e rótulo de cada receita por mercado e chave (validação, guarda, travas com variação ativa, permissões, auditoria e rota pública), e como esse conteúdo conta na ativação da variação.
 
 ### Modified Capabilities
 

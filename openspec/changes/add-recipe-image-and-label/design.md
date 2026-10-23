@@ -23,9 +23,28 @@ Motivação em `proposal.md`. Estado atual que molda a solução:
 
 ## Decisions
 
-### 1. Chave: (mercado, slug do sabor), não a variação
+### 1. Chave: (mercado, chave da receita), escolhida na variação
 
-O conteúdo é da receita, não do tamanho. Gravar por variação obrigaria a enviar a mesma imagem para 300 g e 500 g e deixaria as duas divergirem. Gravar só por sabor juntaria embalagem e idioma de BR e de US e furaria o escopo de mercado da sessão.
+O conteúdo é da receita, não do tamanho. Gravar por variação obrigaria a enviar a mesma imagem para 300 g e 500 g e deixaria as duas divergirem. Gravar só por chave, sem mercado, juntaria embalagem e idioma de BR e de US e furaria o escopo de mercado da sessão.
+
+O vínculo da variação com a receita é **explícito**: o meta `_recipe_key` da variação, preenchido pelo operador no painel. A primeira versão derivava a chave do slug ou do rótulo do sabor pelos aliases (`canonicalFlavorKey`). Isso deixava o vínculo invisível e prendia variações por acidente: um sabor "Bovino" de outro produto entrava no conteúdo de `beef`, e o slug, travado depois de gravado, não deixava corrigir. Com a chave explícita:
+
+- Detalhe do produto, ativação, lista de variações do conteúdo e lista de receitas leem só `_recipe_key`. Valor vazio ou ausente quer dizer sem receita.
+- A chave é validada como slug (`^[a-z0-9]+(-[a-z0-9]+)*$`, até 64 caracteres), com 422 `recipe_key_invalid`. No PATCH, `recipeKey` ausente não muda nada, e `null` ou `''` desvincula. Uma variação nova sem `recipeKey` nasce sem receita. O painel sempre envia o campo, já preenchido com a sugestão.
+- A troca de chave segue a trava de variação ativa em produto publicado (`variation_active_locked`) e é auditada como `catalog.variation.recipe_key`, com `from` e `to`.
+- A migração `1700000000039-backfill-variation-recipe-key.js` grava `_recipe_key` nas variações que não têm, com o valor derivado de antes (`canonicalFlavorKey(_flavor_slug || attribute_pa_flavor, mercado)`). O comportamento no deploy não muda. O `down` remove os metas `_recipe_key`.
+- Alternativas descartadas: manter o vínculo derivado e só mostrar o motivo (o alias continuaria decidindo sozinho); vincular por produto (a loja tem uma página por receita e mercado, e dois produtos disputariam a mesma).
+
+### 1b. Cadastro de receitas no próprio `recipe_contents`
+
+A receita passa a ser cadastrada, com nome e chave, e não mais criada implicitamente pela primeira variação que usa a chave. A linha de `recipe_contents` é o cadastro: a migração `1700000000040-add-recipe-registry.js` acrescenta `name` (varchar 120) e cria uma linha para cada (mercado, `_recipe_key`) em uso, com o nome tirado do `attribute_pa_flavor` da primeira variação (ou a chave). A 038 não é alterada, porque já pode ter rodado em bancos locais. O `down` remove a coluna, o que apaga os nomes; as linhas criadas pelo backfill sem imagem nem rótulo também saem.
+
+- Rotas: `POST /api/v1/admin/catalog/recipe-content?market=` com `{ key, name }` (200, como o cadastro de produto), `PATCH .../recipe-content/:flavorSlug?market=` com `{ name }` e `DELETE .../recipe-content/:flavorSlug?market=`, todas com `catalog.write` e `market: 'query'`.
+- Uma chave existe quando tem linha no mercado. Leitura, imagem, rótulo, renomear e excluir de uma chave sem linha dão 404 `recipe_not_found`. A exclusão é recusada com 409 `recipe_in_use` quando `listRecipeVariations` devolve alguma variação; senão, apaga a linha e o arquivo da imagem.
+- `saveVariants` confere `recipeKey` contra as linhas do mercado do produto (422 `recipe_not_registered`). O formato só é validado no cadastro (`recipe_key_invalid`).
+- A lista do mercado sai das linhas, juntando as variações por chave. Uma chave usada por variação e sem linha (não deve existir depois da 040) não aparece.
+- A rota pública não muda: continua exigindo variação ativa, e uma receita cadastrada sem variação não aparece na loja.
+- Alternativa descartada: uma tabela `recipes` separada só para o cadastro, que daria dois registros para a mesma chave e uma junção a mais em toda leitura.
 
 ### 2. Tabela própria `recipe_contents`
 
@@ -47,13 +66,17 @@ O formato é `PUT .../image` com `{ mimeType, imageBase64 }`, e `express.json({ 
 
 | Método | Caminho | Permissão |
 | --- | --- | --- |
+| GET | `/api/v1/admin/catalog/recipe-content?market=` | `catalog.read`, `market: 'query'` |
+| POST | `/api/v1/admin/catalog/recipe-content?market=` | `catalog.write`, `market: 'query'` (cadastro, decisão 1b) |
 | GET | `/api/v1/admin/catalog/recipe-content/:flavorSlug?market=` | `catalog.read`, `market: 'query'` |
+| PATCH | `/api/v1/admin/catalog/recipe-content/:flavorSlug?market=` | `catalog.write`, `market: 'query'` (renomear) |
+| DELETE | `/api/v1/admin/catalog/recipe-content/:flavorSlug?market=` | `catalog.write`, `market: 'query'` (excluir sem variações) |
 | PUT | `/api/v1/admin/catalog/recipe-content/:flavorSlug/image?market=` | `catalog.write`, `market: 'query'` |
 | DELETE | `/api/v1/admin/catalog/recipe-content/:flavorSlug/image?market=` | `catalog.write`, `market: 'query'` |
 | PUT | `/api/v1/admin/catalog/recipe-content/:flavorSlug/label?market=` | `catalog.write`, `market: 'query'` (fase 2) |
 | GET | `/api/v1/recipes/:key?market=` | pública, com o `limiter` de `/api/v1/products` |
 
-O GET admin devolve `{ market, flavorSlug, imageUrl, label, labelStatus, labelMissing, variations: [{ id, name, sku, active }] }`. O detalhe do produto ganha `recipeImageUrl` e `recipeLabelStatus` em cada variação, com uma consulta por produto. A rota pública devolve `{ key, market, imageUrl, label }`.
+O GET admin de uma receita devolve `{ market, flavorSlug, name, imageUrl, label, labelStatus, labelMissing, variations: [{ id, name, sku, active, productId, productName }] }`. O `:flavorSlug` das rotas admin é a chave da receita, usada como veio (sem alias). O GET sem chave lista as receitas do mercado: `{ market, items: [{ key, name, imageUrl, labelStatus, variations }] }`. A rota pública procura a chave como veio e, sem variação com ela, a chave do alias. O detalhe do produto ganha `recipeKey`, `recipeImageUrl` e `recipeLabelStatus` em cada variação, com uma consulta por produto. O `PUT .../label` recebe `{ label: { ... } }` com os campos nomeados como no `.md` da loja (`productName`, `netWeight`, `freshnessNote`, `ingredients`, `analysis: [{ nutrient, value }]`, `energyKg`, `energyPackage`, `notices`, `storage`, `feeding`, `manufacturer`, `manufacturerLocation`) e recusa formato inválido com 422 `recipe_label_invalid` e `details.field`. A rota pública devolve `{ key, market, imageUrl, label }`.
 
 ### 7. Completude do rótulo numa função pura
 

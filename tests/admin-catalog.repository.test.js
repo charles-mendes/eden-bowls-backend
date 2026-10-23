@@ -284,4 +284,39 @@ describe('AdminCatalogRepository', () => {
       items: []
     });
   });
+
+  test('lists the variations of one recipe in a market by their stored recipe key only', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn().mockResolvedValue([
+        { variationId: 1001, name: 'Beef 300g', sku: '1001', productId: 100, productName: 'Flavors BR', market: 'BR', variationStatus: 'draft', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' },
+        { variationId: 1005, name: 'Beef 500g', sku: '1005', productId: 100, productName: 'Flavors BR', market: 'BR', variationStatus: 'publish', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' },
+        { variationId: 3000, name: 'Bovino', sku: '3000', productId: 300, productName: 'Plano antigo', market: 'BR', variationStatus: 'publish', productStatus: 'publish', flavorSlug: null, recipeKey: '', label: 'Bovino', shortLabel: null, lifeStage: 'adult' },
+        { variationId: 2001, name: 'Beef 300g', sku: '2001', productId: 200, productName: 'Flavors US', market: 'US', variationStatus: 'publish', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' }
+      ])
+    };
+    const repository = new AdminCatalogRepository(dataSource);
+
+    expect(await repository.listRecipeVariations('br', 'beef')).toEqual([
+      { id: '1001', name: 'Beef 300g', sku: '1001', active: false, productId: '100', productName: 'Flavors BR' },
+      { id: '1005', name: 'Beef 500g', sku: '1005', active: true, productId: '100', productName: 'Flavors BR' }
+    ]);
+    const byKey = await repository.listMarketRecipeVariations('BR');
+    expect([...byKey.keys()]).toEqual(['beef']);
+    expect(dataSource.query.mock.calls[0][0]).toContain("vm.meta_key = '_recipe_key'");
+  });
+
+  test('stores, keeps or clears the recipe key of a variation', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    const repository = new AdminCatalogRepository(dataSource);
+    repository.upsertPostMeta = jest.fn();
+    repository.updatePost = jest.fn();
+
+    await repository.updateVariation({ id: '1001', recipeKey: 'beef' });
+    await repository.updateVariation({ id: '1002', recipeKey: null });
+    await repository.updateVariation({ id: '1003' });
+
+    const keyWrites = repository.upsertPostMeta.mock.calls.filter(([, key]) => key === '_recipe_key');
+    expect(keyWrites).toEqual([['1001', '_recipe_key', 'beef'], ['1002', '_recipe_key', '']]);
+  });
 });

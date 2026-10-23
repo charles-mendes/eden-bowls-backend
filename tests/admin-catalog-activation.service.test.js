@@ -16,7 +16,7 @@ function variant(overrides = {}) {
   };
 }
 
-function serviceFor({ product, activeCount = 0 }) {
+function serviceFor({ product, activeCount = 0, contents = {} }) {
   const state = { product };
   const repository = {
     getProduct: jest.fn(async () => state.product),
@@ -30,7 +30,12 @@ function serviceFor({ product, activeCount = 0 }) {
     countActiveSubscriptionsForCatalog: jest.fn().mockResolvedValue(activeCount)
   };
   const auditService = { record: jest.fn() };
-  const service = new AdminCatalogService({ repository, ledgerRepository, auditService });
+  const recipeContentRepository = {
+    findByMarketAndSlugs: jest.fn(async (market, keys) => new Map(keys
+      .filter((key) => contents[`${market}:${key}`])
+      .map((key) => [key, contents[`${market}:${key}`]])))
+  };
+  const service = new AdminCatalogService({ repository, ledgerRepository, auditService, recipeContentRepository });
   service.sync = jest.fn();
   return { service, repository, ledgerRepository, auditService };
 }
@@ -40,6 +45,80 @@ function published(country, variants) {
 }
 
 describe('AdminCatalogService.setVariationActive', () => {
+  test('activates a BR variation with a stored image and no manual image confirmation', async () => {
+    const { service, repository } = serviceFor({
+      product: published('BR', [variant({ recipeKey: 'senior-beef', finalImageReady: false })]),
+      contents: { 'BR:senior-beef': { imageUrl: '/recipe-images/recipe-br-senior-beef-1.webp', label: null } }
+    });
+
+    await service.setVariationActive('100', '3001', true, actor);
+
+    expect(repository.updatePostStatus).toHaveBeenCalledWith('3001', 'publish');
+  });
+
+  test('a stored image of another market does not count', async () => {
+    const { service } = serviceFor({
+      product: published('BR', [variant({ recipeKey: 'senior-beef', finalImageReady: false })]),
+      contents: { 'US:senior-beef': { imageUrl: '/recipe-images/recipe-us-senior-beef-1.webp', label: null } }
+    });
+
+    await expect(service.setVariationActive('100', '3001', true, actor)).rejects.toMatchObject({
+      details: { code: 'recipe_publish_refused', missing: ['final_image'] }
+    });
+  });
+
+  test('activates a US variation with a complete stored label and no manual label confirmation', async () => {
+    const { service, repository } = serviceFor({
+      product: published('US', [variant({ recipeKey: 'beef', stripePriceIdsByCurrency: { usd: 'price_beef' } })]),
+      contents: {
+        'US:beef': {
+          imageUrl: null,
+          label: {
+            ingredients: ['Beef'],
+            analysis: [{ nutrient: 'Crude Protein (min)', value: '9.0%' }],
+            energyKg: '1,200 kcal/kg',
+            energyPackage: '360 kcal per package',
+            notices: ['Not formulated to meet AAFCO nutrient profiles for complete and balanced nutrition.']
+          }
+        }
+      }
+    });
+
+    await service.setVariationActive('100', '3001', true, actor);
+
+    expect(repository.updatePostStatus).toHaveBeenCalledWith('3001', 'publish');
+  });
+
+  test('refuses a US variation whose stored label has no kcal per package', async () => {
+    const { service } = serviceFor({
+      product: published('US', [variant({ recipeKey: 'beef', stripePriceIdsByCurrency: { usd: 'price_beef' } })]),
+      contents: {
+        'US:beef': {
+          imageUrl: null,
+          label: {
+            ingredients: ['Beef'],
+            analysis: [{ nutrient: 'Crude Protein (min)', value: '9.0%' }],
+            energyKg: '1,200 kcal/kg',
+            energyPackage: '',
+            notices: ['Not formulated to meet AAFCO nutrient profiles for complete and balanced nutrition.']
+          }
+        }
+      }
+    });
+
+    await expect(service.setVariationActive('100', '3001', true, actor)).rejects.toMatchObject({
+      details: { code: 'recipe_publish_refused', missing: ['label_data'] }
+    });
+  });
+
+  test('refuses without a stored image and without the manual confirmation', async () => {
+    const { service } = serviceFor({ product: published('BR', [variant({ recipeKey: 'senior-beef', finalImageReady: false })]) });
+
+    await expect(service.setVariationActive('100', '3001', true, actor)).rejects.toMatchObject({
+      details: { code: 'recipe_publish_refused', missing: ['final_image'] }
+    });
+  });
+
   test('activates a ready BR variation without label data and audits it', async () => {
     const { service, repository, auditService } = serviceFor({ product: published('BR', [variant()]) });
 

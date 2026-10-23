@@ -92,13 +92,14 @@ Rollback is restore that dump and redeploy the previous image. There is no `migr
 
 ## Files
 
-Photo and label bytes stay on local disk. Compose uses named volumes at `/app/public/avatars`, `/app/public/feedback-photos`, `/app/public/pet-photos`, and `/app/ups-labels`. `./data` stays mounted read-only, so a nested label volume under `/app/data` cannot be created. Compose sets `UPS_LABEL_DIR=/app/ups-labels`. Labels are still downloaded through `GET /api/v1/admin/shipments/:id/label`.
+Photo and label bytes stay on local disk. Compose uses named volumes at `/app/public/avatars`, `/app/public/feedback-photos`, `/app/public/pet-photos`, `/app/public/recipe-images`, and `/app/ups-labels`. Recipe images are mounted only on the `api` service, which serves them at `/recipe-images`; the `cron` service does not read them. `./data` stays mounted read-only, so a nested label volume under `/app/data` cannot be created. Compose sets `UPS_LABEL_DIR=/app/ups-labels`. Labels are still downloaded through `GET /api/v1/admin/shipments/:id/label`.
 
 Before dropping the old host binds, copy the existing files into the new volumes:
 
 - `public/avatars`
 - `public/feedback-photos`
 - `public/pet-photos`
+- `public/recipe-images` (`RECIPE_IMAGE_DIR`; empty until the first recipe image is uploaded in the admin)
 - the current UPS label directory (`UPS_LABEL_DIR`, default `./data/ups-labels`)
 
 Docker healthchecks stay on `GET /health`.

@@ -24,6 +24,10 @@ describe('QA compose background jobs', () => {
     expect(api).not.toContain('ENABLE_BACKGROUND_JOBS');
     expect(cron).toContain('MODE: cron');
     expect(cron).not.toMatch(/^\s*ports:/m);
+    // Only the API serves recipe images, so only it mounts their volume (production-readiness).
+    expect(api).toContain('eden-bowls-recipe-images-qa:/app/public/recipe-images');
+    expect(cron).not.toContain('recipe-images');
+    expect(text).toMatch(/^  eden-bowls-recipe-images-qa:$/m);
 
     const example = fs.readFileSync(envExamplePath, 'utf8');
     expect(example).toMatch(/^MODE=http$/m);

@@ -314,6 +314,68 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  function requireRecipeContentService() {
+    if (!dependencies.recipeContentService) {
+      throw new HttpError(503, 'Recipe content service is not available.');
+    }
+    return dependencies.recipeContentService;
+  }
+
+  app.get('/api/v1/admin/catalog/recipe-content', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().list(request.query.market));
+  });
+
+  app.post('/api/v1/admin/catalog/recipe-content', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().create(request.query.market, request.body || {}, request.adminIdentity));
+  });
+
+  app.patch('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().rename(
+      request.query.market,
+      request.params.flavorSlug,
+      request.body || {},
+      request.adminIdentity
+    ));
+  });
+
+  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().remove(
+      request.query.market,
+      request.params.flavorSlug,
+      request.adminIdentity
+    ));
+  });
+
+  app.get('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().get(request.query.market, request.params.flavorSlug));
+  });
+
+  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().uploadImage(
+      request.query.market,
+      request.params.flavorSlug,
+      request.body || {},
+      request.adminIdentity
+    ));
+  });
+
+  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/label', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().saveLabel(
+      request.query.market,
+      request.params.flavorSlug,
+      (request.body || {}).label,
+      request.adminIdentity
+    ));
+  });
+
+  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug/image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().removeImage(
+      request.query.market,
+      request.params.flavorSlug,
+      request.adminIdentity
+    ));
+  });
+
   app.get('/api/v1/admin/catalog/pricing', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminCatalogService) {

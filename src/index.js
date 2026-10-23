@@ -55,6 +55,7 @@ const { ProfileRepository } = require('./infrastructure/repositories/profile.rep
 const { LocalAvatarStorage } = require('./infrastructure/storage/local-avatar-storage');
 const { LocalFeedbackPhotoStorage } = require('./infrastructure/storage/local-feedback-photo-storage');
 const { LocalPetPhotoStorage } = require('./infrastructure/storage/local-pet-photo-storage');
+const { LocalRecipeImageStorage } = require('./infrastructure/storage/local-recipe-image-storage');
 const { AuthService } = require('./services/auth.service');
 const { createOtpMailer } = require('./infrastructure/mailers/otp-mailer');
 const { BreedsService } = require('./services/breeds.service');
@@ -115,6 +116,8 @@ const { AdminTodayService } = require('./services/admin-today.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
+const { RecipeContentService } = require('./services/recipe-content.service');
+const { RecipeContentRepository } = require('./infrastructure/repositories/recipe-content.repository');
 const { LifeStageService } = require('./services/life-stage.service');
 const { LifeStageChangeEmailService } = require('./services/life-stage-change-email.service');
 const { LifeStageNoticesService } = require('./services/life-stage-notices.service');
@@ -578,6 +581,13 @@ async function bootstrap() {
     publicBaseUrl: petPhotoPublicBaseUrl
   });
   const onboardingPetImageService = new OnboardingPetImageService(onboardingPetUpdateRepository, petPhotoStorage);
+  const recipeImagePublicDir = path.resolve(env.RECIPE_IMAGE_DIR);
+  const recipeImagePublicBaseUrl = env.RECIPE_IMAGE_PUBLIC_BASE_URL
+    || `${String(env.JWT_AUTH_ISSUER || '').replace(/\/+$/, '')}/recipe-images`;
+  const recipeImageStorage = new LocalRecipeImageStorage({
+    directory: recipeImagePublicDir,
+    publicBaseUrl: recipeImagePublicBaseUrl
+  });
   const onboardingPetDeleteService = new OnboardingPetDeleteService(onboardingPetDeleteRepository, {
     findPet: (userId, petId) => onboardingPetUpdateRepository.findPet(userId, petId),
     petPhotoStorage
@@ -639,6 +649,7 @@ async function bootstrap() {
     repository: new AdminAuditRepository(dataSource),
     logger
   });
+  const recipeContentRepository = new RecipeContentRepository(dataSource);
   const adminCatalogService = new AdminCatalogService({
     repository: adminCatalogRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -646,6 +657,14 @@ async function bootstrap() {
     stripeBilling,
     stripeBrEnabled: env.STRIPE_BR_ENABLED,
     syncRunsRepository: new CatalogSyncRunsRepository(dataSource),
+    auditService: adminAuditService,
+    recipeContentRepository,
+    logger
+  });
+  const recipeContentService = new RecipeContentService({
+    repository: recipeContentRepository,
+    catalogRepository: adminCatalogRepository,
+    imageStorage: recipeImageStorage,
     auditService: adminAuditService,
     logger
   });
@@ -751,6 +770,7 @@ async function bootstrap() {
     upsShipmentService,
     customerInvoicesService,
     adminCatalogService,
+    recipeContentService,
     adminSystemHealthService,
     adminUsersService,
     stripeCouponService,
@@ -758,6 +778,7 @@ async function bootstrap() {
     avatarPublicDir,
     feedbackPhotoPublicDir,
     petPhotoPublicDir,
+    recipeImagePublicDir,
     dataSource,
     logger,
     nodeEnv: env.NODE_ENV,

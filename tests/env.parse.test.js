@@ -57,6 +57,21 @@ describe('parseEnv', () => {
     expect(env.AUTH_REFRESH_COOKIE_DOMAIN).toBe('');
   });
 
+  test('stores recipe images under a configurable directory', () => {
+    const unset = parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local' });
+    expect(unset.RECIPE_IMAGE_DIR).toBe('./public/recipe-images');
+    expect(unset.RECIPE_IMAGE_PUBLIC_BASE_URL).toBe('');
+
+    const set = parseEnv({
+      NODE_ENV: 'development',
+      EDEN_RUNTIME: 'local',
+      RECIPE_IMAGE_DIR: '/app/public/recipe-images',
+      RECIPE_IMAGE_PUBLIC_BASE_URL: 'https://qa-api.edenbowls.com/recipe-images'
+    });
+    expect(set.RECIPE_IMAGE_DIR).toBe('/app/public/recipe-images');
+    expect(set.RECIPE_IMAGE_PUBLIC_BASE_URL).toBe('https://qa-api.edenbowls.com/recipe-images');
+  });
+
   test('keeps the UPS client id outside production', () => {
     const env = parseEnv({
       NODE_ENV: 'development',

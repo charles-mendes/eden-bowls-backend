@@ -92,6 +92,38 @@
     "path": "/api/v1/admin/catalog/products/:productId/variations/:variationId/activation"
   },
   {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/recipe-content"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/catalog/recipe-content"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/label"
+  },
+  {
     "method": "POST",
     "path": "/api/v1/admin/catalog/sync"
   },
@@ -614,6 +646,10 @@
   {
     "method": "GET",
     "path": "/api/v1/public/feedbacks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/recipes/:key"
   },
   {
     "method": "GET",
