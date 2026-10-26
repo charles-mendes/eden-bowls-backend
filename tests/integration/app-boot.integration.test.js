@@ -68,6 +68,7 @@ describeIntegration('API startup through src/index.js (MySQL)', () => {
       cwd: path.join(__dirname, '../..'),
       env: {
         ...process.env,
+        EDEN_RUNTIME: 'local',
         DB_HOST: connection.host,
         DB_PORT: String(connection.port),
         DB_USER: connection.username,
