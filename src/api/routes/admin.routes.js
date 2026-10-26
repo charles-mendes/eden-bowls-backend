@@ -86,6 +86,15 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.get('/api/v1/admin/nutrition/recipes', requirePermission('nutrition.simulate', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminNutritionService) {
+        throw new HttpError(503, 'Nutrition service is not available.');
+      }
+      return dependencies.adminNutritionService.listRecipes({ country: String(request.query.market || '').toUpperCase() }, request.adminIdentity);
+    });
+  });
+
   app.post('/api/v1/admin/nutrition/simulate', requirePermission('nutrition.simulate', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminNutritionService) {

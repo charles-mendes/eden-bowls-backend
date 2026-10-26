@@ -212,6 +212,10 @@
     "path": "/api/v1/admin/me/password"
   },
   {
+    "method": "GET",
+    "path": "/api/v1/admin/nutrition/recipes"
+  },
+  {
     "method": "POST",
     "path": "/api/v1/admin/nutrition/simulate"
   },

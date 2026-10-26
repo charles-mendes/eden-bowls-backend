@@ -139,7 +139,21 @@ function labelCompleteness(label, market) {
   return { status: missing.length ? 'incomplete' : 'complete', missing };
 }
 
+// Energy density written on a label ("1.200 kcal/kg", "1,500 kcal/kg", "1200") in kcal/kg, or null.
+// A dot or comma followed by exactly three digits is a thousands separator in both markets.
+function parseEnergyKcalPerKg(value) {
+  const match = String(value || '').match(/\d[\d.,]*/);
+  if (!match) {
+    return null;
+  }
+  const raw = match[0].replace(/[.,]$/, '');
+  const digits = /^\d{1,3}([.,]\d{3})+$/.test(raw) ? raw.replace(/[.,]/g, '') : raw.replace(',', '.');
+  const kcal = Number(digits);
+  return Number.isFinite(kcal) && kcal > 0 ? kcal : null;
+}
+
 module.exports = {
+  parseEnergyKcalPerKg,
   RECIPE_KEY_META,
   RECIPE_KEY_INVALID,
   parseRecipeKey,

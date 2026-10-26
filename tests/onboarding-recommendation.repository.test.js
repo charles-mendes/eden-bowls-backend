@@ -72,4 +72,26 @@ describe('OnboardingRecommendationRepository', () => {
     expect(data.simplified.pets[0].monthly.grams).toBe(data.recommendations[0].quantidade_g_dia * 30);
     expect(data.simplified.pets[0].packs.count).toBeGreaterThan(0);
   });
+
+  test('divides by the mean energyKg of each dog line', async () => {
+    const lifeStageService = {
+      annotate: jest.fn(async (pets) => pets.map((pet) => ({ ...pet, life_stage: pet.pet_id === 'pup' ? 'puppy' : 'adult' })))
+    };
+    const recipeEnergyService = {
+      forLifeStage: jest.fn(async (market, stage) => ({ puppy: 1500, adult: 1200 })[stage])
+    };
+    const repository = new OnboardingRecommendationRepository({ listPets: jest.fn() }, { lifeStageService, recipeEnergyService });
+    const dog = { breed: 'Maltese', age_years: 3, weight: 2, weight_unit: 'kg', activity_level: 'high', pet_condition: 'underweight', neutered: true };
+
+    const data = await repository.getRecommendation(null, MARKETS.BR, [
+      { ...dog, pet_id: 'pup', name: 'Pipoca' },
+      { ...dog, pet_id: 'adult', name: 'Luna' }
+    ]);
+
+    expect(recipeEnergyService.forLifeStage).toHaveBeenCalledWith('BR', 'puppy');
+    expect(data.recommendations[0].nem_kcal_kg).toBe(1500);
+    expect(data.recommendations[0].quantidade_g_dia).toBe(107);
+    expect(data.recommendations[1].nem_kcal_kg).toBe(1200);
+    expect(data.simplified.pets[0].life_stage).toBe('puppy');
+  });
 });

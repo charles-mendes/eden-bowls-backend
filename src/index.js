@@ -110,6 +110,7 @@ const { StripeFirstPurchasePromosRepository } = require('./infrastructure/reposi
 const { StripeCouponService } = require('./services/stripe-coupon.service');
 const { AdminIdentityService } = require('./services/admin-identity.service');
 const { AdminNutritionService } = require('./services/admin-nutrition.service');
+const { RecipeEnergyService } = require('./services/recipe-energy.service');
 const { AdminShippingService } = require('./services/admin-shipping.service');
 const { ShippingHeadquartersService } = require('./services/shipping-headquarters.service');
 const { AdminTodayService } = require('./services/admin-today.service');
@@ -341,7 +342,14 @@ async function bootstrap() {
     ledgerRepository: subscriptionLedgerRepository,
     petsRepository: onboardingPetsRepository
   });
-  const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository, { lifeStageService });
+  const recipeEnergyService = new RecipeEnergyService({
+    contentRepository: new RecipeContentRepository(dataSource),
+    catalogRepository: recipeLinesRepository
+  });
+  const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository, {
+    lifeStageService,
+    recipeEnergyService
+  });
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
     recommendationRepository: onboardingRecommendationRepository,
@@ -601,7 +609,7 @@ async function bootstrap() {
     authService,
     adminEmails: env.ADMIN_EMAILS
   });
-  const adminNutritionService = new AdminNutritionService();
+  const adminNutritionService = new AdminNutritionService({ recipeEnergyService });
   const adminShippingService = new AdminShippingService({
     shippingService,
     repository: shippingSettingsRepository,
@@ -620,7 +628,9 @@ async function bootstrap() {
   });
   const adminOnboardingService = new AdminOnboardingService({
     repository: adminOnboardingRepository,
-    ledgerRepository: subscriptionLedgerRepository
+    ledgerRepository: subscriptionLedgerRepository,
+    lifeStageService,
+    recipeEnergyService
   });
   const adminBillingService = new AdminBillingService({
     ledgerRepository: subscriptionLedgerRepository,
