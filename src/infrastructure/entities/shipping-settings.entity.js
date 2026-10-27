@@ -258,6 +258,11 @@ function buildShippingUsSettingsEntitySchema(tableName = 'shipping_us_settings')
         type: 'text',
         nullable: true
       },
+      maxTransitDays: {
+        name: 'max_transit_days',
+        type: 'int',
+        default: 1
+      },
       createdAt: {
         name: 'created_at',
         type: 'datetime',

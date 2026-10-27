@@ -68,11 +68,13 @@ Coluna `max_transit_days` (int, padrão 1) em `shipping_us_settings`. `delivery-
 
 `bags`, hoje `{ 300: 0, 500: 0 }`, passa a ter uma chave por tamanho.
 
+O tamanho de cada variação vem do peso cadastrado (`attribute_pa_weight`). Um peso em gramas (`300g`) entra como está. Um peso em onças é convertido e arredondado para 10 g (`packGramsFromWeight` em `plan-catalog-pricing.js`), porque o catálogo dos EUA escreve 300 g como `10.6oz` (300,5 g) e 500 g como `17.6oz` (498,95 g): sem o arredondamento os pacotes viram 301/499 g e a contagem muda no deploy. A diferença do arredondamento fica abaixo da precisão de 0,1 oz do rótulo. Variação ativa sem peso não entra na lista.
+
 ## Risks / Trade-offs
 
 - [`expectedPercentForTerm` passa a ser assíncrono e tem vários chamadores] → Os testes de checkout e de snapshot cobrem os três prazos nas duas contas antes da troca.
 - [Percentual mudado sem revisar os termos de uso] → A tela de cupom mostra o aviso "os termos de uso citam o percentual" ao salvar. Na fase 3 o texto legal passa a ser editável no painel.
-- [O valor de módulo de `max_transit_days` só é atualizado no processo que salva; o container `cron` o carrega na partida e fica com o valor antigo, e o raio do Brasil tem hoje o mesmo problema] → Os jobs que usam o prazo (entregas do cliente e impacto do calendário) recarregam as configurações de frete do banco no início de cada execução.
+- [O valor de módulo de `max_transit_days`, como o do raio do Brasil, só é atualizado no processo que salva as configurações] → Aceito: há um só container de API, e é nele que rodam a estimativa de entrega, as entregas do cliente e o impacto do calendário, os únicos leitores do limite. O container `cron` lê as configurações na partida, mas nenhum job dele usa o prazo nem o raio (o estimador usa o trânsito gravado de cada assinatura). Se a API passar a ter mais de um container, os leitores precisam reler as configurações do banco.
 - [Uma variação de teste ativa pode mudar a recomendação de todos] → A recomendação só usa variações ativas do produto do plano. O detalhe do produto mostra os tamanhos que entram na recomendação.
 - [A semente da apresentação pode divergir dos `.md` se a loja mudar antes do deploy] → O teste da semente compara com o snapshot `lifeStageRecipesContent.test.ts.snap` da loja, copiado para a fixture.
 

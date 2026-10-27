@@ -1,3 +1,4 @@
+const { AdminCatalogRepository } = require('../src/infrastructure/repositories/admin-catalog.repository');
 const { AdminCatalogService } = require('../src/services/admin-catalog.service');
 
 describe('AdminCatalogService', () => {
@@ -77,6 +78,42 @@ describe('AdminCatalogService', () => {
       { id: '12', recipeKey: 'beef', recipeImageUrl: '/recipe-images/recipe-us-beef-1.webp', recipeLabelStatus: 'missing' },
       { id: '13', recipeKey: null, recipeImageUrl: null, recipeLabelStatus: 'missing' }
     ]);
+  });
+
+  describe('large-pack limit (plan-packaging)', () => {
+    function serviceWith() {
+      const repository = {
+        getProduct: jest.fn().mockResolvedValue({ id: '100', active: true, planCountry: 'BR', planDays: 30, largePackLimit: 8, variants: [] }),
+        upsertPostMeta: jest.fn()
+      };
+      return { service: new AdminCatalogService({ repository }), repository };
+    }
+
+    test('saves the limit in the product meta', async () => {
+      const { service, repository } = serviceWith();
+
+      await service.patchProduct('100', { largePackLimit: 4 });
+
+      expect(repository.upsertPostMeta).toHaveBeenCalledWith('100', '_cmpb_large_pack_limit', '4');
+    });
+
+    test.each([0, 61, 2.5, 'many'])('refuses %j with 422 before writing anything', async (largePackLimit) => {
+      const { service, repository } = serviceWith();
+
+      await expect(service.patchProduct('100', { planDays: 28, largePackLimit })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'product_large_pack_limit_invalid' }
+      });
+      expect(repository.upsertPostMeta).not.toHaveBeenCalled();
+    });
+
+    test('the product detail returns the stored limit, and 8 without the meta', () => {
+      const repository = new AdminCatalogRepository({ isInitialized: true, query: jest.fn() });
+      const row = { id: 100, name: 'Plano', slug: 'plano', status: 'publish', planCountry: 'BR', planDays: '30' };
+
+      expect(repository.mapProduct(row, []).largePackLimit).toBe(8);
+      expect(repository.mapProduct({ ...row, largePackLimit: '4' }, []).largePackLimit).toBe(4);
+    });
   });
 
   describe('variation recipe key', () => {

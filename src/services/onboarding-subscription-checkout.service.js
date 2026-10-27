@@ -8,10 +8,7 @@ const { resolveMarket } = require('../core/market');
 const { assertVerifiedDeliveryArea } = require('../core/shipping-quote-token');
 const { resolveStripeAccountFromCountry } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
-const {
-  applyFirstPurchaseDiscount,
-  expectedPercentForTerm
-} = require('../core/first-purchase-discount');
+const { applyFirstPurchaseDiscount } = require('../core/first-purchase-discount');
 const { buildPetsSnapshot, extractSubscriptionPeriod } = require('../core/stripe-subscription-map');
 const {
   buildCheckoutFingerprint,
@@ -195,9 +192,8 @@ class OnboardingSubscriptionCheckoutService {
       termMonths,
       account: stripeAccount
     });
-    const appliedPercent = promotion
-      ? Number(promotion.discount_percent)
-      : (eligible ? expectedPercentForTerm(termMonths) : 0);
+    // The coupon service resolves a promotion for every eligible checkout, with the account's stored percent.
+    const appliedPercent = promotion ? Number(promotion.discount_percent) : 0;
     const catalogPricing = applyDiscountToCatalogPricing(
       planSelection && planSelection.catalog_pricing,
       appliedPercent

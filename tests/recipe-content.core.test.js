@@ -1,4 +1,4 @@
-const { labelCompleteness, parseRecipeKey, parseRecipeLabel } = require('../src/core/recipe-content');
+const { labelCompleteness, parseRecipeKey, parseRecipeLabel, parseRecipePresentation } = require('../src/core/recipe-content');
 
 function label(overrides = {}) {
   return parseRecipeLabel({
@@ -87,5 +87,67 @@ describe('parseRecipeKey', () => {
 
   test.each(['Beef Recipe', 'beef--chicken', '-beef', 'carne_bovina', 'a'.repeat(65)])('refuses %j', (value) => {
     expect(() => parseRecipeKey(value)).toThrow(expect.objectContaining({ statusCode: 422, details: { code: 'recipe_key_invalid' } }));
+  });
+});
+
+describe('parseRecipePresentation', () => {
+  function presentation(overrides = {}) {
+    return {
+      title: 'Beef Recipe',
+      tagline: 'Strength & Vitality',
+      resume: 'Rich in protein and iron, our beef recipe supports strong muscles and lasting energy.',
+      highlights: ['Potatoes', 'Beef', 'White Rice', 'Carrots', 'Spinach'],
+      colors: { color: '#C97B6C', accentColor: '#EAB8A8', pillBg: '#E8CCBC', pillText: '#5A2010', pillBorder: '#c0907c' },
+      ...overrides
+    };
+  }
+
+  function invalidFields(input) {
+    try {
+      parseRecipePresentation(input);
+    } catch (error) {
+      expect(error).toMatchObject({ statusCode: 422, details: { code: 'recipe_presentation_invalid' } });
+      return error.details.fields;
+    }
+    throw new Error('presentation was accepted');
+  }
+
+  test('trims text, uppercases colors and ignores unknown keys', () => {
+    const parsed = parseRecipePresentation(presentation({ title: '  Beef Recipe  ', tag: 'Beef' }));
+    expect(parsed).toEqual({ ...presentation(), colors: { ...presentation().colors, pillBorder: '#C0907C' } });
+  });
+
+  test('Invalid color: lists colors.pillBg', () => {
+    expect(invalidFields(presentation({ colors: { ...presentation().colors, pillBg: 'red' } }))).toEqual(['colors.pillBg']);
+  });
+
+  test.each([
+    ['title', 'x'.repeat(121)],
+    ['tagline', 'x'.repeat(81)],
+    ['resume', 'x'.repeat(301)],
+    ['title', '   ']
+  ])('refuses %s %j', (field, value) => {
+    expect(invalidFields(presentation({ [field]: value }))).toEqual([field]);
+  });
+
+  test('accepts each text at its limit', () => {
+    expect(() => parseRecipePresentation(presentation({
+      title: 'x'.repeat(120), tagline: 'x'.repeat(80), resume: 'x'.repeat(300), highlights: Array(8).fill('y'.repeat(60))
+    }))).not.toThrow();
+  });
+
+  test.each([
+    [[], ['highlights']],
+    [Array(9).fill('Beef'), ['highlights']],
+    [['Beef', 'z'.repeat(61), ''], ['highlights[1]', 'highlights[2]']]
+  ])('refuses highlights %j', (highlights, fields) => {
+    expect(invalidFields(presentation({ highlights }))).toEqual(fields);
+  });
+
+  test('a missing presentation lists every field', () => {
+    expect(invalidFields(null)).toEqual([
+      'title', 'tagline', 'resume', 'highlights',
+      'colors.color', 'colors.accentColor', 'colors.pillBg', 'colors.pillText', 'colors.pillBorder'
+    ]);
   });
 });

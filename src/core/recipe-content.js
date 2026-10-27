@@ -154,7 +154,60 @@ function parseEnergyKcalPerKg(value) {
   return Number.isFinite(kcal) && kcal > 0 ? kcal : null;
 }
 
+// Recipe page presentation, saved whole: text limits in characters, after trimming.
+const PRESENTATION_TEXT_LIMITS = { title: 120, tagline: 80, resume: 300 };
+const MAX_PRESENTATION_HIGHLIGHTS = 8;
+const MAX_PRESENTATION_HIGHLIGHT_LENGTH = 60;
+const PRESENTATION_COLOR_FIELDS = ['color', 'accentColor', 'pillBg', 'pillText', 'pillBorder'];
+const PRESENTATION_COLOR_PATTERN = /^#[0-9A-Fa-f]{6}$/;
+const RECIPE_PRESENTATION_INVALID = 'recipe_presentation_invalid';
+
+function presentationText(value, limit) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text && text.length <= limit ? text : null;
+}
+
+// Normalized presentation from a request, or 422 listing every invalid field. Unknown keys are ignored.
+function parseRecipePresentation(input) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const invalid = [];
+  const presentation = {};
+  for (const [field, limit] of Object.entries(PRESENTATION_TEXT_LIMITS)) {
+    presentation[field] = presentationText(source[field], limit);
+    if (!presentation[field]) invalid.push(field);
+  }
+  const highlights = Array.isArray(source.highlights) ? source.highlights : [];
+  presentation.highlights = highlights.map((item) => presentationText(item, MAX_PRESENTATION_HIGHLIGHT_LENGTH));
+  if (!highlights.length || highlights.length > MAX_PRESENTATION_HIGHLIGHTS) {
+    invalid.push('highlights');
+  } else {
+    presentation.highlights.forEach((item, index) => {
+      if (!item) invalid.push(`highlights[${index}]`);
+    });
+  }
+  const colors = source.colors && typeof source.colors === 'object' ? source.colors : {};
+  presentation.colors = {};
+  for (const field of PRESENTATION_COLOR_FIELDS) {
+    const value = typeof colors[field] === 'string' ? colors[field].trim() : '';
+    if (PRESENTATION_COLOR_PATTERN.test(value)) {
+      presentation.colors[field] = value.toUpperCase();
+    } else {
+      invalid.push(`colors.${field}`);
+    }
+  }
+  if (invalid.length) {
+    throw new HttpError(422, `Invalid presentation fields: ${invalid.join(', ')}.`, { code: RECIPE_PRESENTATION_INVALID, fields: invalid });
+  }
+  return presentation;
+}
+
 module.exports = {
+  parseRecipePresentation,
+  PRESENTATION_TEXT_LIMITS,
+  MAX_PRESENTATION_HIGHLIGHTS,
+  MAX_PRESENTATION_HIGHLIGHT_LENGTH,
+  PRESENTATION_COLOR_FIELDS,
+  RECIPE_PRESENTATION_INVALID,
   parseEnergyKcalPerKg,
   RECIPE_KEY_META,
   RECIPE_KEY_INVALID,

@@ -1,8 +1,10 @@
 const GRAMS_TO_OZ = 0.035274;
+// Packaging of before the catalog fed it, and the fallback without an active variation (plan-packaging).
 const PERIOD_DAYS = 30;
 const SMALL_PACK_GRAMS = 300;
 const LARGE_PACK_GRAMS = 500;
 const LARGE_PACK_THRESHOLD = 8;
+const MAX_LARGE_PACK_LIMIT = 60;
 
 const CONSUMPTION_LABELS = {
   US: {
@@ -29,9 +31,32 @@ function consumptionLabels(market) {
   return CONSUMPTION_LABELS[resolveCountry(market)];
 }
 
-function selectLocalPackForMonth(monthlyGrams, country) {
-  const useLargePack = (Number(monthlyGrams) / SMALL_PACK_GRAMS) > LARGE_PACK_THRESHOLD;
-  const sizeGrams = useLargePack ? LARGE_PACK_GRAMS : SMALL_PACK_GRAMS;
+function positiveInteger(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+// { packSizesGrams, planDays, largePackLimit } of the market's plan product, each falling back on its own:
+// pack sizes sorted and distinct (the lightest is the small pack, the heaviest the large one).
+function packagingOf(options = {}) {
+  const sizes = [...new Set((Array.isArray(options.packSizesGrams) ? options.packSizesGrams : [])
+    .map(positiveInteger)
+    .filter(Boolean))].sort((left, right) => left - right);
+  const packSizesGrams = sizes.length ? sizes : [SMALL_PACK_GRAMS, LARGE_PACK_GRAMS];
+  const limit = positiveInteger(options.largePackLimit);
+  return {
+    packSizesGrams,
+    smallPackGrams: packSizesGrams[0],
+    largePackGrams: packSizesGrams[packSizesGrams.length - 1],
+    planDays: positiveInteger(options.planDays) || PERIOD_DAYS,
+    largePackLimit: limit && limit <= MAX_LARGE_PACK_LIMIT ? limit : LARGE_PACK_THRESHOLD
+  };
+}
+
+function selectLocalPackForMonth(monthlyGrams, country, options = {}) {
+  const packaging = packagingOf(options);
+  const useLargePack = (Number(monthlyGrams) / packaging.smallPackGrams) > packaging.largePackLimit;
+  const sizeGrams = useLargePack ? packaging.largePackGrams : packaging.smallPackGrams;
 
   if (country === 'BR') {
     return {
@@ -114,10 +139,10 @@ function formatPacksConsumption(packCount, packSelection, country) {
   };
 }
 
-function buildSimplifiedPet(recommendation, country) {
+function buildSimplifiedPet(recommendation, country, packaging) {
   const gramsPerDay = Math.max(0, Number.parseInt(recommendation.quantidade_g_dia, 10) || 0);
-  const monthlyGrams = gramsPerDay * PERIOD_DAYS;
-  const packSelection = selectLocalPackForMonth(monthlyGrams, country);
+  const monthlyGrams = gramsPerDay * packaging.planDays;
+  const packSelection = selectLocalPackForMonth(monthlyGrams, country, packaging);
   const packCount = packSelection.size_grams > 0 ? Math.ceil(monthlyGrams / packSelection.size_grams) : 0;
 
   return {
@@ -129,15 +154,16 @@ function buildSimplifiedPet(recommendation, country) {
   };
 }
 
-function buildSimplifiedRecommendation(recommendations, market) {
+function buildSimplifiedRecommendation(recommendations, market, options = {}) {
   const country = resolveCountry(market);
+  const packaging = packagingOf(options);
   const items = (Array.isArray(recommendations) ? recommendations : []).map((recommendation) => (
-    buildSimplifiedPet(recommendation, country)
+    buildSimplifiedPet(recommendation, country, packaging)
   ));
 
   return {
     country,
-    period_days: PERIOD_DAYS,
+    period_days: packaging.planDays,
     labels: consumptionLabels(market),
     pets: items
   };
@@ -155,29 +181,30 @@ function suggestFrequency(totalGramsPerDay) {
   return { frequency: 'biweekly', period_days: 14 };
 }
 
-function buildPackagingRecommendation(recommendations) {
+function buildPackagingRecommendation(recommendations, options = {}) {
+  const packaging = packagingOf(options);
   const items = Array.isArray(recommendations) ? recommendations : [];
   const totalGramsPerDay = items.reduce((sum, recommendation) => (
     sum + Math.max(0, Number.parseInt(recommendation.quantidade_g_dia, 10) || 0)
   ), 0);
   const suggested = suggestFrequency(totalGramsPerDay);
-  const totalTargetGrams = totalGramsPerDay * PERIOD_DAYS;
-  const bags = { 300: 0, 500: 0 };
+  const totalTargetGrams = totalGramsPerDay * packaging.planDays;
+  const bags = Object.fromEntries(packaging.packSizesGrams.map((size) => [size, 0]));
 
   for (const recommendation of items) {
     const gramsPerDay = Math.max(0, Number.parseInt(recommendation.quantidade_g_dia, 10) || 0);
-    const monthlyGrams = gramsPerDay * PERIOD_DAYS;
-    const packSelection = selectLocalPackForMonth(monthlyGrams, 'BR');
+    const monthlyGrams = gramsPerDay * packaging.planDays;
+    const packSelection = selectLocalPackForMonth(monthlyGrams, 'BR', packaging);
     const packCount = packSelection.size_grams > 0 ? Math.ceil(monthlyGrams / packSelection.size_grams) : 0;
     bags[packSelection.size_grams] = (bags[packSelection.size_grams] || 0) + packCount;
   }
 
   return {
     selected_frequency: 'monthly',
-    period_days: PERIOD_DAYS,
+    period_days: packaging.planDays,
     suggested_frequency: suggested.frequency,
     suggested_period_days: suggested.period_days,
-    package_sizes_grams: [SMALL_PACK_GRAMS, LARGE_PACK_GRAMS],
+    package_sizes_grams: [...packaging.packSizesGrams],
     total_grams_per_day: totalGramsPerDay,
     total_target_grams: totalTargetGrams,
     suggested_bags_by_size: bags
@@ -186,7 +213,10 @@ function buildPackagingRecommendation(recommendations) {
 
 module.exports = {
   CONSUMPTION_LABELS,
+  LARGE_PACK_THRESHOLD,
+  MAX_LARGE_PACK_LIMIT,
   PERIOD_DAYS,
+  packagingOf,
   buildPackagingRecommendation,
   buildSimplifiedRecommendation,
   consumptionLabels,

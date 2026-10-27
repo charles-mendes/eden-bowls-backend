@@ -394,6 +394,15 @@ function registerAdminRoutes(app, dependencies = {}) {
     ));
   });
 
+  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/presentation', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().savePresentation(
+      request.query.market,
+      request.params.flavorSlug,
+      (request.body || {}).presentation,
+      request.adminIdentity
+    ));
+  });
+
   app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug/image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => requireRecipeContentService().removeImage(
       request.query.market,
@@ -660,7 +669,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       }
       const payload = parseCreateCouponInput(request.body || {});
       payload.account = couponAccountFor(request);
-      return dependencies.stripeCouponService.createFirstPurchaseCoupon(payload);
+      return dependencies.stripeCouponService.createFirstPurchaseCoupon(payload, request.adminIdentity);
     });
   });
 

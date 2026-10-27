@@ -95,3 +95,46 @@ describe('OnboardingRecommendationRepository', () => {
     expect(data.simplified.pets[0].life_stage).toBe('puppy');
   });
 });
+
+describe('OnboardingRecommendationRepository packaging from the plan product (plan-packaging)', () => {
+  // A 20 kg adult dog: the pack size and count must not change on deploy.
+  const dog = {
+    pet_id: 'rex', name: 'Rex', breed: 'Mixed', age_years: 4, weight: 20, weight_unit: 'kg',
+    size: 'medium', activity_level: 'medium', pet_condition: 'ideal', neutered: true
+  };
+
+  async function recommend(productsRepository, market = MARKETS.BR) {
+    return new OnboardingRecommendationRepository(null, { productsRepository }).getRecommendation(null, market, [dog]);
+  }
+
+  test('Catalog with 300 g and 500 g: the same packs as before the deploy', async () => {
+    const before = await recommend(null);
+    const productsRepository = {
+      findPlanPackaging: jest.fn().mockResolvedValue({ packSizesGrams: [300, 500, 300, 500], planDays: 30, largePackLimit: 8 })
+    };
+
+    const after = await recommend(productsRepository);
+
+    expect(productsRepository.findPlanPackaging).toHaveBeenCalledWith('BR');
+    expect(after.packaging).toEqual(before.packaging);
+    expect(after.simplified).toEqual(before.simplified);
+    expect(after.packaging.package_sizes_grams).toEqual([300, 500]);
+  });
+
+  test('without an active variation, or when the catalog fails, the packaging of before applies', async () => {
+    const before = await recommend(null, MARKETS.US);
+    const empty = await recommend({ findPlanPackaging: jest.fn().mockResolvedValue({ packSizesGrams: [], planDays: 0, largePackLimit: 0 }) }, MARKETS.US);
+    const missing = await recommend({ findPlanPackaging: jest.fn().mockResolvedValue(null) }, MARKETS.US);
+    const failing = await recommend({ findPlanPackaging: jest.fn().mockRejectedValue(new Error('db down')) }, MARKETS.US);
+
+    for (const data of [empty, missing, failing]) {
+      expect(data.packaging).toEqual(before.packaging);
+      expect(data.simplified).toEqual(before.simplified);
+    }
+  });
+
+  test('a 1 kg active variation becomes the large pack', async () => {
+    const data = await recommend({ findPlanPackaging: jest.fn().mockResolvedValue({ packSizesGrams: [300, 500, 1000], planDays: 30, largePackLimit: 8 }) });
+    expect(data.packaging.package_sizes_grams).toEqual([300, 500, 1000]);
+  });
+});

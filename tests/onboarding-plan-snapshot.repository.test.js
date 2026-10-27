@@ -40,6 +40,34 @@ describe('OnboardingPlanSnapshotRepository', () => {
     expect(data.flavor_options.map((option) => option.key)).toEqual(['beef', 'fish', 'pork', 'turkey']);
   });
 
+  describe('plan terms', () => {
+    const recommendationRepository = { getRecommendation: jest.fn().mockResolvedValue(null) };
+    const termDiscounts = {
+      percentsFor: jest.fn(async (account) => (account === 'us' ? { 1: 10, 3: 25, 6: 35 } : { 1: 10, 3: 25, 6: 40 }))
+    };
+
+    test('Values after deploy: BR offers 10, 25 and 40 percent from the seeded account', async () => {
+      const repository = new OnboardingPlanSnapshotRepository({ recommendationRepository, termDiscounts });
+
+      const data = await repository.getSnapshot(7, MARKETS.BR);
+
+      expect(termDiscounts.percentsFor).toHaveBeenCalledWith('br');
+      expect(data.plan_terms).toEqual([
+        { subscription_term_months: 1, discount_percent: 10 },
+        { subscription_term_months: 3, discount_percent: 25 },
+        { subscription_term_months: 6, discount_percent: 40 }
+      ]);
+    });
+
+    test('Accounts are independent: the US snapshot offers the US percents', async () => {
+      const repository = new OnboardingPlanSnapshotRepository({ recommendationRepository, termDiscounts });
+
+      const data = await repository.getSnapshot(7, MARKETS.US);
+
+      expect(data.plan_terms[2]).toEqual({ subscription_term_months: 6, discount_percent: 35 });
+    });
+  });
+
   test('uses published catalog flavors when the products repository returns labels', async () => {
     const repository = new OnboardingPlanSnapshotRepository({
       productsRepository: {

@@ -78,6 +78,34 @@ describe('first delivery estimate (3.14)', () => {
   });
 });
 
+describe('checkout estimate and the US max transit days (shipping-settings)', () => {
+  const { setUsMaxTransitDays } = require('../src/core/delivery-closed-days');
+
+  afterEach(() => setUsMaxTransitDays(null));
+
+  test('Value after deploy: a 2-day US transit is unavailable', async () => {
+    const app = createApp({ deliveryEstimator: estimator, now: () => US_PURCHASE, corsOrigins: ['http://localhost:5173'] });
+    const response = await request(app).get('/api/v1/onboarding/delivery-estimate').query({ country: 'US', transit_days: 2 });
+    expect(response.body.data).toEqual({ country: 'US', available: false });
+  });
+
+  test('Operator allows two transit days: the estimate is available with its preparation day and delivery date', async () => {
+    setUsMaxTransitDays(2);
+    const app = createApp({ deliveryEstimator: estimator, now: () => US_PURCHASE, corsOrigins: ['http://localhost:5173'] });
+
+    const response = await request(app).get('/api/v1/onboarding/delivery-estimate').query({ country: 'US', transit_days: 2 });
+
+    const expected = await estimator.estimate({ market: 'US', at: US_PURCHASE, transitDays: 2 });
+    expect(expected).not.toBeNull();
+    expect(response.body.data).toMatchObject({
+      country: 'US',
+      available: true,
+      preparation_day: expected.preparationDay,
+      delivery_date: expected.deliveryDate
+    });
+  });
+});
+
 describe('order confirmation names the first delivery (3.14)', () => {
   test('pt-BR and en-US say the planned date instead of "already being prepared"', () => {
     const ptLabel = formatDeliveryDay('2026-10-08', 'pt-BR');

@@ -3,9 +3,23 @@ const { buildPackagingRecommendation, buildSimplifiedRecommendation } = require(
 const { resolveMarket } = require('../../core/market');
 const { normalizeDraftPets } = require('../../core/onboarding-draft-pets');
 
+// Packaging of the market's plan product ({ packSizesGrams, planDays, largePackLimit }), or {} so the
+// recommendation keeps the packaging of before when the catalog cannot be read.
+async function planPackagingFor(source, country) {
+  if (!source || typeof source.findPlanPackaging !== 'function') {
+    return {};
+  }
+  try {
+    return (await source.findPlanPackaging(country)) || {};
+  } catch (_error) {
+    return {};
+  }
+}
+
 class OnboardingRecommendationRepository {
   constructor(petsRepository, options = {}) {
     this.petsRepository = petsRepository || null;
+    this.productsRepository = options.productsRepository || null;
     this.lifeStageService = options.lifeStageService || null;
     this.recipeEnergyService = options.recipeEnergyService || null;
   }
@@ -38,8 +52,9 @@ class OnboardingRecommendationRepository {
       energies[index] ? { nem_kcal_kg: energies[index] } : null,
       market.locale
     ));
-    const simplified = buildSimplifiedRecommendation(recommendations, market);
-    const packaging = buildPackagingRecommendation(recommendations);
+    const planPackaging = await planPackagingFor(this.productsRepository, market.country);
+    const simplified = buildSimplifiedRecommendation(recommendations, market, planPackaging);
+    const packaging = buildPackagingRecommendation(recommendations, planPackaging);
     this.annotateLifeStages(annotated, simplified);
 
     return {
@@ -104,5 +119,6 @@ OnboardingRecommendationRepository.prototype.annotateLifeStages = function annot
 };
 
 module.exports = {
+  planPackagingFor,
   OnboardingRecommendationRepository
 };

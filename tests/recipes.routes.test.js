@@ -18,13 +18,15 @@ describe('GET /api/v1/recipes/:key', () => {
   test('resolves the store key chicken to turkey and returns its stored image without auth', async () => {
     const app = appFor({
       variations: { 'US:turkey': [{ id: '11', name: 'Chicken 300g', sku: 'C', active: true }] },
-      contents: { 'US:turkey': { imageUrl: '/recipe-images/recipe-us-turkey-1.webp', label: null } }
+      contents: { 'US:turkey': { name: 'Chicken', imageUrl: '/recipe-images/recipe-us-turkey-1.webp', label: null } }
     });
 
     const response = await request(app).get('/api/v1/recipes/chicken?market=US');
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ key: 'turkey', market: 'US', imageUrl: '/recipe-images/recipe-us-turkey-1.webp', planImageUrl: null, label: null });
+    expect(response.body).toEqual({
+      key: 'turkey', market: 'US', name: 'Chicken', imageUrl: '/recipe-images/recipe-us-turkey-1.webp', planImageUrl: null, label: null, presentation: null
+    });
   });
 
   test('returns null content for a launched recipe with nothing stored', async () => {
@@ -33,7 +35,7 @@ describe('GET /api/v1/recipes/:key', () => {
     const response = await request(app).get('/api/v1/recipes/pork?market=br');
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ key: 'pork', market: 'BR', imageUrl: null, planImageUrl: null, label: null });
+    expect(response.body).toEqual({ key: 'pork', market: 'BR', name: 'pork', imageUrl: null, planImageUrl: null, label: null, presentation: null });
   });
 
   test('returns the stored label whole', async () => {
@@ -47,12 +49,31 @@ describe('GET /api/v1/recipes/:key', () => {
     };
     const app = appFor({
       variations: { 'US:beef': [{ id: '14', name: 'Beef 300g', sku: 'B', active: true }] },
-      contents: { 'US:beef': { imageUrl: null, label } }
+      contents: { 'US:beef': { name: 'Beef', imageUrl: null, label } }
     });
 
     const response = await request(app).get('/api/v1/recipes/beef?market=US');
 
-    expect(response.body).toEqual({ key: 'beef', market: 'US', imageUrl: null, planImageUrl: null, label });
+    expect(response.body).toEqual({ key: 'beef', market: 'US', name: 'Beef', imageUrl: null, planImageUrl: null, label, presentation: null });
+  });
+
+  test('Launched recipe with a presentation: returns the pt-BR presentation and the name', async () => {
+    const presentation = {
+      title: 'Receita de Carne para Cães Sênior',
+      tagline: 'Leveza & Equilíbrio',
+      resume: 'Da nossa linha sênior, com carne bovina, ovo, batata e vagem.',
+      highlights: ['Carne bovina', 'Batata', 'Vagem'],
+      colors: { color: '#A784C5', accentColor: '#A784C5', pillBg: '#D3BAE8', pillText: '#2D1145', pillBorder: '#9C78BA' }
+    };
+    const app = appFor({
+      variations: { 'BR:senior-beef': [{ id: '301', name: 'Sênior Carne 300g', sku: 'S', active: true }] },
+      contents: { 'BR:senior-beef': { name: 'Sênior Bovino', imageUrl: null, label: null, presentation } }
+    });
+
+    const response = await request(app).get('/api/v1/recipes/senior-beef?market=BR');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ key: 'senior-beef', market: 'BR', name: 'Sênior Bovino', presentation });
   });
 
   test('hides a recipe with no active variation in the market', async () => {

@@ -114,6 +114,34 @@ describe('ProductsRepository', () => {
     expect(priceZonePolicyRepository.findActiveZoneId).toHaveBeenCalledWith('US', 'USD');
   });
 
+  describe('plan packaging of a market (plan-packaging)', () => {
+    test('reads the active variation weights, plan days and large-pack limit of the plan product', async () => {
+      const dataSource = {
+        isInitialized: true,
+        query: jest.fn()
+          .mockResolvedValueOnce([{ id: 200, days: '30', large_pack_limit: null }])
+          .mockResolvedValueOnce([{ weight: '10.6oz' }, { weight: '17.6oz' }, { weight: '10.6oz' }, { weight: '' }])
+      };
+
+      const packaging = await new ProductsRepository(dataSource).findPlanPackaging('us');
+
+      expect(packaging).toEqual({ packSizesGrams: [300, 500, 300], planDays: 30, largePackLimit: 0 });
+      expect(dataSource.query.mock.calls[0][0]).toContain("p.post_status = 'publish'");
+      expect(dataSource.query.mock.calls[0][0]).toContain('_cmpb_large_pack_limit');
+      expect(dataSource.query.mock.calls[0][1]).toEqual(['US']);
+      expect(dataSource.query.mock.calls[1][0]).toContain("v.post_status = 'publish'");
+      expect(dataSource.query.mock.calls[1][1]).toEqual(['attribute_pa_weight', 'attribute_weight', 'attribute_gram', 'attribute_peso', 200]);
+    });
+
+    test('has no packaging without a plan product or catalog tables', async () => {
+      const none = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+      const missing = { isInitialized: true, query: jest.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'ER_NO_SUCH_TABLE' })) };
+
+      await expect(new ProductsRepository(none).findPlanPackaging('BR')).resolves.toBeNull();
+      await expect(new ProductsRepository(missing).findPlanPackaging('BR')).resolves.toBeNull();
+    });
+  });
+
   test('lists published flavor labels for a country', async () => {
     const dataSource = {
       isInitialized: true,

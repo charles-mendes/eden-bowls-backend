@@ -50,7 +50,8 @@ const US_COLUMNS = [
   'package_length_in',
   'package_width_in',
   'package_height_in',
-  'allowed_service_codes'
+  'allowed_service_codes',
+  'max_transit_days'
 ];
 
 class ShippingSettingsRepository {

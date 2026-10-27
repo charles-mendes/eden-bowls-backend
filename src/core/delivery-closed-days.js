@@ -336,11 +336,23 @@ function currentBrDeliveryRadiusKm() {
   return brDeliveryRadiusKm;
 }
 
+// The admin edits the US transit limit in the shipping settings; the default holds until settings load.
+let usMaxTransitDays = MAX_TRANSIT_DAYS_US;
+
+function setUsMaxTransitDays(value) {
+  const days = Number(value);
+  usMaxTransitDays = Number.isInteger(days) && days > 0 ? days : MAX_TRANSIT_DAYS_US;
+}
+
+function currentUsMaxTransitDays() {
+  return usMaxTransitDays;
+}
+
 function addressUnavailable(market, { distanceKm, transitDays } = {}) {
   if (market === 'BR' && Number(distanceKm) > brDeliveryRadiusKm) {
     return true;
   }
-  if (market === 'US' && Number(transitDays) > MAX_TRANSIT_DAYS_US) {
+  if (market === 'US' && Number(transitDays) > usMaxTransitDays) {
     return true;
   }
   return false;
@@ -377,6 +389,8 @@ module.exports = {
   MAX_DELIVERY_RADIUS_KM_BR,
   currentBrDeliveryRadiusKm,
   setBrDeliveryRadiusKm,
+  currentUsMaxTransitDays,
+  setUsMaxTransitDays,
   TIMEZONE_BR,
   TIMEZONE_US,
   dateKey,

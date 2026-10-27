@@ -3,7 +3,10 @@ const { parseJsonColumn } = require('../../core/stripe-subscription-map');
 const { toIsoDateTime } = require('./onboarding-pets.repository');
 const { LIFE_STAGES } = require('../../core/flavors');
 
-// Recipe registration with its image and label, one row per market and recipe key (recipe-content).
+const COLUMNS = 'market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_updated_at, '
+  + 'label, label_updated_at, presentation, presentation_updated_at';
+
+// Recipe registration with its image, label and store presentation, one row per market and recipe key (recipe-content).
 class RecipeContentRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
@@ -31,14 +34,16 @@ class RecipeContentRepository {
       planImageUrl: row.plan_image_url ? String(row.plan_image_url) : null,
       planImageUpdatedAt: toIsoDateTime(row.plan_image_updated_at),
       label: parseJsonColumn(row.label),
-      labelUpdatedAt: toIsoDateTime(row.label_updated_at)
+      labelUpdatedAt: toIsoDateTime(row.label_updated_at),
+      presentation: parseJsonColumn(row.presentation),
+      presentationUpdatedAt: toIsoDateTime(row.presentation_updated_at)
     };
   }
 
   async findByMarketAndSlug(market, flavorSlug) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_updated_at, label, label_updated_at
+      `SELECT ${COLUMNS}
        FROM \`${this.tableName}\` WHERE market = ? AND flavor_slug = ? LIMIT 1`,
       [String(market).toUpperCase(), String(flavorSlug)]
     );
@@ -53,7 +58,7 @@ class RecipeContentRepository {
     }
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_updated_at, label, label_updated_at
+      `SELECT ${COLUMNS}
        FROM \`${this.tableName}\` WHERE market = ? AND flavor_slug IN (${slugs.map(() => '?').join(', ')})`,
       [String(market).toUpperCase(), ...slugs]
     );
@@ -63,7 +68,7 @@ class RecipeContentRepository {
   async listByMarket(market) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_updated_at, label, label_updated_at
+      `SELECT ${COLUMNS}
        FROM \`${this.tableName}\` WHERE market = ? ORDER BY flavor_slug ASC`,
       [String(market).toUpperCase()]
     );
@@ -127,6 +132,17 @@ class RecipeContentRepository {
        ON DUPLICATE KEY UPDATE label = VALUES(label), label_updated_at = VALUES(label_updated_at),
          updated_by = VALUES(updated_by)`,
       [String(market).toUpperCase(), String(flavorSlug), JSON.stringify(label), actorId]
+    );
+    return this.findByMarketAndSlug(market, flavorSlug);
+  }
+
+  // Presentation of a registered recipe, replaced whole.
+  async upsertPresentation({ market, flavorSlug, presentation, actorId = null }) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET presentation = ?, presentation_updated_at = CURRENT_TIMESTAMP, updated_by = ?
+       WHERE market = ? AND flavor_slug = ?`,
+      [JSON.stringify(presentation), actorId, String(market).toUpperCase(), String(flavorSlug)]
     );
     return this.findByMarketAndSlug(market, flavorSlug);
   }

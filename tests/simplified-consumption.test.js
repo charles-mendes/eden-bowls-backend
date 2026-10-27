@@ -73,3 +73,49 @@ describe('simplified consumption', () => {
     expect(packaging.total_target_grams).toBe(28500);
   });
 });
+
+describe('packaging from the market plan product (plan-packaging)', () => {
+  const pet = (gramsPerDay) => ({ pet_id: '1', pet_name: 'Luna', quantidade_g_dia: gramsPerDay });
+
+  test('without the object the packaging is the one of before: 300 g and 500 g, 30 days, limit 8', () => {
+    expect(buildPackagingRecommendation([pet(100)])).toMatchObject({
+      period_days: 30,
+      package_sizes_grams: [300, 500],
+      suggested_bags_by_size: { 300: 0, 500: 6 }
+    });
+    expect(buildPackagingRecommendation([pet(100)], { packSizesGrams: [500, 300], planDays: 30, largePackLimit: 8 }))
+      .toEqual(buildPackagingRecommendation([pet(100)]));
+  });
+
+  test('Operator adds a 1 kg variation: the large pack is 1000 g and every size is listed', () => {
+    const options = { packSizesGrams: [300, 500, 1000, 500], planDays: 30, largePackLimit: 8 };
+
+    const packaging = buildPackagingRecommendation([pet(200)], options);
+    const simplified = buildSimplifiedRecommendation([pet(200)], MARKETS.BR, options);
+
+    expect(packaging.package_sizes_grams).toEqual([300, 500, 1000]);
+    expect(packaging.suggested_bags_by_size).toEqual({ 300: 0, 500: 0, 1000: 6 });
+    expect(simplified.pets[0].packs).toMatchObject({ count: 6, pack_size_grams: 1000 });
+  });
+
+  test('Lower large-pack limit: 1,500 g a month exceeds 4 small packs, so the pet gets the large pack', () => {
+    const options = { packSizesGrams: [300, 500], planDays: 30, largePackLimit: 4 };
+
+    expect(buildSimplifiedRecommendation([pet(50)], MARKETS.BR, options).pets[0].packs).toMatchObject({ count: 3, pack_size_grams: 500 });
+    expect(buildSimplifiedRecommendation([pet(50)], MARKETS.BR).pets[0].packs).toMatchObject({ count: 5, pack_size_grams: 300 });
+  });
+
+  test('the plan days of the product set the month', () => {
+    const simplified = buildSimplifiedRecommendation([pet(100)], MARKETS.BR, { planDays: 28 });
+
+    expect(simplified.period_days).toBe(28);
+    expect(simplified.pets[0].monthly.grams).toBe(2800);
+    expect(buildPackagingRecommendation([pet(100)], { planDays: 28 }).total_target_grams).toBe(2800);
+  });
+
+  test('one size serves every pet', () => {
+    const options = { packSizesGrams: [300] };
+    expect(buildSimplifiedRecommendation([pet(400)], MARKETS.BR, options).pets[0].packs).toMatchObject({ count: 40, pack_size_grams: 300 });
+    expect(buildPackagingRecommendation([pet(400)], options).suggested_bags_by_size).toEqual({ 300: 40 });
+  });
+});

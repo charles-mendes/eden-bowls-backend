@@ -1,4 +1,4 @@
-const { MAX_TRANSIT_DAYS_US } = require('../../core/delivery-closed-days');
+const { currentUsMaxTransitDays } = require('../../core/delivery-closed-days');
 
 // Checkout estimate of the first delivery, projected from now with the same rule the production queue applies
 // to the payment. It is an estimate: the queue recalculates from the real payment time.
@@ -21,7 +21,7 @@ function registerDeliveryEstimateRoutes(app, dependencies = {}) {
         return;
       }
       response.setHeader('Cache-Control', 'no-store');
-      if (country === 'US' && transitDays > MAX_TRANSIT_DAYS_US) {
+      if (country === 'US' && transitDays > currentUsMaxTransitDays()) {
         response.status(200).json({ success: true, data: { country, available: false } });
         return;
       }

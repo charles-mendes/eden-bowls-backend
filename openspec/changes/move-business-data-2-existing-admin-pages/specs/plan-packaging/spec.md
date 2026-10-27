@@ -22,7 +22,7 @@ The recommendation MUST use as pack sizes the distinct weights of the active var
 
 ### Requirement: Plan period and large-pack limit come from the product
 
-The monthly grams of the recommendation MUST use the plan days of the market's plan product (the value the admin edits in the product's "Plano" section) in place of a fixed 30. A pet MUST get the large pack when its monthly grams divided by the small pack size exceeds the product's large-pack limit. The large-pack limit MUST be an integer from 1 to 60, editable with `catalog.write` in the product detail, and set to 8 on deploy. A value outside the range MUST be refused with HTTP 422.
+The monthly grams of the recommendation MUST use the plan days of the market's plan product (the value the admin edits in the product's "Plano" section) in place of a fixed 30. A pet MUST get the large pack when its monthly grams divided by the small pack size exceeds the product's large-pack limit. The large-pack limit MUST be an integer from 1 to 60, read and saved as `largePackLimit` in the product detail with `catalog.write`, and set to 8 on deploy. A value outside the range MUST be refused with HTTP 422.
 
 #### Scenario: Values after deploy
 

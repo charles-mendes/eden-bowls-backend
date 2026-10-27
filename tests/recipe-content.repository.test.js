@@ -102,6 +102,18 @@ describe('RecipeContentRepository', () => {
     expect(content.label).toEqual(label);
   });
 
+  test('replaces the presentation of a registered recipe as JSON', async () => {
+    const presentation = { title: 'Beef Recipe', highlights: ['Beef'], colors: { color: '#C97B6C' } };
+    const updatedAt = new Date('2026-10-27T12:00:00.000Z');
+    const dataSource = dataSourceReturning([], [row({ market: 'US', flavor_slug: 'beef', presentation: JSON.stringify(presentation), presentation_updated_at: updatedAt })]);
+
+    const content = await new RecipeContentRepository(dataSource).upsertPresentation({ market: 'us', flavorSlug: 'beef', presentation, actorId: 7 });
+
+    expect(dataSource.query.mock.calls[0][0]).toMatch(/^UPDATE .* SET presentation = \?/);
+    expect(dataSource.query.mock.calls[0][1]).toEqual([JSON.stringify(presentation), 7, 'US', 'beef']);
+    expect(content).toMatchObject({ presentation, presentationUpdatedAt: updatedAt.toISOString() });
+  });
+
   test('registers, renames, lists and deletes a recipe of one market', async () => {
     const dataSource = dataSourceReturning(
       [], [row({ flavor_slug: 'senior-duck', name: 'Sênior Pato', image_url: null })],

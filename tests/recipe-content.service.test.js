@@ -45,6 +45,11 @@ function setup({ variations = SENIOR_BEEF_BR, stored = null, processImage } = {}
       rows.set(`${market}:${flavorSlug}`, row);
       return row;
     }),
+    upsertPresentation: jest.fn(async ({ market, flavorSlug, presentation }) => {
+      const row = { ...rows.get(`${market}:${flavorSlug}`), presentation };
+      rows.set(`${market}:${flavorSlug}`, row);
+      return row;
+    }),
     setPlanImage: jest.fn(async ({ market, flavorSlug, imageUrl }) => {
       const row = { ...rows.get(`${market}:${flavorSlug}`), planImageUrl: imageUrl };
       rows.set(`${market}:${flavorSlug}`, row);
@@ -460,6 +465,53 @@ describe('RecipeContentService', () => {
         statusCode: 422,
         details: { code: 'recipe_label_invalid', field: 'analysis[0]' }
       });
+    });
+  });
+  describe('presentation', () => {
+    const beefBr = {
+      title: 'Receita de Carne',
+      tagline: 'Força & Vitalidade',
+      resume: 'Rica em proteína e ferro, nossa receita de carne bovina apoia músculos fortes e energia duradoura.',
+      highlights: ['Batatas', 'Carne bovina', 'Arroz branco'],
+      colors: { color: '#C97B6C', accentColor: '#EAB8A8', pillBg: '#E8CCBC', pillText: '#5A2010', pillBorder: '#C0907C' }
+    };
+
+    function withBeef() {
+      const context = setup();
+      context.rows.set('BR:beef', { market: 'BR', flavorSlug: 'beef', name: 'Bovino', label: null, presentation: null });
+      return context;
+    }
+
+    test('Save a presentation in BR: only the BR recipe changes and one audit event is recorded', async () => {
+      const { service, repository, auditService, rows } = withBeef();
+
+      const result = await service.savePresentation('br', 'beef', beefBr, actor);
+
+      expect(result.presentation).toEqual(beefBr);
+      expect(repository.upsertPresentation).toHaveBeenCalledWith({ market: 'BR', flavorSlug: 'beef', presentation: beefBr, actorId: 7 });
+      expect(rows.get('US:beef').presentation).toBeUndefined();
+      expect(auditService.record).toHaveBeenCalledTimes(1);
+      expect(auditService.record).toHaveBeenCalledWith({
+        actor,
+        action: 'catalog.recipe.presentation.update',
+        metadata: { market: 'BR', flavorSlug: 'beef' }
+      });
+    });
+
+    test('Invalid color: refused with the field and nothing stored', async () => {
+      const { service, repository, auditService, rows } = withBeef();
+
+      await expect(service.savePresentation('BR', 'beef', { ...beefBr, colors: { ...beefBr.colors, pillBg: 'red' } }, actor))
+        .rejects.toMatchObject({ statusCode: 422, details: { code: 'recipe_presentation_invalid', fields: ['colors.pillBg'] } });
+      expect(repository.upsertPresentation).not.toHaveBeenCalled();
+      expect(auditService.record).not.toHaveBeenCalled();
+      expect(rows.get('BR:beef').presentation).toBeNull();
+    });
+
+    test('needs a registered recipe of the market', async () => {
+      const { service, repository } = setup();
+      await expect(service.savePresentation('BR', 'fish', beefBr, actor)).rejects.toMatchObject({ statusCode: 404 });
+      expect(repository.upsertPresentation).not.toHaveBeenCalled();
     });
   });
 });

@@ -3,7 +3,10 @@ const {
   expectedPercentForTerm,
   isPromoId,
   isValidSubscriptionTerm,
-  PLAN_TERMS,
+  MAX_TERM_PERCENT,
+  MIN_TERM_PERCENT,
+  planTermsFor,
+  TERM_PERCENT_MAP,
   VALID_SUBSCRIPTION_TERMS
 } = require('../core/first-purchase-discount');
 const { parseStripeAccountInput } = require('../core/stripe-account');
@@ -57,7 +60,8 @@ function percentOffFromPromo(promo) {
   return Number.NaN;
 }
 
-function termFromStripePromo(promo) {
+// Term of a first-purchase promotion code: its metadata, else the term whose stored percent it gives.
+function termFromStripePromo(promo, percents = TERM_PERCENT_MAP) {
   const metadata = promo && promo.metadata ? promo.metadata : {};
   const metaTerm = Number(metadata.pawbowl_term_months);
   if (isValidSubscriptionTerm(metaTerm)) {
@@ -66,12 +70,39 @@ function termFromStripePromo(promo) {
 
   const percent = percentOffFromPromo(promo);
   for (const term of VALID_SUBSCRIPTION_TERMS) {
-    if (expectedPercentForTerm(term) === percent) {
+    if (expectedPercentForTerm(term, percents) === percent) {
       return term;
     }
   }
 
   return null;
+}
+
+function parsePercentOff(value, fallback) {
+  if (value == null || value === '') {
+    return fallback;
+  }
+  const percent = Number(value);
+  if (!Number.isInteger(percent) || percent < MIN_TERM_PERCENT || percent > MAX_TERM_PERCENT) {
+    throw new HttpError(422, `Percent off must be a whole number from ${MIN_TERM_PERCENT} to ${MAX_TERM_PERCENT}.`, {
+      code: 'invalid_percent_off'
+    });
+  }
+  return percent;
+}
+
+function actorIdOf(actor) {
+  const id = actor && (actor.userId || actor.id);
+  return id ? Number(id) : null;
+}
+
+// percent_off of the slot's coupon in Stripe and whether it differs from the stored percent of the term.
+function slotPercent(promo, term, percents) {
+  const percentOff = percentOffFromPromo(promo);
+  if (!Number.isFinite(percentOff)) {
+    return { percent_off: null, percent_mismatch: false };
+  }
+  return { percent_off: percentOff, percent_mismatch: percentOff !== expectedPercentForTerm(term, percents) };
 }
 
 function isFirstPurchasePromo(promo) {
@@ -92,6 +123,9 @@ function isFirstPurchasePromo(promo) {
 class StripeCouponService {
   constructor(repository, options = {}) {
     this.repository = repository;
+    this.termDiscounts = options.termDiscounts || null;
+    this.auditRepository = options.auditRepository || null;
+    this.dataSource = options.dataSource || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.secretKey = options.secretKey || '';
@@ -100,6 +134,15 @@ class StripeCouponService {
 
   accountOf(account) {
     return parseStripeAccountInput(account);
+  }
+
+  // Stored percent per term of the account ({ 1, 3, 6 }), or the percents of before the table without its repository.
+  async termPercents(account) {
+    const stripeAccount = this.accountOf(account);
+    if (!this.termDiscounts || typeof this.termDiscounts.percentsFor !== 'function') {
+      return { ...TERM_PERCENT_MAP };
+    }
+    return this.termDiscounts.percentsFor(stripeAccount);
   }
 
   ensureRepository() {
@@ -167,7 +210,7 @@ class StripeCouponService {
       missing_terms: missingTerms,
       mapping,
       // The percent of each term, the same list the plan snapshot offers as plan_terms.
-      terms: PLAN_TERMS.map((term) => ({ ...term })),
+      terms: planTermsFor(await this.termPercents(account)),
       misconfig_count: misconfigCount,
       stripe_account: this.accountOf(account)
     };
@@ -350,6 +393,7 @@ class StripeCouponService {
 
     const mapping = { ...stored.mapping };
     const coupons = { ...stored.coupons };
+    const percents = await this.termPercents(account);
     const slots = {};
     const missingInStripe = [];
     const inactive = [];
@@ -367,7 +411,9 @@ class StripeCouponService {
           promotion_code_id: promoId,
           coupon_id: coupons[term] || null,
           active: false,
-          source: 'stored'
+          source: 'stored',
+          percent_off: null,
+          percent_mismatch: false
         };
         continue;
       }
@@ -385,7 +431,8 @@ class StripeCouponService {
         promotion_code_id: promoId,
         coupon_id: couponId || coupons[term] || null,
         active: Boolean(promo.active),
-        source: 'stored'
+        source: 'stored',
+        ...slotPercent(promo, term, percents)
       };
     }
 
@@ -394,7 +441,7 @@ class StripeCouponService {
       .sort((left, right) => Number(right.created || 0) - Number(left.created || 0));
 
     for (const promo of candidates) {
-      const term = termFromStripePromo(promo);
+      const term = termFromStripePromo(promo, percents);
       if (!term || mapping[term]) {
         continue;
       }
@@ -408,7 +455,8 @@ class StripeCouponService {
         promotion_code_id: promo.id,
         coupon_id: couponId,
         active: true,
-        source: 'stripe'
+        source: 'stripe',
+        ...slotPercent(promo, term, percents)
       };
     }
 
@@ -445,12 +493,33 @@ class StripeCouponService {
 
     return {
       promotion_code_id: promotionCodeId,
-      discount_percent: expectedPercentForTerm(termMonths),
+      discount_percent: expectedPercentForTerm(termMonths, await this.termPercents(account)),
       discount_duration: 'once'
     };
   }
 
-  async createFirstPurchaseCoupon(payload = {}) {
+  // Stores the percent of a term and its audit event in one transaction (billing.first_purchase.percent.update).
+  async saveTermPercent({ account, termMonths, from, to, actor }) {
+    const work = async (manager) => {
+      await this.termDiscounts.savePercent({ account, termMonths, percent: to, actorId: actorIdOf(actor) }, manager);
+      if (this.auditRepository && typeof this.auditRepository.createIn === 'function') {
+        await this.auditRepository.createIn(manager || this.dataSource, {
+          actorUserId: actorIdOf(actor),
+          actorEmail: (actor && actor.email) || null,
+          action: 'billing.first_purchase.percent.update',
+          metadata: { stripe_account: account, term_months: termMonths, from, to }
+        });
+      }
+    };
+    if (this.dataSource && typeof this.dataSource.transaction === 'function') {
+      return this.dataSource.transaction(work);
+    }
+    return work(null);
+  }
+
+  // A new percent needs a new coupon, since Stripe cannot change a coupon's percent: existing subscriptions keep
+  // the previous one. Stripe first, then the mapping, then the percent, so a refused coupon changes nothing.
+  async createFirstPurchaseCoupon(payload = {}, actor = {}) {
     const account = this.accountOf(payload.account);
     const termMonths = Number(payload.term_months);
     if (!isValidSubscriptionTerm(termMonths)) {
@@ -462,12 +531,8 @@ class StripeCouponService {
       throw new HttpError(400, 'Invalid promotion code.', { code: 'invalid_promotion_code' });
     }
 
-    const percentOff = expectedPercentForTerm(termMonths);
-    if (payload.percent_off != null && Number(payload.percent_off) !== percentOff) {
-      throw new HttpError(400, 'Percent off is not editable for first-purchase coupons.', {
-        code: 'percent_off_locked'
-      });
-    }
+    const storedPercent = expectedPercentForTerm(termMonths, await this.termPercents(account));
+    const percentOff = parsePercentOff(payload.percent_off, storedPercent);
 
     const name = String(payload.name || '').trim() || `First purchase ${termMonths}m (${percentOff}%)`;
     const maxRedemptions = Math.max(0, Number(payload.max_redemptions) || 0);
@@ -503,12 +568,16 @@ class StripeCouponService {
     let health = await this.mappingHealth(account);
 
     if (payload.assign_first_purchase_slot !== false) {
-      health = await this.persistMapping({
+      await this.persistMapping({
         ...health.mapping,
         [termMonths]: promotionCode.id
       }, {
         [termMonths]: coupon.id
       }, account);
+      if (percentOff !== storedPercent && this.termDiscounts) {
+        await this.saveTermPercent({ account, termMonths, from: storedPercent, to: percentOff, actor });
+      }
+      health = await this.mappingHealth(account);
     }
 
     return {
@@ -558,6 +627,7 @@ class StripeCouponService {
 }
 
 module.exports = {
+  termFromStripePromo,
   StripeCouponService,
   normalizePromoId
 };

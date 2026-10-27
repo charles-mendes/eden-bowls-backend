@@ -29,6 +29,7 @@ function appFor({ role = 'operator', markets = ['BR'], service = {} } = {}) {
     uploadPlanImage: jest.fn().mockResolvedValue({ ...content, planImageUrl: '/recipe-images/recipe-br-senior-beef-plan-1.webp' }),
     removePlanImage: jest.fn().mockResolvedValue({ ...content, planImageUrl: null }),
     saveLabel: jest.fn().mockResolvedValue({ ...content, labelStatus: 'complete' }),
+    savePresentation: jest.fn().mockResolvedValue({ ...content, presentation: { title: 'Receita de Carne para Cães Sênior' } }),
     create: jest.fn().mockResolvedValue({ ...content, flavorSlug: 'senior-duck', name: 'Sênior Pato', variations: [] }),
     update: jest.fn().mockResolvedValue({ ...content, name: 'Carne Sênior' }),
     remove: jest.fn().mockResolvedValue({ deleted: true, market: 'BR', flavorSlug: 'senior-beef' }),
@@ -130,9 +131,30 @@ describe('admin recipe content routes', () => {
     expect(recipeContentService.saveLabel).toHaveBeenCalledWith('BR', 'senior-beef', label, expect.objectContaining({ userId: '7' }));
   });
 
+  test('operator saves the presentation sent under presentation', async () => {
+    const { app, recipeContentService } = appFor();
+    const presentation = { title: 'Receita de Carne para Cães Sênior' };
+
+    const response = await request(app).put(`${base}/presentation?market=BR`).set('Authorization', `Bearer ${token()}`).send({ presentation });
+
+    expect(response.status).toBe(200);
+    expect(response.body.presentation).toEqual(presentation);
+    expect(recipeContentService.savePresentation).toHaveBeenCalledWith('BR', 'senior-beef', presentation, expect.objectContaining({ userId: '7' }));
+  });
+
+  test('Operator outside the market scope: a US operator cannot save a BR presentation', async () => {
+    const { app, recipeContentService } = appFor({ markets: ['US'] });
+
+    const response = await request(app).put(`${base}/presentation?market=BR`).set('Authorization', `Bearer ${token()}`).send({ presentation: {} });
+
+    expect(response.status).toBe(403);
+    expect(recipeContentService.savePresentation).not.toHaveBeenCalled();
+  });
+
   test.each([
     ['put', `${base}/image?market=BR`],
     ['put', `${base}/label?market=BR`],
+    ['put', `${base}/presentation?market=BR`],
     ['delete', `${base}/image?market=BR`],
     ['put', `${base}/plan-image?market=BR`],
     ['delete', `${base}/plan-image?market=BR`],
@@ -148,6 +170,7 @@ describe('admin recipe content routes', () => {
     expect(recipeContentService.uploadImage).not.toHaveBeenCalled();
     expect(recipeContentService.removeImage).not.toHaveBeenCalled();
     expect(recipeContentService.saveLabel).not.toHaveBeenCalled();
+    expect(recipeContentService.savePresentation).not.toHaveBeenCalled();
     expect(recipeContentService.create).not.toHaveBeenCalled();
     expect(recipeContentService.update).not.toHaveBeenCalled();
     expect(recipeContentService.remove).not.toHaveBeenCalled();

@@ -7,6 +7,7 @@ const {
   normalizeRecipeMarket,
   parseRecipeKey,
   parseRecipeLabel,
+  parseRecipePresentation,
   recipeKeyOf
 } = require('../core/recipe-content');
 const { LIFE_STAGES } = require('../core/flavors');
@@ -191,6 +192,8 @@ class RecipeContentService {
       labelUpdatedAt: content ? content.labelUpdatedAt : null,
       labelStatus: completeness.status,
       labelMissing: completeness.missing,
+      presentation: content ? content.presentation || null : null,
+      presentationUpdatedAt: content ? content.presentationUpdatedAt || null : null,
       variations
     };
   }
@@ -218,9 +221,11 @@ class RecipeContentService {
     return {
       key: recipe.key,
       market: recipe.market,
+      name: content ? content.name : recipe.key,
       imageUrl: content ? content.imageUrl : null,
       planImageUrl: content ? content.planImageUrl || null : null,
-      label: content ? content.label : null
+      label: content ? content.label : null,
+      presentation: content ? content.presentation || null : null
     };
   }
 
@@ -309,6 +314,17 @@ class RecipeContentService {
 
     const content = await this.repository.upsertLabel({ market: recipe.market, flavorSlug: recipe.key, label, actorId: actorId(actor) });
     await this.recordAudit(actor, 'catalog.recipe.label.update', recipe);
+    return this.present(recipe, content);
+  }
+
+  // Replaces the store presentation whole; an invalid one is refused before anything is stored.
+  async savePresentation(market, flavorSlug, input, actor = {}) {
+    const recipe = await this.resolve(market, flavorSlug);
+    const presentation = parseRecipePresentation(input);
+    const content = await this.repository.upsertPresentation({
+      market: recipe.market, flavorSlug: recipe.key, presentation, actorId: actorId(actor)
+    });
+    await this.recordAudit(actor, 'catalog.recipe.presentation.update', recipe);
     return this.present(recipe, content);
   }
 

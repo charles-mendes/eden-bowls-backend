@@ -1,12 +1,29 @@
 const { AdminCatalogService } = require('../src/services/admin-catalog.service');
+const { RecipeContentService } = require('../src/services/recipe-content.service');
+
+const { seedRecipePresentation } = require('../src/infrastructure/migrations/helpers/seed-recipe-presentations');
 
 const actor = { userId: '7', email: 'ops@edenbowls.com' };
+
+// Every registered recipe holds its seeded presentation unless a test says otherwise.
+const SEEDED = {
+  'BR:senior-beef': { imageUrl: null, label: null },
+  'US:senior-beef': { imageUrl: null, label: null }
+};
+
+function withPresentation(contents) {
+  return Object.fromEntries(Object.entries({ ...SEEDED, ...contents }).map(([marketKey, content]) => {
+    const [market, key] = marketKey.split(':');
+    return [marketKey, 'presentation' in content ? content : { ...content, presentation: seedRecipePresentation(market, key) }];
+  }));
+}
 
 function variant(overrides = {}) {
   return {
     id: '3001',
     name: 'Senior Beef 300g',
     active: false,
+    recipeKey: 'senior-beef',
     regularPrice: 40,
     stripePriceId: null,
     stripePriceIdsByCurrency: { brl: 'price_senior_beef_300' },
@@ -16,7 +33,8 @@ function variant(overrides = {}) {
   };
 }
 
-function serviceFor({ product, activeCount = 0, contents = {} }) {
+function serviceFor({ product, activeCount = 0, contents: given = {} }) {
+  const contents = withPresentation(given);
   const state = { product };
   const repository = {
     getProduct: jest.fn(async () => state.product),
@@ -194,6 +212,88 @@ describe('AdminCatalogService.setVariationActive', () => {
 
     await expect(service.setVariationActive('100', '3001', 'yes', actor)).rejects.toMatchObject({ statusCode: 422 });
     await expect(service.setVariationActive('100', '9999', true, actor)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('AdminCatalogService activation and the recipe presentation', () => {
+  const lambLabel = { ingredients: ['Cordeiro'], analysis: [{ nutrient: 'Proteína bruta (mín)', value: '9,0%' }], energyKg: '1.200 kcal/kg', energyPackage: '360 kcal por embalagem' };
+  const lambPresentation = {
+    title: 'Receita de Cordeiro',
+    tagline: 'Sabor & Leveza',
+    resume: 'Cordeiro com legumes cozidos.',
+    highlights: ['Cordeiro', 'Abóbora'],
+    colors: { color: '#8A6F5A', accentColor: '#B89A80', pillBg: '#E6D6C8', pillText: '#3A2414', pillBorder: '#A88E78' }
+  };
+
+  // One BR plan product with an inactive adult-lamb variation, and the recipe rows both services read.
+  function lambCatalog() {
+    const rows = new Map([['BR:adult-lamb', {
+      market: 'BR', flavorSlug: 'adult-lamb', name: 'Cordeiro', lifeStage: 'adult',
+      imageUrl: '/recipe-images/recipe-br-adult-lamb-1.webp', label: lambLabel, presentation: null
+    }]]);
+    const state = { product: published('BR', [variant({ recipeKey: 'adult-lamb', finalImageReady: false })]) };
+    const recipeContentRepository = {
+      findByMarketAndSlug: jest.fn(async (market, key) => rows.get(`${market}:${key}`) || null),
+      findByMarketAndSlugs: jest.fn(async (market, keys) => new Map(keys
+        .filter((key) => rows.has(`${market}:${key}`))
+        .map((key) => [key, rows.get(`${market}:${key}`)]))),
+      listByMarket: jest.fn(async (market) => [...rows.values()].filter((row) => row.market === market)),
+      upsertPresentation: jest.fn(async ({ market, flavorSlug, presentation }) => {
+        const row = { ...rows.get(`${market}:${flavorSlug}`), presentation };
+        rows.set(`${market}:${flavorSlug}`, row);
+        return row;
+      })
+    };
+    const variationsOf = (key) => state.product.variants.filter((item) => item.recipeKey === key);
+    const catalog = new AdminCatalogService({
+      repository: {
+        getProduct: jest.fn(async () => state.product),
+        updatePostStatus: jest.fn(async (id, status) => {
+          state.product = {
+            ...state.product,
+            variants: state.product.variants.map((item) => (item.id === id ? { ...item, active: status === 'publish' } : item))
+          };
+        })
+      },
+      auditService: { record: jest.fn() },
+      recipeContentRepository
+    });
+    catalog.sync = jest.fn();
+    const recipes = new RecipeContentService({
+      repository: recipeContentRepository,
+      catalogRepository: {
+        listRecipeVariations: jest.fn(async (market, key) => (market === 'BR' ? variationsOf(key) : [])),
+        listMarketRecipeVariations: jest.fn(async () => new Map([['adult-lamb', variationsOf('adult-lamb')]]))
+      }
+    });
+    return { catalog, recipes };
+  }
+
+  test('New recipe without presentation: activation is refused with presentation among the missing checks', async () => {
+    const { catalog } = lambCatalog();
+
+    await expect(catalog.setVariationActive('100', '3001', true, actor)).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'recipe_publish_refused', missing: ['presentation'] }
+    });
+  });
+
+  test('New recipe goes live without a store deploy: saved presentation, active variation, listed and served', async () => {
+    const { catalog, recipes } = lambCatalog();
+
+    await recipes.savePresentation('BR', 'adult-lamb', lambPresentation, actor);
+    await catalog.setVariationActive('100', '3001', true, actor);
+
+    expect((await recipes.listPublic('BR')).items).toEqual([{ key: 'adult-lamb', name: 'Cordeiro', lifeStage: 'adult' }]);
+    expect(await recipes.getPublic('adult-lamb', 'BR')).toMatchObject({ key: 'adult-lamb', presentation: lambPresentation });
+  });
+
+  test('a variation without a recipe cannot be activated', async () => {
+    const { service } = serviceFor({ product: published('BR', [variant({ recipeKey: null })]) });
+
+    await expect(service.setVariationActive('100', '3001', true, actor)).rejects.toMatchObject({
+      details: { code: 'recipe_publish_refused', missing: ['presentation'] }
+    });
   });
 });
 

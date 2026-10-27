@@ -23,6 +23,7 @@ const { OnboardingPetsRepository } = require('./infrastructure/repositories/onbo
 const { OnboardingPlanPreviewRepository } = require('./infrastructure/repositories/onboarding-plan-preview.repository');
 const { OnboardingPlanSelectionRepository } = require('./infrastructure/repositories/onboarding-plan-selection.repository');
 const { OnboardingPlanSnapshotRepository } = require('./infrastructure/repositories/onboarding-plan-snapshot.repository');
+const { FirstPurchaseTermDiscountsRepository } = require('./infrastructure/repositories/first-purchase-term-discounts.repository');
 const { OnboardingRecommendationRepository } = require('./infrastructure/repositories/onboarding-recommendation.repository');
 const { OnboardingRecurrenceRepository } = require('./infrastructure/repositories/onboarding-recurrence.repository');
 const { OnboardingSalesTaxQuoteRepository } = require('./infrastructure/repositories/onboarding-sales-tax-quote.repository');
@@ -284,7 +285,11 @@ async function bootstrap() {
   });
   const onboardingAddressAutocompleteService = new OnboardingAddressAutocompleteService(onboardingAddressAutocompleteRepository);
   const stripeFirstPurchasePromosRepository = new StripeFirstPurchasePromosRepository(dataSource);
+  const firstPurchaseTermDiscountsRepository = new FirstPurchaseTermDiscountsRepository(dataSource);
   const stripeCouponService = new StripeCouponService(stripeFirstPurchasePromosRepository, {
+    termDiscounts: firstPurchaseTermDiscountsRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
+    dataSource,
     stripeAccounts,
     stripeBilling,
     secretKey: env.STRIPE_US_SECRET_KEY,
@@ -348,7 +353,8 @@ async function bootstrap() {
   });
   const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository, {
     lifeStageService,
-    recipeEnergyService
+    recipeEnergyService,
+    productsRepository
   });
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
@@ -365,7 +371,8 @@ async function bootstrap() {
   });
   const onboardingPlanSnapshotRepository = new OnboardingPlanSnapshotRepository({
     recommendationRepository: onboardingRecommendationRepository,
-    productsRepository
+    productsRepository,
+    termDiscounts: firstPurchaseTermDiscountsRepository
   });
   const onboardingPlanSnapshotService = new OnboardingPlanSnapshotService(onboardingPlanSnapshotRepository);
   const onboardingRecurrenceRepository = new OnboardingRecurrenceRepository(dataSource);
@@ -630,7 +637,8 @@ async function bootstrap() {
     repository: adminOnboardingRepository,
     ledgerRepository: subscriptionLedgerRepository,
     lifeStageService,
-    recipeEnergyService
+    recipeEnergyService,
+    productsRepository
   });
   const adminBillingService = new AdminBillingService({
     ledgerRepository: subscriptionLedgerRepository,

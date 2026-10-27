@@ -1,5 +1,6 @@
 const {
   PLAN_TERMS,
+  planTermsFor,
   applyFirstPurchaseDiscount,
   discountAmountFromSubtotal,
   expectedPercentForTerm,
@@ -24,6 +25,22 @@ describe('first-purchase-discount', () => {
     expect(expectedPercentForTerm(null)).toBe(0);
     expect(isValidSubscriptionTerm(3)).toBe(true);
     expect(isValidSubscriptionTerm(2)).toBe(false);
+  });
+
+  test('reads the percent of a term from the account percents', () => {
+    const percents = { 1: 10, 3: 30, 6: 35 };
+    expect(expectedPercentForTerm(3, percents)).toBe(30);
+    expect(expectedPercentForTerm(12, percents)).toBe(0);
+    expect(planTermsFor(percents)).toEqual([
+      { subscription_term_months: 1, discount_percent: 10 },
+      { subscription_term_months: 3, discount_percent: 30 },
+      { subscription_term_months: 6, discount_percent: 35 }
+    ]);
+  });
+
+  test('a term missing from the account percents keeps the percent of before the table', () => {
+    expect(expectedPercentForTerm(6, { 1: 15 })).toBe(40);
+    expect(planTermsFor()).toEqual(PLAN_TERMS);
   });
 
   test('accepts only Stripe promotion code ids', () => {

@@ -98,6 +98,35 @@ describe('admin shipping and coupon routes', () => {
     ]);
   });
 
+  test('passes percent_off and the operator to the coupon creation', async () => {
+    const stripeCouponService = {
+      createFirstPurchaseCoupon: jest.fn().mockResolvedValue({ success: true, data: { created: true, percent_off: 30 } })
+    };
+    const app = adminApp({ stripeCouponService });
+    const response = await request(app)
+      .post('/api/v1/admin/stripe/first-purchase-coupons?account=br')
+      .set('Authorization', `Bearer ${tokenFor()}`)
+      .send({ term_months: 3, code: 'PRIMEIRA3M30', percent_off: 30 });
+
+    expect(response.status).toBe(200);
+    expect(stripeCouponService.createFirstPurchaseCoupon).toHaveBeenCalledWith(
+      expect.objectContaining({ term_months: 3, code: 'PRIMEIRA3M30', percent_off: 30, account: 'br' }),
+      expect.objectContaining({ userId: '7', email: 'admin@edenbowls.com' })
+    );
+  });
+
+  test('a percent out of range answers 422 invalid_percent_off', async () => {
+    const stripeCouponService = new StripeCouponService({ getMapping: jest.fn().mockResolvedValue(null) });
+    const app = adminApp({ stripeCouponService });
+    const response = await request(app)
+      .post('/api/v1/admin/stripe/first-purchase-coupons?account=us')
+      .set('Authorization', `Bearer ${tokenFor()}`)
+      .send({ term_months: 1, code: 'FIRST1M', percent_off: 95 });
+
+    expect(response.status).toBe(422);
+    expect(response.body.details).toMatchObject({ code: 'invalid_percent_off' });
+  });
+
   test('syncs first-purchase promos from Stripe', async () => {
     const stripeCouponService = {
       syncFirstPurchasePromos: jest.fn().mockResolvedValue({

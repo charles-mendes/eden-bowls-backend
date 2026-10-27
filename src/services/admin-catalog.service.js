@@ -1,6 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const { labelCompleteness, normalizeRecipeMarket, parseRecipeKey } = require('../core/recipe-content');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
+const { MAX_LARGE_PACK_LIMIT } = require('../core/simplified-consumption');
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
@@ -15,6 +16,20 @@ const {
   flavorKeyFromLabel,
   parseFlavorAliases
 } = require('../core/flavors');
+
+// Small packs a month above which a pet gets the large pack (plan-packaging); null keeps the stored value.
+function parseLargePackLimit(value) {
+  if (value == null || value === '') {
+    return null;
+  }
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LARGE_PACK_LIMIT) {
+    throw new HttpError(422, `Large pack limit must be a whole number from 1 to ${MAX_LARGE_PACK_LIMIT}.`, {
+      code: 'product_large_pack_limit_invalid'
+    });
+  }
+  return limit;
+}
 
 function requiredCurrency(country) {
   if (country === 'US') {
@@ -282,7 +297,7 @@ class AdminCatalogService {
     return this.annotateRecipeContent(annotated);
   }
 
-  // Each variation's recipe content key, stored image and label state in the product's market (recipe-content).
+  // Each variation's recipe content key, stored image, label state and presentation in the product's market (recipe-content).
   async annotateRecipeContent(product) {
     const market = normalizeRecipeMarket(product.planCountry);
     const variants = (product.variants || []).map((variant) => ({ ...variant, recipeKey: variant.recipeKey || null }));
@@ -297,7 +312,8 @@ class AdminCatalogService {
         return {
           ...variant,
           recipeImageUrl: content ? content.imageUrl : null,
-          recipeLabelStatus: labelCompleteness(content ? content.label : null, market).status
+          recipeLabelStatus: labelCompleteness(content ? content.label : null, market).status,
+          recipePresentationReady: Boolean(content && content.presentation)
         };
       })
     };
@@ -434,6 +450,7 @@ class AdminCatalogService {
 
   async patchProduct(productId, payload = {}, actor = {}) {
     const product = await this.getProduct(productId, actor);
+    const largePackLimit = parseLargePackLimit(payload.largePackLimit);
 
     if (payload.planCountry) {
       const country = String(payload.planCountry).trim().toUpperCase();
@@ -449,6 +466,10 @@ class AdminCatalogService {
         throw new HttpError(422, 'Plan days must be greater than zero.', { code: 'product_days_not_configured' });
       }
       await this.repository.upsertPostMeta(product.id, '_cmpb_plan_days', String(days));
+    }
+
+    if (largePackLimit != null) {
+      await this.repository.upsertPostMeta(product.id, '_cmpb_large_pack_limit', String(largePackLimit));
     }
 
     if (Array.isArray(payload.variants)) {
@@ -717,6 +738,10 @@ class AdminCatalogService {
       }
       if (country === 'US' && !variant.labelDataReady && variant.recipeLabelStatus !== 'complete') {
         missing.push('label_data');
+      }
+      // The store page of the recipe has no other source, so there is no manual confirmation.
+      if (!variant.recipePresentationReady) {
+        missing.push('presentation');
       }
       if (missing.length > 0) {
         throw new HttpError(422, `Variation cannot be activated: missing ${missing.join(', ')}.`, {

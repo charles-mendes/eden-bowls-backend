@@ -248,3 +248,33 @@ describeIntegration('delivery closed days read from MySQL', () => {
     expect(yearRows.filter((item) => item.type === 'national').length).toBeGreaterThan(10);
   });
 });
+
+describe('US max transit days (shipping-settings)', () => {
+  const { addressUnavailable, currentUsMaxTransitDays, setUsMaxTransitDays } = require('../src/core/delivery-closed-days');
+  const { ShippingService } = require('../src/services/shipping.service');
+  const { loadShippingSettings } = require('../src/infrastructure/shipping/shipping-settings');
+
+  afterEach(() => setUsMaxTransitDays(null));
+
+  test('Value after deploy: 1 day, so a 2-day transit is outside the area', () => {
+    new ShippingService({ settings: loadShippingSettings() });
+    expect(currentUsMaxTransitDays()).toBe(1);
+    expect(addressUnavailable('US', { transitDays: 2 })).toBe(true);
+    expect(addressUnavailable('US', { transitDays: 1 })).toBe(false);
+  });
+
+  test('Operator allows two transit days: the saved value applies without a restart', () => {
+    const shipping = new ShippingService({ settings: loadShippingSettings() });
+    shipping.settings = { ...shipping.settings, us: { ...shipping.settings.us, max_transit_days: 2 } };
+    expect(currentUsMaxTransitDays()).toBe(2);
+    expect(addressUnavailable('US', { transitDays: 2 })).toBe(false);
+    expect(addressUnavailable('US', { transitDays: 3 })).toBe(true);
+  });
+
+  test('an invalid value falls back to 1', () => {
+    setUsMaxTransitDays(0);
+    expect(currentUsMaxTransitDays()).toBe(1);
+    setUsMaxTransitDays('abc');
+    expect(currentUsMaxTransitDays()).toBe(1);
+  });
+});

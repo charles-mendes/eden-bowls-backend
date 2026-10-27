@@ -1,0 +1,66 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`pt-BR recipe files of the new lines (task 6.2) > parse to the same front matter as before 1`] = `
+{
+  "puppy-beef-chicken": {
+    "color": "#D37D9B",
+    "highlights": [
+      "Carne bovina",
+      "Frango",
+      "Arroz integral",
+      "Lentilha",
+      "Abobrinha",
+    ],
+    "lifeStage": "puppy",
+    "resume": "Da nossa linha para filhotes, com carne bovina, frango, arroz integral e lentilha. Mais energia por porção para quem gasta energia o dia inteiro.",
+    "tag": "Carne e Frango",
+    "tagline": "Primeiros Anos",
+    "title": "Receita de Carne e Frango para Filhotes",
+  },
+  "puppy-chicken-pork": {
+    "color": "#D0A65A",
+    "highlights": [
+      "Frango",
+      "Arroz integral",
+      "Abóbora cabotiá",
+      "Porco",
+      "Abobrinha",
+    ],
+    "lifeStage": "puppy",
+    "resume": "Da nossa linha para filhotes, com frango, porco, arroz integral e legumes cozidos. Tem mais energia por porção que as receitas de adulto, para acompanhar o ritmo de quem não para.",
+    "tag": "Frango e Porco",
+    "tagline": "Crescimento & Energia",
+    "title": "Receita de Frango e Porco para Filhotes",
+  },
+  "senior-beef": {
+    "color": "#A784C5",
+    "highlights": [
+      "Carne bovina",
+      "Batata",
+      "Vagem",
+      "Arroz branco",
+      "Ovo",
+    ],
+    "lifeStage": "senior",
+    "resume": "Da nossa linha sênior, com carne bovina, ovo, batata e vagem. Um pouco mais leve em calorias que as receitas de adulto, para a fase mais tranquila da vida.",
+    "tag": "Carne",
+    "tagline": "Leveza & Equilíbrio",
+    "title": "Receita de Carne para Cães Sênior",
+  },
+  "senior-chicken": {
+    "color": "#6AA98C",
+    "highlights": [
+      "Frango",
+      "Batata-doce",
+      "Arroz branco",
+      "Cenoura",
+      "Abobrinha",
+    ],
+    "lifeStage": "senior",
+    "resume": "Da nossa linha sênior, com sobrecoxa de frango sem pele, batata-doce e legumes. Macia e um pouco mais leve em calorias que as receitas de adulto.",
+    "tag": "Frango",
+    "tagline": "Cuidado na Maturidade",
+    "title": "Receita de Frango para Cães Sênior",
+  },
+}
+`;
