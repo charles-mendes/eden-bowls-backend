@@ -37,12 +37,17 @@ The deploy MUST store the presentation the store shows today for the eight store
 
 ### Requirement: Public recipe route serves the presentation
 
-`GET /api/v1/recipes/:key?market=` MUST include the recipe's `name` and its `presentation` (or `null` when none is stored) alongside the image and the label.
+`GET /api/v1/recipes/:key?market=` MUST include the recipe's `name` and its `presentation` (or `null` when none is stored) alongside the image and the label. Each item of `GET /api/v1/recipes?market=` MUST include the presentation `title` (or `null`), so the store can name every launched recipe from the list alone.
 
 #### Scenario: Launched recipe with a presentation
 
 - **WHEN** the store requests `senior-beef` in BR and the recipe has an active variation and a stored presentation
 - **THEN** the response includes the pt-BR presentation with its title, tagline, resume, highlights and colors
+
+#### Scenario: List names the recipes
+
+- **WHEN** the store requests `GET /api/v1/recipes?market=BR` and `beef` has a stored presentation titled "Receita de Carne"
+- **THEN** the `beef` item has `title` "Receita de Carne", and an item without presentation has `title` null
 
 ### Requirement: Activation requires a stored presentation
 

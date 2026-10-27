@@ -143,7 +143,7 @@ describe('RecipeContentService', () => {
 
       await expect(service.listPublic('br')).resolves.toEqual({
         market: 'BR',
-        items: [{ key: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior' }]
+        items: [{ key: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', title: null }]
       });
       const us = await service.listPublic('US');
       expect(us.items.map((item) => item.key)).toEqual(['beef']);

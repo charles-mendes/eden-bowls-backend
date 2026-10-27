@@ -9,6 +9,7 @@ Fase 2 de 3. Depende da fase 1 (`move-business-data-1-read-from-api`) aplicada. 
 - [x] 1.3 Acrescentar `upsertPresentation` ao repositório e `savePresentation` ao serviço (auditoria `catalog.recipe.presentation.update`), criar `PUT /api/v1/admin/catalog/recipe-content/:flavorSlug/presentation` e rodar `npm run routes:manifest`. Verificar com `tests/recipe-content.service.test.js` e `tests/admin-recipe-content.routes.test.js`: os cenários "Save a presentation in BR" e "Operator outside the market scope", e com `tests/api-routes-manifest.test.js`.
 - [x] 1.4 Incluir `name` e `presentation` em `getPublic`. Verificar com `tests/recipes.routes.test.js`: o cenário "Launched recipe with a presentation" e `presentation: null` sem apresentação.
 - [x] 1.5 Acrescentar a checagem `presentation` à ativação em `src/services/admin-catalog.service.js` (decisão 3). Verificar com `tests/admin-catalog-activation.service.test.js`: os cenários "New recipe without presentation" e "New recipe goes live without a store deploy", e os casos atuais seguem passando com a semente.
+- [x] 1.6 Incluir o `title` da apresentação em cada item de `listPublic`, para o rodapé da loja nomear a receita sem uma requisição por receita (pedido pelo change irmão da loja). Verificar com `tests/recipes.routes.test.js` e `tests/recipe-content.service.test.js`: o cenário "List names the recipes".
 
 ## 2. Percentual por prazo
 

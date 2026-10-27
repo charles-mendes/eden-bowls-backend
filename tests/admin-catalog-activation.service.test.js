@@ -284,7 +284,7 @@ describe('AdminCatalogService activation and the recipe presentation', () => {
     await recipes.savePresentation('BR', 'adult-lamb', lambPresentation, actor);
     await catalog.setVariationActive('100', '3001', true, actor);
 
-    expect((await recipes.listPublic('BR')).items).toEqual([{ key: 'adult-lamb', name: 'Cordeiro', lifeStage: 'adult' }]);
+    expect((await recipes.listPublic('BR')).items).toEqual([{ key: 'adult-lamb', name: 'Cordeiro', lifeStage: 'adult', title: lambPresentation.title }]);
     expect(await recipes.getPublic('adult-lamb', 'BR')).toMatchObject({ key: 'adult-lamb', presentation: lambPresentation });
   });
 

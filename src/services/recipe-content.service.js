@@ -210,7 +210,13 @@ class RecipeContentService {
     const byKey = await this.catalogRepository.listMarketRecipeVariations(normalizedMarket);
     const items = recipes
       .filter((recipe) => (byKey.get(recipe.flavorSlug) || []).some((variation) => variation.active))
-      .map((recipe) => ({ key: recipe.flavorSlug, name: recipe.name, lifeStage: recipe.lifeStage }));
+      // The presentation title lets the store footer name a recipe without one request per recipe.
+      .map((recipe) => ({
+        key: recipe.flavorSlug,
+        name: recipe.name,
+        lifeStage: recipe.lifeStage,
+        title: recipe.presentation ? recipe.presentation.title : null
+      }));
     return { market: normalizedMarket, items };
   }
 
