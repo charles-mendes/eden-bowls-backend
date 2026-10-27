@@ -37,7 +37,7 @@ class RecipeEnergyService {
       return {
         key: recipeKey,
         name: content.name || recipeKey,
-        life_stage: lifeStage,
+        life_stage: content.lifeStage || lifeStage,
         energy_kcal_kg: content.label ? parseEnergyKcalPerKg(content.label.energyKg) : null
       };
     });

@@ -550,13 +550,19 @@ class AdminCatalogService {
         ? undefined
         : parseVariationFlavorAliases(item.flavorAliases, flavorSlug);
       const regularPrice = parseVariationPrice(item.regularPrice);
-      const lifeStage = parseVariationLifeStage(item.lifeStage);
+      let lifeStage = parseVariationLifeStage(item.lifeStage);
       const flags = Object.fromEntries(READINESS_FLAGS.map(([key]) => [key, parseReadinessFlag(item[key])]));
       const shortLabel = parseShortLabel(item.shortLabel);
       // Explicit link to a recipe: absent keeps it, blank unlinks, a new variation without one has none.
       const recipeKey = item.recipeKey === undefined ? undefined : parseRecipeKey(item.recipeKey);
       if (recipeKey) {
         await this.assertRecipeRegistered(country || product.planCountry, recipeKey);
+      }
+      // A variation linked to a recipe takes the recipe's life stage (recipe-content).
+      const linkedKey = recipeKey === undefined ? (current && current.recipeKey) || null : recipeKey;
+      const recipeLifeStage = linkedKey ? await this.recipeLifeStage(country || product.planCountry, linkedKey) : null;
+      if (recipeLifeStage) {
+        lifeStage = recipeLifeStage;
       }
 
       if (isNewVariationId(id, existingIds)) {
@@ -649,6 +655,16 @@ class AdminCatalogService {
         recipeKey
       });
     }
+  }
+
+  async recipeLifeStage(country, recipeKey) {
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlug;
+    const market = normalizeRecipeMarket(country);
+    if (typeof lookup !== 'function' || !market) {
+      return null;
+    }
+    const registered = await lookup.call(this.recipeContentRepository, market, recipeKey);
+    return registered && registered.lifeStage ? registered.lifeStage : null;
   }
 
   async recordRecipeKeyChange(actor, product, current, next) {

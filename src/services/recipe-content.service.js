@@ -9,6 +9,7 @@ const {
   parseRecipeLabel,
   recipeKeyOf
 } = require('../core/recipe-content');
+const { LIFE_STAGES } = require('../core/flavors');
 
 const MAX_RECIPE_NAME_LENGTH = 120;
 
@@ -18,6 +19,14 @@ function parseRecipeName(value) {
     throw new HttpError(422, `Recipe name must have 1 to ${MAX_RECIPE_NAME_LENGTH} characters.`, { code: 'recipe_name_invalid' });
   }
   return name;
+}
+
+function parseRecipeLifeStage(value) {
+  const lifeStage = String(value == null ? '' : value).trim().toLowerCase();
+  if (!LIFE_STAGES.includes(lifeStage)) {
+    throw new HttpError(422, `Recipe life stage must be one of ${LIFE_STAGES.join(', ')}.`, { code: 'recipe_life_stage_invalid' });
+  }
+  return lifeStage;
 }
 
 function notFound() {
@@ -95,6 +104,7 @@ class RecipeContentService {
     const items = recipes.map((recipe) => ({
       key: recipe.flavorSlug,
       name: recipe.name,
+      lifeStage: recipe.lifeStage,
       imageUrl: recipe.imageUrl,
       labelStatus: labelCompleteness(recipe.label, normalizedMarket).status,
       variations: byKey.get(recipe.flavorSlug) || []
@@ -109,12 +119,13 @@ class RecipeContentService {
       throw new HttpError(422, 'Recipe key is required.', { code: RECIPE_KEY_INVALID });
     }
     const name = parseRecipeName(input.name);
+    const lifeStage = input.lifeStage == null ? 'adult' : parseRecipeLifeStage(input.lifeStage);
     if (await this.repository.findByMarketAndSlug(normalizedMarket, key)) {
       throw new HttpError(409, 'A recipe with this key already exists in the market.', { code: 'recipe_key_taken' });
     }
     let content;
     try {
-      content = await this.repository.createRecipe({ market: normalizedMarket, flavorSlug: key, name, actorId: actorId(actor) });
+      content = await this.repository.createRecipe({ market: normalizedMarket, flavorSlug: key, name, lifeStage, actorId: actorId(actor) });
     } catch (error) {
       if (error && (error.code === 'ER_DUP_ENTRY' || error.errno === 1062)) {
         throw new HttpError(409, 'A recipe with this key already exists in the market.', { code: 'recipe_key_taken' });
@@ -122,15 +133,26 @@ class RecipeContentService {
       throw error;
     }
     const recipe = { market: normalizedMarket, key, variations: await this.catalogRepository.listRecipeVariations(normalizedMarket, key) };
-    await this.recordAudit(actor, 'catalog.recipe.create', recipe, { name });
+    await this.recordAudit(actor, 'catalog.recipe.create', recipe, { name, lifeStage });
     return this.present(recipe, content);
   }
 
-  async rename(market, recipeKey, input = {}, actor = {}) {
+  // Renames the recipe and/or changes its life stage; every variation of the recipe follows the new stage.
+  async update(market, recipeKey, input = {}, actor = {}) {
     const recipe = await this.resolve(market, recipeKey);
-    const name = parseRecipeName(input.name);
-    const content = await this.repository.renameRecipe({ market: recipe.market, flavorSlug: recipe.key, name, actorId: actorId(actor) });
-    await this.recordAudit(actor, 'catalog.recipe.rename', recipe, { from: recipe.content.name, to: name });
+    const name = input.name === undefined ? undefined : parseRecipeName(input.name);
+    const lifeStage = input.lifeStage === undefined ? undefined : parseRecipeLifeStage(input.lifeStage);
+    if (name === undefined && lifeStage === undefined) {
+      throw new HttpError(422, 'Send the recipe name or life stage.', { code: 'recipe_update_empty' });
+    }
+    const content = await this.repository.updateRecipe({ market: recipe.market, flavorSlug: recipe.key, name, lifeStage, actorId: actorId(actor) });
+    if (name !== undefined && name !== recipe.content.name) {
+      await this.recordAudit(actor, 'catalog.recipe.rename', recipe, { from: recipe.content.name, to: name });
+    }
+    if (lifeStage !== undefined && lifeStage !== recipe.content.lifeStage) {
+      await this.catalogRepository.setRecipeLifeStage(recipe.market, recipe.key, lifeStage);
+      await this.recordAudit(actor, 'catalog.recipe.life_stage', recipe, { from: recipe.content.lifeStage, to: lifeStage });
+    }
     return this.present(recipe, content);
   }
 
@@ -157,6 +179,7 @@ class RecipeContentService {
       market,
       flavorSlug: key,
       name: content ? content.name : key,
+      lifeStage: content ? content.lifeStage : 'adult',
       imageUrl: content ? content.imageUrl : null,
       imageUpdatedAt: content ? content.imageUpdatedAt : null,
       label,

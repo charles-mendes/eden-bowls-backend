@@ -28,7 +28,7 @@ function appFor({ role = 'operator', markets = ['BR'], service = {} } = {}) {
     removeImage: jest.fn().mockResolvedValue({ ...content, imageUrl: null }),
     saveLabel: jest.fn().mockResolvedValue({ ...content, labelStatus: 'complete' }),
     create: jest.fn().mockResolvedValue({ ...content, flavorSlug: 'senior-duck', name: 'Sênior Pato', variations: [] }),
-    rename: jest.fn().mockResolvedValue({ ...content, name: 'Carne Sênior' }),
+    update: jest.fn().mockResolvedValue({ ...content, name: 'Carne Sênior' }),
     remove: jest.fn().mockResolvedValue({ deleted: true, market: 'BR', flavorSlug: 'senior-beef' }),
     ...service
   };
@@ -83,7 +83,7 @@ describe('admin recipe content routes', () => {
 
     expect([created.status, renamed.status, removed.status]).toEqual([200, 200, 200]);
     expect(recipeContentService.create).toHaveBeenCalledWith('BR', { key: 'senior-duck', name: 'Sênior Pato' }, expect.objectContaining({ userId: '7' }));
-    expect(recipeContentService.rename).toHaveBeenCalledWith('BR', 'senior-beef', { name: 'Carne Sênior' }, expect.objectContaining({ userId: '7' }));
+    expect(recipeContentService.update).toHaveBeenCalledWith('BR', 'senior-beef', { name: 'Carne Sênior' }, expect.objectContaining({ userId: '7' }));
     expect(recipeContentService.remove).toHaveBeenCalledWith('BR', 'senior-beef', expect.objectContaining({ userId: '7' }));
   });
 
@@ -132,7 +132,7 @@ describe('admin recipe content routes', () => {
     expect(recipeContentService.removeImage).not.toHaveBeenCalled();
     expect(recipeContentService.saveLabel).not.toHaveBeenCalled();
     expect(recipeContentService.create).not.toHaveBeenCalled();
-    expect(recipeContentService.rename).not.toHaveBeenCalled();
+    expect(recipeContentService.update).not.toHaveBeenCalled();
     expect(recipeContentService.remove).not.toHaveBeenCalled();
   });
 

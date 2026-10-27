@@ -1,6 +1,7 @@
 const { HttpError } = require('../../core/http-error');
 const { parseJsonColumn } = require('../../core/stripe-subscription-map');
 const { toIsoDateTime } = require('./onboarding-pets.repository');
+const { LIFE_STAGES } = require('../../core/flavors');
 
 // Recipe registration with its image and label, one row per market and recipe key (recipe-content).
 class RecipeContentRepository {
@@ -24,6 +25,7 @@ class RecipeContentRepository {
       market: String(row.market || '').toUpperCase(),
       flavorSlug: String(row.flavor_slug || ''),
       name: String(row.name || '').trim() || String(row.flavor_slug || ''),
+      lifeStage: LIFE_STAGES.includes(row.life_stage) ? row.life_stage : 'adult',
       imageUrl: row.image_url ? String(row.image_url) : null,
       imageUpdatedAt: toIsoDateTime(row.image_updated_at),
       label: parseJsonColumn(row.label),
@@ -34,7 +36,7 @@ class RecipeContentRepository {
   async findByMarketAndSlug(market, flavorSlug) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT market, flavor_slug, name, image_url, image_updated_at, label, label_updated_at
+      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, label, label_updated_at
        FROM \`${this.tableName}\` WHERE market = ? AND flavor_slug = ? LIMIT 1`,
       [String(market).toUpperCase(), String(flavorSlug)]
     );
@@ -49,7 +51,7 @@ class RecipeContentRepository {
     }
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT market, flavor_slug, name, image_url, image_updated_at, label, label_updated_at
+      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, label, label_updated_at
        FROM \`${this.tableName}\` WHERE market = ? AND flavor_slug IN (${slugs.map(() => '?').join(', ')})`,
       [String(market).toUpperCase(), ...slugs]
     );
@@ -59,27 +61,38 @@ class RecipeContentRepository {
   async listByMarket(market) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT market, flavor_slug, name, image_url, image_updated_at, label, label_updated_at
+      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, label, label_updated_at
        FROM \`${this.tableName}\` WHERE market = ? ORDER BY flavor_slug ASC`,
       [String(market).toUpperCase()]
     );
     return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row));
   }
 
-  async createRecipe({ market, flavorSlug, name, actorId = null }) {
+  async createRecipe({ market, flavorSlug, name, lifeStage = 'adult', actorId = null }) {
     this.ensureDataSource();
     await this.dataSource.query(
-      `INSERT INTO \`${this.tableName}\` (market, flavor_slug, name, updated_by) VALUES (?, ?, ?, ?)`,
-      [String(market).toUpperCase(), String(flavorSlug), String(name), actorId]
+      `INSERT INTO \`${this.tableName}\` (market, flavor_slug, name, life_stage, updated_by) VALUES (?, ?, ?, ?, ?)`,
+      [String(market).toUpperCase(), String(flavorSlug), String(name), String(lifeStage), actorId]
     );
     return this.findByMarketAndSlug(market, flavorSlug);
   }
 
-  async renameRecipe({ market, flavorSlug, name, actorId = null }) {
+  // Name and/or life stage of a registered recipe; a field left undefined keeps its value.
+  async updateRecipe({ market, flavorSlug, name, lifeStage, actorId = null }) {
     this.ensureDataSource();
+    const sets = [];
+    const params = [];
+    if (name !== undefined) {
+      sets.push('name = ?');
+      params.push(String(name));
+    }
+    if (lifeStage !== undefined) {
+      sets.push('life_stage = ?');
+      params.push(String(lifeStage));
+    }
     await this.dataSource.query(
-      `UPDATE \`${this.tableName}\` SET name = ?, updated_by = ? WHERE market = ? AND flavor_slug = ?`,
-      [String(name), actorId, String(market).toUpperCase(), String(flavorSlug)]
+      `UPDATE \`${this.tableName}\` SET ${[...sets, 'updated_by = ?'].join(', ')} WHERE market = ? AND flavor_slug = ?`,
+      [...params, actorId, String(market).toUpperCase(), String(flavorSlug)]
     );
     return this.findByMarketAndSlug(market, flavorSlug);
   }

@@ -7,9 +7,9 @@ const SENIOR_BEEF_BR = [
 
 // Registered recipes every test starts with; `stored` replaces one of them.
 const REGISTERED = [
-  { market: 'BR', flavorSlug: 'senior-beef', name: 'Sênior Carne', imageUrl: null, label: null },
+  { market: 'BR', flavorSlug: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', imageUrl: null, label: null },
   { market: 'US', flavorSlug: 'beef', name: 'Beef', imageUrl: null, label: null },
-  { market: 'BR', flavorSlug: 'senior-lamb', name: 'Sênior Cordeiro', imageUrl: '/recipe-images/lamb.webp', label: null }
+  { market: 'BR', flavorSlug: 'senior-lamb', name: 'Sênior Cordeiro', lifeStage: 'senior', imageUrl: '/recipe-images/lamb.webp', label: null }
 ];
 
 function setup({ variations = SENIOR_BEEF_BR, stored = null, processImage } = {}) {
@@ -21,13 +21,14 @@ function setup({ variations = SENIOR_BEEF_BR, stored = null, processImage } = {}
     findByMarketAndSlug: jest.fn(async (market, slug) => rows.get(`${market}:${slug}`) || null),
     listByMarket: jest.fn(async (market) => [...rows.values()].filter((row) => row.market === market)
       .sort((left, right) => left.flavorSlug.localeCompare(right.flavorSlug))),
-    createRecipe: jest.fn(async ({ market, flavorSlug, name }) => {
-      const row = { market, flavorSlug, name, imageUrl: null, label: null };
+    createRecipe: jest.fn(async ({ market, flavorSlug, name, lifeStage }) => {
+      const row = { market, flavorSlug, name, lifeStage, imageUrl: null, label: null };
       rows.set(`${market}:${flavorSlug}`, row);
       return row;
     }),
-    renameRecipe: jest.fn(async ({ market, flavorSlug, name }) => {
-      const row = { ...rows.get(`${market}:${flavorSlug}`), name };
+    updateRecipe: jest.fn(async ({ market, flavorSlug, name, lifeStage }) => {
+      const current = rows.get(`${market}:${flavorSlug}`);
+      const row = { ...current, name: name === undefined ? current.name : name, lifeStage: lifeStage === undefined ? current.lifeStage : lifeStage };
       rows.set(`${market}:${flavorSlug}`, row);
       return row;
     }),
@@ -51,7 +52,8 @@ function setup({ variations = SENIOR_BEEF_BR, stored = null, processImage } = {}
     })
   };
   const catalogRepository = {
-    listRecipeVariations: jest.fn(async (market, key) => (market === 'BR' && key === 'senior-beef') || (market === 'US' && key === 'beef') ? variations : [])
+    listRecipeVariations: jest.fn(async (market, key) => (market === 'BR' && key === 'senior-beef') || (market === 'US' && key === 'beef') ? variations : []),
+    setRecipeLifeStage: jest.fn().mockResolvedValue(undefined)
   };
   let counter = 0;
   const imageStorage = {
@@ -107,8 +109,8 @@ describe('RecipeContentService', () => {
     expect(result).toEqual({
       market: 'BR',
       items: [
-        { key: 'senior-beef', name: 'Sênior Carne', imageUrl: null, labelStatus: 'missing', variations: SENIOR_BEEF_BR },
-        { key: 'senior-lamb', name: 'Sênior Cordeiro', imageUrl: '/recipe-images/lamb.webp', labelStatus: 'missing', variations: [] }
+        { key: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', imageUrl: null, labelStatus: 'missing', variations: SENIOR_BEEF_BR },
+        { key: 'senior-lamb', name: 'Sênior Cordeiro', lifeStage: 'senior', imageUrl: '/recipe-images/lamb.webp', labelStatus: 'missing', variations: [] }
       ]
     });
   });
@@ -117,15 +119,15 @@ describe('RecipeContentService', () => {
     test('registers a recipe without variations that can then hold an image', async () => {
       const { service, repository, auditService } = setup({ variations: [] });
 
-      const created = await service.create('BR', { key: 'senior-duck', name: '  Sênior Pato  ' }, actor);
+      const created = await service.create('BR', { key: 'senior-duck', name: '  Sênior Pato  ', lifeStage: 'senior' }, actor);
       const withImage = await service.uploadImage('BR', 'senior-duck', upload, actor);
 
-      expect(repository.createRecipe).toHaveBeenCalledWith({ market: 'BR', flavorSlug: 'senior-duck', name: 'Sênior Pato', actorId: 7 });
-      expect(created).toMatchObject({ flavorSlug: 'senior-duck', name: 'Sênior Pato', variations: [], imageUrl: null });
+      expect(repository.createRecipe).toHaveBeenCalledWith({ market: 'BR', flavorSlug: 'senior-duck', name: 'Sênior Pato', lifeStage: 'senior', actorId: 7 });
+      expect(created).toMatchObject({ flavorSlug: 'senior-duck', name: 'Sênior Pato', lifeStage: 'senior', variations: [], imageUrl: null });
       expect(withImage.imageUrl).toBe('/recipe-images/recipe-br-senior-duck-1.webp');
       expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
         action: 'catalog.recipe.create',
-        metadata: { market: 'BR', flavorSlug: 'senior-duck', name: 'Sênior Pato' }
+        metadata: { market: 'BR', flavorSlug: 'senior-duck', name: 'Sênior Pato', lifeStage: 'senior' }
       }));
     });
 
@@ -157,13 +159,40 @@ describe('RecipeContentService', () => {
     test('renames and keeps the key and the variations', async () => {
       const { service, auditService } = setup();
 
-      const renamed = await service.rename('BR', 'senior-beef', { name: 'Carne Sênior' }, actor);
+      const renamed = await service.update('BR', 'senior-beef', { name: 'Carne Sênior' }, actor);
 
-      expect(renamed).toMatchObject({ flavorSlug: 'senior-beef', name: 'Carne Sênior', variations: SENIOR_BEEF_BR });
+      expect(renamed).toMatchObject({ flavorSlug: 'senior-beef', name: 'Carne Sênior', lifeStage: 'senior', variations: SENIOR_BEEF_BR });
       expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
         action: 'catalog.recipe.rename',
         metadata: { market: 'BR', flavorSlug: 'senior-beef', from: 'Sênior Carne', to: 'Carne Sênior' }
       }));
+    });
+
+    test('changes the life stage and moves every variation of the recipe to it', async () => {
+      const { service, catalogRepository, auditService } = setup();
+
+      const updated = await service.update('BR', 'senior-beef', { lifeStage: 'adult' }, actor);
+
+      expect(updated).toMatchObject({ name: 'Sênior Carne', lifeStage: 'adult' });
+      expect(catalogRepository.setRecipeLifeStage).toHaveBeenCalledWith('BR', 'senior-beef', 'adult');
+      expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'catalog.recipe.life_stage',
+        metadata: { market: 'BR', flavorSlug: 'senior-beef', from: 'senior', to: 'adult' }
+      }));
+    });
+
+    test('keeps the variations when the life stage does not change', async () => {
+      const { service, catalogRepository } = setup();
+      await service.update('BR', 'senior-beef', { lifeStage: 'senior' }, actor);
+      expect(catalogRepository.setRecipeLifeStage).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      [{}, 'recipe_update_empty'],
+      [{ lifeStage: 'kitten' }, 'recipe_life_stage_invalid']
+    ])('refuses the update %j', async (input, code) => {
+      const { service } = setup();
+      await expect(service.update('BR', 'senior-beef', input, actor)).rejects.toMatchObject({ statusCode: 422, details: { code } });
     });
 
     test('refuses to delete a recipe used by variations, naming them', async () => {

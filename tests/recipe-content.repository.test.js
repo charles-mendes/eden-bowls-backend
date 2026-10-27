@@ -94,12 +94,12 @@ describe('RecipeContentRepository', () => {
     );
     const repository = new RecipeContentRepository(dataSource);
 
-    const created = await repository.createRecipe({ market: 'br', flavorSlug: 'senior-duck', name: 'Sênior Pato', actorId: 7 });
-    const renamed = await repository.renameRecipe({ market: 'BR', flavorSlug: 'senior-duck', name: 'Pato Sênior', actorId: 7 });
+    const created = await repository.createRecipe({ market: 'br', flavorSlug: 'senior-duck', name: 'Sênior Pato', lifeStage: 'senior', actorId: 7 });
+    const renamed = await repository.updateRecipe({ market: 'BR', flavorSlug: 'senior-duck', name: 'Pato Sênior', actorId: 7 });
     const listed = await repository.listByMarket('br');
     await repository.deleteRecipe({ market: 'BR', flavorSlug: 'senior-duck' });
 
-    expect(dataSource.query.mock.calls[0]).toEqual([expect.stringContaining('(market, flavor_slug, name, updated_by)'), ['BR', 'senior-duck', 'Sênior Pato', 7]]);
+    expect(dataSource.query.mock.calls[0]).toEqual([expect.stringContaining('(market, flavor_slug, name, life_stage, updated_by)'), ['BR', 'senior-duck', 'Sênior Pato', 'senior', 7]]);
     expect(created.name).toBe('Sênior Pato');
     expect(dataSource.query.mock.calls[2][1]).toEqual(['Pato Sênior', 7, 'BR', 'senior-duck']);
     expect(renamed.name).toBe('Pato Sênior');

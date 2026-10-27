@@ -397,6 +397,13 @@ class AdminCatalogRepository {
       }));
   }
 
+  // Every variation of a recipe in a market follows the recipe's life stage (recipe-content).
+  async setRecipeLifeStage(market, recipeKey, lifeStage) {
+    for (const variation of await this.listRecipeVariations(market, recipeKey)) {
+      await this.upsertPostMeta(variation.id, LIFE_STAGE_META, lifeStage);
+    }
+  }
+
   // Every recipe key of a market with the variations that use it (recipe-content).
   async listMarketRecipeVariations(market) {
     const normalized = String(market || '').trim().toUpperCase();

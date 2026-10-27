@@ -339,7 +339,7 @@ function registerAdminRoutes(app, dependencies = {}) {
   });
 
   app.patch('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().rename(
+    await handle(response, next, async () => requireRecipeContentService().update(
       request.query.market,
       request.params.flavorSlug,
       request.body || {},

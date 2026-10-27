@@ -90,7 +90,9 @@ describe('AdminCatalogService', () => {
       };
       const auditService = { record: jest.fn() };
       const recipeContentRepository = {
-        findByMarketAndSlug: jest.fn(async (market, key) => (market === 'BR' && registered.includes(key) ? { flavorSlug: key } : null))
+        findByMarketAndSlug: jest.fn(async (market, key) => (market === 'BR' && registered.includes(key)
+          ? { flavorSlug: key, lifeStage: key.startsWith('senior-') ? 'senior' : 'adult' }
+          : null))
       };
       return { service: new AdminCatalogService({ repository, auditService, recipeContentRepository }), repository, auditService, recipeContentRepository };
     }
@@ -132,6 +134,26 @@ describe('AdminCatalogService', () => {
       await service.patchProduct('100', { variants: [{ name: 'Sênior Carne 300g', sku: 'SB-300', recipeKey: 'senior-beef' }] });
 
       expect(repository.createVariation).toHaveBeenCalledWith(expect.objectContaining({ recipeKey: 'senior-beef' }));
+    });
+
+    test('a variation takes the life stage of the recipe it is linked to', async () => {
+      const { service, repository } = serviceWith([bovino]);
+
+      await service.patchProduct('100', { variants: [
+        { id: '3000', name: 'Bovino', lifeStage: 'puppy' },
+        { name: 'Sênior Carne 300g', sku: 'SB-300', recipeKey: 'senior-beef', lifeStage: 'adult' }
+      ] });
+
+      expect(repository.updateVariation).toHaveBeenCalledWith(expect.objectContaining({ id: '3000', lifeStage: 'adult' }));
+      expect(repository.createVariation).toHaveBeenCalledWith(expect.objectContaining({ recipeKey: 'senior-beef', lifeStage: 'senior' }));
+    });
+
+    test('a variation without a recipe keeps the life stage sent', async () => {
+      const { service, repository } = serviceWith([]);
+
+      await service.patchProduct('100', { variants: [{ name: 'Cordeiro 300g', sku: 'LAMB-300', lifeStage: 'puppy' }] });
+
+      expect(repository.createVariation).toHaveBeenCalledWith(expect.objectContaining({ recipeKey: null, lifeStage: 'puppy' }));
     });
 
     test('refuses a key that is not registered in the product market', async () => {
