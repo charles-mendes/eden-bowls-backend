@@ -76,13 +76,13 @@ O tamanho de cada variação vem do peso cadastrado (`attribute_pa_weight`). Um 
 - [Percentual mudado sem revisar os termos de uso] → A tela de cupom mostra o aviso "os termos de uso citam o percentual" ao salvar. Na fase 3 o texto legal passa a ser editável no painel.
 - [O valor de módulo de `max_transit_days`, como o do raio do Brasil, só é atualizado no processo que salva as configurações] → Aceito: há um só container de API, e é nele que rodam a estimativa de entrega, as entregas do cliente e o impacto do calendário, os únicos leitores do limite. O container `cron` lê as configurações na partida, mas nenhum job dele usa o prazo nem o raio (o estimador usa o trânsito gravado de cada assinatura). Se a API passar a ter mais de um container, os leitores precisam reler as configurações do banco.
 - [Uma variação de teste ativa pode mudar a recomendação de todos] → A recomendação só usa variações ativas do produto do plano. O detalhe do produto mostra os tamanhos que entram na recomendação.
-- [A semente da apresentação pode divergir dos `.md` se a loja mudar antes do deploy] → O teste da semente compara com o snapshot `lifeStageRecipesContent.test.ts.snap` da loja, copiado para a fixture.
+- [A semente da apresentação pode divergir dos `.md` se a loja mudar antes do deploy] → O teste da semente compara com o snapshot `lifeStageRecipesContent.test.ts.snap` da loja, copiado para a fixture. Com a remoção dos `.md` na loja, a fixture passa a ser a referência do texto aprovado.
 
 ## Migration Plan
 
 1. API: migrações (percentual, apresentação com semente, trânsito), checagem `presentation` e rotas. A loja atual segue lendo os `.md`.
 2. Painel: as quatro edições.
-3. Loja: passa a ler `presentation` da API e mantém os `.md` como fallback por uma versão.
-4. Loja: remove os `.md` e `recipes.ts` depois de conferir em QA que todas as receitas ativas têm apresentação.
+3. Antes do deploy da loja: conferir em QA e em produção que toda receita ativa tem apresentação com `tag` (a migração `1700000000048` preenche o `tag` das já gravadas).
+4. Loja: lê `presentation` e o rótulo só da API e remove os `.md` de receita (o change irmão da loja). `recipes.ts` fica com chave, fase, imagem e cor. O build da loja precisa desta API de pé para pré-renderizar o texto.
 
 Rollback: as colunas novas são nulas ou têm padrão, e o `down` de cada migração as remove. Um cupom criado com outro percentual continua válido na Stripe depois de um rollback; o `down` da tabela de percentuais não desfaz o mapeamento.

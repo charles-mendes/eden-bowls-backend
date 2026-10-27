@@ -154,8 +154,9 @@ function parseEnergyKcalPerKg(value) {
   return Number.isFinite(kcal) && kcal > 0 ? kcal : null;
 }
 
-// Recipe page presentation, saved whole: text limits in characters, after trimming.
-const PRESENTATION_TEXT_LIMITS = { title: 120, tagline: 80, resume: 300 };
+// Recipe store presentation, saved whole: text limits in characters, after trimming.
+// `tag` is the short name of the store tabs and plan chips ("Carne", "Frango e Porco").
+const PRESENTATION_TEXT_LIMITS = { tag: 40, title: 120, tagline: 80, resume: 300 };
 const MAX_PRESENTATION_HIGHLIGHTS = 8;
 const MAX_PRESENTATION_HIGHLIGHT_LENGTH = 60;
 const PRESENTATION_COLOR_FIELDS = ['color', 'accentColor', 'pillBg', 'pillText', 'pillBorder'];

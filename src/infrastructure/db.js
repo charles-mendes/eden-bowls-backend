@@ -66,6 +66,7 @@ const { SeedLifeStageVariations1700000000044 } = require('./migrations/170000000
 const { AddRecipePresentation1700000000045 } = require('./migrations/1700000000045-add-recipe-presentation');
 const { CreateFirstPurchaseTermDiscounts1700000000046 } = require('./migrations/1700000000046-create-first-purchase-term-discounts');
 const { AddUsMaxTransitDays1700000000047 } = require('./migrations/1700000000047-add-us-max-transit-days');
+const { AddRecipePresentationTag1700000000048 } = require('./migrations/1700000000048-add-recipe-presentation-tag');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
@@ -154,7 +155,8 @@ function buildDataSourceOptions(env) {
       SeedLifeStageVariations1700000000044,
       AddRecipePresentation1700000000045,
       CreateFirstPurchaseTermDiscounts1700000000046,
-      AddUsMaxTransitDays1700000000047
+      AddUsMaxTransitDays1700000000047,
+      AddRecipePresentationTag1700000000048
     ],
     synchronize: false,
     logging: false,

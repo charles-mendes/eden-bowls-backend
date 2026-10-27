@@ -10,6 +10,7 @@ Fase 2 de 3. Depende da fase 1 (`move-business-data-1-read-from-api`) aplicada. 
 - [x] 1.4 Incluir `name` e `presentation` em `getPublic`. Verificar com `tests/recipes.routes.test.js`: o cenário "Launched recipe with a presentation" e `presentation: null` sem apresentação.
 - [x] 1.5 Acrescentar a checagem `presentation` à ativação em `src/services/admin-catalog.service.js` (decisão 3). Verificar com `tests/admin-catalog-activation.service.test.js`: os cenários "New recipe without presentation" e "New recipe goes live without a store deploy", e os casos atuais seguem passando com a semente.
 - [x] 1.6 Incluir o `title` da apresentação em cada item de `listPublic`, para o rodapé da loja nomear a receita sem uma requisição por receita (pedido pelo change irmão da loja). Verificar com `tests/recipes.routes.test.js` e `tests/recipe-content.service.test.js`: o cenário "List names the recipes".
+- [x] 1.7 Acrescentar `tag` (nome curto das abas e chips da loja, 1 a 40) à apresentação: semente com os `tag` dos `.md`, validação, migração `1700000000048` que preenche as apresentações já gravadas (o `tag` da loja, senão o nome da receita) e `tag` em cada item de `listPublic`. Pedido pela remoção dos `.md` na loja. Verificar com `tests/recipe-presentations.migration.test.js` (o cenário "Presentation saved before the short name existed" e toda semente válida), `tests/recipe-content.core.test.js` e `tests/recipes.routes.test.js`.
 
 ## 2. Percentual por prazo
 

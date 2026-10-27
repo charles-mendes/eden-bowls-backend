@@ -59,6 +59,7 @@ describe('GET /api/v1/recipes/:key', () => {
 
   test('Launched recipe with a presentation: returns the pt-BR presentation and the name', async () => {
     const presentation = {
+      tag: 'Carne',
       title: 'Receita de Carne para Cães Sênior',
       tagline: 'Leveza & Equilíbrio',
       resume: 'Da nossa linha sênior, com carne bovina, ovo, batata e vagem.',
@@ -121,7 +122,7 @@ describe('GET /api/v1/recipes', () => {
   }
 
   const recipes = [
-    { market: 'BR', flavorSlug: 'beef', name: 'Bovino', lifeStage: 'adult', imageUrl: '/recipe-images/beef.webp', label: { productName: 'X' }, presentation: { title: 'Receita de Carne', tagline: 'Força' } },
+    { market: 'BR', flavorSlug: 'beef', name: 'Bovino', lifeStage: 'adult', imageUrl: '/recipe-images/beef.webp', label: { productName: 'X' }, presentation: { tag: 'Carne', title: 'Receita de Carne', tagline: 'Força' } },
     { market: 'BR', flavorSlug: 'senior-beef', name: 'Receita de Carne para Cães Sênior', lifeStage: 'senior', imageUrl: null, label: null },
     { market: 'BR', flavorSlug: 'puppy-beef-chicken', name: 'Filhote', lifeStage: 'puppy', imageUrl: null, label: null }
   ];
@@ -142,8 +143,8 @@ describe('GET /api/v1/recipes', () => {
     expect(response.body).toEqual({
       market: 'BR',
       items: [
-        { key: 'beef', name: 'Bovino', lifeStage: 'adult', title: 'Receita de Carne' },
-        { key: 'senior-beef', name: 'Receita de Carne para Cães Sênior', lifeStage: 'senior', title: null }
+        { key: 'beef', name: 'Bovino', lifeStage: 'adult', title: 'Receita de Carne', tag: 'Carne' },
+        { key: 'senior-beef', name: 'Receita de Carne para Cães Sênior', lifeStage: 'senior', title: null, tag: null }
       ]
     });
   });

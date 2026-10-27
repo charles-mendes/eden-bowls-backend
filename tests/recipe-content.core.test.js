@@ -93,6 +93,7 @@ describe('parseRecipeKey', () => {
 describe('parseRecipePresentation', () => {
   function presentation(overrides = {}) {
     return {
+      tag: 'Beef',
       title: 'Beef Recipe',
       tagline: 'Strength & Vitality',
       resume: 'Rich in protein and iron, our beef recipe supports strong muscles and lasting energy.',
@@ -113,7 +114,7 @@ describe('parseRecipePresentation', () => {
   }
 
   test('trims text, uppercases colors and ignores unknown keys', () => {
-    const parsed = parseRecipePresentation(presentation({ title: '  Beef Recipe  ', tag: 'Beef' }));
+    const parsed = parseRecipePresentation(presentation({ title: '  Beef Recipe  ', tag: ' Beef ', theme: 'dark' }));
     expect(parsed).toEqual({ ...presentation(), colors: { ...presentation().colors, pillBorder: '#C0907C' } });
   });
 
@@ -122,6 +123,8 @@ describe('parseRecipePresentation', () => {
   });
 
   test.each([
+    ['tag', 'x'.repeat(41)],
+    ['tag', ''],
     ['title', 'x'.repeat(121)],
     ['tagline', 'x'.repeat(81)],
     ['resume', 'x'.repeat(301)],
@@ -132,7 +135,7 @@ describe('parseRecipePresentation', () => {
 
   test('accepts each text at its limit', () => {
     expect(() => parseRecipePresentation(presentation({
-      title: 'x'.repeat(120), tagline: 'x'.repeat(80), resume: 'x'.repeat(300), highlights: Array(8).fill('y'.repeat(60))
+      tag: 'x'.repeat(40), title: 'x'.repeat(120), tagline: 'x'.repeat(80), resume: 'x'.repeat(300), highlights: Array(8).fill('y'.repeat(60))
     }))).not.toThrow();
   });
 
@@ -146,7 +149,7 @@ describe('parseRecipePresentation', () => {
 
   test('a missing presentation lists every field', () => {
     expect(invalidFields(null)).toEqual([
-      'title', 'tagline', 'resume', 'highlights',
+      'tag', 'title', 'tagline', 'resume', 'highlights',
       'colors.color', 'colors.accentColor', 'colors.pillBg', 'colors.pillText', 'colors.pillBorder'
     ]);
   });

@@ -143,7 +143,7 @@ describe('RecipeContentService', () => {
 
       await expect(service.listPublic('br')).resolves.toEqual({
         market: 'BR',
-        items: [{ key: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', title: null }]
+        items: [{ key: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', title: null, tag: null }]
       });
       const us = await service.listPublic('US');
       expect(us.items.map((item) => item.key)).toEqual(['beef']);
@@ -469,6 +469,7 @@ describe('RecipeContentService', () => {
   });
   describe('presentation', () => {
     const beefBr = {
+      tag: 'Carne',
       title: 'Receita de Carne',
       tagline: 'Força & Vitalidade',
       resume: 'Rica em proteína e ferro, nossa receita de carne bovina apoia músculos fortes e energia duradoura.',

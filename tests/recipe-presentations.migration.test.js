@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { AddRecipePresentation1700000000045 } = require('../src/infrastructure/migrations/1700000000045-add-recipe-presentation');
 const { RECIPE_TEXTS, seedRecipePresentation } = require('../src/infrastructure/migrations/helpers/seed-recipe-presentations');
+const { AddRecipePresentationTag1700000000048 } = require('../src/infrastructure/migrations/1700000000048-add-recipe-presentation-tag');
+const { parseRecipePresentation } = require('../src/core/recipe-content');
 
 // Copy of the store's eden-bowls/src/content/__snapshots__/lifeStageRecipesContent.test.ts.snap (pt-BR files of
 // the puppy and senior lines). The snapshot body is an object literal.
@@ -31,13 +33,14 @@ describe('seedRecipePresentation', () => {
   test('matches the store files of the puppy and senior lines in pt-BR', () => {
     for (const [key, content] of Object.entries(storeSnapshot())) {
       const seed = seedRecipePresentation('BR', key);
-      expect(seed).toMatchObject({ title: content.title, tagline: content.tagline, resume: content.resume, highlights: content.highlights });
+      expect(seed).toMatchObject({ tag: content.tag, title: content.title, tagline: content.tagline, resume: content.resume, highlights: content.highlights });
       expect(seed.colors.color).toBe(content.color);
     }
   });
 
   test('uses the market language and the store colors', () => {
     expect(seedRecipePresentation('US', 'turkey')).toEqual({
+      tag: 'Chicken',
       title: 'Chicken Recipe',
       tagline: 'Light & Lean',
       resume: 'A lean and flavorful option, packed with natural goodness your dog will love.',
@@ -45,6 +48,14 @@ describe('seedRecipePresentation', () => {
       colors: { color: '#B08F66', accentColor: '#D0A860', pillBg: '#E4D0A8', pillText: '#3C2800', pillBorder: '#B09060' }
     });
     expect(seedRecipePresentation('BR', 'turkey').title).toBe('Receita de Frango');
+  });
+
+  test('every seed passes the presentation validation', () => {
+    for (const market of ['BR', 'US']) {
+      for (const key of Object.keys(RECIPE_TEXTS[market])) {
+        expect(parseRecipePresentation(seedRecipePresentation(market, key))).toEqual(seedRecipePresentation(market, key));
+      }
+    }
   });
 
   test('has no presentation for an unknown key or market', () => {
@@ -98,5 +109,33 @@ describe('AddRecipePresentation1700000000045', () => {
     await new AddRecipePresentation1700000000045().up(runner);
     expect(runner.addColumn).not.toHaveBeenCalled();
     expect(runner.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('AddRecipePresentationTag1700000000048', () => {
+  test('adds the store tag, or the recipe name, to stored presentations without one', async () => {
+    const { tag: _tag, ...beefWithoutTag } = seedRecipePresentation('BR', 'beef');
+    const runner = queryRunner({
+      hasColumn: true,
+      rows: [
+        { id: 1, market: 'BR', recipeKey: 'beef', name: 'Bovino', presentation: JSON.stringify(beefWithoutTag) },
+        { id: 2, market: 'BR', recipeKey: 'adult-lamb', name: 'Cordeiro', presentation: { ...beefWithoutTag, title: 'Receita de Cordeiro' } },
+        { id: 3, market: 'US', recipeKey: 'fish', name: 'Fish', presentation: { ...beefWithoutTag, tag: 'Saved' } }
+      ]
+    });
+
+    await new AddRecipePresentationTag1700000000048().up(runner);
+
+    const updates = runner.query.mock.calls.filter(([sql]) => sql.startsWith('UPDATE'));
+    expect(updates.map(([, params]) => [JSON.parse(params[0]).tag, params[1]])).toEqual([['Carne', 1], ['Cordeiro', 2]]);
+    expect(JSON.parse(updates[0][1][0])).toEqual(seedRecipePresentation('BR', 'beef'));
+  });
+
+  test('down removes the tag from every presentation', async () => {
+    const runner = queryRunner({ hasColumn: true });
+
+    await new AddRecipePresentationTag1700000000048().down(runner);
+
+    expect(runner.query.mock.calls[0][0]).toContain("JSON_REMOVE(presentation, '$.tag')");
   });
 });

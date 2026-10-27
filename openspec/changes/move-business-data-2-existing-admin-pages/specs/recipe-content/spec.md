@@ -4,7 +4,7 @@
 
 ### Requirement: Recipe presentation is stored per market in the market language
 
-The admin MUST be able to save, for each registered recipe of a market, a presentation in the market language (BR in pt-BR, US in en-US) with: `title` (1 to 120 characters), `tagline` (1 to 80), `resume` (1 to 300), `highlights` (1 to 8 items, each 1 to 60 characters) and `colors` with the five keys `color`, `accentColor`, `pillBg`, `pillText` and `pillBorder`, each a `#RRGGBB` hex value. A presentation MUST be saved whole: any missing or invalid field MUST be refused with HTTP 422 `recipe_presentation_invalid`, listing the invalid fields, and the stored presentation MUST stay unchanged. Saving MUST require `catalog.write` within the operator's market scope and MUST be recorded in the admin audit log as `catalog.recipe.presentation.update` with the market and the key.
+The admin MUST be able to save, for each registered recipe of a market, a presentation in the market language (BR in pt-BR, US in en-US) with: `tag` (the short name of the store tabs and plan chips, 1 to 40 characters), `title` (1 to 120 characters), `tagline` (1 to 80), `resume` (1 to 300), `highlights` (1 to 8 items, each 1 to 60 characters) and `colors` with the five keys `color`, `accentColor`, `pillBg`, `pillText` and `pillBorder`, each a `#RRGGBB` hex value. A presentation MUST be saved whole: any missing or invalid field MUST be refused with HTTP 422 `recipe_presentation_invalid`, listing the invalid fields, and the stored presentation MUST stay unchanged. Saving MUST require `catalog.write` within the operator's market scope and MUST be recorded in the admin audit log as `catalog.recipe.presentation.update` with the market and the key.
 
 #### Scenario: Save a presentation in BR
 
@@ -28,7 +28,7 @@ The deploy MUST store the presentation the store shows today for the eight store
 #### Scenario: Seed after deploy
 
 - **WHEN** the migration runs on a database where no presentation was saved
-- **THEN** every registered store recipe in BR and US holds the title, tagline, resume, highlights and colors of the store's current recipe page for that language
+- **THEN** every registered store recipe in BR and US holds the short name, title, tagline, resume, highlights and colors of the store's current recipe content for that language
 
 #### Scenario: Saved presentation survives a rerun
 
@@ -37,7 +37,7 @@ The deploy MUST store the presentation the store shows today for the eight store
 
 ### Requirement: Public recipe route serves the presentation
 
-`GET /api/v1/recipes/:key?market=` MUST include the recipe's `name` and its `presentation` (or `null` when none is stored) alongside the image and the label. Each item of `GET /api/v1/recipes?market=` MUST include the presentation `title` (or `null`), so the store can name every launched recipe from the list alone.
+`GET /api/v1/recipes/:key?market=` MUST include the recipe's `name` and its `presentation` (or `null` when none is stored) alongside the image and the label. Each item of `GET /api/v1/recipes?market=` MUST include the presentation `title` and `tag` (or `null`), so the store can name every launched recipe from the list alone.
 
 #### Scenario: Launched recipe with a presentation
 
@@ -47,7 +47,12 @@ The deploy MUST store the presentation the store shows today for the eight store
 #### Scenario: List names the recipes
 
 - **WHEN** the store requests `GET /api/v1/recipes?market=BR` and `beef` has a stored presentation titled "Receita de Carne"
-- **THEN** the `beef` item has `title` "Receita de Carne", and an item without presentation has `title` null
+- **THEN** the `beef` item has `title` "Receita de Carne" and `tag` "Carne", and an item without presentation has both null
+
+#### Scenario: Presentation saved before the short name existed
+
+- **WHEN** a presentation stored without `tag` is migrated
+- **THEN** it gets the store's short name for a store recipe (`beef` in BR: "Carne"), else the recipe name, and stays valid
 
 ### Requirement: Activation requires a stored presentation
 

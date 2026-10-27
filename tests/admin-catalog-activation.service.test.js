@@ -218,6 +218,7 @@ describe('AdminCatalogService.setVariationActive', () => {
 describe('AdminCatalogService activation and the recipe presentation', () => {
   const lambLabel = { ingredients: ['Cordeiro'], analysis: [{ nutrient: 'Proteína bruta (mín)', value: '9,0%' }], energyKg: '1.200 kcal/kg', energyPackage: '360 kcal por embalagem' };
   const lambPresentation = {
+    tag: 'Cordeiro',
     title: 'Receita de Cordeiro',
     tagline: 'Sabor & Leveza',
     resume: 'Cordeiro com legumes cozidos.',
@@ -284,7 +285,7 @@ describe('AdminCatalogService activation and the recipe presentation', () => {
     await recipes.savePresentation('BR', 'adult-lamb', lambPresentation, actor);
     await catalog.setVariationActive('100', '3001', true, actor);
 
-    expect((await recipes.listPublic('BR')).items).toEqual([{ key: 'adult-lamb', name: 'Cordeiro', lifeStage: 'adult', title: lambPresentation.title }]);
+    expect((await recipes.listPublic('BR')).items).toEqual([{ key: 'adult-lamb', name: 'Cordeiro', lifeStage: 'adult', title: lambPresentation.title, tag: lambPresentation.tag }]);
     expect(await recipes.getPublic('adult-lamb', 'BR')).toMatchObject({ key: 'adult-lamb', presentation: lambPresentation });
   });
 
