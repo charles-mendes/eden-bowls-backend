@@ -17,4 +17,4 @@ Fase 1 de 3. Este change cobre a API e sai antes dos changes irmãos `move-busin
 
 ## 4. Integração
 
-- [ ] 4.1 Com a API local de pé, conferir `curl "localhost:3000/api/v1/recipes?market=BR"` contra a lista do painel em Receitas: as receitas com variação ativa batem. Registrar no PR as chaves que estavam com `VITE_LIFE_STAGE_RECIPES_LAUNCHED_*=true` e não têm variação ativa, para o operador ativar antes do deploy da loja (passo 3 do Migration Plan).
+- [x] 4.1 Com a API local de pé, conferir `curl "localhost:3000/api/v1/recipes?market=BR"` contra a lista do painel em Receitas: as receitas com variação ativa batem. Registrar no PR as chaves que estavam com `VITE_LIFE_STAGE_RECIPES_LAUNCHED_*=true` e não têm variação ativa, para o operador ativar antes do deploy da loja (passo 3 do Migration Plan).
