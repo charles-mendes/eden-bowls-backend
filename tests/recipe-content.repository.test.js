@@ -74,6 +74,23 @@ describe('RecipeContentRepository', () => {
     expect(content.imageUrl).toBeNull();
   });
 
+  test('sets and clears the plan thumbnail apart from the banner', async () => {
+    const dataSource = dataSourceReturning(
+      [], [row({ plan_image_url: '/recipe-images/recipe-br-senior-beef-plan-1.webp' })],
+      [], [row({ plan_image_url: null })]
+    );
+    const repository = new RecipeContentRepository(dataSource);
+
+    const set = await repository.setPlanImage({ market: 'br', flavorSlug: 'senior-beef', imageUrl: '/recipe-images/recipe-br-senior-beef-plan-1.webp', actorId: 7 });
+    const cleared = await repository.setPlanImage({ market: 'BR', flavorSlug: 'senior-beef', imageUrl: null, actorId: 7 });
+
+    expect(dataSource.query.mock.calls[0][0]).toContain('SET plan_image_url = ?, plan_image_updated_at = CURRENT_TIMESTAMP');
+    expect(dataSource.query.mock.calls[0][1]).toEqual(['/recipe-images/recipe-br-senior-beef-plan-1.webp', 7, 'BR', 'senior-beef']);
+    expect(dataSource.query.mock.calls[2][1]).toEqual([null, 7, 'BR', 'senior-beef']);
+    expect(set.planImageUrl).toBe('/recipe-images/recipe-br-senior-beef-plan-1.webp');
+    expect(cleared.planImageUrl).toBeNull();
+  });
+
   test('stores the label as JSON on the market and flavor key', async () => {
     const label = { ingredients: ['Beef'], analysis: [], notices: [] };
     const dataSource = dataSourceReturning([], [row({ market: 'US', flavor_slug: 'beef', label: JSON.stringify(label) })]);

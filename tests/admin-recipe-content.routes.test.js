@@ -26,6 +26,8 @@ function appFor({ role = 'operator', markets = ['BR'], service = {} } = {}) {
     list: jest.fn().mockResolvedValue({ market: 'BR', items: [{ key: 'senior-beef', imageUrl: null, labelStatus: 'missing', variations: content.variations }] }),
     uploadImage: jest.fn().mockResolvedValue(content),
     removeImage: jest.fn().mockResolvedValue({ ...content, imageUrl: null }),
+    uploadPlanImage: jest.fn().mockResolvedValue({ ...content, planImageUrl: '/recipe-images/recipe-br-senior-beef-plan-1.webp' }),
+    removePlanImage: jest.fn().mockResolvedValue({ ...content, planImageUrl: null }),
     saveLabel: jest.fn().mockResolvedValue({ ...content, labelStatus: 'complete' }),
     create: jest.fn().mockResolvedValue({ ...content, flavorSlug: 'senior-duck', name: 'Sênior Pato', variations: [] }),
     update: jest.fn().mockResolvedValue({ ...content, name: 'Carne Sênior' }),
@@ -105,6 +107,19 @@ describe('admin recipe content routes', () => {
     expect(response.status).toBe(200);
   });
 
+  test('operator uploads and removes the plan thumbnail, with a large body', async () => {
+    const { app, recipeContentService } = appFor();
+    const large = { mimeType: 'image/png', imageBase64: 'A'.repeat(3 * 1024 * 1024) };
+
+    const uploaded = await request(app).put(`${base}/plan-image?market=BR`).set('Authorization', `Bearer ${token()}`).send(large);
+    const removed = await request(app).delete(`${base}/plan-image?market=BR`).set('Authorization', `Bearer ${token()}`);
+
+    expect([uploaded.status, removed.status]).toEqual([200, 200]);
+    expect(uploaded.body.planImageUrl).toBe('/recipe-images/recipe-br-senior-beef-plan-1.webp');
+    expect(recipeContentService.uploadPlanImage).toHaveBeenCalledWith('BR', 'senior-beef', large, expect.objectContaining({ userId: '7' }));
+    expect(recipeContentService.removePlanImage).toHaveBeenCalledWith('BR', 'senior-beef', expect.objectContaining({ userId: '7' }));
+  });
+
   test('operator saves the label sent under label', async () => {
     const { app, recipeContentService } = appFor();
     const label = { ingredients: ['Carne'] };
@@ -119,6 +134,8 @@ describe('admin recipe content routes', () => {
     ['put', `${base}/image?market=BR`],
     ['put', `${base}/label?market=BR`],
     ['delete', `${base}/image?market=BR`],
+    ['put', `${base}/plan-image?market=BR`],
+    ['delete', `${base}/plan-image?market=BR`],
     ['post', '/api/v1/admin/catalog/recipe-content?market=BR'],
     ['patch', `${base}?market=BR`],
     ['delete', `${base}?market=BR`]

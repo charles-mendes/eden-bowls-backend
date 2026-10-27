@@ -368,6 +368,23 @@ function registerAdminRoutes(app, dependencies = {}) {
     ));
   });
 
+  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().uploadPlanImage(
+      request.query.market,
+      request.params.flavorSlug,
+      request.body || {},
+      request.adminIdentity
+    ));
+  });
+
+  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().removePlanImage(
+      request.query.market,
+      request.params.flavorSlug,
+      request.adminIdentity
+    ));
+  });
+
   app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/label', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => requireRecipeContentService().saveLabel(
       request.query.market,

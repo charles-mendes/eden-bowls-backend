@@ -25,6 +25,23 @@ describe('processRecipeImage', () => {
     expect(metadata).toMatchObject({ format: 'webp', width: 1024, height: 636, hasAlpha: true });
   });
 
+  test.each([400, 200])('accepts a %i px square plan thumbnail', async (side) => {
+    const result = await processRecipeImage({ mimeType: 'image/png', buffer: await image(side, side), kind: 'plan' });
+    expect(await sharp(result.buffer).metadata()).toMatchObject({ format: 'webp', width: side, height: side });
+  });
+
+  test('refuses the banner size as a plan thumbnail, naming the accepted sizes', async () => {
+    const error = await refusal(processRecipeImage({ mimeType: 'image/png', buffer: await image(1024, 636), kind: 'plan' }));
+
+    expect(error.message).toBe('Image must be 400 x 400 or 200 x 200 pixels.');
+    expect(error.details).toMatchObject({
+      reason: 'dimensions',
+      expectedWidth: 400,
+      expectedHeight: 400,
+      acceptedSizes: [{ width: 400, height: 400 }, { width: 200, height: 200 }]
+    });
+  });
+
   test('accepts JPEG at the banner size', async () => {
     const result = await processRecipeImage({ mimeType: 'image/jpeg', buffer: await image(1024, 636, { format: 'jpeg' }) });
     expect((await sharp(result.buffer).metadata()).width).toBe(1024);

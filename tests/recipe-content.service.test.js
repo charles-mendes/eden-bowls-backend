@@ -45,6 +45,11 @@ function setup({ variations = SENIOR_BEEF_BR, stored = null, processImage } = {}
       rows.set(`${market}:${flavorSlug}`, row);
       return row;
     }),
+    setPlanImage: jest.fn(async ({ market, flavorSlug, imageUrl }) => {
+      const row = { ...rows.get(`${market}:${flavorSlug}`), planImageUrl: imageUrl };
+      rows.set(`${market}:${flavorSlug}`, row);
+      return row;
+    }),
     clearImage: jest.fn(async ({ market, flavorSlug }) => {
       const row = { ...rows.get(`${market}:${flavorSlug}`), imageUrl: null };
       rows.set(`${market}:${flavorSlug}`, row);
@@ -109,8 +114,8 @@ describe('RecipeContentService', () => {
     expect(result).toEqual({
       market: 'BR',
       items: [
-        { key: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', imageUrl: null, labelStatus: 'missing', variations: SENIOR_BEEF_BR },
-        { key: 'senior-lamb', name: 'Sênior Cordeiro', lifeStage: 'senior', imageUrl: '/recipe-images/lamb.webp', labelStatus: 'missing', variations: [] }
+        { key: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', imageUrl: null, planImageUrl: null, labelStatus: 'missing', variations: SENIOR_BEEF_BR },
+        { key: 'senior-lamb', name: 'Sênior Cordeiro', lifeStage: 'senior', imageUrl: '/recipe-images/lamb.webp', planImageUrl: null, labelStatus: 'missing', variations: [] }
       ]
     });
   });
@@ -285,6 +290,44 @@ describe('RecipeContentService', () => {
 
     expect(result.imageUrl).toBeNull();
     expect(imageStorage.delete).toHaveBeenCalledWith('/recipe-images/old.webp');
+  });
+
+  describe('plan thumbnail', () => {
+    test('stores a square thumbnail apart from the banner and replaces the previous file', async () => {
+      const { service, imageStorage, repository, auditService } = setup({
+        stored: { market: 'BR', flavorSlug: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', imageUrl: '/recipe-images/banner.webp', planImageUrl: '/recipe-images/old-plan.webp', label: null }
+      });
+
+      const result = await service.uploadPlanImage('BR', 'senior-beef', upload, actor);
+
+      expect(service.processImage).toHaveBeenCalledWith(expect.objectContaining({ mimeType: 'image/png', kind: 'plan' }));
+      expect(imageStorage.write).toHaveBeenCalledWith(expect.objectContaining({ market: 'BR', flavorSlug: 'senior-beef-plan' }));
+      expect(repository.setPlanImage).toHaveBeenCalledWith(expect.objectContaining({ market: 'BR', flavorSlug: 'senior-beef', imageUrl: result.planImageUrl }));
+      expect(result).toMatchObject({ imageUrl: '/recipe-images/banner.webp', planImageUrl: '/recipe-images/recipe-br-senior-beef-plan-1.webp' });
+      expect(imageStorage.delete).toHaveBeenCalledWith('/recipe-images/old-plan.webp');
+      expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'catalog.recipe.plan_image.update' }));
+    });
+
+    test('removes the thumbnail even with an active variation, keeping the banner', async () => {
+      const { service, imageStorage } = setup({
+        variations: SENIOR_BEEF_BR.map((item) => ({ ...item, active: true })),
+        stored: { market: 'BR', flavorSlug: 'senior-beef', name: 'Sênior Carne', imageUrl: '/recipe-images/banner.webp', planImageUrl: '/recipe-images/plan.webp', label: null }
+      });
+
+      const result = await service.removePlanImage('BR', 'senior-beef', actor);
+
+      expect(result).toMatchObject({ imageUrl: '/recipe-images/banner.webp', planImageUrl: null });
+      expect(imageStorage.delete).toHaveBeenCalledWith('/recipe-images/plan.webp');
+    });
+
+    test('the store view carries the thumbnail', async () => {
+      const { service } = setup({
+        variations: SENIOR_BEEF_BR.map((item) => ({ ...item, active: true })),
+        stored: { market: 'BR', flavorSlug: 'senior-beef', name: 'Sênior Carne', imageUrl: null, planImageUrl: '/recipe-images/plan.webp', label: null }
+      });
+
+      await expect(service.getPublic('senior-beef', 'BR')).resolves.toMatchObject({ imageUrl: null, planImageUrl: '/recipe-images/plan.webp' });
+    });
   });
 
   test('records one audit event per upload and removal, with market and flavor', async () => {

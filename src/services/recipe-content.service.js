@@ -106,6 +106,7 @@ class RecipeContentService {
       name: recipe.name,
       lifeStage: recipe.lifeStage,
       imageUrl: recipe.imageUrl,
+      planImageUrl: recipe.planImageUrl || null,
       labelStatus: labelCompleteness(recipe.label, normalizedMarket).status,
       variations: byKey.get(recipe.flavorSlug) || []
     }));
@@ -165,8 +166,10 @@ class RecipeContentService {
       });
     }
     await this.repository.deleteRecipe({ market: recipe.market, flavorSlug: recipe.key });
-    if (recipe.content.imageUrl) {
-      await this.deleteFile(recipe.content.imageUrl);
+    for (const imageUrl of [recipe.content.imageUrl, recipe.content.planImageUrl]) {
+      if (imageUrl) {
+        await this.deleteFile(imageUrl);
+      }
     }
     await this.recordAudit(actor, 'catalog.recipe.delete', recipe);
     return { deleted: true, market: recipe.market, flavorSlug: recipe.key };
@@ -182,6 +185,8 @@ class RecipeContentService {
       lifeStage: content ? content.lifeStage : 'adult',
       imageUrl: content ? content.imageUrl : null,
       imageUpdatedAt: content ? content.imageUpdatedAt : null,
+      planImageUrl: content ? content.planImageUrl || null : null,
+      planImageUpdatedAt: content ? content.planImageUpdatedAt || null : null,
       label,
       labelUpdatedAt: content ? content.labelUpdatedAt : null,
       labelStatus: completeness.status,
@@ -203,6 +208,7 @@ class RecipeContentService {
       key: recipe.key,
       market: recipe.market,
       imageUrl: content ? content.imageUrl : null,
+      planImageUrl: content ? content.planImageUrl || null : null,
       label: content ? content.label : null
     };
   }
@@ -232,6 +238,47 @@ class RecipeContentService {
     }
 
     await this.recordAudit(actor, 'catalog.recipe.image.update', recipe);
+    return this.present(recipe, content);
+  }
+
+  // Package thumbnail of the plan flavor picker. Optional: without it the plan shows the banner image.
+  async uploadPlanImage(market, flavorSlug, payload = {}, actor = {}) {
+    if (!this.imageStorage || typeof this.imageStorage.write !== 'function') {
+      throw new HttpError(503, 'Recipe image storage is not available.');
+    }
+    const recipe = await this.resolve(market, flavorSlug);
+    const processed = await this.processImage({
+      mimeType: payload.mimeType,
+      buffer: decodeImageBase64(payload.imageBase64),
+      kind: 'plan'
+    });
+
+    const previous = recipe.content.planImageUrl;
+    const imageUrl = await this.imageStorage.write({ market: recipe.market, flavorSlug: `${recipe.key}-plan`, buffer: processed.buffer });
+    let content;
+    try {
+      content = await this.repository.setPlanImage({ market: recipe.market, flavorSlug: recipe.key, imageUrl, actorId: actorId(actor) });
+    } catch (error) {
+      await this.deleteFile(imageUrl);
+      throw error;
+    }
+    if (previous && previous !== imageUrl) {
+      await this.deleteFile(previous);
+    }
+
+    await this.recordAudit(actor, 'catalog.recipe.plan_image.update', recipe);
+    return this.present(recipe, content);
+  }
+
+  async removePlanImage(market, flavorSlug, actor = {}) {
+    const recipe = await this.resolve(market, flavorSlug);
+    const previous = recipe.content.planImageUrl;
+    if (!previous) {
+      return this.present(recipe, recipe.content);
+    }
+    const content = await this.repository.setPlanImage({ market: recipe.market, flavorSlug: recipe.key, imageUrl: null, actorId: actorId(actor) });
+    await this.deleteFile(previous);
+    await this.recordAudit(actor, 'catalog.recipe.plan_image.delete', recipe);
     return this.present(recipe, content);
   }
 

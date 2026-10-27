@@ -6,6 +6,8 @@ const RECIPE_CONTENT_MARKETS = ['BR', 'US'];
 // Recipe banner image accepted by the store (recipe-content): the size of public/images/recipe-*.png.
 const RECIPE_IMAGE_WIDTH = 1024;
 const RECIPE_IMAGE_HEIGHT = 636;
+// Square package thumbnail of the plan flavor picker (recipe-content): 400 px for retina screens, or 200 px.
+const RECIPE_PLAN_IMAGE_SIZES = [400, 200];
 const MAX_RECIPE_IMAGE_BYTES = 5 * 1024 * 1024;
 const RECIPE_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 // sharp's decoded format for each accepted type, so a renamed GIF is refused.
@@ -167,6 +169,7 @@ module.exports = {
   RECIPE_LABEL_INVALID,
   RECIPE_IMAGE_WIDTH,
   RECIPE_IMAGE_HEIGHT,
+  RECIPE_PLAN_IMAGE_SIZES,
   MAX_RECIPE_IMAGE_BYTES,
   RECIPE_IMAGE_MIME_TYPES,
   RECIPE_IMAGE_FORMATS,

@@ -124,6 +124,14 @@
     "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/label"
   },
   {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image"
+  },
+  {
     "method": "POST",
     "path": "/api/v1/admin/catalog/sync"
   },

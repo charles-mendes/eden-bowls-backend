@@ -24,7 +24,7 @@ describe('GET /api/v1/recipes/:key', () => {
     const response = await request(app).get('/api/v1/recipes/chicken?market=US');
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ key: 'turkey', market: 'US', imageUrl: '/recipe-images/recipe-us-turkey-1.webp', label: null });
+    expect(response.body).toEqual({ key: 'turkey', market: 'US', imageUrl: '/recipe-images/recipe-us-turkey-1.webp', planImageUrl: null, label: null });
   });
 
   test('returns null content for a launched recipe with nothing stored', async () => {
@@ -33,7 +33,7 @@ describe('GET /api/v1/recipes/:key', () => {
     const response = await request(app).get('/api/v1/recipes/pork?market=br');
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ key: 'pork', market: 'BR', imageUrl: null, label: null });
+    expect(response.body).toEqual({ key: 'pork', market: 'BR', imageUrl: null, planImageUrl: null, label: null });
   });
 
   test('returns the stored label whole', async () => {
@@ -52,7 +52,7 @@ describe('GET /api/v1/recipes/:key', () => {
 
     const response = await request(app).get('/api/v1/recipes/beef?market=US');
 
-    expect(response.body).toEqual({ key: 'beef', market: 'US', imageUrl: null, label });
+    expect(response.body).toEqual({ key: 'beef', market: 'US', imageUrl: null, planImageUrl: null, label });
   });
 
   test('hides a recipe with no active variation in the market', async () => {

@@ -61,6 +61,7 @@ const { BackfillVariationRecipeKey1700000000039 } = require('./migrations/170000
 const { AddRecipeRegistry1700000000040 } = require('./migrations/1700000000040-add-recipe-registry');
 const { SeedRecipeLabels1700000000041 } = require('./migrations/1700000000041-seed-recipe-labels');
 const { AddRecipeLifeStage1700000000042 } = require('./migrations/1700000000042-add-recipe-life-stage');
+const { AddRecipePlanImage1700000000043 } = require('./migrations/1700000000043-add-recipe-plan-image');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
@@ -144,7 +145,8 @@ function buildDataSourceOptions(env) {
       BackfillVariationRecipeKey1700000000039,
       AddRecipeRegistry1700000000040,
       SeedRecipeLabels1700000000041,
-      AddRecipeLifeStage1700000000042
+      AddRecipeLifeStage1700000000042,
+      AddRecipePlanImage1700000000043
     ],
     synchronize: false,
     logging: false,

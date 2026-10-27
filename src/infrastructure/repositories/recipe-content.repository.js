@@ -28,6 +28,8 @@ class RecipeContentRepository {
       lifeStage: LIFE_STAGES.includes(row.life_stage) ? row.life_stage : 'adult',
       imageUrl: row.image_url ? String(row.image_url) : null,
       imageUpdatedAt: toIsoDateTime(row.image_updated_at),
+      planImageUrl: row.plan_image_url ? String(row.plan_image_url) : null,
+      planImageUpdatedAt: toIsoDateTime(row.plan_image_updated_at),
       label: parseJsonColumn(row.label),
       labelUpdatedAt: toIsoDateTime(row.label_updated_at)
     };
@@ -36,7 +38,7 @@ class RecipeContentRepository {
   async findByMarketAndSlug(market, flavorSlug) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, label, label_updated_at
+      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_updated_at, label, label_updated_at
        FROM \`${this.tableName}\` WHERE market = ? AND flavor_slug = ? LIMIT 1`,
       [String(market).toUpperCase(), String(flavorSlug)]
     );
@@ -51,7 +53,7 @@ class RecipeContentRepository {
     }
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, label, label_updated_at
+      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_updated_at, label, label_updated_at
        FROM \`${this.tableName}\` WHERE market = ? AND flavor_slug IN (${slugs.map(() => '?').join(', ')})`,
       [String(market).toUpperCase(), ...slugs]
     );
@@ -61,7 +63,7 @@ class RecipeContentRepository {
   async listByMarket(market) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, label, label_updated_at
+      `SELECT market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_updated_at, label, label_updated_at
        FROM \`${this.tableName}\` WHERE market = ? ORDER BY flavor_slug ASC`,
       [String(market).toUpperCase()]
     );
@@ -125,6 +127,16 @@ class RecipeContentRepository {
        ON DUPLICATE KEY UPDATE label = VALUES(label), label_updated_at = VALUES(label_updated_at),
          updated_by = VALUES(updated_by)`,
       [String(market).toUpperCase(), String(flavorSlug), JSON.stringify(label), actorId]
+    );
+    return this.findByMarketAndSlug(market, flavorSlug);
+  }
+
+  async setPlanImage({ market, flavorSlug, imageUrl, actorId = null }) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET plan_image_url = ?, plan_image_updated_at = CURRENT_TIMESTAMP, updated_by = ?
+       WHERE market = ? AND flavor_slug = ?`,
+      [imageUrl == null ? null : String(imageUrl), actorId, String(market).toUpperCase(), String(flavorSlug)]
     );
     return this.findByMarketAndSlug(market, flavorSlug);
   }
