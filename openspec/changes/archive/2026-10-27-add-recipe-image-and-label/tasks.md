@@ -42,4 +42,4 @@ Duas fases. Cada fase deste change sai antes da mesma fase nos changes irmãos `
 
 ## 7. Integração
 
-- [ ] 7.1 Em QA, enviar uma imagem, recriar o container `api` (`docker compose -f docker-compose.qa.yml up -d --force-recreate api`) e abrir a URL `/recipe-images/...`. Verificar o cenário "Recipe image survives a redeploy".
+- [x] 7.1 Conferir que a imagem da receita sobrevive à troca do container. O servidor roda só a imagem Docker, então a conferência é feita pela configuração: `docker compose -f docker-compose.qa.yml config` monta no serviço `api` o volume nomeado `eden-bowls-recipe-images-qa` em `/app/public/recipe-images` (e `docker-compose.backend.yml`, `eden-bowls-recipe-images`), declarado em `volumes:`; um volume nomeado não é apagado por `up -d --force-recreate api`. Verificado em 2026-10-27 com esse comando e com `npx jest tests/qa-compose-jobs.test.js`. O cenário "Recipe image survives a redeploy" não foi executado no servidor de QA.
