@@ -3,6 +3,7 @@ const {
   expectedPercentForTerm,
   isPromoId,
   isValidSubscriptionTerm,
+  PLAN_TERMS,
   VALID_SUBSCRIPTION_TERMS
 } = require('../core/first-purchase-discount');
 const { parseStripeAccountInput } = require('../core/stripe-account');
@@ -165,6 +166,8 @@ class StripeCouponService {
       complete: missingTerms.length === 0,
       missing_terms: missingTerms,
       mapping,
+      // The percent of each term, the same list the plan snapshot offers as plan_terms.
+      terms: PLAN_TERMS.map((term) => ({ ...term })),
       misconfig_count: misconfigCount,
       stripe_account: this.accountOf(account)
     };

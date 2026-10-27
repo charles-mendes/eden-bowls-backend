@@ -120,6 +120,60 @@ describe('RecipeContentService', () => {
     });
   });
 
+  describe('public list', () => {
+    // Variations per market and key; the single-recipe lookup and the market listing read the same data.
+    function withVariations(byMarket) {
+      const context = setup();
+      const variationsOf = (market, key) => (byMarket[market] && byMarket[market][key]) || [];
+      context.catalogRepository.listRecipeVariations = jest.fn(async (market, key) => variationsOf(market, key));
+      context.catalogRepository.listMarketRecipeVariations = jest.fn(async (market) => new Map(Object.entries(byMarket[market] || {})));
+      return context;
+    }
+
+    test('senior line launched in BR only', async () => {
+      const { service } = withVariations({
+        BR: { 'senior-beef': [{ id: '301', name: 'Sênior Carne 300g', sku: 'SENIOR-BEEF-300', active: true }] },
+        US: { beef: [{ id: '11', name: 'Beef', sku: 'B', active: true }] }
+      });
+
+      await expect(service.listPublic('br')).resolves.toEqual({
+        market: 'BR',
+        items: [{ key: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior' }]
+      });
+      const us = await service.listPublic('US');
+      expect(us.items.map((item) => item.key)).toEqual(['beef']);
+    });
+
+    test('deactivating the last variation removes the recipe', async () => {
+      const { service } = withVariations({ BR: { 'senior-beef': SENIOR_BEEF_BR } });
+
+      await expect(service.listPublic('BR')).resolves.toEqual({ market: 'BR', items: [] });
+      await expect(service.getPublic('senior-beef', 'BR')).rejects.toMatchObject({ statusCode: 404 });
+    });
+
+    test('every listed key resolves on the single-recipe route', async () => {
+      const { service } = withVariations({
+        BR: {
+          'senior-beef': [{ id: '301', name: 'Sênior Carne 300g', sku: 'SENIOR-BEEF-300', active: true }, SENIOR_BEEF_BR[1]],
+          'senior-lamb': [{ id: '401', name: 'Sênior Cordeiro 300g', sku: 'SENIOR-LAMB-300', active: true }]
+        }
+      });
+
+      const { items } = await service.listPublic('BR');
+
+      expect(items.map((item) => item.key)).toEqual(['senior-beef', 'senior-lamb']);
+      for (const item of items) {
+        await expect(service.getPublic(item.key, 'BR')).resolves.toMatchObject({ key: item.key, market: 'BR' });
+      }
+    });
+
+    test('an unknown market is refused', async () => {
+      const { service } = withVariations({});
+
+      await expect(service.listPublic('AR')).rejects.toMatchObject({ statusCode: 400, details: { code: 'invalid_market' } });
+    });
+  });
+
   describe('registration', () => {
     test('registers a recipe without variations that can then hold an image', async () => {
       const { service, repository, auditService } = setup({ variations: [] });

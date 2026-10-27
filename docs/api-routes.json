@@ -661,6 +661,10 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/recipes"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/recipes/:key"
   },
   {

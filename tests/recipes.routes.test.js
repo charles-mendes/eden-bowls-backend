@@ -80,3 +80,63 @@ describe('GET /api/v1/recipes/:key', () => {
     expect(response.status).toBe(400);
   });
 });
+
+describe('GET /api/v1/recipes', () => {
+  // Registered recipes per market and the variations of each key, as the market listing reads them.
+  function listingApp({ recipes = [], variations = {} } = {}) {
+    const recipeContentService = new RecipeContentService({
+      repository: {
+        listByMarket: jest.fn(async (market) => recipes.filter((recipe) => recipe.market === market))
+      },
+      catalogRepository: {
+        listMarketRecipeVariations: jest.fn(async (market) => new Map(
+          Object.entries(variations)
+            .filter(([marketKey]) => marketKey.startsWith(`${market}:`))
+            .map(([marketKey, list]) => [marketKey.slice(market.length + 1), list])
+        ))
+      }
+    });
+    return createApp({ corsOrigins: ['http://localhost:5173'], recipeContentService });
+  }
+
+  const recipes = [
+    { market: 'BR', flavorSlug: 'beef', name: 'Bovino', lifeStage: 'adult', imageUrl: '/recipe-images/beef.webp', label: { productName: 'X' } },
+    { market: 'BR', flavorSlug: 'senior-beef', name: 'Receita de Carne para Cães Sênior', lifeStage: 'senior', imageUrl: null, label: null },
+    { market: 'BR', flavorSlug: 'puppy-beef-chicken', name: 'Filhote', lifeStage: 'puppy', imageUrl: null, label: null }
+  ];
+
+  test('lists the launched recipes of the market without auth, label or images', async () => {
+    const app = listingApp({
+      recipes,
+      variations: {
+        'BR:beef': [{ id: '1', active: true }],
+        'BR:senior-beef': [{ id: '2', active: false }, { id: '3', active: true }],
+        'BR:puppy-beef-chicken': [{ id: '4', active: false }]
+      }
+    });
+
+    const response = await request(app).get('/api/v1/recipes?market=br');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      market: 'BR',
+      items: [
+        { key: 'beef', name: 'Bovino', lifeStage: 'adult' },
+        { key: 'senior-beef', name: 'Receita de Carne para Cães Sênior', lifeStage: 'senior' }
+      ]
+    });
+  });
+
+  test('refuses an unknown market', async () => {
+    const response = await request(listingApp()).get('/api/v1/recipes?market=AR');
+
+    expect(response.status).toBe(400);
+    expect(response.body.details).toMatchObject({ code: 'invalid_market' });
+  });
+
+  test('refuses a missing market', async () => {
+    const response = await request(listingApp()).get('/api/v1/recipes');
+
+    expect(response.status).toBe(400);
+  });
+});

@@ -3,6 +3,7 @@ const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
 const { ROLE_PERMISSIONS } = require('../src/core/admin-roles');
 const { HttpError } = require('../src/core/http-error');
+const { StripeCouponService } = require('../src/services/stripe-coupon.service');
 
 const jwt = { secret: 'test-secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
 
@@ -77,6 +78,24 @@ describe('admin shipping and coupon routes', () => {
     expect(response.status).toBe(200);
     expect(response.body.missing_terms).toEqual([6]);
     expect(response.body.envSlots).toBeUndefined();
+  });
+
+  test('promo health carries the percent of each term', async () => {
+    const stripeCouponService = new StripeCouponService({
+      getMapping: jest.fn().mockResolvedValue(null),
+      getMisconfigCount: jest.fn().mockResolvedValue(0)
+    });
+    const app = adminApp({ stripeCouponService });
+    const response = await request(app)
+      .get('/api/v1/admin/stripe/first-purchase-promos')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.terms).toEqual([
+      { subscription_term_months: 1, discount_percent: 10 },
+      { subscription_term_months: 3, discount_percent: 25 },
+      { subscription_term_months: 6, discount_percent: 40 }
+    ]);
   });
 
   test('syncs first-purchase promos from Stripe', async () => {

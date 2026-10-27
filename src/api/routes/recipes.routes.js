@@ -12,6 +12,18 @@ function registerRecipesRoutes(app, dependencies = {}) {
     keyGenerator: productsRateLimitKeyGenerator
   });
 
+  app.get('/api/v1/recipes', limiter, async (request, response, next) => {
+    try {
+      if (!dependencies.recipeContentService) {
+        throw new HttpError(503, 'Recipe content service is not available.');
+      }
+      const payload = await dependencies.recipeContentService.listPublic(request.query.market);
+      response.status(200).json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get('/api/v1/recipes/:key', limiter, async (request, response, next) => {
     try {
       if (!dependencies.recipeContentService) {

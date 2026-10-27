@@ -1,5 +1,7 @@
 const { HttpError } = require('../src/core/http-error');
 const { StripeCouponService } = require('../src/services/stripe-coupon.service');
+const { PLAN_TERMS } = require('../src/core/first-purchase-discount');
+const { PLAN_TERMS: SNAPSHOT_PLAN_TERMS } = require('../src/infrastructure/repositories/onboarding-plan-snapshot.repository');
 
 describe('StripeCouponService', () => {
   test('reads mapping only from the database', async () => {
@@ -21,9 +23,42 @@ describe('StripeCouponService', () => {
       complete: false,
       missing_terms: [3, 6],
       mapping: { 1: 'promo_db_1m', 3: null, 6: null },
+      terms: PLAN_TERMS,
       misconfig_count: 0,
       stripe_account: 'us'
     });
+  });
+
+  test('health lists the three terms with the percents the plan snapshot offers', async () => {
+    const repository = {
+      getMapping: jest.fn().mockResolvedValue({ mapping: { 1: 'promo_1', 3: 'promo_3', 6: 'promo_6' }, coupons: {} }),
+      getMisconfigCount: jest.fn().mockResolvedValue(0)
+    };
+    const service = new StripeCouponService(repository);
+
+    const health = await service.mappingHealth('br');
+
+    expect(health.terms).toEqual([
+      { subscription_term_months: 1, discount_percent: 10 },
+      { subscription_term_months: 3, discount_percent: 25 },
+      { subscription_term_months: 6, discount_percent: 40 }
+    ]);
+    expect(health.terms).toEqual(SNAPSHOT_PLAN_TERMS);
+  });
+
+  test('health without any mapped coupon still lists the terms', async () => {
+    const repository = {
+      getMapping: jest.fn().mockResolvedValue(null),
+      getMisconfigCount: jest.fn().mockResolvedValue(0)
+    };
+    const service = new StripeCouponService(repository);
+
+    const health = await service.mappingHealth('us');
+
+    expect(health.missing_terms).toEqual([1, 3, 6]);
+    expect(health.terms.map((term) => term.subscription_term_months)).toEqual([1, 3, 6]);
+    health.terms[0].discount_percent = 99;
+    expect(PLAN_TERMS[0].discount_percent).toBe(10);
   });
 
   test('seeds leftover env ids only into empty database slots', async () => {

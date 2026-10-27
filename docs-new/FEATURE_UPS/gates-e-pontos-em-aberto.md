@@ -109,6 +109,8 @@ Arquivo existe mas runtime usa MySQL + defaults em código.
 
 **Ação:** remover ou marcar DEPRECATED nesta feature para não confundir o próximo dev.
 
+**Feito (2026-10-26):** arquivo removido no change `move-business-data-1-read-from-api`. As configurações de frete vêm só de `shipping_br_settings` / `shipping_us_settings`.
+
 ---
 
 ## Checklist antes de `quote_mode=ups` em produção

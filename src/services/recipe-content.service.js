@@ -200,6 +200,17 @@ class RecipeContentService {
     return this.present(recipe, recipe.content);
   }
 
+  // Store view of the market's launched recipes, by the same rule as getPublic: an active variation.
+  async listPublic(market) {
+    const normalizedMarket = marketOf(market);
+    const recipes = await this.repository.listByMarket(normalizedMarket);
+    const byKey = await this.catalogRepository.listMarketRecipeVariations(normalizedMarket);
+    const items = recipes
+      .filter((recipe) => (byKey.get(recipe.flavorSlug) || []).some((variation) => variation.active))
+      .map((recipe) => ({ key: recipe.flavorSlug, name: recipe.name, lifeStage: recipe.lifeStage }));
+    return { market: normalizedMarket, items };
+  }
+
   // Store view of a launched recipe: a flavor with no active variation in the market stays hidden.
   async getPublic(key, market) {
     const recipe = await this.resolveLaunched(market, key);
