@@ -70,9 +70,15 @@ describe('admin market scope registry', () => {
       .flatMap((route) => route.methods.map((method) => `${method} ${route.path}`))
       .sort();
 
+    // The nutrition parameter set applies to both markets (nutrition-parameters).
     expect(nonePaths).toEqual([
+      'DELETE /api/v1/admin/nutrition/parameters/draft',
       'GET /api/v1/admin/me',
-      'POST /api/v1/admin/me/password'
+      'GET /api/v1/admin/nutrition/parameters',
+      'POST /api/v1/admin/me/password',
+      'POST /api/v1/admin/nutrition/parameters/:id/copy-to-draft',
+      'POST /api/v1/admin/nutrition/parameters/publish',
+      'PUT /api/v1/admin/nutrition/parameters/draft'
     ]);
   });
 

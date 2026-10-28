@@ -5,8 +5,9 @@ const MARKETS = ['BR', 'US'];
 // Daily stage-change email (customer-life-stage-notice, design decision 7). Per market, only after that market's
 // launch announcement was sent. A transition is emailed once, 7 days before the cutoff of the delivery the
 // adjustment still applies to, or at the first run inside that window. Each market has an emergency switch
-// (LIFE_STAGE_CHANGE_EMAIL_ENABLED_<BR|US>): off, the market is skipped before any read or write, so turning it
-// on again sends the emails whose time came during the pause at the next run, by the late-detection rule.
+// (automated_email_settings.life_stage_change_enabled, read at the start of each run): off, the market is
+// skipped before any other read or write, so turning it on again sends the emails whose time came during the
+// pause at the next run, by the late-detection rule.
 class LifeStageChangeEmailService {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository;
@@ -16,8 +17,8 @@ class LifeStageChangeEmailService {
     this.deliveriesService = options.deliveriesService;
     this.petsRepository = options.petsRepository;
     this.mailer = options.mailer;
-    // Per market; a market missing here is on.
-    this.enabled = options.enabled || {};
+    // automated_email_settings, read per market at each run; without it every market is on.
+    this.settings = options.settings || null;
     this.logger = options.logger || { warn() {}, error() {} };
     this.now = options.now || (() => new Date());
   }
@@ -31,8 +32,9 @@ class LifeStageChangeEmailService {
   }
 
   async runMarket(market) {
-    if (this.enabled[market] === false) {
-      this.logger.warn({ market }, `Stage-change email paused in this market (LIFE_STAGE_CHANGE_EMAIL_ENABLED_${market}=false).`);
+    const settings = this.settings ? await this.settings.forMarket(market) : null;
+    if (settings && settings.lifeStageChangeEnabled === false) {
+      this.logger.warn({ market }, 'Stage-change email paused in this market (Configurações > E-mails automáticos).');
       return { skipped: 'paused' };
     }
     const state = await this.announcementsRepository.findMarket(market);

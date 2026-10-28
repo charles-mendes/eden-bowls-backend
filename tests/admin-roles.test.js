@@ -1,8 +1,18 @@
 const { ROLE_PERMISSIONS, parseRoles, permissionsForRoles, resolveAdminRoles } = require('../src/core/admin-roles');
 
 describe('admin roles', () => {
-  test('maps veterinarian to simulate only', () => {
-    expect(permissionsForRoles(['veterinarian'])).toEqual(['nutrition.simulate']);
+  test('maps veterinarian to simulate and nutrition settings only', () => {
+    expect(permissionsForRoles(['veterinarian'])).toEqual(['nutrition.simulate', 'nutrition.settings.write']);
+  });
+
+  test('gives each role exactly the new settings permissions of phase 3', () => {
+    const NEW = ['nutrition.settings.write', 'settings.read', 'settings.company.write', 'settings.email.write', 'legal.write'];
+    const granted = (role) => NEW.filter((permission) => ROLE_PERMISSIONS[role].includes(permission));
+    expect(granted('admin')).toEqual(NEW);
+    expect(granted('operator')).toEqual(['settings.read', 'settings.email.write']);
+    expect(granted('readonly')).toEqual(['settings.read']);
+    expect(granted('veterinarian')).toEqual(['nutrition.settings.write']);
+    expect(ROLE_PERMISSIONS.veterinarian.some((permission) => permission.startsWith('catalog.') || permission.startsWith('settings.'))).toBe(false);
   });
 
   test('gives operator catalog.sync', () => {
@@ -71,6 +81,6 @@ describe('admin roles', () => {
     expect(parseRoles('nutritionist,readonly')).toEqual(['veterinarian', 'readonly']);
     expect(parseRoles(['nutritionist', 'veterinarian'])).toEqual(['veterinarian']);
     expect(resolveAdminRoles({ storedRoles: '["nutritionist"]', email: 'lia@edenbowls.com' })).toEqual(['veterinarian']);
-    expect(permissionsForRoles(parseRoles('["nutritionist"]'))).toEqual(['nutrition.simulate']);
+    expect(permissionsForRoles(parseRoles('["nutritionist"]'))).toEqual(['nutrition.simulate', 'nutrition.settings.write']);
   });
 });

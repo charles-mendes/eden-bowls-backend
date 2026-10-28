@@ -2,6 +2,7 @@ const { DataSource } = require('typeorm');
 const { CreateLifeStageLimits1700000000035 } = require('../../src/infrastructure/migrations/1700000000035-create-life-stage-limits');
 const { LifeStageLimitsRepository } = require('../../src/infrastructure/repositories/life-stage-limits.repository');
 const { LifeStageService } = require('../../src/services/life-stage.service');
+const { LifeStageSettingsService } = require('../../src/services/life-stage-settings.service');
 
 const runIntegration = process.env.RUN_DB_INTEGRATION_TESTS === 'true';
 const describeIntegration = runIntegration ? describe : describe.skip;
@@ -69,5 +70,53 @@ describeIntegration('LifeStageService with stored limits (MySQL)', () => {
     );
     const service = serviceAt(new Date('2026-10-18T12:00:00Z'));
     expect((await service.resolve({ breed: 'Test Hound', size: 'large', age_years: 2 }, 'US')).sizeClass).toBe('giant');
+  });
+
+  test('Preview before lowering the senior age: counts the BR pets that would become senior and leaves the tables as they were', async () => {
+    await dataSource.query('CREATE TABLE stripe_subscriptions (id INT AUTO_INCREMENT PRIMARY KEY, user_id BIGINT, stripe_account VARCHAR(8), status VARCHAR(32))');
+    await dataSource.query(`CREATE TABLE onboarding_pets (id INT AUTO_INCREMENT PRIMARY KEY, user_id BIGINT, breed VARCHAR(191), size VARCHAR(16),
+      age_years INT, age_months INT, age_recorded_at DATETIME NULL, birth_date DATE NULL, deleted_at DATETIME NULL)`);
+    await dataSource.query("UPDATE life_stage_size_classes SET senior_from_months = 96 WHERE market = 'BR' AND size_class = 'medium'");
+    await dataSource.query(
+      "INSERT INTO stripe_subscriptions (user_id, stripe_account, status) VALUES (1, 'br', 'active'), (2, 'br', 'canceled'), (3, 'us', 'active')"
+    );
+    // 90 months: adult today, senior at 84. The canceled plan and the US plan do not count.
+    await dataSource.query(`INSERT INTO onboarding_pets (user_id, breed, size, age_years, age_months, age_recorded_at) VALUES
+      (1, '', 'medium', 7, 6, '2026-10-27 09:00:00'),
+      (1, '', 'medium', 5, 0, '2026-10-27 09:00:00'),
+      (2, '', 'medium', 7, 6, '2026-10-27 09:00:00'),
+      (3, '', 'medium', 7, 6, '2026-10-27 09:00:00')`);
+    const snapshot = async () => ({
+      limits: await dataSource.query('SELECT * FROM life_stage_size_classes ORDER BY id'),
+      breeds: await dataSource.query('SELECT * FROM life_stage_breeds ORDER BY id')
+    });
+    const before = await snapshot();
+    const service = new LifeStageSettingsService({
+      repository: new LifeStageLimitsRepository(dataSource, { ttlMs: 0 }),
+      dataSource,
+      now: () => new Date('2026-10-27T12:00:00Z')
+    });
+
+    const result = await service.preview('BR', 'br', { limits: { medium: { adult_from_months: 12, senior_from_months: 84 } } });
+
+    expect(result).toEqual({ market: 'BR', pets_evaluated: 2, pets_changing: 1, transitions: [{ from: 'adult', to: 'senior', count: 1 }] });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  test('saved limits and a deactivated breed apply to the next evaluation', async () => {
+    const repository = new LifeStageLimitsRepository(dataSource);
+    const evaluator = new LifeStageService({ repository, now: () => new Date('2026-10-27T12:00:00Z') });
+    const service = new LifeStageSettingsService({ repository, dataSource });
+    const dane = { breed: 'Great Dane', size: 'large', age_years: 6 };
+    expect(await evaluator.resolve(dane, 'US')).toMatchObject({ sizeClass: 'giant', lifeStage: 'senior' });
+
+    const [breed] = await dataSource.query("SELECT id FROM life_stage_breeds WHERE market = 'US' AND name_en_normalized = 'great dane'");
+    await service.updateBreed('US', Number(breed.id), { active: false }, { userId: 5 });
+    await service.updateLimits('US', { large: { adult_from_months: 15, senior_from_months: 90 } }, { userId: 5 });
+
+    expect(await evaluator.resolve(dane, 'US')).toMatchObject({ sizeClass: 'large', lifeStage: 'adult' });
+    const [row] = await dataSource.query("SELECT senior_from_months, updated_by FROM life_stage_size_classes WHERE market = 'US' AND size_class = 'large'");
+    expect(row).toMatchObject({ senior_from_months: 90 });
+    expect(Number(row.updated_by)).toBe(5);
   });
 });

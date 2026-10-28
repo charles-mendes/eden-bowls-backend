@@ -1,4 +1,5 @@
 const { buildForPet } = require('../core/nutrition-recommendation');
+const { publishedParametersFor } = require('../infrastructure/repositories/onboarding-recommendation.repository');
 const { buildSimplifiedRecommendation } = require('../core/simplified-consumption');
 const { planPackagingFor } = require('../infrastructure/repositories/onboarding-recommendation.repository');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
@@ -155,6 +156,7 @@ class AdminOnboardingService {
     this.lifeStageService = options.lifeStageService || null;
     this.recipeEnergyService = options.recipeEnergyService || null;
     this.productsRepository = options.productsRepository || null;
+    this.nutritionParameters = options.nutritionParameters || null;
   }
 
   // kcal/kg per checkout pet from the mean energyKg of its line, null to keep the engine default.
@@ -222,6 +224,7 @@ class AdminOnboardingService {
       : subscriptions;
     const marketCountry = checkout.address && checkout.address.country === 'BR' ? 'BR' : 'US';
     const energies = await this.energiesFor(checkout.pets, marketCountry);
+    const parameterSet = await publishedParametersFor(this.nutritionParameters);
     const recommendations = checkout.pets.map((pet, index) => buildForPet({
       id: pet.id,
       name: pet.name,
@@ -235,7 +238,7 @@ class AdminOnboardingService {
       activity_level: pet.activityLevel,
       pet_condition: pet.petCondition,
       neutered: pet.neutered
-    }, energies[index] ? { nem_kcal_kg: energies[index] } : null));
+    }, energies[index] ? { nem_kcal_kg: energies[index] } : null, '', parameterSet.parameters));
     const simplified = checkout.pets.length
       ? buildSimplifiedRecommendation(recommendations, { country: marketCountry }, await planPackagingFor(this.productsRepository, marketCountry))
       : null;

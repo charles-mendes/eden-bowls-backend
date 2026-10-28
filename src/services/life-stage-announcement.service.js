@@ -1,11 +1,14 @@
 const { allowedLifeStages, isOutsideAllowed, planLinesForPet, planPetIds } = require('../core/life-stage-lines');
 const { firstNameFrom } = require('../core/email/mail-context');
-const { companyAddressFromEnv, formatCompanyAddress, missingCompanyAddress } = require('../core/email/company-address');
+const { companyAddressFromProfile, formatCompanyAddress, missingCompanyAddress } = require('../core/email/company-address');
+const { companyProfileFor } = require('../core/email/company-directory');
 const { buildLifeStageAnnouncementEmail, packsUrl } = require('../core/email/life-stage-emails');
 
 const TEMPLATE = 'life_stage_announcement';
-const DEFAULT_BATCH_SIZE = 50;
-const DEFAULT_DAILY_CAP = 300;
+const { DEFAULT_AUTOMATED_EMAIL_SETTINGS } = require('../core/automated-email-settings');
+
+const DEFAULT_BATCH_SIZE = DEFAULT_AUTOMATED_EMAIL_SETTINGS.announcementBatchSize;
+const DEFAULT_DAILY_CAP = DEFAULT_AUTOMATED_EMAIL_SETTINGS.announcementDailyCap;
 const MARKETS = ['BR', 'US'];
 
 class AnnouncementRefused extends Error {
@@ -37,7 +40,9 @@ class LifeStageAnnouncementService {
     this.mailer = options.mailer || null;
     this.storeAppUrl = String(options.storeAppUrl || 'http://localhost:5173').replace(/\/+$/, '');
     this.emailAssetBaseUrl = options.emailAssetBaseUrl || '';
-    this.env = options.env || process.env;
+    // automated_email_settings: batch and daily cap of the market, read at the start of each send.
+    this.settings = options.settings || null;
+    this.companyProfiles = options.companyProfiles || null;
     this.wait = options.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.batchPauseMs = options.batchPauseMs == null ? 1000 : options.batchPauseMs;
     this.now = options.now || (() => new Date());
@@ -75,9 +80,10 @@ class LifeStageAnnouncementService {
     if (state && state.sent_at) {
       throw new AnnouncementRefused('already_sent', `O anúncio de ${code} já foi concluído em ${summary.already_sent_at}. Nada foi enviado.`);
     }
-    const missing = missingCompanyAddress(code, this.env);
+    const company = this.companyProfiles ? await this.companyProfiles.forMarket(code) : companyProfileFor(code);
+    const missing = missingCompanyAddress(company);
     if (missing.length > 0) {
-      throw new AnnouncementRefused('company_address_missing', `Envio recusado: configure ${missing.join(' e ')} (empresa e rua do rodapé do anúncio de ${code}). Nada foi enviado.`);
+      throw new AnnouncementRefused('company_address_missing', `Envio recusado: preencha ${missing.join(' e ')} no perfil da empresa de ${code} (Configurações > Empresa); é o rodapé do anúncio. Nada foi enviado.`);
     }
     if (!this.mailer || typeof this.mailer.sendClaimed !== 'function') {
       throw new AnnouncementRefused('mailer_unavailable', 'O envio de e-mail não está configurado. Nada foi enviado.');
@@ -85,12 +91,13 @@ class LifeStageAnnouncementService {
 
     const startedAt = this.now();
     await this.repository.markStarted(code, startedAt);
-    const dailyCap = positiveInt(this.env.LIFE_STAGE_ANNOUNCEMENT_DAILY_CAP, DEFAULT_DAILY_CAP);
-    const batchSize = positiveInt(this.env.LIFE_STAGE_ANNOUNCEMENT_BATCH_SIZE, DEFAULT_BATCH_SIZE);
+    const settings = this.settings ? await this.settings.forMarket(code) : DEFAULT_AUTOMATED_EMAIL_SETTINGS;
+    const dailyCap = positiveInt(settings.announcementDailyCap, DEFAULT_DAILY_CAP);
+    const batchSize = positiveInt(settings.announcementBatchSize, DEFAULT_BATCH_SIZE);
     const sentToday = await this.repository.countAnnouncedCustomersSince(code.toLowerCase(), startOfUtcDay(startedAt));
     const budget = Math.max(0, dailyCap - sentToday);
     const batch = recipients.slice(0, budget);
-    const companyLine = formatCompanyAddress(code, companyAddressFromEnv(code, this.env));
+    const companyLine = formatCompanyAddress(code, companyAddressFromProfile(company));
 
     let sent = 0;
     let failed = 0;

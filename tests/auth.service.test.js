@@ -457,7 +457,8 @@ describe('AuthService', () => {
       termsAccepted: true,
       privacyAccepted: true,
       privacyVersion: '2026-09-13',
-      termsVersion: '2026-09-13'
+      termsVersion: '2026-09-13',
+      market: 'BR'
     })).resolves.toEqual({
       token_endpoint: '/api/v1/auth/token'
     });
@@ -471,7 +472,8 @@ describe('AuthService', () => {
       userId: 12,
       marketingOptIn: true,
       privacyVersion: '2026-09-13',
-      termsVersion: '2026-09-13'
+      termsVersion: '2026-09-13',
+      market: 'BR'
     }));
   });
 

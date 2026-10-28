@@ -9,7 +9,8 @@ function build(locale, status = 'open', overrides = {}) {
     invoiceNumber: 'EB-2026-000418',
     stripeAccount: sample.stripeAccount,
     ledger: overrides.ledger || sample.ledger,
-    variants: overrides.variants || sample.variants
+    variants: overrides.variants || sample.variants,
+    issuer: sample.issuer
   });
 }
 
@@ -149,9 +150,25 @@ describe('invoice document (approved layout texts)', () => {
       ...sampleInvoice({ currency: 'usd', status: 'paid' }),
       customer_address: { line1: '5 Main St', city: 'Boca Raton', state: 'FL', postal_code: '33431', country: 'US' }
     };
-    const model = buildInvoiceDocument({ invoice, invoiceNumber: 'EB-2026-000001', stripeAccount: 'us', ledger: {} });
+    const model = buildInvoiceDocument({ invoice, invoiceNumber: 'EB-2026-000001', stripeAccount: 'us', ledger: {}, issuer: PREVIEW_CASES['en-US'].issuer });
 
     expect(model.shipTo.lines).toEqual(['Ana Mendes', '5 Main St', 'Boca Raton, FL 33431', 'United States']);
+  });
+});
+
+describe('issuer from the company profile (company-profile)', () => {
+  test('Invoice text unchanged after deploy: the seeded profiles print the approved issuer lines', () => {
+    expect(build('pt-BR').footer).toMatchObject({ issuerLine: 'Eden Bowls · CNPJ 65.291.985/0001-05 · Curitiba, PR', email: 'hello@edenbowls.com' });
+    expect(build('en-US').footer).toMatchObject({ issuerLine: 'Eden Bowls · Boca Raton, FL, USA', email: 'hello@edenbowls.com' });
+    expect(build('en-US').summary.from).toBe('From: Eden Bowls');
+  });
+
+  test('prints the issuer it is given and refuses to build without one', () => {
+    const sample = PREVIEW_CASES['pt-BR'];
+    const issuer = { name: 'Eden Bowls', line: 'Eden Bowls · CNPJ 65.291.985/0001-05 · São Paulo, SP', email: 'oi@edenbowls.com.br' };
+    const model = buildInvoiceDocument({ invoice: sample.invoice('paid'), invoiceNumber: 'EB-2026-000010', stripeAccount: 'br', ledger: sample.ledger, issuer });
+    expect(model.footer).toMatchObject({ issuerLine: issuer.line, email: 'oi@edenbowls.com.br' });
+    expect(() => buildInvoiceDocument({ invoice: sample.invoice('paid'), invoiceNumber: 'EB-2026-000010', stripeAccount: 'br' })).toThrow('issuer snapshot');
   });
 });
 
@@ -185,7 +202,8 @@ describe('invoice lines of the life-stage recipes (2.15)', () => {
       invoiceNumber: 'EB-2026-000418',
       stripeAccount: sample.stripeAccount,
       ledger: sample.ledger,
-      variants: sample.variants
+      variants: sample.variants,
+      issuer: sample.issuer
     });
   }
 

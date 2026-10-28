@@ -12,6 +12,8 @@ const {
   buildShippedEmail
 } = require('../src/core/email/transactional-emails');
 const { listEmailPreviews } = require('../src/core/email/preview-fixtures');
+const { refreshCompanyDirectory, resetCompanyDirectory, setCompanyProfile } = require('../src/core/email/company-directory');
+const { COMPANY_PROFILE_SEED } = require('../src/core/company-profile');
 const { createInviteMailer } = require('../src/infrastructure/mailers/invite-mailer');
 const { createPrivacyMailer } = require('../src/infrastructure/mailers/privacy-mailer');
 
@@ -390,3 +392,32 @@ describe('recipe names in customer emails (2.15)', () => {
     expect(otpMailer.sendMail.mock.calls[0][0].html).toContain('senior-beef');
   });
 });
+
+describe('support email of the market company profile', () => {
+  afterEach(() => resetCompanyDirectory());
+  const renewal = (locale) => buildRenewalEmail({ firstName: 'Ana', nextDeliveryLabel: 'October 1, 2026', amountLabel: '$144.50', locale });
+
+  test('the seeded profiles keep hello@edenbowls.com in both markets', () => {
+    expect(renewal('en-US').html).toContain('mailto:hello@edenbowls.com');
+    expect(renewal('pt-BR').html).toContain('mailto:hello@edenbowls.com');
+  });
+
+  test('Support email follows the market profile', () => {
+    setCompanyProfile('US', { ...COMPANY_PROFILE_SEED.US, supportEmail: 'support@edenbowls.com' });
+
+    expect(renewal('en-US').html).toContain('mailto:support@edenbowls.com');
+    expect(renewal('en-US').html).not.toContain('hello@edenbowls.com');
+    expect(renewal('pt-BR').html).toContain('mailto:hello@edenbowls.com');
+  });
+
+  test('a refresh reads the saved profiles and keeps the last one when the read fails', async () => {
+    await refreshCompanyDirectory({ forMarket: async (market) => ({ ...COMPANY_PROFILE_SEED[market], supportEmail: `${market.toLowerCase()}@edenbowls.com` }) });
+    expect(renewal('pt-BR').html).toContain('mailto:br@edenbowls.com');
+
+    const logger = { warn: jest.fn() };
+    await refreshCompanyDirectory({ forMarket: async () => { throw new Error('db down'); } }, logger);
+    expect(renewal('en-US').html).toContain('mailto:us@edenbowls.com');
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+});
+

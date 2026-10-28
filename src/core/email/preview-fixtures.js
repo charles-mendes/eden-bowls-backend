@@ -14,7 +14,8 @@ const {
   buildResumedEmail,
   buildShippedEmail
 } = require('./transactional-emails');
-const { formatCompanyAddress } = require('./company-address');
+const { companyAddressFromProfile, formatCompanyAddress } = require('./company-address');
+const { COMPANY_PROFILE_SEED } = require('../company-profile');
 const {
   buildLifeStageAnnouncementEmail,
   buildLifeStageChangeEmail,
@@ -188,8 +189,8 @@ function listEmailPreviews(options = {}) {
         firstName: 'Ana',
         profileUrl: 'https://edenbowls.com/dashboard/profile',
         companyLine: en
-          ? formatCompanyAddress('US', { name: 'EZER ONE INC (Eden Bowls)', street: '6200 NW 2nd Ave', city: 'Boca Raton', state: 'FL', postalCode: '33487-3021', country: 'USA' })
-          : formatCompanyAddress('BR', { name: 'C. C. J. Lovato Ltda', taxId: '65.291.985/0001-05', street: 'Rua Delmiro Fetter dos Santos, 94', complement: 'Cajuru', city: 'Curitiba', state: 'PR', postalCode: '82950-130' }),
+          ? formatCompanyAddress('US', companyAddressFromProfile(COMPANY_PROFILE_SEED.US))
+          : formatCompanyAddress('BR', companyAddressFromProfile(COMPANY_PROFILE_SEED.BR)),
         dogs: en
           ? [
             { petName: 'Luna', stage: 'puppy', recipes: ['Chicken & Pork Recipe for Puppies', 'Beef & Chicken Recipe for Puppies'], adjustUrl: packsUrl('https://edenbowls.com', 'sub_preview', 'pet_luna') },

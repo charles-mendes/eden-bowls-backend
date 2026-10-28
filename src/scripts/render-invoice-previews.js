@@ -21,7 +21,8 @@ async function main() {
         invoiceNumber: 'EB-2026-000418',
         stripeAccount: sample.stripeAccount,
         ledger: sample.ledger,
-        variants: sample.variants
+        variants: sample.variants,
+        issuer: sample.issuer
       });
       const file = path.join(outputDir, `invoice-${locale}-${status === 'paid' ? 'paid' : 'due'}.pdf`);
       await fs.writeFile(file, await renderInvoicePdf(model));

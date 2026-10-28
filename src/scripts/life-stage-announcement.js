@@ -45,6 +45,9 @@ async function main() {
   const { PetLifeStageNoticesRepository } = require('../infrastructure/repositories/pet-life-stage-notices.repository');
   const { SubscriptionMailClaimsRepository } = require('../infrastructure/repositories/subscription-mail-claims.repository');
   const { LifeStageService } = require('../services/life-stage.service');
+  const { CompanyProfilesRepository } = require('../infrastructure/repositories/company-profiles.repository');
+  const { AutomatedEmailSettingsRepository } = require('../infrastructure/repositories/automated-email-settings.repository');
+  const { refreshCompanyDirectory } = require('../core/email/company-directory');
   const { AnnouncementRefused, LifeStageAnnouncementService } = require('../services/life-stage-announcement.service');
 
   const env = parseEnv();
@@ -52,6 +55,9 @@ async function main() {
   const dataSource = createDataSource(env);
   await dataSource.initialize();
   try {
+    const companyProfiles = new CompanyProfilesRepository(dataSource);
+    // The letters' footer reads the support email of the market profile.
+    await refreshCompanyDirectory(companyProfiles, logger);
     const otpMailer = createOtpMailer({
       logger,
       nodeEnv: env.NODE_ENV,
@@ -86,7 +92,9 @@ async function main() {
         emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
       }),
       storeAppUrl: env.STORE_APP_URL,
-      emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL
+      emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
+      companyProfiles,
+      settings: new AutomatedEmailSettingsRepository(dataSource)
     });
     try {
       console.log(formatSummary(await service.run({ market, send })));

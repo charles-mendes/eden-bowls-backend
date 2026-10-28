@@ -19,7 +19,10 @@ const otpVerifySchema = z.object({
   termsAccepted: z.boolean(),
   privacyAccepted: z.boolean(),
   privacyVersion: z.string().trim().max(32).optional(),
-  termsVersion: z.string().trim().max(32).optional()
+  termsVersion: z.string().trim().max(32).optional(),
+  // The market whose legal versions the customer saw; without it, or with an unknown one, US (legal-documents).
+  // It never blocks the sign-in.
+  market: z.preprocess((value) => (typeof value === 'string' ? value.trim().toUpperCase() : value), z.enum(['BR', 'US']).optional()).catch(undefined)
 });
 
 const otpResendSchema = z.object({

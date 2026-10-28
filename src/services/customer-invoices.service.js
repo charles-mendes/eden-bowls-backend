@@ -7,6 +7,8 @@ const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accoun
 const { buildInvoiceDocument, formatInvoiceMoney, formatLongDate, invoiceLocale, linePriceId } = require('../core/invoice/invoice-document');
 const { formatInvoiceNumber, invoiceYear } = require('../core/invoice/invoice-number');
 const { buildInvoiceEmail } = require('../core/email/transactional-emails');
+const { COMPANY_PROFILE_SEED } = require('../core/company-profile');
+const { issuerFor } = require('../core/invoice/invoice-copy');
 const { dashboardPlansUrl } = require('../core/email/mail-context');
 const { withTimeout } = require('../core/with-timeout');
 
@@ -55,6 +57,7 @@ class CustomerInvoicesService {
     this.renderPdf = options.renderPdf || null;
     this.mailer = options.mailer || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.companyProfiles = options.companyProfiles || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.shippingProductIds = (options.shippingProductIds || []).filter(Boolean);
@@ -88,6 +91,13 @@ class CustomerInvoicesService {
    * written again only when it is missing or the Stripe status changed (open → paid).
    * Throws when Stripe or the disk fail, so the webhook that called it is retried.
    */
+  // The issuer an invoice of this locale prints today, from the company profile of its market.
+  async currentIssuer(locale) {
+    const market = locale === 'pt-BR' ? 'BR' : 'US';
+    const profile = this.companyProfiles ? await this.companyProfiles.forMarket(market) : COMPANY_PROFILE_SEED[market];
+    return issuerFor(locale, profile);
+  }
+
   async issueForInvoice({ invoice, account, ledger = null, send = true }) {
     this.ensureReady();
     const stripeAccount = parseStripeAccountInput(account, 'us');
@@ -134,6 +144,7 @@ class CustomerInvoicesService {
         billingReason: full.billing_reason || null,
         issuedAt: unixToDate(issuedAt),
         customerName: String(full.customer_name || '').trim() || null,
+        issuerSnapshot: await this.currentIssuer(locale),
         emailTo: String(full.customer_email || ledgerRow.customerEmail || '').trim() || null
       });
       row = inserted.row;
@@ -151,13 +162,20 @@ class CustomerInvoicesService {
   async renderAndStore(row, invoice, ledgerRow, stripeAccount) {
     const lines = invoice.lines && Array.isArray(invoice.lines.data) ? invoice.lines.data : [];
     const variants = await this.repository.findVariantsByPriceIds(lines.map(linePriceId));
+    let issuer = row.issuerSnapshot;
+    if (!issuer || !issuer.line) {
+      // A row numbered without a snapshot gets the current issuer once, and keeps it from then on.
+      issuer = await this.currentIssuer(row.locale);
+      await this.repository.setIssuerSnapshot(row.id, issuer);
+    }
     const model = buildInvoiceDocument({
       invoice,
       invoiceNumber: row.invoiceNumber,
       stripeAccount,
       ledger: ledgerRow,
       variants,
-      shippingProductIds: this.shippingProductIds
+      shippingProductIds: this.shippingProductIds,
+      issuer
     });
     const buffer = await this.renderPdf(model);
     const filename = await this.storage.write({ invoiceNumber: row.invoiceNumber, buffer });

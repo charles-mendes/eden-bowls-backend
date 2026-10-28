@@ -29,35 +29,63 @@ const STATE_FACTORS = {
   CRESCIMENTO_81_100: 140
 };
 
-const DOG_BASE_FACTOR = 95;
-const CAT_BASE_FACTOR = 242;
-const CAT_OBESE_FACTOR = 134;
-const DEFAULT_DOG_NEM = 3600;
-const DEFAULT_CAT_NEM = 3800;
+/**
+ * Every number and breed list of the calculation, as the published nutrition parameter set stores them
+ * (nutrition-parameters). The rules below keep their order; only these values are data. Breeds are normalized
+ * (lower case, no accents).
+ */
+const DEFAULT_NUTRITION_PARAMETERS = Object.freeze({
+  combination: Object.freeze({ ...COMBINATION_FACTORS }),
+  state: Object.freeze({ ...STATE_FACTORS }),
+  base: Object.freeze({
+    dog: 95,
+    cat: 242,
+    cat_overweight: 134,
+    work_dog_high: 165,
+    moderate_high_impact: 125,
+    age_1_2: 130,
+    age_3_7: 110,
+    terranova: 105,
+    dog_overweight: 80,
+    dogue: 200,
+    slow_metabolism: 95
+  }),
+  nem: Object.freeze({ dog: 3600, cat: 3800 }),
+  breed_groups: Object.freeze({
+    dogue: Object.freeze([
+      'dogue alemao',
+      'great dane',
+      'irish wolfhound',
+      'scottish deerhound',
+      'borzoi',
+      'greyhound',
+      'anatolian',
+      'anatolian shepherd',
+      'leonberger'
+    ]),
+    slow_metabolism: Object.freeze(['sao bernardo', 'sao bernard', 'saint bernard']),
+    terranova: Object.freeze(['terra nova', 'terranova', 'newfoundland'])
+  })
+});
 
-const GIANT_DOG_BREEDS = new Set([
-  'dogue alemao',
-  'great dane',
-  'irish wolfhound',
-  'scottish deerhound',
-  'borzoi',
-  'greyhound',
-  'anatolian',
-  'anatolian shepherd',
-  'leonberger'
-]);
+const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
-const SLOW_METABOLISM_GIANT_BREEDS = new Set([
-  'sao bernardo',
-  'sao bernard',
-  'saint bernard'
-]);
-
-const TERRANOVA_GROUP_BREEDS = new Set([
-  'terra nova',
-  'terranova',
-  'newfoundland'
-]);
+// The parameter set with its breed lists as sets, read once per calculation.
+function resolveParameters(parameters) {
+  const source = parameters || DEFAULT_NUTRITION_PARAMETERS;
+  const groups = source.breed_groups || {};
+  return {
+    combination: source.combination,
+    state: source.state,
+    base: source.base,
+    nem: source.nem,
+    groups: {
+      dogue: new Set((groups.dogue || []).map(normalizeText)),
+      slow_metabolism: new Set((groups.slow_metabolism || []).map(normalizeText)),
+      terranova: new Set((groups.terranova || []).map(normalizeText))
+    }
+  };
+}
 
 function normalizeText(value) {
   return String(value || '')
@@ -217,7 +245,7 @@ function classifySize(species, weightKg) {
   return 'gigante';
 }
 
-function resolveNemKcalPerKg(species, input) {
+function resolveNemKcalPerKg(species, input, p) {
   const nemKg = Number(input.nem_kcal_kg || 0);
   if (nemKg > 0) {
     return nemKg;
@@ -228,7 +256,7 @@ function resolveNemKcalPerKg(species, input) {
     return nem100 * 10;
   }
 
-  return species === 'cat' ? DEFAULT_CAT_NEM : DEFAULT_DOG_NEM;
+  return species === 'cat' ? p.nem.cat : p.nem.dog;
 }
 
 function resolveMeals(species, lifeStage) {
@@ -239,52 +267,52 @@ function resolveMeals(species, lifeStage) {
   return 2;
 }
 
-function selectStateFactor(state) {
+function selectStateFactor(state, p) {
   if (!state) {
     return null;
   }
 
   if (state === 'CRESCIMENTO') {
-    return STATE_FACTORS.CRESCIMENTO_81_100;
+    return p.state.CRESCIMENTO_81_100;
   }
 
-  return Object.prototype.hasOwnProperty.call(STATE_FACTORS, state) ? STATE_FACTORS[state] : null;
+  return has(p.state, state) ? p.state[state] : null;
 }
 
-function selectBaseFactor(species, breed, activity, score, age, workDog, highImpact, growthStage) {
+function selectBaseFactor(species, breed, activity, score, age, workDog, highImpact, growthStage, p) {
   if (species === 'cat') {
-    return score === 'ACIMA' ? CAT_OBESE_FACTOR : CAT_BASE_FACTOR;
+    return score === 'ACIMA' ? p.base.cat_overweight : p.base.cat;
   }
 
-  if (growthStage && Object.prototype.hasOwnProperty.call(STATE_FACTORS, growthStage)) {
-    return STATE_FACTORS[growthStage];
+  if (growthStage && has(p.state, growthStage)) {
+    return p.state[growthStage];
   }
 
   if (activity === 'ALTO' && workDog) {
-    return 165;
+    return p.base.work_dog_high;
   }
 
   if (activity === 'MODERADO' && highImpact) {
-    return 125;
+    return p.base.moderate_high_impact;
   }
 
   if (age >= 1 && age <= 2) {
-    return 130;
+    return p.base.age_1_2;
   }
 
   if (age >= 3 && age <= 7) {
-    return 110;
+    return p.base.age_3_7;
   }
 
-  if (TERRANOVA_GROUP_BREEDS.has(breed)) {
-    return 105;
+  if (p.groups.terranova.has(breed)) {
+    return p.base.terranova;
   }
 
   if (score === 'ACIMA') {
-    return 80;
+    return p.base.dog_overweight;
   }
 
-  return DOG_BASE_FACTOR;
+  return p.base.dog;
 }
 
 function selectFactor({
@@ -299,42 +327,43 @@ function selectFactor({
   age,
   workDog,
   highImpact
-}) {
+}, p) {
   const trace = [];
-  const baseFactor = selectBaseFactor(species, breed, activity, score, age, workDog, highImpact, growthStage);
+  const baseFactor = selectBaseFactor(species, breed, activity, score, age, workDog, highImpact, growthStage, p);
   let factor = baseFactor;
   trace.push(`base:${baseFactor}`);
 
-  const stateFactor = selectStateFactor(lifeStage);
+  const stateFactor = selectStateFactor(lifeStage, p);
   if (stateFactor !== null) {
     factor = stateFactor;
     trace.push(`state_override:${lifeStage}:${stateFactor}`);
   }
 
-  if (species === 'dog' && GIANT_DOG_BREEDS.has(breed)) {
-    factor = 200;
-    trace.push('breed_dogue_group:200');
+  if (species === 'dog' && p.groups.dogue.has(breed)) {
+    factor = p.base.dogue;
+    trace.push(`breed_dogue_group:${factor}`);
   }
 
-  if (species === 'dog' && SLOW_METABOLISM_GIANT_BREEDS.has(breed)) {
-    factor = 95;
-    trace.push('slow_metabolism_exception:95');
+  if (species === 'dog' && p.groups.slow_metabolism.has(breed)) {
+    factor = p.base.slow_metabolism;
+    trace.push(`slow_metabolism_exception:${factor}`);
   }
 
   const combinationKey = `${castrado}-${activity}-${score}`;
-  if (Object.prototype.hasOwnProperty.call(COMBINATION_FACTORS, combinationKey)) {
-    factor = COMBINATION_FACTORS[combinationKey];
+  const hasCombination = has(p.combination, combinationKey);
+  if (hasCombination) {
+    factor = p.combination[combinationKey];
     trace.push(`combination_override:${combinationKey}:${factor}`);
   }
 
-  if (species === 'cat' && score === 'ACIMA' && !Object.prototype.hasOwnProperty.call(COMBINATION_FACTORS, combinationKey)) {
-    factor = CAT_OBESE_FACTOR;
-    trace.push('cat_obese_adjustment:134');
+  if (species === 'cat' && score === 'ACIMA' && !hasCombination) {
+    factor = p.base.cat_overweight;
+    trace.push(`cat_obese_adjustment:${factor}`);
   }
 
-  if (species === 'cat' && score !== 'ACIMA' && !Object.prototype.hasOwnProperty.call(COMBINATION_FACTORS, combinationKey)) {
-    factor = CAT_BASE_FACTOR;
-    trace.push('cat_normal_factor:242');
+  if (species === 'cat' && score !== 'ACIMA' && !hasCombination) {
+    factor = p.base.cat;
+    trace.push(`cat_normal_factor:${factor}`);
   }
 
   return { factor, trace };
@@ -371,7 +400,8 @@ function resolveWeightKg(pet = {}) {
   return convertWeight(amount, unit, 'kg');
 }
 
-function calculateFood(input = {}, locale = '') {
+function calculateFood(input = {}, locale = '', parameters = DEFAULT_NUTRITION_PARAMETERS) {
+  const p = resolveParameters(parameters);
   const weightKg = Math.max(0, Number(input.peso ?? 0));
   if (weightKg <= 0) {
     return {
@@ -404,9 +434,9 @@ function calculateFood(input = {}, locale = '') {
     age,
     workDog,
     highImpact
-  });
+  }, p);
   const energyKcalDay = factorDecision.factor * (weightKg ** 0.75);
-  const nemKcalKg = resolveNemKcalPerKg(species, input);
+  const nemKcalKg = resolveNemKcalPerKg(species, input, p);
   const gramsDay = nemKcalKg > 0 ? Math.round((energyKcalDay / nemKcalKg) * 1000) : 0;
   const meals = resolveMeals(species, lifeStage);
   const gramsPerMeal = meals > 0 ? Math.round(gramsDay / meals) : 0;
@@ -442,7 +472,7 @@ function mapPetConditionToScore(petCondition) {
   return '';
 }
 
-function buildForPet(pet = {}, questionnaire = null, locale = '') {
+function buildForPet(pet = {}, questionnaire = null, locale = '', parameters = DEFAULT_NUTRITION_PARAMETERS) {
   const questions = questionnaire && typeof questionnaire === 'object' ? questionnaire : {};
   const petCondition = normalizeText(pet.pet_condition);
   const mappedScore = mapPetConditionToScore(pet.pet_condition);
@@ -466,7 +496,7 @@ function buildForPet(pet = {}, questionnaire = null, locale = '') {
     growth_stage: questions.growth_stage || '',
     work_dog: questions.work_dog ?? null,
     high_impact: questions.high_impact ?? null
-  }, locale);
+  }, locale, parameters);
 
   result.pet_id = String(pet.id || pet.pet_id || '');
   result.pet_name = String(pet.name || pet.pet_name || '');
@@ -491,6 +521,8 @@ function buildForPet(pet = {}, questionnaire = null, locale = '') {
 
 module.exports = {
   COMBINATION_FACTORS,
+  DEFAULT_NUTRITION_PARAMETERS,
+  normalizeText,
   buildForPet,
   calculateFood,
   resolveWeightKg

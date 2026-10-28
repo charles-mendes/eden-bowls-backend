@@ -2,20 +2,16 @@
 // docs-new/FEATURE_CUSTOMIZED_INVOICE/Eden Bowls - Invoice personalizado EN e PT (aprovacao).pdf.
 // Change a text here, never inside the renderer, and keep both languages in step.
 
-const SUPPORT_EMAIL = 'hello@edenbowls.com';
-
-const INVOICE_ISSUERS = {
-  'en-US': {
-    name: 'Eden Bowls',
-    line: 'Eden Bowls · Boca Raton, FL, USA',
-    email: SUPPORT_EMAIL
-  },
-  'pt-BR': {
-    name: 'Eden Bowls',
-    line: 'Eden Bowls · CNPJ 65.291.985/0001-05 · Curitiba, PR',
-    email: SUPPORT_EMAIL
-  }
-};
+// The issuer printed on an invoice, composed from the company profile of its market (company-profile) in the
+// approved form. The result is what an invoice stores as `issuer_snapshot` when it receives its number.
+function issuerFor(locale, profile = {}) {
+  const city = String(profile.city || '').trim();
+  const state = String(profile.state || '').trim();
+  const line = locale === 'pt-BR'
+    ? `Eden Bowls · CNPJ ${String(profile.taxId || '').trim()} · ${city}, ${state}`
+    : `Eden Bowls · ${city}, ${state}, USA`;
+  return { name: 'Eden Bowls', line, email: String(profile.supportEmail || '').trim() };
+}
 
 const INVOICE_COPY = {
   'en-US': {
@@ -112,5 +108,5 @@ const FLAVOR_RECIPE_LABELS = {
 module.exports = {
   FLAVOR_RECIPE_LABELS,
   INVOICE_COPY,
-  INVOICE_ISSUERS
+  issuerFor
 };

@@ -1,3 +1,7 @@
+const { supportEmailFor } = require('./company-directory');
+
+// Colors and name of the letters. The support email is the one of the letter's market company profile
+// (`supportEmailFor`), not a constant.
 const BRAND = {
   parchment: '#F5EFE2',
   paper: '#FFFBF4',
@@ -7,7 +11,6 @@ const BRAND = {
   clay: '#B08F66',
   border: '#D0C7AC',
   muted: '#5C6758',
-  support: 'hello@edenbowls.com',
   name: 'Eden Bowls',
   storeUrl: 'https://edenbowls.com'
 };
@@ -143,9 +146,11 @@ function wrapEmailHtml({
   allowRelativeAssets,
   // Marketing letters drop the account security note and add the company line.
   securityNote = true,
-  footerLines = []
+  footerLines = [],
+  supportEmail
 }) {
   const pt = isPortuguese(locale);
+  const support = escapeHtml(supportEmail || supportEmailFor(locale));
   const preview = escapeHtml(preheader || '');
   const footerNote = pt
     ? 'E-mail automático da Eden Bowls. Dúvidas? Fale com a gente: '
@@ -202,7 +207,7 @@ function wrapEmailHtml({
           <tr>
             <td style="background:${BRAND.parchment};border:1px solid ${BRAND.border};border-top:0;padding:24px 36px 28px;">
               ${horizontal || `<p style="margin:0 0 12px;font-family:${FONT_DISPLAY};font-size:13px;letter-spacing:0.2em;text-transform:uppercase;color:${BRAND.ink};">${escapeHtml(BRAND.name)}</p>`}
-              <p style="margin:0 0 8px;font-family:${FONT_BODY};font-size:13px;line-height:1.6;color:${BRAND.muted};">${footerNote}<a href="mailto:${BRAND.support}" style="color:${BRAND.moss};text-decoration:none;">${BRAND.support}</a></p>
+              <p style="margin:0 0 8px;font-family:${FONT_BODY};font-size:13px;line-height:1.6;color:${BRAND.muted};">${footerNote}<a href="mailto:${support}" style="color:${BRAND.moss};text-decoration:none;">${support}</a></p>
               ${[securityNote ? legal : '', ...(footerLines || [])].filter(Boolean).map((line) => `<p style="margin:0;font-family:${FONT_BODY};font-size:12px;line-height:1.55;color:${BRAND.muted};">${escapeHtml(line)}</p>`).join('')}
             </td>
           </tr>

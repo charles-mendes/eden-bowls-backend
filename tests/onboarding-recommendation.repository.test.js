@@ -1,5 +1,6 @@
 const { MARKETS } = require('../src/core/market');
 const { OnboardingRecommendationRepository } = require('../src/infrastructure/repositories/onboarding-recommendation.repository');
+const { DEFAULT_NUTRITION_PARAMETERS } = require('../src/core/nutrition-recommendation');
 
 describe('OnboardingRecommendationRepository', () => {
   test('returns empty pets when there is no authenticated user', async () => {
@@ -136,5 +137,44 @@ describe('OnboardingRecommendationRepository packaging from the plan product (pl
   test('a 1 kg active variation becomes the large pack', async () => {
     const data = await recommend({ findPlanPackaging: jest.fn().mockResolvedValue({ packSizesGrams: [300, 500, 1000], planDays: 30, largePackLimit: 8 }) });
     expect(data.packaging.package_sizes_grams).toEqual([300, 500, 1000]);
+  });
+
+  describe('published nutrition parameter set', () => {
+    const draftPets = [
+      { pet_id: 'rex', name: 'Rex', breed: 'SRD', age_years: 4, weight: 20, weight_unit: 'kg', size: 'medium', activity_level: 'medium', pet_condition: 'ideal', neutered: true },
+      { pet_id: 'thor', name: 'Thor', breed: 'Great Dane', age_years: 3, weight: 60, weight_unit: 'kg', size: 'large', activity_level: 'high', pet_condition: 'ideal', neutered: false },
+      { pet_id: 'mia', name: 'Mia', type: 'cat', age_years: 6, weight: 4, weight_unit: 'kg', activity_level: 'low', pet_condition: 'overweight', neutered: true }
+    ];
+
+    test('Recommendation records its version: the id of the published set', async () => {
+      const nutritionParameters = { published: jest.fn().mockResolvedValue({ id: 4, parameters: DEFAULT_NUTRITION_PARAMETERS }) };
+      const repository = new OnboardingRecommendationRepository(null, { nutritionParameters });
+
+      const data = await repository.getRecommendation(null, MARKETS.BR, draftPets);
+
+      expect(data.nutrition_parameter_set_id).toBe(4);
+    });
+
+    test('Same result after deploy: the seeded set gives what the code gave before', async () => {
+      const seeded = JSON.parse(JSON.stringify(DEFAULT_NUTRITION_PARAMETERS));
+      const withSet = new OnboardingRecommendationRepository(null, { nutritionParameters: { published: async () => ({ id: 1, parameters: seeded }) } });
+      const without = new OnboardingRecommendationRepository(null);
+
+      const after = await withSet.getRecommendation(null, MARKETS.US, draftPets);
+      const before = await without.getRecommendation(null, MARKETS.US, draftPets);
+
+      expect(after.recommendations).toEqual(before.recommendations);
+      expect(after.simplified).toEqual(before.simplified);
+      expect(before.nutrition_parameter_set_id).toBeNull();
+    });
+
+    test('a published change reaches the recommendation', async () => {
+      const parameters = { ...DEFAULT_NUTRITION_PARAMETERS, nem: { dog: 4000, cat: 3800 } };
+      const repository = new OnboardingRecommendationRepository(null, { nutritionParameters: { published: async () => ({ id: 2, parameters }) } });
+
+      const data = await repository.getRecommendation(null, MARKETS.US, draftPets.slice(0, 1));
+
+      expect(data.recommendations[0].nem_kcal_kg).toBe(4000);
+    });
   });
 });

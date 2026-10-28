@@ -29,7 +29,7 @@ Tabela `nutrition_parameter_sets` (`id`, `status` `draft|published|retired`, `pa
 
 `nutrition-recommendation.js` passa a receber `parameters` como argumento, com os valores atuais como padrão para os testes puros. Quem chama lê o conjunto publicado por um repositório com `TtlCache` de 60 s. Esse tempo vale em cada processo, então o `cron` vê a publicação em no máximo 60 s.
 
-A recomendação grava `nutrition_parameter_set_id` junto do resultado, no repositório de recomendação do onboarding.
+A recomendação devolve `nutrition_parameter_set_id` junto do resultado. A seleção do plano o guarda em `validated_with`, e o checkout leva a seleção para `stripe_subscriptions.plan_selection`, então cada assinatura registra o conjunto que a dimensionou (consulta por `JSON_EXTRACT`). A recomendação não tem tabela própria, por isso não há coluna nova.
 
 Alternativa descartada: uma linha por fator. São cerca de 30 números que só fazem sentido juntos; versionar o conjunto inteiro dá histórico e comparação simples.
 
@@ -42,6 +42,8 @@ Existe no máximo um rascunho. Ele é criado copiando o publicado, salvo à vont
 `life_stage_size_classes` e `life_stage_breeds` já existem, por mercado, com colunas de auditoria. A edição é direta, porque cada linha já é a fonte e a mudança é registrada na auditoria.
 
 A prévia (`POST …/life-stage/preview`) recalcula a fase dos pets com assinatura ativa do mercado usando os limites propostos e devolve a contagem por transição (`adult→senior`…), sem gravar. O e-mail de mudança de fase continua sendo disparado pelo job, que já compara a fase gravada com a calculada.
+
+Rotas (`market` na query ou no corpo, um mercado por chamada): `GET /api/v1/admin/life-stage` (`nutrition.simulate`), `PUT …/life-stage/limits`, `POST …/life-stage/breeds`, `PATCH …/life-stage/breeds/:id` e `POST …/life-stage/preview` (`nutrition.settings.write`). A prévia aceita `limits` (parcial) e, opcionalmente, uma `breed` nova ou alterada (`id`), e responde `{ pets_evaluated, pets_changing, transitions: [{ from, to, count }] }`. "Assinatura ativa" é `active`, `trialing` ou `past_due`, o mesmo conjunto do anúncio. Salvar limpa o cache do processo; outros processos leem a mudança em até 60 s.
 
 ### 4. Permissões novas
 
@@ -63,6 +65,10 @@ Tabela `company_profiles` com chave `market`. Semente: os valores hoje impressos
 
 `company-address.js` passa a ler o perfil, e `BRAND.support` vem do perfil do mercado da carta. As OTP e os convites sem mercado usam o perfil US, como já usam o inglês por padrão.
 
+O layout do e-mail é síncrono, então cada processo mantém um diretório dos perfis (`core/email/company-directory.js`): lido no início, relido a cada 60 s e trocado na hora quando o admin salva naquele processo. A carta escolhe o perfil pelo idioma (pt → BR, outro → US).
+
+Rotas: `GET` e `PUT /api/v1/admin/settings/company?market=`. No `PUT` os campos vão em `profile`, porque um `country` no topo do corpo seria lido como filtro de mercado.
+
 ### 6. Documentos legais: versões imutáveis
 
 Tabela `legal_documents` (`market`, `kind`, `version`, `body_markdown`, `published_at`, `published_by`), única por (`market`, `kind`, `version`). Não há rascunho no banco: o painel edita o texto localmente e publica.
@@ -73,11 +79,17 @@ Na loja, as páginas legais buscam o texto em runtime. O build pré-renderiza co
 
 A semente copia os quatro `.md` atuais da loja para `helpers/seed-legal-documents.js`.
 
+Rotas: `GET /api/v1/legal/:kind?market=` (pública), `GET /api/v1/admin/legal/:kind?market=` (vigente e lista de versões), `GET …/legal/:kind/versions/:version` (`settings.read`) e `POST …/legal/:kind` com `{ market, version, body_markdown }` (`legal.write`).
+
+O `POST /api/v1/auth/otp/verify` ganha `market` opcional (`BR`/`US`), o mercado cujas versões o cliente viu. Sem ele, ou com um valor desconhecido, vale US; nunca bloqueia o cadastro. A loja passa a enviá-lo no change irmão.
+
 ### 7. E-mails automáticos: tabela por mercado, lida a cada execução
 
 Tabela `automated_email_settings` com chave `market`. Os jobs leem a linha do mercado no início de cada execução, sem cache, então desligar vale na execução seguinte em qualquer processo.
 
 A migração lê `process.env` com os mesmos padrões de `env.js`. É a única migração que lê o ambiente, e isso fica registrado no seu comentário. Depois, `env.js` e os `.env*.example` perdem as variáveis.
+
+Por isso as variáveis precisam continuar no `.env` de cada ambiente até a migração rodar lá (passo 5 do plano). Um limite diário menor que o lote no ambiente é gravado igual ao lote. Rotas: `GET` e `PUT /api/v1/admin/settings/automated-emails?market=`.
 
 ### 8. Duas páginas no painel, menu com dois itens novos
 

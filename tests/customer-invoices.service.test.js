@@ -1,5 +1,6 @@
 const { CustomerInvoicesService } = require('../src/services/customer-invoices.service');
 const { PREVIEW_CASES } = require('../src/core/invoice/preview-fixtures');
+const { COMPANY_PROFILE_SEED } = require('../src/core/company-profile');
 
 const NOW = new Date('2026-09-01T16:00:00Z');
 
@@ -34,6 +35,7 @@ function memoryRepository() {
       });
       return { row: { ...rows.get(id) }, created: true };
     }),
+    setIssuerSnapshot: jest.fn(async (id, snapshot) => (rows.get(id).issuerSnapshot ? rows.get(id) : update(id, { issuerSnapshot: snapshot }))),
     markPdf: jest.fn(async (id, { filename, invoiceStatus, amountPaidMinor }) => update(id, { pdfFilename: filename, invoiceStatus, amountPaidMinor })),
     markEmailSent: jest.fn(async (id, { to, sentAt }) => update(id, { emailStatus: 'sent', emailTo: to, emailSentAt: sentAt.toISOString() })),
     markEmailSkipped: jest.fn(async (id, { to }) => update(id, { emailStatus: 'skipped', emailTo: to })),
@@ -75,6 +77,7 @@ function buildService(overrides = {}) {
     mailer,
     ledgerRepository,
     stripeBilling: billing,
+    companyProfiles: overrides.companyProfiles,
     storeAppUrl: 'https://edenbowls.com',
     now: () => NOW
   });
@@ -170,6 +173,51 @@ describe('CustomerInvoicesService.issueForInvoice', () => {
 
     expect(repository.nextSequence).toHaveBeenCalledTimes(1);
     expect(row).toMatchObject({ invoiceNumber: 'EB-2026-000418', emailStatus: 'sent' });
+  });
+});
+
+describe('CustomerInvoicesService issuer (company-profile)', () => {
+  function brSetup() {
+    const sample = PREVIEW_CASES['pt-BR'];
+    const profiles = { BR: { ...COMPANY_PROFILE_SEED.BR }, US: { ...COMPANY_PROFILE_SEED.US } };
+    const companyProfiles = { forMarket: jest.fn(async (market) => profiles[market]) };
+    const renderPdf = jest.fn().mockResolvedValue(Buffer.from('%PDF-1.3 test'));
+    const built = buildService({ invoice: sample.invoice('paid'), companyProfiles, renderPdf });
+    built.ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ ...sample.ledger, stripeAccount: 'br', userId: 3 });
+    return { ...built, profiles, renderPdf };
+  }
+
+  test('City change reaches new invoices', async () => {
+    const { service, profiles, renderPdf } = brSetup();
+    profiles.BR = { ...profiles.BR, city: 'São Paulo', state: 'SP' };
+
+    const { row } = await service.issueForInvoice({ invoice: { id: 'in_preview_br' }, account: 'br', send: false });
+
+    expect(row.issuerSnapshot.line).toBe('Eden Bowls · CNPJ 65.291.985/0001-05 · São Paulo, SP');
+    expect(renderPdf.mock.calls[0][0].footer.issuerLine.endsWith('São Paulo, SP')).toBe(true);
+  });
+
+  test('Reissue after a profile change keeps the issuer the invoice was numbered with', async () => {
+    const { service, profiles, renderPdf, repository } = brSetup();
+    const { row } = await service.issueForInvoice({ invoice: { id: 'in_preview_br' }, account: 'br', send: false });
+    expect(row.issuerSnapshot.line).toBe('Eden Bowls · CNPJ 65.291.985/0001-05 · Curitiba, PR');
+
+    profiles.BR = { ...profiles.BR, city: 'São Paulo', state: 'SP' };
+    await service.regenerate(await repository.findById(row.id));
+
+    expect(renderPdf).toHaveBeenCalledTimes(2);
+    expect(renderPdf.mock.calls[1][0].footer.issuerLine).toBe('Eden Bowls · CNPJ 65.291.985/0001-05 · Curitiba, PR');
+    expect(repository.setIssuerSnapshot).not.toHaveBeenCalled();
+  });
+
+  test('a row without a snapshot takes the current issuer once and keeps it', async () => {
+    const { service, repository } = brSetup();
+    const { row } = await service.issueForInvoice({ invoice: { id: 'in_preview_br' }, account: 'br', send: false });
+    repository.rows.set(row.id, { ...repository.rows.get(row.id), issuerSnapshot: null });
+
+    await service.regenerate(await repository.findById(row.id));
+
+    expect(repository.setIssuerSnapshot).toHaveBeenCalledWith(row.id, expect.objectContaining({ line: 'Eden Bowls · CNPJ 65.291.985/0001-05 · Curitiba, PR' }));
   });
 });
 
