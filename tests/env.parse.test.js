@@ -28,14 +28,10 @@ function productionEnv(overrides = {}) {
 }
 
 describe('parseEnv', () => {
-  test('stage-change email switches are on unless set to false, per market (2.16)', () => {
-    const unset = parseEnv(productionEnv());
-    expect(unset.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR).toBe(true);
-    expect(unset.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US).toBe(true);
-
-    const paused = parseEnv(productionEnv({ LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR: 'false', LIFE_STAGE_CHANGE_EMAIL_ENABLED_US: 'true' }));
-    expect(paused.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR).toBe(false);
-    expect(paused.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US).toBe(true);
+  test('the automated email switches are no longer read from the environment (automated-email-settings)', () => {
+    const parsed = parseEnv(productionEnv({ LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR: 'false' }));
+    expect(parsed).not.toHaveProperty('LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR');
+    expect(parsed).not.toHaveProperty('LIFE_STAGE_CHANGE_EMAIL_ENABLED_US');
   });
 
   test('rejects a missing runtime label', () => {

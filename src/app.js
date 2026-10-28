@@ -11,6 +11,7 @@ const { registerGeoRoutes } = require('./api/routes/geo.routes');
 const { registerDeliveryEstimateRoutes } = require('./api/routes/delivery-estimate.routes');
 const { registerProductsRoutes } = require('./api/routes/products.routes');
 const { registerRecipesRoutes } = require('./api/routes/recipes.routes');
+const { registerLegalRoutes } = require('./api/routes/legal.routes');
 const { registerOnboardingAddressAutocompleteRoutes } = require('./api/routes/onboarding-address-autocomplete.routes');
 const { registerOnboardingDiscountEligibilityRoutes } = require('./api/routes/onboarding-discount-eligibility.routes');
 const { registerOnboardingPaymentIntentAckRoutes } = require('./api/routes/onboarding-payment-intent-ack.routes');
@@ -190,6 +191,7 @@ function createApp(dependencies = {}) {
   registerDeliveryEstimateRoutes(app, dependencies);
   registerProductsRoutes(app, dependencies);
   registerRecipesRoutes(app, dependencies);
+  registerLegalRoutes(app, dependencies);
   registerAuthRoutes(app, dependencies);
   registerOnboardingAddressAutocompleteRoutes(app, dependencies);
   registerOnboardingDiscountEligibilityRoutes(app, dependencies);

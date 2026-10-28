@@ -1,6 +1,7 @@
 const { PrivacyService } = require('../src/services/privacy.service');
 const { HttpError } = require('../src/core/http-error');
-const { LEGAL_PRIVACY_VERSION, LEGAL_TERMS_VERSION } = require('../src/core/legal-documents');
+const LEGAL_PRIVACY_VERSION = '2026-09-13';
+const LEGAL_TERMS_VERSION = '2026-09-13';
 const { dueAtForMarket } = require('../src/core/privacy');
 
 const NOW = new Date('2026-01-01T00:00:00.000Z');
@@ -119,6 +120,45 @@ describe('PrivacyService', () => {
       consentType: 'marketing_email',
       status: 'denied'
     }));
+  });
+
+  describe('consent versions of the published legal documents', () => {
+    // BR terms 2026-09-13 and 2026-11-01 (current); privacy 2026-09-13 only.
+    const published = { 'BR:terms': ['2026-09-13', '2026-11-01'], 'BR:privacy': ['2026-09-13'], 'US:terms': ['2026-09-13'], 'US:privacy': ['2026-09-13'] };
+    const legalDocuments = {
+      isPublished: jest.fn(async (market, kind, version) => published[`${market}:${kind}`].includes(version)),
+      currentVersion: jest.fn(async (market, kind) => published[`${market}:${kind}`].slice(-1)[0])
+    };
+    const versions = (repository) => repository.insertConsent.mock.calls.slice(0, 2).map(([input]) => input.documentVersion);
+
+    test('Customer accepts the version shown', async () => {
+      const { service, repository } = createService({ options: { legalDocuments } });
+      await service.recordOtpConsents({ userId: 77, privacyVersion: '2026-09-13', termsVersion: '2026-09-13', market: 'BR' });
+      expect(versions(repository)).toEqual(['2026-09-13', '2026-09-13']);
+    });
+
+    test('without a version the current one of the market is recorded', async () => {
+      const { service, repository } = createService({ options: { legalDocuments } });
+      await service.recordOtpConsents({ userId: 77, market: 'BR' });
+      expect(versions(repository)).toEqual(['2026-09-13', '2026-11-01']);
+    });
+
+    test('Stale client sends an unknown version', async () => {
+      const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+      const { service, repository } = createService({ options: { legalDocuments, logger } });
+
+      await expect(service.recordOtpConsents({ userId: 77, privacyVersion: '2020-01-01', termsVersion: '2026-11-01', market: 'BR' })).resolves.toBeUndefined();
+
+      expect(versions(repository)).toEqual(['2026-09-13', '2026-11-01']);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(logger.warn.mock.calls[0][0]).toEqual({ market: 'BR', kind: 'privacy', received: '2020-01-01', recorded: '2026-09-13' });
+    });
+
+    test('a version of another market is not recorded: a consent without market reads as US', async () => {
+      const { service, repository } = createService({ options: { legalDocuments } });
+      await service.recordOtpConsents({ userId: 77, termsVersion: '2026-11-01' });
+      expect(versions(repository)).toEqual(['2026-09-13', '2026-09-13']);
+    });
   });
 
   test('sets due_at to 15 days for BR and 45 days for US', async () => {

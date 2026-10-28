@@ -213,6 +213,38 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/legal/:kind"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/legal/:kind"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/legal/:kind/versions/:version"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/life-stage"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/life-stage/breeds"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/life-stage/breeds/:id"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/life-stage/limits"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/life-stage/preview"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/markets/conflicts"
   },
   {
@@ -222,6 +254,26 @@
   {
     "method": "POST",
     "path": "/api/v1/admin/me/password"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/nutrition/parameters"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/nutrition/parameters/:id/copy-to-draft"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/nutrition/parameters/draft"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/nutrition/parameters/draft"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/nutrition/parameters/publish"
   },
   {
     "method": "GET",
@@ -302,6 +354,22 @@
   {
     "method": "PATCH",
     "path": "/api/v1/admin/production/queue/:id"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/settings/automated-emails"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/settings/automated-emails"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/settings/company"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/settings/company"
   },
   {
     "method": "GET",
@@ -470,6 +538,10 @@
   {
     "method": "GET",
     "path": "/api/v1/geo/context"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/legal/:kind"
   },
   {
     "method": "POST",

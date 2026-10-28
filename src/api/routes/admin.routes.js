@@ -25,6 +25,10 @@ const {
 } = require('../validators/feedbacks.validator');
 const { registerAdminPrivacyRoutes } = require('./privacy.routes');
 const { registerAdminDeliveryCalendarRoutes } = require('./admin-delivery-calendar.routes');
+const { registerAdminNutritionSettingsRoutes } = require('./admin-nutrition-settings.routes');
+const { registerAdminLifeStageSettingsRoutes } = require('./admin-life-stage-settings.routes');
+const { registerAdminCompanySettingsRoutes } = require('./admin-company-settings.routes');
+const { registerAdminLegalRoutes } = require('./legal.routes');
 
 function couponAccountFor(request) {
   const query = { ...(request.query || {}), ...(request.body || {}) };
@@ -100,7 +104,12 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.adminNutritionService) {
         throw new HttpError(503, 'Nutrition service is not available.');
       }
-      return dependencies.adminNutritionService.simulate(parseNutritionSimulateInput(request.body || {}), request.adminIdentity);
+      const input = parseNutritionSimulateInput(request.body || {});
+      // A draft is simulated only by who may publish it.
+      if (input.parameterSet === 'draft' && !request.adminIdentity.permissions.includes('nutrition.settings.write')) {
+        throw new HttpError(403, 'Forbidden.');
+      }
+      return dependencies.adminNutritionService.simulate(input, request.adminIdentity);
     });
   });
 
@@ -882,6 +891,10 @@ function registerAdminRoutes(app, dependencies = {}) {
 
   registerAdminPrivacyRoutes(app, dependencies, { requirePermission, handle });
   registerAdminDeliveryCalendarRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminNutritionSettingsRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminLifeStageSettingsRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminCompanySettingsRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminLegalRoutes(app, dependencies, { requirePermission, handle });
 }
 
 module.exports = {

@@ -1,3 +1,4 @@
+const { COMPANY_PROFILE_SEED } = require('../src/core/company-profile');
 const { buildSizeClassSeedRows } = require('../src/core/life-stage-seed');
 const { LifeStageService } = require('../src/services/life-stage.service');
 const { LifeStageNoticesService } = require('../src/services/life-stage-notices.service');
@@ -9,15 +10,7 @@ const RECIPES = [
   { key: 'beef', label: 'Bovino', life_stage: 'adult' },
   { key: 'senior-beef', label: 'Receita de Carne para Cães Sênior', life_stage: 'senior' }
 ];
-const COMPANY = {
-  MAIL_COMPANY_BR_NAME: 'C. C. J. Lovato Ltda',
-  MAIL_COMPANY_BR_TAX_ID: '65.291.985/0001-05',
-  MAIL_COMPANY_BR_STREET: 'Rua Delmiro Fetter dos Santos, 94',
-  MAIL_COMPANY_BR_COMPLEMENT: 'Cajuru',
-  MAIL_COMPANY_BR_CITY: 'Curitiba',
-  MAIL_COMPANY_BR_STATE: 'PR',
-  MAIL_COMPANY_BR_POSTAL_CODE: '82950-130'
-};
+const COMPANY = { ...COMPANY_PROFILE_SEED.BR };
 const registered = { breed: '', size: 'medium', age_recorded_at: '2026-10-19T09:00:00.000Z', birth_date: null };
 const senior = (id, name) => ({ id, name, age_years: 9, age_months: 0, ...registered });
 
@@ -63,7 +56,11 @@ function customer(userId, petId, name) {
   };
 }
 
-function setup({ customers, env = COMPANY, published = ['adult', 'senior'], cap, batch } = {}) {
+function setup({ customers, company = COMPANY, published = ['adult', 'senior'], cap, batch } = {}) {
+  // automated_email_settings of the market, read at the start of each send.
+  const settings = {
+    forMarket: jest.fn(async () => ({ lifeStageChangeEnabled: true, announcementBatchSize: batch || 50, announcementDailyCap: cap || 300 }))
+  };
   const clock = { now: new Date('2026-10-20T12:00:00Z') };
   const limits = {};
   for (const row of buildSizeClassSeedRows().filter((item) => item.market === 'BR')) {
@@ -92,22 +89,18 @@ function setup({ customers, env = COMPANY, published = ['adult', 'senior'], cap,
     noticesRepository,
     mailer,
     storeAppUrl: 'https://edenbowls.com',
-    env: {
-      ...env,
-      ...(cap ? { LIFE_STAGE_ANNOUNCEMENT_DAILY_CAP: String(cap) } : {}),
-      ...(batch ? { LIFE_STAGE_ANNOUNCEMENT_BATCH_SIZE: String(batch) } : {})
-    },
+    companyProfiles: { forMarket: async () => company },
+    settings,
     wait,
     now: () => clock.now
   });
-  return { service, repository, noticesRepository, mailer, clock, wait, lifeStageService };
+  return { service, repository, noticesRepository, mailer, clock, wait, lifeStageService, settings };
 }
 
 describe('launch announcement command (2.14)', () => {
   test('the simulation reports customers and pets and sends or writes nothing', async () => {
     const { service, repository, noticesRepository, mailer } = setup({
-      customers: [customer(1, 'p-thor', 'Thor'), customer(2, 'p-bob', 'Bob')],
-      env: {}
+      customers: [customer(1, 'p-thor', 'Thor'), customer(2, 'p-bob', 'Bob')]
     });
     const summary = await service.run({ market: 'BR' });
     expect(summary).toMatchObject({ mode: 'simulation', customers: 2, pets: 2 });
@@ -155,6 +148,20 @@ describe('launch announcement command (2.14)', () => {
     expect(repository.state.sent_at).toEqual(new Date('2026-10-21T09:00:00Z'));
   });
 
+  test('a cap saved in the admin applies to the next send, read at its start', async () => {
+    const { service, settings, mailer, clock } = setup({ customers: [customer(1, 'p-a', 'A'), customer(2, 'p-b', 'B'), customer(3, 'p-c', 'C')], cap: 1 });
+    await service.run({ market: 'BR', send: true });
+    expect(mailer.sendClaimed).toHaveBeenCalledTimes(1);
+
+    settings.forMarket.mockResolvedValue({ lifeStageChangeEnabled: true, announcementBatchSize: 50, announcementDailyCap: 3 });
+    clock.now = new Date(clock.now.getTime() + 60 * 1000);
+    await service.run({ market: 'BR', send: true });
+
+    expect(mailer.sendClaimed).toHaveBeenCalledTimes(3);
+    expect(settings.forMarket).toHaveBeenCalledTimes(2);
+    expect(settings.forMarket).toHaveBeenCalledWith('BR');
+  });
+
   test('batches pause between them', async () => {
     const { service, wait } = setup({ customers: [customer(1, 'p-a', 'A'), customer(2, 'p-b', 'B'), customer(3, 'p-c', 'C')], batch: 2 });
     await service.run({ market: 'BR', send: true });
@@ -173,11 +180,11 @@ describe('launch announcement command (2.14)', () => {
   test('--send without the company name or street is refused; the simulation still runs', async () => {
     const { service, repository, mailer } = setup({
       customers: [customer(1, 'p-thor', 'Thor')],
-      env: { ...COMPANY, MAIL_COMPANY_BR_STREET: '' }
+      company: { ...COMPANY, street: '' }
     });
     await expect(service.run({ market: 'BR', send: true })).rejects.toMatchObject({
       code: 'company_address_missing',
-      message: 'Envio recusado: configure MAIL_COMPANY_BR_STREET (empresa e rua do rodapé do anúncio de BR). Nada foi enviado.'
+      message: 'Envio recusado: preencha street no perfil da empresa de BR (Configurações > Empresa); é o rodapé do anúncio. Nada foi enviado.'
     });
     expect(mailer.sendClaimed).not.toHaveBeenCalled();
     expect(repository.writes).toEqual([]);

@@ -16,12 +16,21 @@ async function planPackagingFor(source, country) {
   }
 }
 
+// Published nutrition parameter set ({ id, parameters }); without the repository the values of the code apply.
+async function publishedParametersFor(source) {
+  if (!source || typeof source.published !== 'function') {
+    return { id: null, parameters: undefined };
+  }
+  return source.published();
+}
+
 class OnboardingRecommendationRepository {
   constructor(petsRepository, options = {}) {
     this.petsRepository = petsRepository || null;
     this.productsRepository = options.productsRepository || null;
     this.lifeStageService = options.lifeStageService || null;
     this.recipeEnergyService = options.recipeEnergyService || null;
+    this.nutritionParameters = options.nutritionParameters || null;
   }
 
   async loadPets(userId) {
@@ -47,10 +56,12 @@ class OnboardingRecommendationRepository {
     const pets = await this.resolvePets(userId, petsOverride);
     const annotated = await this.annotatePets(userId, market, pets);
     const energies = await this.energiesFor(market, pets, annotated);
+    const parameterSet = await publishedParametersFor(this.nutritionParameters);
     const recommendations = pets.map((pet, index) => buildForPet(
       pet,
       energies[index] ? { nem_kcal_kg: energies[index] } : null,
-      market.locale
+      market.locale,
+      parameterSet.parameters
     ));
     const planPackaging = await planPackagingFor(this.productsRepository, market.country);
     const simplified = buildSimplifiedRecommendation(recommendations, market, planPackaging);
@@ -62,7 +73,9 @@ class OnboardingRecommendationRepository {
       recommendations,
       packaging,
       simplified,
-      version: 'v1'
+      version: 'v1',
+      // The plan selection keeps it (validated_with), so a subscription records the set that sized it.
+      nutrition_parameter_set_id: parameterSet.id
     };
   }
 }
@@ -119,6 +132,7 @@ OnboardingRecommendationRepository.prototype.annotateLifeStages = function annot
 };
 
 module.exports = {
+  publishedParametersFor,
   planPackagingFor,
   OnboardingRecommendationRepository
 };

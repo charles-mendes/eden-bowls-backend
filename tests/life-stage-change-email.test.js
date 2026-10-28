@@ -106,7 +106,8 @@ function setup({ pets, rows, usRows = [], sentAt = '2026-10-18T12:00:00Z', usSen
     deliveriesService,
     petsRepository,
     mailer: mailer || fakeMailer,
-    ...(enabled ? { enabled } : {}),
+    // automated_email_settings read at each run; `enabled` stays live, as a row saved in the admin.
+    ...(enabled ? { settings: { forMarket: jest.fn(async (market) => ({ lifeStageChangeEnabled: enabled[market] !== false })) } } : {}),
     ...(logger ? { logger } : {}),
     now
   });
@@ -263,7 +264,7 @@ describe('stage-change email job (2.12)', () => {
       expect(summary.BR).toEqual({ skipped: 'paused' });
       expect(sent).toHaveLength(0);
       expect(notices.rows).toEqual(before);
-      expect(log.warn).toHaveBeenCalledWith({ market: 'BR' }, 'Stage-change email paused in this market (LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR=false).');
+      expect(log.warn).toHaveBeenCalledWith({ market: 'BR' }, 'Stage-change email paused in this market (Configurações > E-mails automáticos).');
       expect(service.announcementsRepository.findMarket).not.toHaveBeenCalledWith('BR');
       expect(service.ledgerRepository.listDeliverableByAccount).not.toHaveBeenCalledWith('br');
     });
@@ -284,7 +285,7 @@ describe('stage-change email job (2.12)', () => {
       expect(sent.map((item) => item.petId)).toEqual(['p-max']);
     });
 
-    test('turned on again before the cutoff: the next run sends once with that cutoff', async () => {
+    test('Pause without restart: turned on again before the cutoff, the next run sends once with that cutoff', async () => {
       const enabled = { BR: false, US: true };
       const { service, clock, sent, noticesService } = setup({ pets: [thor], rows: [ledgerRow(1, ['p-thor'])], enabled, logger: logger() });
       await noticesService.reportForUser(7, [ledgerRow(1, ['p-thor'])]);

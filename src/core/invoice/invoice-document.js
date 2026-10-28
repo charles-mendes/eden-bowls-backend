@@ -1,7 +1,7 @@
 const { DateTime } = require('luxon');
 const { parseJsonColumn } = require('../stripe-subscription-map');
 const { formatPackSizeLabel } = require('../plan-catalog-pricing');
-const { INVOICE_COPY, INVOICE_ISSUERS, FLAVOR_RECIPE_LABELS } = require('./invoice-copy');
+const { INVOICE_COPY, FLAVOR_RECIPE_LABELS } = require('./invoice-copy');
 
 const ZONES = { 'pt-BR': 'America/Sao_Paulo', 'en-US': 'America/New_York' };
 const COUNTRY_NAMES = {
@@ -198,15 +198,17 @@ function buildInvoiceDocument({
   ledger = {},
   customer = {},
   variants = new Map(),
-  shippingProductIds = []
+  shippingProductIds = [],
+  issuer
 }) {
   if (!invoice || !invoice.id) throw new Error('A Stripe invoice is required to build the document.');
+  // The issuer is the copy the invoice stored when it got its number (issuer_snapshot), never the current profile.
+  if (!issuer || !issuer.line) throw new Error('The issuer snapshot of the invoice is required to build the document.');
   const ledgerAddress = parseJsonColumn(ledger.address) || null;
   const fallbackAddress = stripeAddress(invoice.customer_shipping) || stripeAddress({ address: invoice.customer_address });
   const shipTo = ledgerAddress && pick(ledgerAddress.city, ledgerAddress.zipcode) ? ledgerAddress : fallbackAddress || {};
   const locale = invoiceLocale(stripeAccount, shipTo);
   const copy = INVOICE_COPY[locale];
-  const issuer = INVOICE_ISSUERS[locale];
   const country = locale === 'pt-BR' ? 'BR' : 'US';
   const currency = String(invoice.currency || (locale === 'pt-BR' ? 'brl' : 'usd')).toLowerCase();
   const money = (value) => formatInvoiceMoney(value, currency, locale);

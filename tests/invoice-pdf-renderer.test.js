@@ -9,7 +9,8 @@ function model(locale, invoiceOverrides = {}) {
     invoiceNumber: 'EB-2026-000418',
     stripeAccount: sample.stripeAccount,
     ledger: sample.ledger,
-    variants: sample.variants
+    variants: sample.variants,
+    issuer: sample.issuer
   });
 }
 

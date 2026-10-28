@@ -1,29 +1,25 @@
-// Company name and postal address shown in marketing emails, per market, from configuration:
-// MAIL_COMPANY_<BR|US>_NAME, _TAX_ID, _STREET, _COMPLEMENT, _CITY, _STATE, _POSTAL_CODE, _COUNTRY.
-const FIELDS = {
-  name: 'NAME',
-  taxId: 'TAX_ID',
-  street: 'STREET',
-  complement: 'COMPLEMENT',
-  city: 'CITY',
-  state: 'STATE',
-  postalCode: 'POSTAL_CODE',
-  country: 'COUNTRY'
-};
-const REQUIRED = ['name', 'street'];
+// Company name and postal address shown in marketing emails, per market, from the company profile
+// (company_profiles, company-profile).
+const REQUIRED = { name: 'legal_name', street: 'street' };
 
-function envKey(market, field) {
-  return `MAIL_COMPANY_${String(market || '').toUpperCase()}_${FIELDS[field]}`;
+function companyAddressFromProfile(profile = {}) {
+  const text = (value) => String(value == null ? '' : value).trim();
+  return {
+    name: text(profile.legalName),
+    taxId: text(profile.taxId),
+    street: text(profile.street),
+    complement: text(profile.complement),
+    city: text(profile.city),
+    state: text(profile.state),
+    postalCode: text(profile.postalCode),
+    country: text(profile.country)
+  };
 }
 
-function companyAddressFromEnv(market, env = process.env) {
-  return Object.fromEntries(Object.keys(FIELDS).map((field) => [field, String(env[envKey(market, field)] || '').trim()]));
-}
-
-// Settings a real send needs and that are empty, by variable name.
-function missingCompanyAddress(market, env = process.env) {
-  const address = companyAddressFromEnv(market, env);
-  return REQUIRED.filter((field) => !address[field]).map((field) => envKey(market, field));
+// Profile fields a real send needs and that are empty.
+function missingCompanyAddress(profile = {}) {
+  const address = companyAddressFromProfile(profile);
+  return Object.entries(REQUIRED).filter(([field]) => !address[field]).map(([, name]) => name);
 }
 
 // BR: "Empresa · CNPJ 00.000.000/0000-00 · Rua X, 94, Bairro, Curitiba – PR, CEP 82950-130".
@@ -42,7 +38,7 @@ function formatCompanyAddress(market, address = {}) {
 }
 
 module.exports = {
-  companyAddressFromEnv,
+  companyAddressFromProfile,
   formatCompanyAddress,
   missingCompanyAddress
 };

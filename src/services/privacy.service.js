@@ -1,6 +1,5 @@
 const crypto = require('crypto');
 const { HttpError } = require('../core/http-error');
-const { LEGAL_PRIVACY_VERSION, LEGAL_TERMS_VERSION } = require('../core/legal-documents');
 const {
   dueAtForMarket,
   hashIp,
@@ -64,7 +63,8 @@ class PrivacyService {
     this.mailer = options.mailer || null;
     this.publicBaseUrl = String(options.publicBaseUrl || '').replace(/\/+$/, '');
     this.ipPepper = String(options.ipPepper || '');
-    this.logger = options.logger || { info() {}, error() {} };
+    this.logger = options.logger || { info() {}, warn() {}, error() {} };
+    this.legalDocuments = options.legalDocuments || null;
     this.nowProvider = typeof options.nowProvider === 'function' ? options.nowProvider : () => new Date();
   }
 
@@ -100,13 +100,31 @@ class PrivacyService {
     });
   }
 
-  async recordOtpConsents({ userId, marketingOptIn, privacyVersion, termsVersion, ipHash, userAgent }) {
+  // The version a consent records (legal-documents): the one the client sent when it is published in the
+  // market, else the current one. An unknown version never blocks the sign-in; it is logged.
+  async consentVersion(market, kind, sent) {
+    const version = String(sent || '').trim();
+    if (!this.legalDocuments) {
+      return version || null;
+    }
+    if (version && await this.legalDocuments.isPublished(market, kind, version)) {
+      return version;
+    }
+    const current = await this.legalDocuments.currentVersion(market, kind);
+    if (version && typeof this.logger.warn === 'function') {
+      this.logger.warn({ market, kind, received: version, recorded: current }, 'consent with an unknown legal version; recording the current one');
+    }
+    return current;
+  }
+
+  async recordOtpConsents({ userId, marketingOptIn, privacyVersion, termsVersion, market, ipHash, userAgent }) {
     const context = { ipHash: ipHash || '', userAgent: userAgent || '' };
+    const legalMarket = String(market || '').toUpperCase() === 'BR' ? 'BR' : 'US';
     await this.recordConsent({
       userId,
       consentType: 'privacy_policy',
       status: 'granted',
-      documentVersion: privacyVersion || LEGAL_PRIVACY_VERSION,
+      documentVersion: await this.consentVersion(legalMarket, 'privacy', privacyVersion),
       source: 'otp_verify',
       ...context
     });
@@ -114,7 +132,7 @@ class PrivacyService {
       userId,
       consentType: 'terms',
       status: 'granted',
-      documentVersion: termsVersion || LEGAL_TERMS_VERSION,
+      documentVersion: await this.consentVersion(legalMarket, 'terms', termsVersion),
       source: 'otp_verify',
       ...context
     });

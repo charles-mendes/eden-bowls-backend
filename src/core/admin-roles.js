@@ -3,7 +3,7 @@ const ADMIN_ROLES_META_KEY = '_eden_admin_roles';
 const OPERATIONAL_ROLES = ['admin', 'operator', 'veterinarian', 'readonly'];
 
 const ROLE_PERMISSIONS = {
-  veterinarian: ['nutrition.simulate'],
+  veterinarian: ['nutrition.simulate', 'nutrition.settings.write'],
   readonly: [
     'nutrition.simulate',
     'onboarding.read',
@@ -14,7 +14,8 @@ const ROLE_PERMISSIONS = {
     'users.read',
     'feedbacks.read',
     'privacy.requests.read',
-    'production.read'
+    'production.read',
+    'settings.read'
   ],
   operator: [
     'nutrition.simulate',
@@ -36,11 +37,22 @@ const ROLE_PERMISSIONS = {
     'privacy.requests.read',
     'privacy.requests.write',
     'production.read',
-    'production.write'
+    'production.write',
+    'settings.read',
+    'settings.email.write'
   ]
 };
 
-ROLE_PERMISSIONS.admin = [...ROLE_PERMISSIONS.operator, 'users.roles.write', 'users.access.write', 'system.health.read'];
+// Nutrition settings are clinical: the operator does not get them. Company data and legal texts are admin only.
+ROLE_PERMISSIONS.admin = [
+  ...ROLE_PERMISSIONS.operator,
+  'users.roles.write',
+  'users.access.write',
+  'system.health.read',
+  'nutrition.settings.write',
+  'settings.company.write',
+  'legal.write'
+];
 
 const VALID_ROLES = new Set(['admin', 'operator', 'veterinarian', 'readonly', 'customer']);
 

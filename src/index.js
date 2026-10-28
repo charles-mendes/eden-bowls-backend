@@ -111,6 +111,8 @@ const { StripeFirstPurchasePromosRepository } = require('./infrastructure/reposi
 const { StripeCouponService } = require('./services/stripe-coupon.service');
 const { AdminIdentityService } = require('./services/admin-identity.service');
 const { AdminNutritionService } = require('./services/admin-nutrition.service');
+const { NutritionParameterSetsRepository } = require('./infrastructure/repositories/nutrition-parameter-sets.repository');
+const { NutritionParametersService } = require('./services/nutrition-parameters.service');
 const { RecipeEnergyService } = require('./services/recipe-energy.service');
 const { AdminShippingService } = require('./services/admin-shipping.service');
 const { ShippingHeadquartersService } = require('./services/shipping-headquarters.service');
@@ -121,6 +123,14 @@ const { AdminCatalogService } = require('./services/admin-catalog.service');
 const { RecipeContentService } = require('./services/recipe-content.service');
 const { RecipeContentRepository } = require('./infrastructure/repositories/recipe-content.repository');
 const { LifeStageService } = require('./services/life-stage.service');
+const { LifeStageSettingsService } = require('./services/life-stage-settings.service');
+const { CompanyProfilesRepository } = require('./infrastructure/repositories/company-profiles.repository');
+const { CompanyProfileService } = require('./services/company-profile.service');
+const { startCompanyDirectory } = require('./core/email/company-directory');
+const { LegalDocumentsRepository } = require('./infrastructure/repositories/legal-documents.repository');
+const { LegalDocumentsService } = require('./services/legal-documents.service');
+const { AutomatedEmailSettingsRepository } = require('./infrastructure/repositories/automated-email-settings.repository');
+const { AutomatedEmailSettingsService } = require('./services/automated-email-settings.service');
 const { LifeStageChangeEmailService } = require('./services/life-stage-change-email.service');
 const { LifeStageNoticesService } = require('./services/life-stage-notices.service');
 const { LifeStageAnnouncementsRepository } = require('./infrastructure/repositories/life-stage-announcements.repository');
@@ -286,6 +296,8 @@ async function bootstrap() {
   const onboardingAddressAutocompleteService = new OnboardingAddressAutocompleteService(onboardingAddressAutocompleteRepository);
   const stripeFirstPurchasePromosRepository = new StripeFirstPurchasePromosRepository(dataSource);
   const firstPurchaseTermDiscountsRepository = new FirstPurchaseTermDiscountsRepository(dataSource);
+  // Published nutrition parameter set, cached 60 s in each process (the API and the cron see a publication within it).
+  const nutritionParameterSetsRepository = new NutritionParameterSetsRepository(dataSource);
   const stripeCouponService = new StripeCouponService(stripeFirstPurchasePromosRepository, {
     termDiscounts: firstPurchaseTermDiscountsRepository,
     auditRepository: new AdminAuditRepository(dataSource),
@@ -328,8 +340,9 @@ async function bootstrap() {
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
     termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
   });
+  const lifeStageLimitsRepository = new LifeStageLimitsRepository(dataSource);
   const lifeStageService = new LifeStageService({
-    repository: new LifeStageLimitsRepository(dataSource),
+    repository: lifeStageLimitsRepository,
     recipeLinesRepository
   });
   const petLifeStageNoticesRepository = new PetLifeStageNoticesRepository(dataSource);
@@ -354,7 +367,8 @@ async function bootstrap() {
   const onboardingRecommendationRepository = new OnboardingRecommendationRepository(onboardingPetsRepository, {
     lifeStageService,
     recipeEnergyService,
-    productsRepository
+    productsRepository,
+    nutritionParameters: nutritionParameterSetsRepository
   });
   const onboardingRecommendationService = new OnboardingRecommendationService(onboardingRecommendationRepository);
   const onboardingPlanPreviewRepository = new OnboardingPlanPreviewRepository({
@@ -398,6 +412,12 @@ async function bootstrap() {
   });
   const stripeWebhookEventsRepository = new StripeWebhookEventsRepository(dataSource);
   const subscriptionMailClaimsRepository = new SubscriptionMailClaimsRepository(dataSource);
+  // Pause and limits of the automated life-stage emails, read by the jobs at each run.
+  const automatedEmailSettingsRepository = new AutomatedEmailSettingsRepository(dataSource);
+  // Company data per market printed on invoices and emails (company-profile).
+  const companyProfilesRepository = new CompanyProfilesRepository(dataSource);
+  // The email footer reads the support email from here (the API and the cron mode).
+  startCompanyDirectory(companyProfilesRepository, { logger });
   const transactionalMailer = createTransactionalMailer({
     logger,
     otpMailer,
@@ -416,7 +436,7 @@ async function bootstrap() {
     deliveriesService: customerDeliveriesService,
     petsRepository: onboardingPetsRepository,
     mailer: transactionalMailer,
-    enabled: { BR: env.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR, US: env.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US },
+    settings: automatedEmailSettingsRepository,
     logger
   });
   // Eden Bowls invoice PDFs (EB-YYYY-NNNNNN): issued on invoice.paid, kept in INVOICE_PDF_DIR, emailed to the customer.
@@ -426,6 +446,7 @@ async function bootstrap() {
     renderPdf: renderInvoicePdf,
     mailer: otpMailer,
     ledgerRepository: subscriptionLedgerRepository,
+    companyProfiles: companyProfilesRepository,
     stripeAccounts,
     stripeBilling,
     storeAppUrl: env.STORE_APP_URL,
@@ -562,8 +583,19 @@ async function bootstrap() {
     usersTableName: env.WP_USERS_TABLE_NAME,
     usermetaTableName: env.WP_USERMETA_TABLE_NAME
   });
+  const automatedEmailSettingsService = new AutomatedEmailSettingsService({
+    repository: automatedEmailSettingsRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
+    dataSource
+  });
+  const legalDocumentsService = new LegalDocumentsService({
+    repository: new LegalDocumentsRepository(dataSource),
+    auditRepository: new AdminAuditRepository(dataSource),
+    dataSource
+  });
   const privacyService = new PrivacyService({
     repository: privacyRepository,
+    legalDocuments: legalDocumentsService,
     profileService,
     profileRepository,
     quotesRepository: onboardingQuotesRepository,
@@ -616,7 +648,23 @@ async function bootstrap() {
     authService,
     adminEmails: env.ADMIN_EMAILS
   });
-  const adminNutritionService = new AdminNutritionService({ recipeEnergyService });
+  const nutritionParametersService = new NutritionParametersService({
+    repository: nutritionParameterSetsRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
+    dataSource
+  });
+  const adminNutritionService = new AdminNutritionService({ recipeEnergyService, nutritionParametersService });
+  const companyProfileService = new CompanyProfileService({
+    repository: companyProfilesRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
+    dataSource
+  });
+  // Same repository as lifeStageService, so a save clears the cache this process evaluates with.
+  const lifeStageSettingsService = new LifeStageSettingsService({
+    repository: lifeStageLimitsRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
+    dataSource
+  });
   const adminShippingService = new AdminShippingService({
     shippingService,
     repository: shippingSettingsRepository,
@@ -638,7 +686,8 @@ async function bootstrap() {
     ledgerRepository: subscriptionLedgerRepository,
     lifeStageService,
     recipeEnergyService,
-    productsRepository
+    productsRepository,
+    nutritionParameters: nutritionParameterSetsRepository
   });
   const adminBillingService = new AdminBillingService({
     ledgerRepository: subscriptionLedgerRepository,
@@ -779,6 +828,11 @@ async function bootstrap() {
     privacyService,
     adminIdentityService,
     adminNutritionService,
+    nutritionParametersService,
+    lifeStageSettingsService,
+    companyProfileService,
+    legalDocumentsService,
+    automatedEmailSettingsService,
     adminShippingService,
     adminOnboardingService,
     adminBillingService,

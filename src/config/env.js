@@ -11,8 +11,6 @@ const rawEnvSchema = z.object({
   MODE: z.enum(['all', 'http', 'cron', 'worker']).default('http'),
   ENABLE_BACKGROUND_JOBS: z.string().optional(),
   PRIME_ENABLE_UPDATE: z.string().optional(),
-  LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR: z.string().optional(),
-  LIFE_STAGE_CHANGE_EMAIL_ENABLED_US: z.string().optional(),
   LOG_LEVEL: z.string().optional(),
   CORS_ORIGINS: z.string().default('http://localhost:5173,http://localhost:5174,http://localhost:5175'),
   ADMIN_EMAILS: z.string().optional(),
@@ -291,8 +289,6 @@ function parseEnv(source = process.env) {
     MODE: rawEnv.MODE,
     ENABLE_BACKGROUND_JOBS: toBoolean(rawEnv.ENABLE_BACKGROUND_JOBS),
     PRIME_ENABLE_UPDATE: toBoolean(rawEnv.PRIME_ENABLE_UPDATE),
-    LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR: toBoolean(rawEnv.LIFE_STAGE_CHANGE_EMAIL_ENABLED_BR, true),
-    LIFE_STAGE_CHANGE_EMAIL_ENABLED_US: toBoolean(rawEnv.LIFE_STAGE_CHANGE_EMAIL_ENABLED_US, true),
     LOG_LEVEL: rawEnv.LOG_LEVEL || (rawEnv.NODE_ENV === 'development' ? 'debug' : 'info'),
     CORS_ORIGINS: corsOrigins,
     ADMIN_EMAILS: String(rawEnv.ADMIN_EMAILS || '')

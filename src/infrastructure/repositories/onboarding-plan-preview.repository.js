@@ -140,6 +140,7 @@ class OnboardingPlanPreviewRepository {
       currency: market.currency,
       validated_with: {
         recommendation_version: recommendation && recommendation.version ? recommendation.version : null,
+        nutrition_parameter_set_id: recommendation && recommendation.nutrition_parameter_set_id != null ? recommendation.nutrition_parameter_set_id : null,
         validated_at: new Date().toISOString()
       },
       updated_at: new Date().toISOString()

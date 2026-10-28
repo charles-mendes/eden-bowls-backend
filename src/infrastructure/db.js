@@ -67,6 +67,11 @@ const { AddRecipePresentation1700000000045 } = require('./migrations/17000000000
 const { CreateFirstPurchaseTermDiscounts1700000000046 } = require('./migrations/1700000000046-create-first-purchase-term-discounts');
 const { AddUsMaxTransitDays1700000000047 } = require('./migrations/1700000000047-add-us-max-transit-days');
 const { AddRecipePresentationTag1700000000048 } = require('./migrations/1700000000048-add-recipe-presentation-tag');
+const { CreateNutritionParameterSets1700000000049 } = require('./migrations/1700000000049-create-nutrition-parameter-sets');
+const { CreateCompanyProfiles1700000000050 } = require('./migrations/1700000000050-create-company-profiles');
+const { AddInvoiceIssuerSnapshot1700000000051 } = require('./migrations/1700000000051-add-invoice-issuer-snapshot');
+const { CreateLegalDocuments1700000000052 } = require('./migrations/1700000000052-create-legal-documents');
+const { CreateAutomatedEmailSettings1700000000053 } = require('./migrations/1700000000053-create-automated-email-settings');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
@@ -156,7 +161,12 @@ function buildDataSourceOptions(env) {
       AddRecipePresentation1700000000045,
       CreateFirstPurchaseTermDiscounts1700000000046,
       AddUsMaxTransitDays1700000000047,
-      AddRecipePresentationTag1700000000048
+      AddRecipePresentationTag1700000000048,
+      CreateNutritionParameterSets1700000000049,
+      CreateCompanyProfiles1700000000050,
+      AddInvoiceIssuerSnapshot1700000000051,
+      CreateLegalDocuments1700000000052,
+      CreateAutomatedEmailSettings1700000000053
     ],
     synchronize: false,
     logging: false,

@@ -13,7 +13,9 @@ The approved layout is `docs-new/FEATURE_CUSTOMIZED_INVOICE/Eden Bowls - Invoice
 
 | Piece | File |
 | --- | --- |
-| Every fixed text, EN and PT, issuer line, CNPJ, support email, recipe names | `src/core/invoice/invoice-copy.js` |
+| Every fixed text, EN and PT, recipe names, and `issuerFor(locale, profile)` (how the issuer line is composed) | `src/core/invoice/invoice-copy.js` |
+| Issuer data per market: legal name, CNPJ, city, state, support email (edited in the admin, Configurações > Empresa) | table `company_profiles`, `src/infrastructure/repositories/company-profiles.repository.js`, `src/core/company-profile.js` (seed and validation) |
+| The issuer each invoice printed, frozen when it got its number | column `customer_invoices.issuer_snapshot` (migration `1700000000051-add-invoice-issuer-snapshot.js`) |
 | Stripe invoice + ledger → strings ready to print (pure, no I/O) | `src/core/invoice/invoice-document.js` |
 | Invoice number `EB-YYYY-NNNNNN` and its year | `src/core/invoice/invoice-number.js` |
 | Approved sample data (Ana Mendes, Luna, $144.50) | `src/core/invoice/preview-fixtures.js` |
@@ -32,6 +34,7 @@ The store (`eden-bowls`) shows no invoice to the customer. No screen there asks 
 
 ## Rules that keep the pattern
 
+0. **The issuer comes from the snapshot, never from a constant.** When an invoice receives its number, `CustomerInvoicesService` composes `issuerFor(locale, company_profiles[market])` (BR: `Eden Bowls · CNPJ <tax id> · <city>, <state>`; US: `Eden Bowls · <city>, <state>, USA`) and stores it in `issuer_snapshot`. `buildInvoiceDocument` prints only the `issuer` it is given and throws without one; writing the PDF again (missing file, open → paid) uses the stored snapshot, so a later profile change never reaches an invoice already numbered.
 1. **Texts only in `invoice-copy.js`, always in both languages.** The renderer never holds a sentence. A new label needs an `en-US` and a `pt-BR` entry, with labels in CAPS where the approved layout uses CAPS.
 2. **The renderer draws, the document decides.** Formatting money, dates, addresses, which rows exist: `invoice-document.js`. Positions, sizes, colors: `invoice-pdf-renderer.js`. Keep that split; it is what lets tests check every printed string without opening a PDF.
 3. **Language and paper follow the market.** Stripe account `br` or a Brazilian address → `pt-BR`, A4, `R$ 1.234,50`, `1 de setembro de 2026`, timezone America/Sao_Paulo. Otherwise → `en-US`, Letter, `$1,234.50`, `September 1, 2026`, America/New_York.
@@ -71,4 +74,4 @@ Read `references/layout.md` before moving anything. In short: paper `#FFFBF4`, i
 - **Pet names in Portuguese** print without an article ("alimentar Luna"), because the API does not know the pet's gender. The approved sample says "a Luna".
 - **Stripe's own emails.** The Stripe Dashboard settings "Email finalized invoices" and "Successful payments" (receipts) must stay off on both accounts (US and BR), or the customer gets a second, Stripe-branded invoice.
 - **The Brazilian "Fatura" is not a nota fiscal.** It does not replace an NF-e; do not print tax-document wording on it.
-- Issuer data (Boca Raton address, CNPJ 65.291.985/0001-05, Curitiba) is fixed in `invoice-copy.js`; a change of company data is a change there plus a new approved PDF.
+- **Issuer data is in `company_profiles`, not in code.** The deploy seeded the approved values (Boca Raton, FL; CNPJ 65.291.985/0001-05, Curitiba, PR; hello@edenbowls.com), and an admin changes them in the panel. Only the composition of the line lives in `issuerFor`; changing that composition changes the approved layout and needs a new approved PDF. Do not "fix" an old invoice by editing its `issuer_snapshot`: it is what that PDF printed.
