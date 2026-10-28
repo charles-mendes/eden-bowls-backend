@@ -7,7 +7,7 @@ Os e-mails transacionais saem com a casca e a redação da v3 da designer, em po
 ## Requirements
 
 ### Requirement: Shared designer shell
-Every transactional, OTP, invite, and privacy email SHALL use one HTML shell: a 600px table, dark header with the circular logo at 96px, parchment body, and a footer with the horizontal logo at 132 by 47 pixels. Sent mail MUST use absolute https image sources when an https asset base URL is configured. The shell MUST strip trailing slashes from that base before joining the path, so `https://api.example.com/` and `https://api.example.com` produce the same src. Each logo `img` MUST have `alt="Eden Bowls"`. When the base is missing, empty, or not https, the shell MUST omit both logo `img` tags and keep the Eden Bowls name as readable text. Sent mail MUST NOT use a relative image src. The footer MUST include the support address hello@edenbowls.com and the designer legal line for that locale. The hidden preheader MUST be the designer preheader for that letter. Fonts MUST declare Tenor Sans and Quicksand with Georgia and Segoe UI fallbacks. The system MUST NOT embed SVG or data-URI images.
+Every transactional, OTP, invite, and privacy email SHALL use one HTML shell: a 600px table, dark header with the circular logo at 96px, parchment body, and a footer with the horizontal logo at 132 by 47 pixels. Sent mail MUST use absolute https image sources when an https asset base URL is configured. The shell MUST strip trailing slashes from that base before joining the path, so `https://api.example.com/` and `https://api.example.com` produce the same src. Each logo `img` MUST have `alt="Eden Bowls"`. When the base is missing, empty, or not https, the shell MUST omit both logo `img` tags and keep the Eden Bowls name as readable text. Sent mail MUST NOT use a relative image src. The footer MUST include the support email of the letter's market company profile (hello@edenbowls.com in both markets on deploy) and the designer legal line for that locale. The hidden preheader MUST be the designer preheader for that letter. Fonts MUST declare Tenor Sans and Quicksand with Georgia and Segoe UI fallbacks. The system MUST NOT embed SVG or data-URI images.
 
 #### Scenario: Asset base is configured
 - **WHEN** a sent email is rendered with asset base `https://api.example.com/`
@@ -16,6 +16,10 @@ Every transactional, OTP, invite, and privacy email SHALL use one HTML shell: a 
 #### Scenario: Asset base is missing or not https
 - **WHEN** a sent email is rendered with an empty base, or with an http base
 - **THEN** the HTML contains no `img` tag and the Eden Bowls name remains readable as text
+
+#### Scenario: Support email follows the market profile
+- **WHEN** an admin changes the US support email to support@edenbowls.com and a US renewal email is sent
+- **THEN** the footer shows support@edenbowls.com, and BR emails still show hello@edenbowls.com
 
 ### Requirement: Locale copy
 The system SHALL render the Portuguese copy from `new-designer-emails/pt` when the locale starts with `pt`, and the English copy from `new-designer-emails/en` otherwise. Subjects MUST match the designer `<title>`. The pet name is substituted only in order confirmed, payment failed, shipped, renewal, paused, resumed, cancelled, and plan changed. Admin new subscription, OTP, invite, password reset, and privacy subjects MUST stay fixed and MUST NOT insert a pet or recipient name. The greeting in the body uses the recipient first name when the designer sentence greets the tutor or the invited person. Sample names in the designer files (Ana, Luna, Lia) MUST NOT be hardcoded in sent mail.
