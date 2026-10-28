@@ -3,6 +3,8 @@ const { TableColumn } = require('typeorm');
 const LEDGER = 'stripe_subscriptions';
 const INVOICES = 'customer_invoices';
 const CHARGED = 'subscription_charged_invoices';
+// The ledger and the invoice tables can have different default collations; compare the ids under one.
+const SAME_ID = (left, right) => `${left} COLLATE utf8mb4_unicode_ci = ${right} COLLATE utf8mb4_unicode_ci`;
 
 // activated_at is the first time a subscription was billable; canceled_at is when it really ended
 // (Stripe ended_at, not the cancellation request). Reports count new, canceled and churn by them.
@@ -39,10 +41,10 @@ async function backfill(queryRunner) {
   const paidSources = [];
   if (await queryRunner.hasTable(INVOICES)) {
     paidSources.push(`EXISTS (SELECT 1 FROM \`${INVOICES}\` ci
-      WHERE ci.stripe_subscription_id = s.stripe_subscription_id AND ci.invoice_status = 'paid')`);
+      WHERE ${SAME_ID('ci.stripe_subscription_id', 's.stripe_subscription_id')} AND ci.invoice_status = 'paid')`);
   }
   if (await queryRunner.hasTable(CHARGED)) {
-    paidSources.push(`EXISTS (SELECT 1 FROM \`${CHARGED}\` sc WHERE sc.stripe_subscription_id = s.stripe_subscription_id)`);
+    paidSources.push(`EXISTS (SELECT 1 FROM \`${CHARGED}\` sc WHERE ${SAME_ID('sc.stripe_subscription_id', 's.stripe_subscription_id')})`);
   }
   if (paidSources.length) {
     await queryRunner.query(
