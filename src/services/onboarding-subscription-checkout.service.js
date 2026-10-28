@@ -8,10 +8,7 @@ const { resolveMarket } = require('../core/market');
 const { assertVerifiedDeliveryArea } = require('../core/shipping-quote-token');
 const { resolveStripeAccountFromCountry } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
-const {
-  applyFirstPurchaseDiscount,
-  expectedPercentForTerm
-} = require('../core/first-purchase-discount');
+const { applyFirstPurchaseDiscount } = require('../core/first-purchase-discount');
 const { buildPetsSnapshot, extractSubscriptionPeriod } = require('../core/stripe-subscription-map');
 const {
   buildCheckoutFingerprint,
@@ -126,6 +123,8 @@ class OnboardingSubscriptionCheckoutService {
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.petsSyncRepository = options.petsSyncRepository || null;
     this.shippingQuoteSigner = options.shippingQuoteSigner || null;
+    this.lifeStageService = options.lifeStageService || null;
+    this.petsRepository = options.petsRepository || null;
   }
 
   async checkout({ userId, payload = {} }) {
@@ -169,6 +168,15 @@ class OnboardingSubscriptionCheckoutService {
     assertVerifiedDeliveryArea(this.shippingQuoteSigner, deliveryMarket, context.shipping || {}, {
       zipcode: deliveryAddress.zipcode
     });
+    // A saved plan may predate a stage change or a publication: check each pet's line before any charge.
+    if (this.lifeStageService) {
+      await this.lifeStageService.assertPlanWithinLines({
+        planSelection: context.planSelection,
+        market: deliveryMarket,
+        userId,
+        petsRepository: this.petsRepository
+      });
+    }
 
     const eligibility = await this.discountEligibilityRepository.getEligibility(userId);
     const planSelection = context.planSelection || (
@@ -184,9 +192,8 @@ class OnboardingSubscriptionCheckoutService {
       termMonths,
       account: stripeAccount
     });
-    const appliedPercent = promotion
-      ? Number(promotion.discount_percent)
-      : (eligible ? expectedPercentForTerm(termMonths) : 0);
+    // The coupon service resolves a promotion for every eligible checkout, with the account's stored percent.
+    const appliedPercent = promotion ? Number(promotion.discount_percent) : 0;
     const catalogPricing = applyDiscountToCatalogPricing(
       planSelection && planSelection.catalog_pricing,
       appliedPercent

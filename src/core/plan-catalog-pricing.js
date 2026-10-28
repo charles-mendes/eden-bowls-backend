@@ -62,6 +62,16 @@ function parseWeightToGrams(label) {
   return amount;
 }
 
+// Pack size in grams for the recommendation (plan-packaging). An ounce label is rounded to 10 g, since the
+// catalog writes 300 g as 10.6oz and 500 g as 17.6oz.
+function packGramsFromWeight(label) {
+  const grams = parseWeightToGrams(label);
+  if (!(grams > 0)) {
+    return 0;
+  }
+  return /oz\s*$/i.test(String(label).trim()) ? Math.round(grams / 10) * 10 : Math.round(grams);
+}
+
 function formatPackSizeLabel(grams, country) {
   const sizeGrams = Math.max(0, Number(grams || 0));
 
@@ -356,6 +366,7 @@ module.exports = {
   formatPackSizeLabel,
   indexFlavorVariations,
   listFallbackCatalogItems,
+  packGramsFromWeight,
   parseWeightToGrams,
   roundMoney,
   sanitizeFlavorSlug,

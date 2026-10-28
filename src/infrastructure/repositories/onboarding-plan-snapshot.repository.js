@@ -1,4 +1,4 @@
-const { PLAN_TERMS } = require('../../core/first-purchase-discount');
+const { PLAN_TERMS, planTermsFor } = require('../../core/first-purchase-discount');
 const {
   allowFlavorCatalogFallback,
   flavorOptionsFromCatalog,
@@ -7,11 +7,13 @@ const {
 const { HttpError } = require('../../core/http-error');
 const { MARKETS, resolveMarket } = require('../../core/market');
 const { consumptionLabels } = require('../../core/simplified-consumption');
+const { stripeAccountFromMarket } = require('../../core/stripe-account');
 
 class OnboardingPlanSnapshotRepository {
   constructor(options = {}) {
     this.recommendationRepository = options.recommendationRepository || null;
     this.productsRepository = options.productsRepository || null;
+    this.termDiscounts = options.termDiscounts || null;
     this.allowCatalogFallback = options.allowCatalogFallback;
   }
 
@@ -48,8 +50,16 @@ class OnboardingPlanSnapshotRepository {
       },
       pets,
       flavor_options: await this.resolveFlavorOptions(market),
-      plan_terms: PLAN_TERMS
+      plan_terms: await this.planTerms(market)
     };
+  }
+
+  // Terms with the stored percents of the market's Stripe account (first-purchase-discount).
+  async planTerms(market) {
+    if (!this.termDiscounts || typeof this.termDiscounts.percentsFor !== 'function') {
+      return planTermsFor();
+    }
+    return planTermsFor(await this.termDiscounts.percentsFor(stripeAccountFromMarket(market)));
   }
 
   publicFlavorOptions(options) {

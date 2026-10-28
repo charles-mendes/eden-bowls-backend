@@ -7,6 +7,9 @@ const {
 const { PROFILE_MARKET_META_KEY, appendInFilter } = require('../../core/admin-market-scope');
 const { dateOnly } = require('./subscription-production.repository');
 
+// A subscription is activated the first time it reaches a status Stripe bills.
+const BILLABLE_STATUSES = new Set(['active', 'trialing', 'past_due']);
+
 function isMissingTableError(error) {
   const message = String(error && error.message ? error.message : '');
   return Boolean(
@@ -307,6 +310,17 @@ class SubscriptionLedgerRepository {
     return toMysqlDateTime(value);
   }
 
+  // Candidate values only: the upsert keeps the first activation and the first end date it stored.
+  // endedAt is Stripe ended_at (or canceled_at) and only counts once the row is canceled; a cancellation
+  // request with cancel_at_period_end leaves the row active and the date empty.
+  lifecycleDates(status, endedAt) {
+    const now = toMysqlDateTime(new Date());
+    return [
+      BILLABLE_STATUSES.has(status) ? now : null,
+      status === 'canceled' ? (this.periodValue(endedAt) || now) : null
+    ];
+  }
+
   async upsert(input = {}) {
     this.ensureDataSource();
     const subscriptionId = String(input.stripeSubscriptionId || '').trim();
@@ -365,7 +379,8 @@ class SubscriptionLedgerRepository {
       jsonOrNull(next.address) || null,
       next.subscriptionTermMonths == null ? null : Number(next.subscriptionTermMonths),
       next.editPaymentPending ? 1 : 0,
-      jsonOrNull(next.editPending) || null
+      jsonOrNull(next.editPending) || null,
+      ...this.lifecycleDates(next.status, input.endedAt)
     ];
 
     await this.dataSource.query(
@@ -374,8 +389,8 @@ class SubscriptionLedgerRepository {
         \`stripe_account\`, \`status\`, \`plan_label\`, \`stripe_price_id\`, \`current_period_start\`, \`current_period_end\`,
         \`cancel_at_period_end\`, \`payment_method_last4\`, \`payment_method_brand\`,
         \`pets_snapshot\`, \`plan_selection\`, \`shipping\`, \`address\`, \`subscription_term_months\`,
-        \`edit_payment_pending\`, \`edit_pending\`
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        \`edit_payment_pending\`, \`edit_pending\`, \`activated_at\`, \`canceled_at\`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         \`user_id\` = VALUES(\`user_id\`),
         \`customer_email\` = VALUES(\`customer_email\`),
@@ -395,7 +410,10 @@ class SubscriptionLedgerRepository {
         \`address\` = VALUES(\`address\`),
         \`subscription_term_months\` = VALUES(\`subscription_term_months\`),
         \`edit_payment_pending\` = VALUES(\`edit_payment_pending\`),
-        \`edit_pending\` = VALUES(\`edit_pending\`)`,
+        \`edit_pending\` = VALUES(\`edit_pending\`),
+        \`activated_at\` = COALESCE(\`activated_at\`, VALUES(\`activated_at\`)),
+        \`canceled_at_approximate\` = IF(VALUES(\`status\`) = 'canceled', \`canceled_at_approximate\`, 0),
+        \`canceled_at\` = IF(VALUES(\`status\`) = 'canceled', COALESCE(\`canceled_at\`, VALUES(\`canceled_at\`)), NULL)`,
       params
     );
 
@@ -605,7 +623,7 @@ class SubscriptionLedgerRepository {
           "SUM(CASE WHEN `status` IN ('active', 'trialing') THEN 1 ELSE 0 END) AS active,",
           "SUM(CASE WHEN `cancel_at_period_end` = 1 AND `status` IN ('active', 'trialing', 'past_due') THEN 1 ELSE 0 END) AS canceling,",
           "SUM(CASE WHEN `status` = 'past_due' THEN 1 ELSE 0 END) AS pastDue,",
-          "SUM(CASE WHEN `status` = 'canceled' AND `updated_at` IS NOT NULL AND `updated_at` >= ? THEN 1 ELSE 0 END) AS canceled30d,",
+          "SUM(CASE WHEN `status` = 'canceled' AND `activated_at` IS NOT NULL AND `canceled_at` >= ? THEN 1 ELSE 0 END) AS canceled30d,",
           "SUM(CASE WHEN `current_period_end` IS NOT NULL AND `current_period_end` > ? AND `current_period_end` <= ? AND `status` IN ('active', 'trialing', 'past_due') THEN 1 ELSE 0 END) AS renewing7d",
           `FROM \`${this.tableName}\``,
           whereSql
@@ -831,6 +849,26 @@ class SubscriptionLedgerRepository {
     }
   }
 
+  // Every queue row of the window, in queue order and without paging: stock demand and coverage need the whole
+  // window, so the committed packs are by construction the ones the queue shows.
+  async listQueueDemandRows(input = {}) {
+    this.ensureDataSource();
+    const { whereSql, params } = this.queueMembership(input);
+
+    try {
+      const rows = await this.dataSource.query(
+        [this.queueSelectSql(), this.queueJoinSql(), whereSql, 'ORDER BY q.due_at ASC, q.id ASC'].join(' '),
+        params
+      );
+      return (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean);
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
   async listQueueMetricRows(input = {}) {
     this.ensureDataSource();
     const { whereSql, params } = this.queueMembership({
@@ -945,6 +983,58 @@ class SubscriptionLedgerRepository {
     } catch (error) {
       if (isMissingTableError(error)) {
         return { variationIds: [], priceIds: [] };
+      }
+      throw error;
+    }
+  }
+
+  // Counts subscriptions still delivering (the production queue statuses) that reference a catalog
+  // variation by id in plan_selection, or by one of its Stripe prices.
+  async countActiveSubscriptionsForCatalog({ variationIds = [], priceIds = [] } = {}) {
+    const variations = [...new Set(variationIds.map((id) => String(id).trim()).filter(Boolean))];
+    const prices = [...new Set(priceIds.map((id) => String(id).trim()).filter((id) => id.startsWith('price_')))];
+    if (!variations.length && !prices.length) {
+      return 0;
+    }
+
+    this.ensureDataSource();
+    const where = [];
+    const params = [];
+    const inList = (column, values) => {
+      where.push(`${column} IN (${values.map(() => '?').join(', ')})`);
+      params.push(...values);
+    };
+    if (prices.length) {
+      inList('s.stripe_price_id', prices);
+      inList('jt.price_id', prices);
+      inList('jt.alt_price', prices);
+    }
+    if (variations.length) {
+      inList('jt.variation_id', variations);
+    }
+
+    try {
+      const rows = await this.dataSource.query(
+        [
+          'SELECT COUNT(DISTINCT s.id) AS total',
+          `FROM \`${this.tableName}\` s`,
+          'LEFT JOIN JSON_TABLE(',
+          'CASE WHEN JSON_VALID(s.plan_selection) THEN s.plan_selection ELSE JSON_OBJECT() END,',
+          "'$.catalog_pricing.line_items[*]' COLUMNS (",
+          "price_id VARCHAR(64) PATH '$.stripe_price_id',",
+          "alt_price VARCHAR(64) PATH '$.price_id',",
+          "variation_id VARCHAR(32) PATH '$.variation_id'",
+          ')',
+          ') jt ON TRUE',
+          "WHERE s.status IN ('active', 'trialing', 'past_due')",
+          `AND (${where.join(' OR ')})`
+        ].join(' '),
+        params
+      );
+      return Number(rows && rows[0] && rows[0].total) || 0;
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return 0;
       }
       throw error;
     }

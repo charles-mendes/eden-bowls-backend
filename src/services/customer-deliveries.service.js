@@ -1,6 +1,5 @@
 const { HttpError } = require('../core/http-error');
 const {
-  MAX_TRANSIT_DAYS_US,
   addCalendarDays,
   addressUnavailable,
   brazilPrepValid,
@@ -627,7 +626,6 @@ module.exports = {
   CustomerDeliveriesService,
   LOCKED_STATUSES,
   STATUS_LABELS,
-  MAX_TRANSIT_DAYS_US,
   buildDeliveryRead,
   keepLaterPreparation,
   offerDates,

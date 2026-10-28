@@ -14,7 +14,9 @@ const createCouponSchema = z.object({
   code: z.string().trim().min(1),
   name: z.string().trim().optional().default(''),
   max_redemptions: z.coerce.number().int().min(0).optional().default(0),
-  assign_first_purchase_slot: z.coerce.boolean().optional().default(true)
+  assign_first_purchase_slot: z.coerce.boolean().optional().default(true),
+  // Checked by the coupon service, which answers 422 invalid_percent_off.
+  percent_off: z.unknown().optional()
 });
 
 function parsePromoMappingInput(input) {

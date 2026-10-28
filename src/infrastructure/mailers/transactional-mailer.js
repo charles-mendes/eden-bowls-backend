@@ -12,6 +12,7 @@ const {
   buildResumedEmail,
   buildShippedEmail
 } = require('../../core/email/transactional-emails');
+const { buildLifeStageChangeEmail, formatDeadline, packsUrl } = require('../../core/email/life-stage-emails');
 const {
   dashboardPlansUrl,
   firstNameFrom,
@@ -32,7 +33,8 @@ const TEMPLATES = {
   resumed: 'resumed',
   cancelled: 'cancelled',
   autoRenewOff: 'auto_renew_off',
-  planChanged: 'plan_changed'
+  planChanged: 'plan_changed',
+  lifeStageChange: 'life_stage_change'
 };
 
 const RESEND_TEMPLATES = [
@@ -108,6 +110,21 @@ function createTransactionalMailer(options = {}) {
   const emailAssetBaseUrl = options.emailAssetBaseUrl || '';
   const adminAppUrl = options.adminAppUrl || 'http://localhost:5174';
   const opsEmails = Array.isArray(options.opsEmails) ? options.opsEmails.filter(Boolean) : [];
+  const recipeNamesRepository = options.recipeNamesRepository || null;
+
+  // Recipe names of the subscription's market from the catalog (full name); the plan's keys when unavailable.
+  async function recipeFlavors(ledger) {
+    let names = null;
+    if (recipeNamesRepository && typeof recipeNamesRepository.listRecipeNames === 'function') {
+      try {
+        const byMarket = await recipeNamesRepository.listRecipeNames();
+        names = byMarket && byMarket[String(ledger.stripeAccount || '').toLowerCase() === 'br' ? 'BR' : 'US'];
+      } catch (error) {
+        logger.warn({ code: error && error.code }, 'Recipe names unavailable; emails show recipe keys.');
+      }
+    }
+    return flavorsFrom(ledger, names);
+  }
 
   function canSend() {
     return Boolean(
@@ -227,7 +244,7 @@ function createTransactionalMailer(options = {}) {
     const content = buildOrderConfirmedEmail({
       firstName: firstNameFrom(ledger),
       petName: petNameFrom(ledger),
-      flavors: flavorsFrom(ledger),
+      flavors: await recipeFlavors(ledger),
       planName: ledger.planLabel || '',
       cycleLabel: ledger.subscriptionTermMonths
         ? (localeFrom(ledger) === 'pt-BR'
@@ -430,7 +447,7 @@ function createTransactionalMailer(options = {}) {
     const content = buildRenewalEmail({
       firstName: firstNameFrom(ledger),
       petName: petNameFrom(ledger),
-      flavors: flavorsFrom(ledger),
+      flavors: await recipeFlavors(ledger),
       totalLabel: formatMoney(invoice.amount_paid || invoice.total, invoice.currency),
       nextDeliveryLabel: formatLetterDate(ledger.currentPeriodEnd, locale),
       invoiceNumber: invoiceAttachment ? invoiceAttachment.invoiceNumber : '',
@@ -557,7 +574,7 @@ function createTransactionalMailer(options = {}) {
       firstName: firstNameFrom(ledger),
       petName: petNameFrom(ledger),
       planName: ledger.planLabel || '',
-      flavors: flavorsFrom(ledger),
+      flavors: await recipeFlavors(ledger),
       totalLabel: amount ? formatMoney(amount, invoice.currency) : '',
       dashboardUrl: dashboardPlansUrl(storeAppUrl),
       locale,
@@ -656,6 +673,35 @@ function createTransactionalMailer(options = {}) {
     logger.error({ template, claimId, outcome: 'failed' }, 'Transactional email failed.');
   }
 
+  // One letter per pet transition: the claim key is the pet and its transition (customer-life-stage-notice).
+  async function notifyLifeStageChange({ ledger = {}, petId, petName, fromLine, toLine, suggestedRecipes = [], editableUntil }) {
+    const target = customerTarget({
+      ledger,
+      referenceId: petId && toLine ? `${petId}:${fromLine || ''}>${toLine}` : ''
+    });
+    if (!target.id || !target.reference || !target.to || !editableUntil) {
+      return missingContext(TEMPLATES.lifeStageChange);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildLifeStageChangeEmail({
+      firstName: firstNameFrom(ledger),
+      petName,
+      stage: toLine,
+      suggestedRecipes,
+      adjustUrl: packsUrl(storeAppUrl, target.id, petId),
+      deadlineLabel: formatDeadline(editableUntil, locale === 'pt-BR' ? 'BR' : 'US'),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.lifeStageChange,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
   return {
     notifyOrderConfirmed,
     notifyAdminNewSubscription,
@@ -667,6 +713,7 @@ function createTransactionalMailer(options = {}) {
     notifyCancelled,
     notifyAutoRenewOff,
     notifyPlanChanged,
+    notifyLifeStageChange,
     hasSentClaim,
     sendClaimed,
     resendUnsent

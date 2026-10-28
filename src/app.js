@@ -10,6 +10,8 @@ const { registerBreedsRoutes } = require('./api/routes/breeds.routes');
 const { registerGeoRoutes } = require('./api/routes/geo.routes');
 const { registerDeliveryEstimateRoutes } = require('./api/routes/delivery-estimate.routes');
 const { registerProductsRoutes } = require('./api/routes/products.routes');
+const { registerRecipesRoutes } = require('./api/routes/recipes.routes');
+const { registerLegalRoutes } = require('./api/routes/legal.routes');
 const { registerOnboardingAddressAutocompleteRoutes } = require('./api/routes/onboarding-address-autocomplete.routes');
 const { registerOnboardingDiscountEligibilityRoutes } = require('./api/routes/onboarding-discount-eligibility.routes');
 const { registerOnboardingPaymentIntentAckRoutes } = require('./api/routes/onboarding-payment-intent-ack.routes');
@@ -31,6 +33,7 @@ const { registerOnboardingZipcodeRoutes } = require('./api/routes/onboarding-zip
 const { registerShippingRoutes } = require('./api/routes/shipping.routes');
 const { registerSubscriptionsActionsRoutes } = require('./api/routes/subscriptions-actions.routes');
 const { registerSubscriptionsDetailRoutes } = require('./api/routes/subscriptions-detail.routes');
+const { registerSubscriptionsLifeStageNoticesRoutes } = require('./api/routes/subscriptions-life-stage-notices.routes');
 const { registerSubscriptionsEditCommitRoutes } = require('./api/routes/subscriptions-edit-commit.routes');
 const { registerCustomerDeliveriesRoutes } = require('./api/routes/customer-deliveries.routes');
 const { registerCustomerInvoicesRoutes } = require('./api/routes/customer-invoices.routes');
@@ -117,6 +120,10 @@ function createApp(dependencies = {}) {
     if (request.method === 'POST' && /^\/api\/v1\/onboarding\/pets\/[^/]+\/image\/?$/.test(request.path)) {
       return express.json({ limit: '5mb' })(request, response, next);
     }
+    // A 5 MB recipe image is about 6.7 MB in base64.
+    if (request.method === 'PUT' && /^\/api\/v1\/admin\/catalog\/recipe-content\/[^/]+\/(plan-)?image\/?$/.test(request.path)) {
+      return express.json({ limit: '8mb' })(request, response, next);
+    }
     next();
   });
   app.use(express.json({ limit: '1mb' }));
@@ -124,6 +131,7 @@ function createApp(dependencies = {}) {
   app.use('/avatars', express.static(dependencies.avatarPublicDir || path.join(process.cwd(), 'public', 'avatars')));
   app.use('/feedback-photos', express.static(dependencies.feedbackPhotoPublicDir || path.join(process.cwd(), 'public', 'feedback-photos')));
   app.use('/pet-photos', express.static(dependencies.petPhotoPublicDir || path.join(process.cwd(), 'public', 'pet-photos')));
+  app.use('/recipe-images', express.static(dependencies.recipeImagePublicDir || path.join(process.cwd(), 'public', 'recipe-images')));
   app.use(
     rateLimit({
       windowMs: 60 * 1000,
@@ -182,6 +190,8 @@ function createApp(dependencies = {}) {
   registerGeoRoutes(app, dependencies);
   registerDeliveryEstimateRoutes(app, dependencies);
   registerProductsRoutes(app, dependencies);
+  registerRecipesRoutes(app, dependencies);
+  registerLegalRoutes(app, dependencies);
   registerAuthRoutes(app, dependencies);
   registerOnboardingAddressAutocompleteRoutes(app, dependencies);
   registerOnboardingDiscountEligibilityRoutes(app, dependencies);
@@ -204,6 +214,7 @@ function createApp(dependencies = {}) {
   registerShippingRoutes(app, dependencies);
   registerSubscriptionsActionsRoutes(app, dependencies);
   registerSubscriptionsDetailRoutes(app, dependencies);
+  registerSubscriptionsLifeStageNoticesRoutes(app, dependencies);
   registerSubscriptionsEditPreviewRoutes(app, dependencies);
   registerSubscriptionsEditCommitRoutes(app, dependencies);
   registerCustomerDeliveriesRoutes(app, dependencies);

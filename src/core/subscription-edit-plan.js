@@ -92,7 +92,7 @@ function sumByPrice(items) {
   return [...byPrice.values()];
 }
 
-async function resolveProposedPlan(planPreviewRepository, resolveSubscriptionItems, { userId, payload }) {
+async function resolveProposedPlan(planPreviewRepository, resolveSubscriptionItems, { userId, payload, currentSelection = null }) {
   if (!planPreviewRepository) {
     throw new HttpError(503, 'Plan preview repository is not available.');
   }
@@ -103,7 +103,7 @@ async function resolveProposedPlan(planPreviewRepository, resolveSubscriptionIte
     subscription_term_months: payload.subscription_term_months,
     pets: payload.pets,
     country
-  }, market);
+  }, market, { currentSelection });
 
   const planSelection = {
     ...resolved,

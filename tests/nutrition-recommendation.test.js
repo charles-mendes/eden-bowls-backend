@@ -1,4 +1,4 @@
-const { COMBINATION_FACTORS, buildForPet, calculateFood } = require('../src/core/nutrition-recommendation');
+const { COMBINATION_FACTORS, DEFAULT_NUTRITION_PARAMETERS, buildForPet, calculateFood } = require('../src/core/nutrition-recommendation');
 
 describe('nutrition recommendation', () => {
   test.each(Object.entries(COMBINATION_FACTORS))('applies combination factor %s = %s', (key, expectedFactor) => {
@@ -178,5 +178,38 @@ describe('nutrition recommendation', () => {
     });
 
     expect(inLb.quantidade_g_dia).toBe(inKg.quantidade_g_dia);
+  });
+
+  describe('parameter set', () => {
+    const greatDane = { especie: 'cao', peso: 60, castrado: 'NAO', nivel_atividade: 'BAIXO', score_corporal: 'ADEQUADO', raca: 'Great Dane' };
+
+    test('gives the same result with the default set as without one', () => {
+      expect(calculateFood(greatDane, '', DEFAULT_NUTRITION_PARAMETERS)).toEqual(calculateFood(greatDane));
+    });
+
+    test('a changed Dogue factor changes only the group step of the trace', () => {
+      const parameters = { ...DEFAULT_NUTRITION_PARAMETERS, base: { ...DEFAULT_NUTRITION_PARAMETERS.base, dogue: 190 } };
+
+      const before = calculateFood(greatDane).decision_trace;
+      const after = calculateFood(greatDane, '', parameters).decision_trace;
+
+      expect(before).toContain('breed_dogue_group:200');
+      expect(after).toEqual(before.map((step) => (step === 'breed_dogue_group:200' ? 'breed_dogue_group:190' : step)));
+    });
+
+    test('a breed moved out of the Dogue group no longer gets the group step', () => {
+      const parameters = {
+        ...DEFAULT_NUTRITION_PARAMETERS,
+        breed_groups: { ...DEFAULT_NUTRITION_PARAMETERS.breed_groups, dogue: DEFAULT_NUTRITION_PARAMETERS.breed_groups.dogue.filter((breed) => breed !== 'great dane') }
+      };
+
+      expect(calculateFood(greatDane, '', parameters).decision_trace.join('|')).not.toContain('breed_dogue_group');
+    });
+
+    test('reads the default NEM of the set', () => {
+      const parameters = { ...DEFAULT_NUTRITION_PARAMETERS, nem: { dog: 4000, cat: 3800 } };
+
+      expect(calculateFood(greatDane, '', parameters).nem_kcal_kg).toBe(4000);
+    });
   });
 });

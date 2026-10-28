@@ -1,5 +1,24 @@
 const { HttpError } = require('../../core/http-error');
 
+function toIsoDateTime(value) {
+  if (value == null || value === '') {
+    return null;
+  }
+  const date = value instanceof Date ? value : new Date(String(value).replace(' ', 'T') + (String(value).includes('Z') ? '' : 'Z'));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function toIsoDay(value) {
+  if (value == null || value === '') {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+  const text = String(value).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+}
+
 class OnboardingPetsRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
@@ -13,7 +32,8 @@ class OnboardingPetsRepository {
 
     const sql = [
       'SELECT `id`, `name`, `breed`, `age_years`, `age_months`, `weight_input`, `weight_unit`,',
-      '`size`, `activity_level`, `pet_condition`, `neutered`, `image_url`',
+      '`size`, `activity_level`, `pet_condition`, `neutered`, `image_url`, `age_recorded_at`, `birth_date`,',
+      '`life_stage_announced_at`, `life_stage_announced_stage`',
       `FROM \`${this.tableName}\``,
       'WHERE `user_id` = ? AND `deleted_at` IS NULL',
       'ORDER BY `created_at` ASC'
@@ -35,12 +55,18 @@ class OnboardingPetsRepository {
         activity_level: String(pet.activity_level || ''),
         pet_condition: String(pet.pet_condition || ''),
         neutered: Boolean(pet.neutered),
-        image_url: String(pet.image_url || '')
+        image_url: String(pet.image_url || ''),
+        age_recorded_at: toIsoDateTime(pet.age_recorded_at),
+        birth_date: toIsoDay(pet.birth_date),
+        life_stage_announced_at: toIsoDateTime(pet.life_stage_announced_at),
+        life_stage_announced_stage: pet.life_stage_announced_stage ? String(pet.life_stage_announced_stage) : null
       }))
     };
   }
 }
 
 module.exports = {
-  OnboardingPetsRepository
+  OnboardingPetsRepository,
+  toIsoDateTime,
+  toIsoDay
 };

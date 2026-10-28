@@ -3,6 +3,8 @@ const { HttpError } = require('../../core/http-error');
 
 const simulateSchema = z.object({
   country: z.enum(['BR', 'US']).default('US'),
+  recipe_key: z.string().trim().max(64).optional().default(''),
+  parameter_set: z.enum(['published', 'draft']).optional().default('published'),
   pet: z.object({
     name: z.string().optional().default(''),
     type: z.enum(['dog', 'cat']).default('dog'),
@@ -32,6 +34,8 @@ function parseNutritionSimulateInput(input) {
   const ageYears = pet.age_years ?? pet.age;
   return {
     country,
+    recipeKey: parsed.data.recipe_key,
+    parameterSet: parsed.data.parameter_set,
     pet: {
       ...pet,
       age: ageYears,

@@ -1,0 +1,148 @@
+# EUA CÃO FILHOTES- CARNE E FRANGO
+
+_Relatório de Ração Ajustada (TD Software)_
+
+- **Ração:** EUA CÃO FILHOTES- CARNE E FRANGO
+- **Exigência:** dieta crescimento cão 1500 kcal
+- **Cliente:** Pawl & Bowl- Cris e Jo
+- **Uso exclusivo de:** Izabella
+- **Banco de dados:** MENTORIA T3
+- **Impresso em:** 01/04/2026
+- **Hora:** 16:02
+
+## Composição Alimentar
+
+| Alimento | Quantidade (%) | Custo Atual | Custo Total | Qtde. Mínima | Qtde. Máxima |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ARROZ INTEGRAL COZIDO | 33,0000 | 0,000 | 0,000 | 0,0000 | 100,0000 |
+| MUSCULO BOVINO COZIDO | 22,0000 | 0,000 | 0,000 | 10,0000 | 100,0000 |
+| LENTILHA COZIDA | 15,5000 | 21,590 | 334,645 | 10,0000 | 100,0000 |
+| ABOBRINHA COZIDA | 9,0000 | 3,230 | 29,070 | 0,0000 | 100,0000 |
+| CENOURA COZIDA | 7,0000 | 7,430 | 52,010 | 10,0000 | 100,0000 |
+| PEITO FRANG S/PELE CZ | 5,0000 | 0,000 | 0,000 | 0,0000 | 100,0000 |
+| OLEO DE CANOLA | 3,0000 | 19,170 | 57,510 | 0,0000 | 100,0000 |
+| AVEIA EM FLOCOS | 2,8000 | 0,000 | 0,000 | 0,0000 | 100,0000 |
+| BALANCE IT CANINE PLUS CH | 2,0000 | 0,000 | 0,000 | 0,0000 | 100,0000 |
+| OLEO DE GIRASSOL | 0,5000 | 0,000 | 0,000 | 0,0000 | 100,0000 |
+| SAL REFINADO | 0,2000 | 2,050 | 0,410 | 0,0000 | 100,0000 |
+| BRÓCOLIS COZIDO | 0,0000 | 12,950 | 0,000 | 0,0000 | 100,0000 |
+
+**Total:** 100,0000 · **Custo total:** 473,645 · **Custo/Kg:** 4,736
+
+## Atendimento das Exigências Nutricionais – Matéria Natural
+
+| Nutriente | Unidade | Atendimento | Qtde. Mínima | Qtde. Máxima |
+| --- | ---: | ---: | ---: | ---: |
+| EM CAES | kcal/Kg | 1499,6170 | 1500,0000 | 999999,9999 |
+| UMIDADE | % | 66,9577 | 0,0000 | 999999,9999 |
+| PROTEINA BRUTA | % | 11,1985 | 11,0000 | 13,0000 |
+| ARGININA TOTAL | % | 0,7086 | 0,2760 | 999,0000 |
+| HISTIDINA TOTAL | % | 0,3737 | 0,0945 | 999,0000 |
+| ISOLEUCINA TOTAL | % | 0,5423 | 0,1875 | 999999,9999 |
+| METIONINA TOTAL | % | 0,2449 | 0,0750 | 999,0000 |
+| MET + CISTINA TOTAL | % | 0,3651 | 0,2000 | 999999,0000 |
+| LEUCINA TOTAL | % | 0,8774 | 0,3000 | 99999,0000 |
+| LISINA TOTAL | % | 0,8586 | 0,2650 | 1,0500 |
+| FENIL TOTAL | % | 0,4768 | 0,1875 | 999999,0000 |
+| FENIL + TIR TOTAL | % | 0,8354 | 0,3750 | 99999,0000 |
+| TREONINA TOTAL | % | 0,4750 | 0,2400 | 99999,0000 |
+| TRIPTOFANO TOTAL | % | 0,1208 | 0,0800 | 99999,0000 |
+| VALINA TOTAL | % | 0,6068 | 0,2100 | 99999,0000 |
+| CALCIO | % | 0,2881 | 0,3000 | 0,6750 |
+| FOSFORO TOTAL | % | 0,2653 | 0,2625 | 1,0000 |
+| MAGNESIO | % | 0,0471 | 0,0150 | 9999,0000 |
+| SODIO | % | 0,1284 | 0,0825 | 99999,0000 |
+| POTASSIO | % | 0,3914 | 0,1650 | 9999,0000 |
+| CLORO | % | 0,1249 | 0,1245 | 999999,9999 |
+| EXTRATO ETEREO | % | 5,6583 | 5,5000 | 6,0000 |
+| ACIDO LINOLEICO | % | 1,2126 | 0,4875 | 9999,0000 |
+| ACIDO LINOLENICO | % | 0,3036 | 0,3000 | 999999,9999 |
+| ACIDO ARAQUIDONICO | % | 0,0226 | 0,0112 | 999999,9999 |
+| ACIDO CITRICO | % | 0,0000 | 0,0000 | 100000,0015 |
+| ACIDO FOLICO | mg/Kg | 0,4762 | 0,0810 | 999999,9999 |
+| ACIDO FOLICO | mcg/Kg | 342,9500 | 0,0000 | 999999,9999 |
+| ACIDO PANTOTENICO B5 | mg/Kg | 9,2909 | 0,4500 | 999999,9999 |
+| BIOTINA | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| COBRE | mg/Kg | 3,7796 | 2,7000 | 37,0000 |
+| COLESTEROL | % | 0,0043 | 0,0000 | 999999,9999 |
+| COLINA | mg/Kg | 549,0650 | 0,0000 | 999999,9999 |
+| CONDROITINA | % | 0,0000 | 0,0000 | 100000,0015 |
+| CURCUMA | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| DHA W3 | % | 0,0010 | 0,0000 | 999999,9999 |
+| DPA | % | 0,0005 | 0,0000 | 999999,9999 |
+| ENN | % | 13,5608 | 13,0000 | 14,0000 |
+| ENXOFRE | % | 0,0000 | 0,0000 | 999999,9999 |
+| EPA + DHA | % | 0,0015 | 0,0000 | 999999,9999 |
+| EPA W3 | % | 0,0005 | 0,0000 | 999999,9999 |
+| EXTRATO DE ALECRIM | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| EXTRATO DE YUCCA | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| FERRO | mg/Kg | 41,1855 | 33,0000 | 999999,9999 |
+| FIBRA ALIMENTAR | % | 0,0000 | 0,0000 | 999999,9999 |
+| FIBRA BRUTA | % | 2,3733 | 0,0000 | 999999,9999 |
+| FLUOR | mg/Kg | 0,0000 | 0,0000 | 9999999999,00 |
+| FOS | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| FOSFORO DISPONIVEL | % | 0,0000 | 0,2625 | 0,6000 |
+| GLICINA + SER TOTAL | % | 0,6550 | 0,0000 | 999999,9999 |
+| GLICOSAMINA | % | 0,0000 | 0,0000 | 100000,0015 |
+| GLUCANOS | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| GORDURA | % | 0,0000 | 5,0000 | 5,0000 |
+| GOS | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| IODATO DE POTASSIO | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| IODO | mg/Kg | 0,7360 | 0,5700 | 999999,9999 |
+| MANGANES | mg/Kg | 7,1992 | 2,1000 | 999999,9999 |
+| MATERIA MINERAL | % | 0,9042 | 0,0000 | 999999,9999 |
+| MATERIA ORGANICA | % | 0,0000 | 0,0000 | 999999,9999 |
+| MATERIA SECA | % | 33,0177 | 0,0000 | 999999,9999 |
+| MOS | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| NIACINA - VIT. B3 | mg/Kg | 40,1689 | 0,0000 | 999999,9999 |
+| NIQUEL | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| NUCLEOTÍDEOS | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| PROLINA TOTAL | % | 0,0000 | 0,0000 | 999999,9999 |
+| PROTEINA METABOLIZAVEL | % | 0,0000 | 0,0000 | 999999,9999 |
+| SELENIO | mg/Kg | 0,1219 | 0,1500 | 0,6750 |
+| SELENIO | mcg/Kg | 56,7000 | 0,0000 | 999999,9999 |
+| SERINA TOTAL | % | 0,0000 | 0,0000 | 999999,9999 |
+| TAURINA TOTAL | mg/Kg | 0,0000 | 0,0000 | 9999999999,00 |
+| TIROSINA TOTAL | % | 0,0000 | 0,0000 | 999999,9999 |
+| TOCOFEROL | % | 0,0000 | 0,0000 | 100000,0015 |
+| VANADIO | mg/Kg | 0,0000 | 0,0000 | 999999,9999 |
+| VITAMINA A | UI/Kg | 3068,7600 | 1875,0000 | 150000,0000 |
+| VITAMINA B1 | mg/Kg | 1,5511 | 0,6750 | 999999,9999 |
+| VITAMINA B12 | mg/Kg | 0,0104 | 0,0105 | 999999,9999 |
+| VITAMINA B2 | mg/Kg | 2,5535 | 1,5750 | 999999,9999 |
+| VITAMINA B6 | mg/Kg | 2,3517 | 0,4500 | 999999,9999 |
+| VITAMINA C | mg/Kg | 16,8470 | 0,0000 | 999999,9999 |
+| VITAMINA D | UI/Kg | 197,9200 | 187,5000 | 1200,0000 |
+| VITAMINA D3 | UI/Kg | 2,0000 | 0,0000 | 999999,9999 |
+| VITAMINA E | UI/Kg | 93,1171 | 18,7500 | 999999,9999 |
+| ZINCO | mg/Kg | 67,1055 | 37,5000 | 999999,9999 |
+
+**pH Urinário:** 6,97
+
+## Relações entre os Nutrientes
+
+| Relação | Unidade | Valor | Mín. | Máx. |
+| --- | ---: | ---: | ---: | ---: |
+| REL. ACIDO LINOLEICO/ACIDO LINOLENICO | %/% | 3,9938 | 3,0000 | 10,0000 |
+| REL. CALCIO/FOSFORO TOTAL | %/% | 1,0858 | 1,0000 | 4,0000 |
+
+## Variação Permitida nos Custos dos Alimentos
+
+| Alimento | Quantidade | Unidade | Custo Analisado | Custo Mínimo | Custo Máximo |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ARROZ INTEGRAL COZIDO | 33,0000 | Kg | 0,000 |  |  |
+| MUSCULO BOVINO COZIDO | 22,0000 | Kg | 0,000 |  |  |
+| LENTILHA COZIDA | 15,5000 | Kg | 21,590 |  |  |
+| ABOBRINHA COZIDA | 9,0000 | Kg | 3,230 |  |  |
+| CENOURA COZIDA | 7,0000 | Kg | 7,430 |  |  |
+| PEITO FRANG S/PELE CZ | 5,0000 | Kg | 0,000 |  |  |
+| OLEO DE CANOLA | 3,0000 | Kg | 19,170 |  |  |
+| AVEIA EM FLOCOS | 2,8000 | Kg | 0,000 |  |  |
+| BALANCE IT CANINE PLUS CH | 2,0000 | Kg | 0,000 |  |  |
+| OLEO DE GIRASSOL | 0,5000 | Kg | 0,000 |  |  |
+| SAL REFINADO | 0,2000 | Kg | 2,050 |  |  |
+| BRÓCOLIS COZIDO | 0,0000 | Kg | 12,950 |  |  |
+
+## Considerações
+
+_(sem considerações)_

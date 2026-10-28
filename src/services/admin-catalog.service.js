@@ -1,5 +1,7 @@
 const { HttpError } = require('../core/http-error');
+const { labelCompleteness, normalizeRecipeMarket, parseRecipeKey } = require('../core/recipe-content');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
+const { MAX_LARGE_PACK_LIMIT } = require('../core/simplified-consumption');
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
@@ -8,11 +10,26 @@ const {
   shouldEnforceMarketScope
 } = require('../core/admin-market-scope');
 const {
+  LIFE_STAGES,
   SEED_FLAVOR_ALIASES,
   canonicalFlavorKey,
   flavorKeyFromLabel,
   parseFlavorAliases
 } = require('../core/flavors');
+
+// Small packs a month above which a pet gets the large pack (plan-packaging); null keeps the stored value.
+function parseLargePackLimit(value) {
+  if (value == null || value === '') {
+    return null;
+  }
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LARGE_PACK_LIMIT) {
+    throw new HttpError(422, `Large pack limit must be a whole number from 1 to ${MAX_LARGE_PACK_LIMIT}.`, {
+      code: 'product_large_pack_limit_invalid'
+    });
+  }
+  return limit;
+}
 
 function requiredCurrency(country) {
   if (country === 'US') {
@@ -67,6 +84,52 @@ function parseVariationFlavorAliases(value, flavorSlug) {
 
   const aliases = parseFlavorAliases(value);
   return aliases.join(',');
+}
+
+function parseVariationLifeStage(value) {
+  if (value == null || value === '') {
+    return undefined;
+  }
+
+  const lifeStage = String(value).trim().toLowerCase();
+  if (!LIFE_STAGES.includes(lifeStage)) {
+    throw new HttpError(422, `Variation life stage must be one of ${LIFE_STAGES.join(', ')}.`);
+  }
+
+  return lifeStage;
+}
+
+function parseShortLabel(value) {
+  if (value == null) {
+    return undefined;
+  }
+  const shortLabel = String(value).trim();
+  if (shortLabel.length > 64) {
+    throw new HttpError(422, 'Variation short name must be at most 64 characters.');
+  }
+  return shortLabel;
+}
+
+function parseReadinessFlag(value) {
+  if (value == null || value === '') {
+    return undefined;
+  }
+  if (value === true || value === 'true') {
+    return true;
+  }
+  if (value === false || value === 'false') {
+    return false;
+  }
+  throw new HttpError(422, 'Variation readiness flags must be true or false.');
+}
+
+const READINESS_FLAGS = [
+  ['finalImageReady', 'final_image'],
+  ['labelDataReady', 'label_data']
+];
+
+function pluralSubscriptions(count) {
+  return count === 1 ? '1 active subscription' : `${count} active subscriptions`;
 }
 
 function parseVariationPrice(value) {
@@ -142,6 +205,8 @@ class AdminCatalogService {
     this.stripeBrEnabled = options.stripeBrEnabled;
     this.syncRunsRepository = options.syncRunsRepository || null;
     this.logger = options.logger || null;
+    this.auditService = options.auditService || null;
+    this.recipeContentRepository = options.recipeContentRepository || null;
     this.lastSync = null;
   }
 
@@ -229,7 +294,29 @@ class AdminCatalogService {
       assertRecordMarket(actor, product.planCountry);
     }
     const [annotated] = await this.annotateDeleteFlags([product]);
-    return annotated;
+    return this.annotateRecipeContent(annotated);
+  }
+
+  // Each variation's recipe content key, stored image, label state and presentation in the product's market (recipe-content).
+  async annotateRecipeContent(product) {
+    const market = normalizeRecipeMarket(product.planCountry);
+    const variants = (product.variants || []).map((variant) => ({ ...variant, recipeKey: variant.recipeKey || null }));
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlugs;
+    const contents = market && typeof lookup === 'function'
+      ? await lookup.call(this.recipeContentRepository, market, variants.map((variant) => variant.recipeKey))
+      : new Map();
+    return {
+      ...product,
+      variants: variants.map((variant) => {
+        const content = variant.recipeKey ? contents.get(variant.recipeKey) : null;
+        return {
+          ...variant,
+          recipeImageUrl: content ? content.imageUrl : null,
+          recipeLabelStatus: labelCompleteness(content ? content.label : null, market).status,
+          recipePresentationReady: Boolean(content && content.presentation)
+        };
+      })
+    };
   }
 
   async createProduct(payload = {}) {
@@ -363,6 +450,7 @@ class AdminCatalogService {
 
   async patchProduct(productId, payload = {}, actor = {}) {
     const product = await this.getProduct(productId, actor);
+    const largePackLimit = parseLargePackLimit(payload.largePackLimit);
 
     if (payload.planCountry) {
       const country = String(payload.planCountry).trim().toUpperCase();
@@ -380,11 +468,15 @@ class AdminCatalogService {
       await this.repository.upsertPostMeta(product.id, '_cmpb_plan_days', String(days));
     }
 
+    if (largePackLimit != null) {
+      await this.repository.upsertPostMeta(product.id, '_cmpb_large_pack_limit', String(largePackLimit));
+    }
+
     if (Array.isArray(payload.variants)) {
       const country = payload.planCountry
         ? String(payload.planCountry).trim().toUpperCase()
         : product.planCountry;
-      await this.saveVariants(product, payload.variants, country);
+      await this.saveVariants(product, payload.variants, country, actor);
       if (!(payload.active === true && !product.active)) {
         try {
           await this.sync({
@@ -442,11 +534,25 @@ class AdminCatalogService {
     return this.getProduct(productId, actor);
   }
 
-  async saveVariants(product, variants, country) {
+  async saveVariants(product, variants, country, actor = {}) {
     const zoneId = zoneIdFromCountry(country);
     const existingIds = new Set((product.variants || []).map((item) => String(item.id)));
     const existingById = new Map((product.variants || []).map((item) => [String(item.id), item]));
     let menuOrder = (product.variants || []).length;
+
+    // A published product keeps its active variations as they are; only inactive ones change.
+    if (product.active) {
+      const locked = variants
+        .map((item) => (item && item.id != null ? existingById.get(String(item.id).trim()) : null))
+        .filter((current) => current && current.active)
+        .map((current) => String(current.id));
+      if (locked.length > 0) {
+        throw new HttpError(409, 'Active variations of a published product cannot be edited.', {
+          code: 'variation_active_locked',
+          variationIds: locked
+        });
+      }
+    }
 
     for (const item of variants) {
       if (!item || typeof item !== 'object') {
@@ -465,6 +571,20 @@ class AdminCatalogService {
         ? undefined
         : parseVariationFlavorAliases(item.flavorAliases, flavorSlug);
       const regularPrice = parseVariationPrice(item.regularPrice);
+      let lifeStage = parseVariationLifeStage(item.lifeStage);
+      const flags = Object.fromEntries(READINESS_FLAGS.map(([key]) => [key, parseReadinessFlag(item[key])]));
+      const shortLabel = parseShortLabel(item.shortLabel);
+      // Explicit link to a recipe: absent keeps it, blank unlinks, a new variation without one has none.
+      const recipeKey = item.recipeKey === undefined ? undefined : parseRecipeKey(item.recipeKey);
+      if (recipeKey) {
+        await this.assertRecipeRegistered(country || product.planCountry, recipeKey);
+      }
+      // A variation linked to a recipe takes the recipe's life stage (recipe-content).
+      const linkedKey = recipeKey === undefined ? (current && current.recipeKey) || null : recipeKey;
+      const recipeLifeStage = linkedKey ? await this.recipeLifeStage(country || product.planCountry, linkedKey) : null;
+      if (recipeLifeStage) {
+        lifeStage = recipeLifeStage;
+      }
 
       if (isNewVariationId(id, existingIds)) {
         if (!String(name || '').trim() && !String(sku || '').trim()) {
@@ -472,17 +592,23 @@ class AdminCatalogService {
         }
 
         menuOrder += 1;
-        await this.repository.createVariation({
+        const createdId = await this.repository.createVariation({
           productId: product.id,
           name: String(name || '').trim(),
           sku: String(sku || '').trim(),
           flavor,
           flavorSlug,
           flavorAliases,
+          lifeStage: lifeStage || 'adult',
+          shortLabel,
+          recipeKey: recipeKey || null,
+          ...flags,
           regularPrice,
           zoneId,
           menuOrder
         });
+        await this.recordFlagChanges(actor, product, { id: createdId }, flags);
+        await this.recordRecipeKeyChange(actor, product, { id: createdId }, recipeKey || null);
         continue;
       }
 
@@ -494,11 +620,157 @@ class AdminCatalogService {
         flavor,
         flavorSlug,
         flavorAliases,
+        lifeStage,
+        shortLabel,
+        recipeKey,
+        ...flags,
         regularPrice,
         zoneId,
         priceChanged: regularPrice != null && currentPrice !== regularPrice
       });
+      await this.recordFlagChanges(actor, product, current || { id }, flags);
+      if (recipeKey !== undefined) {
+        await this.recordRecipeKeyChange(actor, product, current || { id }, recipeKey);
+      }
     }
+  }
+
+  async recordAudit(actor, action, product, variationId, metadata = {}) {
+    if (!this.auditService || typeof this.auditService.record !== 'function') {
+      return;
+    }
+    await this.auditService.record({
+      actor,
+      action,
+      metadata: {
+        productId: String(product.id),
+        variationId: String(variationId),
+        market: product.planCountry || null,
+        ...metadata
+      }
+    });
+  }
+
+  async recordFlagChanges(actor, product, current, flags) {
+    for (const [key] of READINESS_FLAGS) {
+      const next = flags[key];
+      const previous = Boolean(current && current[key]);
+      if (next === undefined || next === previous) {
+        continue;
+      }
+      await this.recordAudit(actor, 'catalog.variation.flag', product, current.id, { flag: key, from: previous, to: next });
+    }
+  }
+
+  // A variation links only to a recipe registered in its product's market (recipe-content).
+  async assertRecipeRegistered(country, recipeKey) {
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlug;
+    if (typeof lookup !== 'function') {
+      return;
+    }
+    const market = normalizeRecipeMarket(country);
+    const registered = market ? await lookup.call(this.recipeContentRepository, market, recipeKey) : null;
+    if (!registered) {
+      throw new HttpError(422, `Recipe ${recipeKey} is not registered in the product market.`, {
+        code: 'recipe_not_registered',
+        recipeKey
+      });
+    }
+  }
+
+  async recipeLifeStage(country, recipeKey) {
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlug;
+    const market = normalizeRecipeMarket(country);
+    if (typeof lookup !== 'function' || !market) {
+      return null;
+    }
+    const registered = await lookup.call(this.recipeContentRepository, market, recipeKey);
+    return registered && registered.lifeStage ? registered.lifeStage : null;
+  }
+
+  async recordRecipeKeyChange(actor, product, current, next) {
+    const previous = (current && current.recipeKey) || null;
+    if (previous === next) {
+      return;
+    }
+    await this.recordAudit(actor, 'catalog.variation.recipe_key', product, current.id, { from: previous, to: next });
+  }
+
+  // Activates or deactivates one variation without touching the product or its other variations.
+  async setVariationActive(productId, variationId, active, actor = {}) {
+    if (typeof active !== 'boolean') {
+      throw new HttpError(422, 'active must be true or false.');
+    }
+    let product = await this.getProduct(productId, actor);
+    let variant = (product.variants || []).find((item) => String(item.id) === String(variationId));
+    if (!variant) {
+      throw new HttpError(404, 'Variation not found.');
+    }
+    if (variant.active === active) {
+      return product;
+    }
+
+    if (active) {
+      const country = product.planCountry;
+      if (!country) {
+        throw new HttpError(422, 'Plan country is required before activating a variation.', { code: 'product_incomplete' });
+      }
+      const currency = requiredCurrency(country);
+      try {
+        await this.sync({ productId: product.id, market: country, currency: currency.toUpperCase() });
+      } catch (_error) {
+        // A failed sync leaves the Stripe price missing, which the checks below report.
+      }
+      product = await this.getProduct(productId, actor);
+      variant = product.variants.find((item) => String(item.id) === String(variationId));
+
+      const missing = [];
+      if (!(Number(variant.regularPrice) > 0)) {
+        missing.push('price');
+      }
+      const mapped = (variant.stripePriceIdsByCurrency || {})[currency] || variant.stripePriceId;
+      if (!String(mapped || '').startsWith('price_')) {
+        missing.push('stripe_price');
+      }
+      // Stored content or the manual confirmation, while flavors still keep content in the store code.
+      if (!variant.finalImageReady && !variant.recipeImageUrl) {
+        missing.push('final_image');
+      }
+      if (country === 'US' && !variant.labelDataReady && variant.recipeLabelStatus !== 'complete') {
+        missing.push('label_data');
+      }
+      // The store page of the recipe has no other source, so there is no manual confirmation.
+      if (!variant.recipePresentationReady) {
+        missing.push('presentation');
+      }
+      if (missing.length > 0) {
+        throw new HttpError(422, `Variation cannot be activated: missing ${missing.join(', ')}.`, {
+          code: 'recipe_publish_refused',
+          missing
+        });
+      }
+
+      await this.repository.updatePostStatus(variant.id, 'publish');
+      await this.recordAudit(actor, 'catalog.variation.activate', product, variant.id);
+      return this.getProduct(productId, actor);
+    }
+
+    const count = this.ledgerRepository && typeof this.ledgerRepository.countActiveSubscriptionsForCatalog === 'function'
+      ? await this.ledgerRepository.countActiveSubscriptionsForCatalog({
+        variationIds: [String(variant.id)],
+        priceIds: priceIdsOf(variant)
+      })
+      : 0;
+    if (count > 0) {
+      throw new HttpError(409, `Variation is used by ${pluralSubscriptions(count)} and cannot be deactivated.`, {
+        code: 'variation_in_active_subscriptions',
+        activeSubscriptions: count
+      });
+    }
+
+    await this.repository.updatePostStatus(variant.id, 'draft');
+    await this.recordAudit(actor, 'catalog.variation.deactivate', product, variant.id);
+    return this.getProduct(productId, actor);
   }
 
   async listPricing(query, pagination, actor = {}) {

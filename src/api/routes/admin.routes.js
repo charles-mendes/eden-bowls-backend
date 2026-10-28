@@ -12,6 +12,13 @@ const {
   parseProductionQueuePatch
 } = require('../validators/admin-production.validator');
 const {
+  parseStockAdjustment,
+  parseStockMinimum,
+  parseStockMovementsQuery,
+  parseStockOverviewQuery,
+  parseStockProduction
+} = require('../validators/admin-pack-stock.validator');
+const {
   parseCreateAccessInput,
   parseUpdateAccessInput,
   parsePasswordChangeInput
@@ -25,6 +32,10 @@ const {
 } = require('../validators/feedbacks.validator');
 const { registerAdminPrivacyRoutes } = require('./privacy.routes');
 const { registerAdminDeliveryCalendarRoutes } = require('./admin-delivery-calendar.routes');
+const { registerAdminNutritionSettingsRoutes } = require('./admin-nutrition-settings.routes');
+const { registerAdminLifeStageSettingsRoutes } = require('./admin-life-stage-settings.routes');
+const { registerAdminCompanySettingsRoutes } = require('./admin-company-settings.routes');
+const { registerAdminLegalRoutes } = require('./legal.routes');
 
 function couponAccountFor(request) {
   const query = { ...(request.query || {}), ...(request.body || {}) };
@@ -86,12 +97,26 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.get('/api/v1/admin/nutrition/recipes', requirePermission('nutrition.simulate', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminNutritionService) {
+        throw new HttpError(503, 'Nutrition service is not available.');
+      }
+      return dependencies.adminNutritionService.listRecipes({ country: String(request.query.market || '').toUpperCase() }, request.adminIdentity);
+    });
+  });
+
   app.post('/api/v1/admin/nutrition/simulate', requirePermission('nutrition.simulate', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminNutritionService) {
         throw new HttpError(503, 'Nutrition service is not available.');
       }
-      return dependencies.adminNutritionService.simulate(parseNutritionSimulateInput(request.body || {}), request.adminIdentity);
+      const input = parseNutritionSimulateInput(request.body || {});
+      // A draft is simulated only by who may publish it.
+      if (input.parameterSet === 'draft' && !request.adminIdentity.permissions.includes('nutrition.settings.write')) {
+        throw new HttpError(403, 'Forbidden.');
+      }
+      return dependencies.adminNutritionService.simulate(input, request.adminIdentity);
     });
   });
 
@@ -290,6 +315,21 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.post('/api/v1/admin/catalog/products/:productId/variations/:variationId/activation', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminCatalogService) {
+        throw new HttpError(503, 'Catalog service is not available.');
+      }
+      const body = request.body || {};
+      return dependencies.adminCatalogService.setVariationActive(
+        request.params.productId,
+        request.params.variationId,
+        body.active,
+        request.adminIdentity
+      );
+    });
+  });
+
   app.delete('/api/v1/admin/catalog/products/:productId', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminCatalogService) {
@@ -297,6 +337,94 @@ function registerAdminRoutes(app, dependencies = {}) {
       }
       return dependencies.adminCatalogService.deleteProduct(request.params.productId, request.adminIdentity);
     });
+  });
+
+  function requireRecipeContentService() {
+    if (!dependencies.recipeContentService) {
+      throw new HttpError(503, 'Recipe content service is not available.');
+    }
+    return dependencies.recipeContentService;
+  }
+
+  app.get('/api/v1/admin/catalog/recipe-content', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().list(request.query.market));
+  });
+
+  app.post('/api/v1/admin/catalog/recipe-content', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().create(request.query.market, request.body || {}, request.adminIdentity));
+  });
+
+  app.patch('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().update(
+      request.query.market,
+      request.params.flavorSlug,
+      request.body || {},
+      request.adminIdentity
+    ));
+  });
+
+  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().remove(
+      request.query.market,
+      request.params.flavorSlug,
+      request.adminIdentity
+    ));
+  });
+
+  app.get('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().get(request.query.market, request.params.flavorSlug));
+  });
+
+  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().uploadImage(
+      request.query.market,
+      request.params.flavorSlug,
+      request.body || {},
+      request.adminIdentity
+    ));
+  });
+
+  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().uploadPlanImage(
+      request.query.market,
+      request.params.flavorSlug,
+      request.body || {},
+      request.adminIdentity
+    ));
+  });
+
+  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().removePlanImage(
+      request.query.market,
+      request.params.flavorSlug,
+      request.adminIdentity
+    ));
+  });
+
+  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/label', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().saveLabel(
+      request.query.market,
+      request.params.flavorSlug,
+      (request.body || {}).label,
+      request.adminIdentity
+    ));
+  });
+
+  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/presentation', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().savePresentation(
+      request.query.market,
+      request.params.flavorSlug,
+      (request.body || {}).presentation,
+      request.adminIdentity
+    ));
+  });
+
+  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug/image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().removeImage(
+      request.query.market,
+      request.params.flavorSlug,
+      request.adminIdentity
+    ));
   });
 
   app.get('/api/v1/admin/catalog/pricing', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
@@ -394,6 +522,72 @@ function registerAdminRoutes(app, dependencies = {}) {
         parseProductionQueuePatch(request.body || {}),
         request.adminIdentity
       );
+    });
+  });
+
+  function packStockService() {
+    if (!dependencies.adminPackStockService) {
+      throw new HttpError(503, 'Stock service is not available.');
+    }
+    return dependencies.adminPackStockService;
+  }
+
+  app.get('/api/v1/admin/stock', requirePermission('production.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().overview(
+      parseStockOverviewQuery(request.query || {}),
+      request.adminIdentity
+    ));
+  });
+
+  app.get('/api/v1/admin/stock/movements', requirePermission('production.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().listMovements(
+      parseStockMovementsQuery(request.query || {}),
+      parsePageQuery(request.query, { defaultPerPage: 20 }),
+      request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/stock/production', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().recordProduction(
+      parseStockProduction(request.body || {}),
+      request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/stock/adjustments', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().recordAdjustment(
+      parseStockAdjustment(request.body || {}),
+      request.adminIdentity
+    ));
+  });
+
+  app.put('/api/v1/admin/stock/minimum', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().setMinimum(
+      parseStockMinimum(request.body || {}),
+      request.adminIdentity
+    ));
+  });
+
+  function reportsService() {
+    if (!dependencies.adminReportsService) {
+      throw new HttpError(503, 'Reports service is not available.');
+    }
+    return dependencies.adminReportsService;
+  }
+
+  for (const report of ['summary', 'revenue', 'subscriptions', 'acquisition', 'mix', 'operations', 'stock']) {
+    app.get(`/api/v1/admin/reports/${report}`, requirePermission('reports.read', { market: 'query' }), async (request, response, next) => {
+      await handle(response, next, async () => reportsService().report(report, request.query || {}, request.marketQuery, request.adminIdentity));
+    });
+  }
+
+  // Export asks for reports.export; reading the figures still needs reports.read.
+  app.get('/api/v1/admin/reports/export.csv', requirePermission('reports.export', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!request.adminIdentity.permissions.includes('reports.read')) {
+        throw new HttpError(403, 'Forbidden.');
+      }
+      return reportsService().exportCsv(request.query || {}, request.marketQuery, request.adminIdentity);
     });
   });
 
@@ -557,7 +751,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       }
       const payload = parseCreateCouponInput(request.body || {});
       payload.account = couponAccountFor(request);
-      return dependencies.stripeCouponService.createFirstPurchaseCoupon(payload);
+      return dependencies.stripeCouponService.createFirstPurchaseCoupon(payload, request.adminIdentity);
     });
   });
 
@@ -770,6 +964,10 @@ function registerAdminRoutes(app, dependencies = {}) {
 
   registerAdminPrivacyRoutes(app, dependencies, { requirePermission, handle });
   registerAdminDeliveryCalendarRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminNutritionSettingsRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminLifeStageSettingsRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminCompanySettingsRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminLegalRoutes(app, dependencies, { requirePermission, handle });
 }
 
 module.exports = {

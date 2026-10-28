@@ -35,7 +35,8 @@ function registerOnboardingPlanPreviewRoutes(app, dependencies = {}) {
           data: {
             status: error.statusCode,
             errors: error.details.errors || undefined
-          }
+          },
+          ...(error.details.code === 'recipe_life_stage_mismatch' ? { details: error.details } : {})
         });
         return;
       }

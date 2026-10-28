@@ -15,6 +15,16 @@ function isoOrNull(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function parseSnapshot(value) {
+  if (value && typeof value === 'object') return value;
+  try {
+    const parsed = JSON.parse(String(value || 'null'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
 function mapRow(row) {
   return {
     id: Number(row.id),
@@ -34,6 +44,7 @@ function mapRow(row) {
     pdfSha256: row.pdf_sha256 || null,
     pdfGeneratedAt: isoOrNull(row.pdf_generated_at),
     customerName: row.customer_name || null,
+    issuerSnapshot: parseSnapshot(row.issuer_snapshot),
     emailTo: row.email_to || null,
     emailStatus: row.email_status,
     emailSentAt: isoOrNull(row.email_sent_at),
@@ -108,8 +119,9 @@ class CustomerInvoicesRepository {
     const result = await this.dataSource.query(
       `INSERT IGNORE INTO ${TABLE}
         (invoice_number, stripe_account, stripe_invoice_id, stripe_subscription_id, user_id, locale, currency,
-         total_minor, amount_paid_minor, invoice_status, billing_reason, issued_at, customer_name, email_to, email_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         total_minor, amount_paid_minor, invoice_status, billing_reason, issued_at, customer_name, email_to, email_status,
+         issuer_snapshot)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.invoiceNumber,
         input.stripeAccount,
@@ -125,11 +137,20 @@ class CustomerInvoicesRepository {
         toMysqlDateTime(input.issuedAt),
         input.customerName ? String(input.customerName).slice(0, 255) : null,
         input.emailTo || null,
-        input.emailStatus || 'pending'
+        input.emailStatus || 'pending',
+        input.issuerSnapshot ? JSON.stringify(input.issuerSnapshot) : null
       ]
     );
     const row = await this.findByStripeInvoice(input.stripeAccount, input.stripeInvoiceId);
     return { row, created: Boolean(result && result.affectedRows) };
+  }
+
+  // Only fills an empty snapshot: an invoice keeps the issuer it was numbered with.
+  async setIssuerSnapshot(id, snapshot) {
+    await this.dataSource.query(
+      `UPDATE ${TABLE} SET issuer_snapshot = ? WHERE id = ? AND issuer_snapshot IS NULL`,
+      [JSON.stringify(snapshot), id]
+    );
   }
 
   async markPdf(id, { filename, sha256, generatedAt, invoiceStatus, amountPaidMinor }) {
@@ -223,7 +244,11 @@ class CustomerInvoicesRepository {
       const meta = metaByPost.get(postId) || {};
       const flavorKey = canonicalFlavorKey(firstMeta(meta, FLAVOR_META));
       if (!flavorKey) continue;
-      result.set(priceId, { flavorKey, grams: parseWeightToGrams(firstMeta(meta, WEIGHT_META)) });
+      result.set(priceId, {
+        flavorKey,
+        label: firstMeta(meta, FLAVOR_META.filter((key) => key !== '_flavor_slug')) || '',
+        grams: parseWeightToGrams(firstMeta(meta, WEIGHT_META))
+      });
     }
     return result;
   }

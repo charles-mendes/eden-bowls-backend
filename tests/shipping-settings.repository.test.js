@@ -82,6 +82,27 @@ describe('ShippingSettingsRepository', () => {
     );
   });
 
+  test('reads and saves the US max transit days, 1 for a row without it', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([brRow])
+        .mockResolvedValueOnce([usRow])
+        .mockResolvedValueOnce([brRow])
+        .mockResolvedValueOnce([usRow])
+        .mockResolvedValue({ affectedRows: 1 })
+    };
+    const repository = new ShippingSettingsRepository(dataSource);
+
+    expect((await repository.get()).us.max_transit_days).toBe(1);
+    const saved = await repository.save({ us: { max_transit_days: 2 } });
+
+    expect(saved.us.max_transit_days).toBe(2);
+    const [sql, params] = dataSource.query.mock.calls.find(([text]) => text.includes('INSERT INTO `shipping_us_settings`'));
+    expect(sql).toContain('`max_transit_days` = VALUES(`max_transit_days`)');
+    expect(params[params.length - 1]).toBe(2);
+  });
+
   test('throws 503 when datasource is not initialized', async () => {
     const repository = new ShippingSettingsRepository({ isInitialized: false, query: jest.fn() });
 

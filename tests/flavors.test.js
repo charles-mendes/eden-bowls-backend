@@ -37,6 +37,29 @@ describe('flavor catalog', () => {
     expect(flavorAliasKeys('chicken', MARKETS.BR)).toEqual(expect.arrayContaining(['chicken', 'frango', 'peru', 'turkey']));
   });
 
+  test('resolves the life-stage keys and their pt aliases, and chicken still resolves to turkey (task 6.5)', () => {
+    expect(canonicalFlavorKey('filhote-frango-porco', MARKETS.BR)).toBe('puppy-chicken-pork');
+    expect(canonicalFlavorKey('filhote-carne-frango', MARKETS.BR)).toBe('puppy-beef-chicken');
+    expect(canonicalFlavorKey('senior-carne', MARKETS.BR)).toBe('senior-beef');
+    expect(canonicalFlavorKey('senior-frango', MARKETS.US)).toBe('senior-chicken');
+    for (const key of ['puppy-chicken-pork', 'puppy-beef-chicken', 'senior-beef', 'senior-chicken']) {
+      expect(canonicalFlavorKey(key, MARKETS.US)).toBe(key);
+    }
+    expect(canonicalFlavorKey('chicken', MARKETS.BR)).toBe('turkey');
+    expect(canonicalFlavorKey('frango', MARKETS.BR)).toBe('turkey');
+    expect(flavorAliasKeys('filhote-frango-porco', MARKETS.BR)).toEqual(expect.arrayContaining(['puppy-chicken-pork', 'filhote-frango-porco']));
+    expect(FLAVOR_KEYS).toEqual(['beef', 'fish', 'pork', 'turkey']);
+  });
+
+  test('labels the life-stage keys with the recipe titles of each market', () => {
+    expect(MARKETS.BR.flavorLabels['senior-beef']).toBe('Receita de Carne para Cães Sênior');
+    expect(MARKETS.US.flavorLabels['puppy-chicken-pork']).toBe('Chicken & Pork Recipe for Puppies');
+    expect(flavorOptionsFromLabels([{ key: 'senior-chicken', label: '' }], MARKETS.BR)).toEqual([
+      { key: 'senior-chicken', label: 'Receita de Frango para Cães Sênior' }
+    ]);
+    expect(listFlavorOptions(MARKETS.BR).map((option) => option.key)).toEqual(['beef', 'fish', 'pork', 'turkey']);
+  });
+
   test('lists localized flavor options for Brazil and the United States', () => {
     expect(listFlavorOptions(MARKETS.BR)).toEqual([
       { key: 'beef', label: 'Bovino' },

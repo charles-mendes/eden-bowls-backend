@@ -1,6 +1,7 @@
 const { HttpError } = require('../src/core/http-error');
 const { createCheckoutLockStore } = require('../src/core/checkout-idempotency');
 const { OnboardingSubscriptionCheckoutService } = require('../src/services/onboarding-subscription-checkout.service');
+const { StripeCouponService } = require('../src/services/stripe-coupon.service');
 const { ShippingQuoteSigner } = require('../src/core/shipping-quote-token');
 
 const quoteSigner = new ShippingQuoteSigner({ secret: 'test-shipping-quote-secret' });
@@ -165,6 +166,35 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       stripe_promotion_code_id: 'promo_1m',
       stripe_discount_duration: 'once',
       discount_eligibility: { validated: true, eligible: true, reason: null }
+    }));
+  });
+
+  test('Accounts are independent: a US 6-month checkout applies the stored US percent', async () => {
+    const sixMonths = { ...validContext.planSelection, subscription_term_months: 6 };
+    const stripeCouponService = new StripeCouponService({
+      getMapping: jest.fn().mockResolvedValue({ mapping: { 1: 'promo_1m', 3: 'promo_3m', 6: 'promo_6m' }, coupons: {} })
+    }, {
+      termDiscounts: { percentsFor: jest.fn(async (account) => (account === 'us' ? { 1: 10, 3: 25, 6: 35 } : { 1: 10, 3: 25, 6: 40 })) }
+    });
+    const { service, repository } = buildService({
+      stripeCouponService,
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(sixMonths),
+        getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, planSelection: sixMonths }),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane' })
+      }
+    });
+
+    await service.checkout({ userId: 7, payload });
+
+    expect(repository.checkout).toHaveBeenCalledWith(7, expect.objectContaining({
+      discount_applied_percent: 35,
+      stripe_promotion_code_id: 'promo_6m',
+      plan_selection: expect.objectContaining({
+        catalog_pricing: expect.objectContaining({ discounted_first_month_total: 26 })
+      })
     }));
   });
 

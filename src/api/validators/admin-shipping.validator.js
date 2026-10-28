@@ -53,7 +53,8 @@ const shippingSettingsSchema = z.object({
       width_in: optionalNumber,
       height_in: optionalNumber
     }).optional(),
-    allowed_service_codes: z.union([z.array(z.string()), z.string()]).optional()
+    allowed_service_codes: z.union([z.array(z.string()), z.string()]).optional(),
+    max_transit_days: optionalNumber
   }).optional()
 });
 

@@ -5,6 +5,7 @@ const {
   assertRecordMarket,
   effectiveMarkets,
   parseMarkets,
+  requireSingleReportMarket,
   resolveStaffMarkets,
   marketPermissions,
   stripeAccountForMarkets
@@ -46,6 +47,20 @@ describe('admin market scope helper', () => {
     expect(scoped.markets).toEqual(['BR']);
     expect(scoped.stripeAccounts).toEqual(['br']);
     expect(scoped.filtered).toBe(false);
+  });
+
+  test('resolves a single report market from the scoped query', () => {
+    const admin = { userId: '1', roles: ['admin'], markets: ['BR', 'US'], permissions: marketPermissions(['BR', 'US']) };
+    expect(requireSingleReportMarket(constrainMarketQuery(operator(['BR']), {}))).toBe('BR');
+    expect(requireSingleReportMarket(constrainMarketQuery(admin, { market: 'US' }))).toBe('US');
+    try {
+      requireSingleReportMarket(constrainMarketQuery(admin, {}));
+      throw new Error('expected report_market_required');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpError);
+      expect(error.statusCode).toBe(400);
+      expect(error.details.code).toBe('report_market_required');
+    }
   });
 
   test('marks a requested in-scope filter as filtered', () => {
@@ -115,6 +130,19 @@ describe('admin market scope helper', () => {
       expect(error).toBeInstanceOf(HttpError);
       expect(error.statusCode).toBe(404);
     }
+  });
+
+  test('pack stock is scoped by the item market: an operator BR listing US is market_forbidden', async () => {
+    const { AdminPackStockService } = require('../src/services/admin-pack-stock.service');
+    const stockRepository = { listItems: jest.fn(), listMovements: jest.fn() };
+    const service = new AdminPackStockService({ stockRepository, ledgerRepository: { listQueueDemandRows: jest.fn() } });
+
+    await expect(service.overview({ market: 'US', windowDays: 7 }, operator(['BR'])))
+      .rejects.toMatchObject({ statusCode: 403, details: { code: 'market_forbidden' } });
+    await expect(service.listMovements({ market: 'US' }, { page: 1, perPage: 20, offset: 0 }, operator(['BR'])))
+      .rejects.toMatchObject({ statusCode: 403, details: { code: 'market_forbidden' } });
+    expect(stockRepository.listItems).not.toHaveBeenCalled();
+    expect(stockRepository.listMovements).not.toHaveBeenCalled();
   });
 
   test('customers without a profile market are admin-only', () => {

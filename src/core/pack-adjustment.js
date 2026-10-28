@@ -1,5 +1,6 @@
 const { HttpError } = require('./http-error');
-const { catalogPricesAt, roundMoney } = require('./plan-catalog-pricing');
+const { catalogPricesAt, roundMoney, sanitizeFlavorSlug } = require('./plan-catalog-pricing');
+const { planFlavorsForPet } = require('./life-stage-lines');
 
 // Designer copy. The percent is the chosen pack count divided by the suggested count.
 const PORTION_WARNING = {
@@ -82,6 +83,37 @@ function withStoredPets(payload = {}, currentSelection = null) {
   return missing.length ? { ...payload, pets: [...sent, ...missing] } : payload;
 }
 
+function petQuantities(flavors, quantities) {
+  const map = {};
+  (Array.isArray(flavors) ? flavors : []).forEach((flavor, index) => {
+    const slug = sanitizeFlavorSlug(flavor);
+    const quantity = Math.round(positive(Array.isArray(quantities) ? quantities[index] : 0));
+    if (slug && quantity > 0) map[slug] = (map[slug] || 0) + quantity;
+  });
+  return map;
+}
+
+function sameQuantities(left, right) {
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
+}
+
+// True when an edit changes the plan step: which pets are on the plan, their recipes or their packs.
+// An edit of only address, payment method or date keeps the stored selection.
+function planStepChanged(payload = {}, currentSelection = null) {
+  const stored = Array.isArray(currentSelection && currentSelection.flavors_by_pet) ? currentSelection.flavors_by_pet : [];
+  const sent = enabledPets(payload);
+  if (stored.length === 0 || sent.length !== stored.length) return true;
+  return sent.some((pet) => {
+    const entry = stored.find((candidate) => samePet(candidate, pet));
+    if (!entry || !entry.flavors) return true;
+    return !sameQuantities(
+      petQuantities(pet.selected_flavors, pet.flavor_weights),
+      petQuantities(Object.keys(entry.flavors), Object.values(entry.flavors))
+    );
+  });
+}
+
 function assertPackOnlyChange(payload = {}, row = {}) {
   const currentTerm = Number(row.subscriptionTermMonths || 1);
   if (Number(payload.subscription_term_months || currentTerm) !== currentTerm) {
@@ -99,7 +131,8 @@ function buildPackAdjustment({
   currentSelection = null,
   catalogItems = [],
   language = 'en',
-  currency
+  currency,
+  lineByKey = null
 }) {
   const lineItems = resolved.catalog_pricing && Array.isArray(resolved.catalog_pricing.line_items)
     ? resolved.catalog_pricing.line_items
@@ -126,15 +159,26 @@ function buildPackAdjustment({
           : null
       };
     }
-    const recipes = catalogPricesAt(catalogItems, positive(pet.pack_size_grams)).map((recipe) => ({
-      ...recipe,
-      quantity: lineItems
-        .filter((item) => samePet(item, pet) && item.flavor === recipe.flavor)
-        .reduce((sum, item) => sum + positive(item.quantity), 0)
-    }));
+    // The pet's allowed line, plus its current recipes when the plan is outside that line (keep option, L-04).
+    const allowed = Array.isArray(pet.allowed_life_stages) ? pet.allowed_life_stages : ['adult'];
+    const current = planFlavorsForPet(currentSelection, pet.pet_id);
+    const lineOf = (flavor) => (lineByKey && lineByKey[flavor]) || 'adult';
+    const outside = Boolean(lineByKey) && current.some((flavor) => !allowed.includes(lineOf(flavor)));
+    const recipes = catalogPricesAt(catalogItems, positive(pet.pack_size_grams))
+      .filter((recipe) => !lineByKey || allowed.includes(lineOf(recipe.flavor)) || (outside && current.includes(recipe.flavor)))
+      .map((recipe) => ({
+        ...recipe,
+        life_stage: lineOf(recipe.flavor),
+        quantity: lineItems
+          .filter((item) => samePet(item, pet) && item.flavor === recipe.flavor)
+          .reduce((sum, item) => sum + positive(item.quantity), 0)
+      }));
     return {
       pet_id: String(pet.pet_id || ''),
       pet_name: String(pet.pet_name || ''),
+      allowed_life_stages: allowed,
+      outside_line: outside,
+      current_recipes: current,
       recipes,
       suggested_count: suggested > 0 ? suggested : null,
       suggested_split: suggested > 0 ? suggestedSplit(suggested, pet, payloadPet, currentSelection) : null,
@@ -165,6 +209,7 @@ module.exports = {
   assertPackOnlyChange,
   assertSomePacks,
   buildPackAdjustment,
+  planStepChanged,
   withStoredPets,
   distributeEqual
 };

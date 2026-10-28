@@ -78,6 +78,26 @@ function buildOnboardingPetEntitySchema(tableName = 'onboarding_pets') {
         length: 2048,
         nullable: true
       },
+      ageRecordedAt: {
+        name: 'age_recorded_at',
+        type: 'datetime'
+      },
+      birthDate: {
+        name: 'birth_date',
+        type: 'date',
+        nullable: true
+      },
+      lifeStageAnnouncedAt: {
+        name: 'life_stage_announced_at',
+        type: 'datetime',
+        nullable: true
+      },
+      lifeStageAnnouncedStage: {
+        name: 'life_stage_announced_stage',
+        type: String,
+        length: 16,
+        nullable: true
+      },
       deletedAt: {
         name: 'deleted_at',
         type: 'datetime',

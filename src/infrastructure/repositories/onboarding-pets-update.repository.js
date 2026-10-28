@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { toIsoDateTime, toIsoDay } = require('./onboarding-pets.repository');
 
 class OnboardingPetUpdateRepository {
   constructor(dataSource, options = {}) {
@@ -21,7 +22,9 @@ class OnboardingPetUpdateRepository {
       size: 'size',
       activity_level: 'activity_level',
       pet_condition: 'pet_condition',
-      neutered: 'neutered'
+      neutered: 'neutered',
+      birth_date: 'birth_date',
+      age_recorded_at: 'age_recorded_at'
     };
     const updates = Object.entries(fieldMap)
       .filter(([key]) => payload[key] !== undefined)
@@ -61,7 +64,7 @@ class OnboardingPetUpdateRepository {
 
   async findPet(userId, petId) {
     const rows = await this.dataSource.query(
-      `SELECT \`id\`, \`name\`, \`breed\`, \`age_years\`, \`age_months\`, \`weight_input\`, \`weight_unit\`, \`size\`, \`activity_level\`, \`pet_condition\`, \`neutered\`, \`image_url\` FROM \`${this.tableName}\` WHERE \`id\` = ? AND \`user_id\` = ? AND \`deleted_at\` IS NULL LIMIT 1`,
+      `SELECT \`id\`, \`name\`, \`breed\`, \`age_years\`, \`age_months\`, \`weight_input\`, \`weight_unit\`, \`size\`, \`activity_level\`, \`pet_condition\`, \`neutered\`, \`image_url\`, \`age_recorded_at\`, \`birth_date\` FROM \`${this.tableName}\` WHERE \`id\` = ? AND \`user_id\` = ? AND \`deleted_at\` IS NULL LIMIT 1`,
       [petId, userId]
     );
     const pet = Array.isArray(rows) ? rows[0] : null;
@@ -83,7 +86,9 @@ class OnboardingPetUpdateRepository {
       activity_level: String(pet.activity_level || ''),
       pet_condition: String(pet.pet_condition || ''),
       neutered: Boolean(pet.neutered),
-      image_url: String(pet.image_url || '')
+      image_url: String(pet.image_url || ''),
+      age_recorded_at: toIsoDateTime(pet.age_recorded_at),
+      birth_date: toIsoDay(pet.birth_date)
     };
   }
 

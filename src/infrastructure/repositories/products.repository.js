@@ -3,10 +3,15 @@ const { PRODUCTS_ERROR } = require('../../api/contracts/products-errors');
 const {
   FLAVOR_ALIASES_META,
   FLAVOR_SLUG_META,
+  LIFE_STAGE_META,
+  LIFE_STAGES,
   canonicalFlavorKey,
   flavorKeyFromLabel,
   parseFlavorAliases
 } = require('../../core/flavors');
+const { packGramsFromWeight } = require('../../core/plan-catalog-pricing');
+
+const WEIGHT_META_KEYS = ['attribute_pa_weight', 'attribute_weight', 'attribute_gram', 'attribute_peso'];
 
 class ProductsRepository {
   constructor(dataSource, options = {}) {
@@ -22,7 +27,7 @@ class ProductsRepository {
     };
   }
 
-  async listByCategory({ categorySlug, country, currency }) {
+  async listByCategory({ categorySlug, country, currency, lifeStage }) {
     this.ensureDataSourceReady();
     try {
       const category = await this.findCategoryBySlug(categorySlug);
@@ -39,7 +44,8 @@ class ProductsRepository {
 
       for (const productRow of productRows) {
         const variations = await this.findVariationRowsByProductId(productRow.id);
-        const productVariations = this.mapVariations(variations, zoneId, currency, categorySlug);
+        const productVariations = this.mapVariations(variations, zoneId, currency, categorySlug)
+          .filter((variation) => !lifeStage || variation.life_stage === lifeStage);
 
         if (productVariations.length === 0) {
           continue;
@@ -219,6 +225,7 @@ class ProductsRepository {
         flavor: flavorLabel,
         flavor_key: flavorKey || flavorLabel,
         flavor_aliases: this.extractVariationFlavorAliases(variation),
+        life_stage: this.extractVariationLifeStage(variation),
         weight: this.extractVariationWeight(variation),
         price: Number(price.toFixed(2)),
         currency
@@ -226,6 +233,12 @@ class ProductsRepository {
     }
 
     return output;
+  }
+
+  // Variations without a stored line are adult (migration 034).
+  extractVariationLifeStage(variation) {
+    const stored = String((variation.meta || {})[LIFE_STAGE_META] || '').trim();
+    return LIFE_STAGES.includes(stored) ? stored : 'adult';
   }
 
   resolveVariationPrice(variation, zoneId) {
@@ -413,6 +426,49 @@ class ProductsRepository {
     }
 
     return '';
+  }
+
+  // Packaging of the market's plan product (plan-packaging): the pack sizes of its active variations, its plan
+  // days and its large-pack limit. Fields it cannot read stay empty, so the recommendation falls back on each.
+  async findPlanPackaging(country) {
+    this.ensureDataSourceReady();
+    try {
+      const products = await this.dataSource.query([
+        'SELECT p.ID AS id, pm_days.meta_value AS days, pm_limit.meta_value AS large_pack_limit',
+        `FROM \`${this.tableNames.posts}\` p`,
+        `INNER JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
+        `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
+        `LEFT JOIN \`${this.tableNames.postmeta}\` pm_limit ON pm_limit.post_id = p.ID AND pm_limit.meta_key = '_cmpb_large_pack_limit'`,
+        "WHERE p.post_type = 'product'",
+        "AND p.post_status = 'publish'",
+        'AND UPPER(COALESCE(pm_country.meta_value, "")) = ?',
+        'ORDER BY p.menu_order ASC, p.ID ASC',
+        'LIMIT 1'
+      ].join(' '), [String(country || '').trim().toUpperCase()]);
+      const product = Array.isArray(products) ? products[0] : null;
+      if (!product) {
+        return null;
+      }
+      const weights = await this.dataSource.query([
+        'SELECT vm.meta_value AS weight',
+        `FROM \`${this.tableNames.posts}\` v`,
+        `INNER JOIN \`${this.tableNames.postmeta}\` vm ON vm.post_id = v.ID`,
+        `AND vm.meta_key IN (${WEIGHT_META_KEYS.map(() => '?').join(', ')})`,
+        "WHERE v.post_type = 'product_variation'",
+        "AND v.post_status = 'publish'",
+        'AND v.post_parent = ?'
+      ].join(' '), [...WEIGHT_META_KEYS, product.id]);
+      return {
+        packSizesGrams: (Array.isArray(weights) ? weights : []).map((row) => packGramsFromWeight(row.weight)).filter((grams) => grams > 0),
+        planDays: this.toPositiveInt(product.days),
+        largePackLimit: this.toPositiveInt(product.large_pack_limit)
+      };
+    } catch (error) {
+      if (this.isCatalogMissingError(error)) {
+        return null;
+      }
+      throw error;
+    }
   }
 
   async findZoneIdByCountryCurrency(country, currency) {

@@ -1,4 +1,5 @@
 const { resolveMarket } = require('../../core/market');
+const { planFlavorsForPet } = require('../../core/life-stage-lines');
 const { allowFlavorCatalogFallback } = require('../../core/flavors');
 const { normalizeDraftPets, petHasNutritionalProfile } = require('../../core/onboarding-draft-pets');
 const {
@@ -25,7 +26,7 @@ class OnboardingPlanPreviewRepository {
     return allowFlavorCatalogFallback();
   }
 
-  async previewPlan(userId, payload = {}, marketInput) {
+  async previewPlan(userId, payload = {}, marketInput, options = {}) {
     const market = marketInput && marketInput.country ? marketInput : resolveMarket(marketInput);
     const draftPets = normalizeDraftPets(payload.pets).filter(petHasNutritionalProfile);
     const recommendation = this.recommendationRepository
@@ -43,6 +44,7 @@ class OnboardingPlanPreviewRepository {
     const catalogLineRequests = [];
     const flavorsByPet = [];
     const selectedPets = [];
+    const lineChecks = [];
 
     for (const petInput of Array.isArray(payload.pets) ? payload.pets : []) {
       if (!petInput || typeof petInput !== 'object' || petInput.enabled === false) {
@@ -71,6 +73,12 @@ class OnboardingPlanPreviewRepository {
 
       selectedPets.push({
         pet_id: petId,
+        life_stage: matchedPet.life_stage ?? null,
+        life_stage_next_at: matchedPet.life_stage_next_at ?? null,
+        size_class: matchedPet.size_class ?? null,
+        current_age_years: matchedPet.current_age_years ?? null,
+        current_age_months: matchedPet.current_age_months ?? null,
+        allowed_life_stages: Array.isArray(matchedPet.allowed_life_stages) ? matchedPet.allowed_life_stages : ['adult'],
         pet_name: petName,
         enabled: true,
         selected_flavors: [...flavorQuantities.keys()],
@@ -84,6 +92,16 @@ class OnboardingPlanPreviewRepository {
         pet_name: petName,
         flavors: Object.fromEntries(flavorQuantities)
       });
+      if (Array.isArray(matchedPet.allowed_life_stages)) {
+        lineChecks.push({
+          pet_id: petId,
+          life_stage: matchedPet.life_stage ?? null,
+          allowed_life_stages: matchedPet.allowed_life_stages,
+          flavors: [...flavorQuantities.keys()],
+          // Editing a plan: its current recipes allow keeping the previous line (L-04).
+          current_flavors: options.currentSelection ? planFlavorsForPet(options.currentSelection, petId) : null
+        });
+      }
 
       for (const [flavor, quantity] of flavorQuantities) {
         catalogLineRequests.push({
@@ -94,6 +112,11 @@ class OnboardingPlanPreviewRepository {
           target_pack_size_grams: targetPackSizeGrams
         });
       }
+    }
+
+    const lifeStageService = this.recommendationRepository && this.recommendationRepository.lifeStageService;
+    if (lineChecks.length > 0 && lifeStageService) {
+      await lifeStageService.assertWithinLines(lineChecks, market.country);
     }
 
     if (catalogLineRequests.length === 0) {
@@ -117,6 +140,7 @@ class OnboardingPlanPreviewRepository {
       currency: market.currency,
       validated_with: {
         recommendation_version: recommendation && recommendation.version ? recommendation.version : null,
+        nutrition_parameter_set_id: recommendation && recommendation.nutrition_parameter_set_id != null ? recommendation.nutrition_parameter_set_id : null,
         validated_at: new Date().toISOString()
       },
       updated_at: new Date().toISOString()

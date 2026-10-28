@@ -89,6 +89,54 @@
   },
   {
     "method": "POST",
+    "path": "/api/v1/admin/catalog/products/:productId/variations/:variationId/activation"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/recipe-content"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/catalog/recipe-content"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/label"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/presentation"
+  },
+  {
+    "method": "POST",
     "path": "/api/v1/admin/catalog/sync"
   },
   {
@@ -165,6 +213,38 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/legal/:kind"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/legal/:kind"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/legal/:kind/versions/:version"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/life-stage"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/life-stage/breeds"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/life-stage/breeds/:id"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/life-stage/limits"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/life-stage/preview"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/markets/conflicts"
   },
   {
@@ -174,6 +254,30 @@
   {
     "method": "POST",
     "path": "/api/v1/admin/me/password"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/nutrition/parameters"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/nutrition/parameters/:id/copy-to-draft"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/nutrition/parameters/draft"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/nutrition/parameters/draft"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/nutrition/parameters/publish"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/nutrition/recipes"
   },
   {
     "method": "POST",
@@ -253,6 +357,54 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/reports/acquisition"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/export.csv"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/mix"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/operations"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/revenue"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/stock"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/subscriptions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/summary"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/settings/automated-emails"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/settings/automated-emails"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/settings/company"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/settings/company"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/shipments/:id/label"
   },
   {
@@ -278,6 +430,26 @@
   {
     "method": "POST",
     "path": "/api/v1/admin/shipping/test"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/stock"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/stock/adjustments"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/stock/minimum"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/stock/movements"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/stock/production"
   },
   {
     "method": "POST",
@@ -418,6 +590,10 @@
   {
     "method": "GET",
     "path": "/api/v1/geo/context"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/legal/:kind"
   },
   {
     "method": "POST",
@@ -613,6 +789,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/recipes"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/recipes/:key"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/subscriptions"
   },
   {
@@ -650,5 +834,9 @@
   {
     "method": "GET",
     "path": "/api/v1/subscriptions/:subscriptionId/invoices/:invoiceId/pdf"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/subscriptions/:subscriptionId/life-stage-notices/:petId/dismiss"
   }
 ]

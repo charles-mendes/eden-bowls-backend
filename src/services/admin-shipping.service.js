@@ -28,6 +28,22 @@ async function timed(run) {
   }
 }
 
+const MIN_US_TRANSIT_DAYS = 1;
+const MAX_US_TRANSIT_DAYS = 10;
+
+// The US transit limit is a whole number of days; a refused value leaves every stored setting unchanged.
+function assertUsMaxTransitDays(us) {
+  if (!us || us.max_transit_days == null || us.max_transit_days === '') {
+    return;
+  }
+  const days = Number(us.max_transit_days);
+  if (!Number.isInteger(days) || days < MIN_US_TRANSIT_DAYS || days > MAX_US_TRANSIT_DAYS) {
+    throw new HttpError(422, `US max transit days must be a whole number from ${MIN_US_TRANSIT_DAYS} to ${MAX_US_TRANSIT_DAYS}.`, {
+      code: 'invalid_max_transit_days'
+    });
+  }
+}
+
 class AdminShippingService {
   constructor(options = {}) {
     this.shippingService = options.shippingService || null;
@@ -144,6 +160,7 @@ class AdminShippingService {
 
   async saveSettings(payload = {}, actor = {}) {
     this.ensureRepository();
+    assertUsMaxTransitDays(payload.us);
     const scoped = await this.resolveHeadquarters(this.scopedPayload(payload, actor));
     const settings = await this.repository.save(scoped);
     this.applyToShippingService(settings);

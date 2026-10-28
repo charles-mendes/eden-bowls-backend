@@ -1,6 +1,6 @@
 const {
-  MAX_TRANSIT_DAYS_US,
   brazilPrepValid,
+  currentUsMaxTransitDays,
   editableUntil,
   timeZoneFor,
   usPrepValid,
@@ -32,7 +32,7 @@ function sameInstant(left, right) {
 function transitFor(subscription) {
   if (subscription.market !== 'US') return 0;
   const transit = Number(subscription.transitDays);
-  return transit > 0 ? transit : MAX_TRANSIT_DAYS_US;
+  return transit > 0 ? transit : currentUsMaxTransitDays();
 }
 
 function prepValid(market, preparationDay, rows, transitDays) {

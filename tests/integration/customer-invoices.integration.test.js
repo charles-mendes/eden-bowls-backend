@@ -1,5 +1,6 @@
 const { DataSource } = require('typeorm');
 const { CreateCustomerInvoices1700000000029 } = require('../../src/infrastructure/migrations/1700000000029-create-customer-invoices');
+const { AddInvoiceIssuerSnapshot1700000000051 } = require('../../src/infrastructure/migrations/1700000000051-add-invoice-issuer-snapshot');
 const { CustomerInvoicesRepository } = require('../../src/infrastructure/repositories/customer-invoices.repository');
 
 const runIntegration = process.env.RUN_DB_INTEGRATION_TESTS === 'true';
@@ -54,6 +55,12 @@ describeIntegration('customer invoices (MySQL)', () => {
     await dataSource.initialize();
     const runner = dataSource.createQueryRunner();
     await new CreateCustomerInvoices1700000000029().up(runner);
+    // Two invoices numbered before the issuer snapshot existed.
+    await dataSource.query(`INSERT INTO customer_invoices
+      (invoice_number, stripe_account, stripe_invoice_id, locale, currency, invoice_status, issued_at, email_status)
+      VALUES ('EB-2026-800001', 'br', 'in_legacy_br', 'pt-BR', 'brl', 'paid', '2026-08-01 12:00:00', 'sent'),
+             ('EB-2026-800002', 'us', 'in_legacy_us', 'en-US', 'usd', 'paid', '2026-08-01 12:00:00', 'sent')`);
+    await new AddInvoiceIssuerSnapshot1700000000051().up(runner);
     await runner.release();
     repository = new CustomerInvoicesRepository(dataSource);
   });
@@ -101,5 +108,21 @@ describeIntegration('customer invoices (MySQL)', () => {
       emailLastError: null
     });
     await expect(repository.listBySubscription('sub_it')).resolves.toHaveLength(2);
+  });
+
+  test('the deploy stores on every invoice already issued the issuer it printed', async () => {
+    const br = await repository.findByStripeInvoice('br', 'in_legacy_br');
+    const us = await repository.findByStripeInvoice('us', 'in_legacy_us');
+    expect(br.issuerSnapshot).toEqual({ name: 'Eden Bowls', line: 'Eden Bowls · CNPJ 65.291.985/0001-05 · Curitiba, PR', email: 'hello@edenbowls.com' });
+    expect(us.issuerSnapshot).toEqual({ name: 'Eden Bowls', line: 'Eden Bowls · Boca Raton, FL, USA', email: 'hello@edenbowls.com' });
+    const [{ missing }] = await dataSource.query("SELECT COUNT(*) AS missing FROM customer_invoices WHERE issuer_snapshot IS NULL AND invoice_number LIKE 'EB-2026-8%'");
+    expect(Number(missing)).toBe(0);
+  });
+
+  test('a stored snapshot is never replaced', async () => {
+    const issuer = { name: 'Eden Bowls', line: 'Eden Bowls · CNPJ 65.291.985/0001-05 · Curitiba, PR', email: 'hello@edenbowls.com' };
+    const { row } = await repository.insertOrGet({ ...invoiceInput('in_it_3', 'EB-2026-900004'), issuerSnapshot: issuer });
+    await repository.setIssuerSnapshot(row.id, { ...issuer, line: 'Eden Bowls · CNPJ 65.291.985/0001-05 · São Paulo, SP' });
+    expect((await repository.findById(row.id)).issuerSnapshot).toEqual(issuer);
   });
 });

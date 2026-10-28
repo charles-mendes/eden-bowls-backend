@@ -27,7 +27,50 @@ function formatWeight(weightKg, country) {
 }
 
 class AdminNutritionService {
-  simulate({ country, pet = {}, questionnaire = {} }, actor = {}) {
+  constructor(options = {}) {
+    this.recipeEnergyService = options.recipeEnergyService || null;
+    this.nutritionParametersService = options.nutritionParametersService || null;
+  }
+
+  // The published parameter set, or the draft when asked; without the service the values of the code apply.
+  async resolveParameters(selection) {
+    if (!this.nutritionParametersService) {
+      return { id: null, parameters: undefined, status: 'published' };
+    }
+    return this.nutritionParametersService.parametersFor(selection);
+  }
+
+  // kcal/kg for the simulation: the chosen recipe's energyKg, else the mean of the pet's line.
+  // Cats and an unwired catalog keep the engine default.
+  async resolveEnergy(market, recipeKey, pet) {
+    if (!this.recipeEnergyService || pet.type === 'cat') {
+      return { kcalKg: null, source: 'default' };
+    }
+    if (recipeKey) {
+      const kcalKg = await this.recipeEnergyService.forRecipe(market, recipeKey);
+      if (!kcalKg) {
+        throw new HttpError(422, 'A receita não tem energia (energyKg) cadastrada no rótulo.', {
+          code: 'recipe_energy_missing',
+          recipe_key: recipeKey
+        });
+      }
+      return { kcalKg, source: 'recipe' };
+    }
+    const kcalKg = await this.recipeEnergyService.forLifeStage(market, pet.life_stage);
+    return kcalKg ? { kcalKg, source: 'life_stage_average' } : { kcalKg: null, source: 'default' };
+  }
+
+  // Recipes the simulator can pick, with their energy density.
+  async listRecipes({ country }, actor = {}) {
+    if (shouldEnforceMarketScope(actor)) {
+      constrainMarketQuery(actor, { country });
+    }
+    const market = country === 'BR' ? 'BR' : 'US';
+    const items = this.recipeEnergyService ? await this.recipeEnergyService.listRecipes(market) : [];
+    return { success: true, data: { market, items } };
+  }
+
+  async simulate({ country, recipeKey = '', parameterSet = 'published', pet = {}, questionnaire = {} }, actor = {}) {
     if (shouldEnforceMarketScope(actor)) {
       constrainMarketQuery(actor, { country });
     }
@@ -38,6 +81,8 @@ class AdminNutritionService {
       throw new HttpError(422, 'Peso inválido. Informe peso maior que zero.');
     }
 
+    const energy = await this.resolveEnergy(market, recipeKey, pet);
+    const parameterSetUsed = await this.resolveParameters(parameterSet);
     const result = buildForPet(
       {
         name: pet.name,
@@ -53,9 +98,11 @@ class AdminNutritionService {
       },
       {
         nivel_atividade: questionnaire.nivel_atividade,
-        score_corporal: questionnaire.score_corporal
+        score_corporal: questionnaire.score_corporal,
+        nem_kcal_kg: energy.kcalKg
       },
-      locale
+      locale,
+      parameterSetUsed.parameters
     );
 
     if (result && result.error) {
@@ -73,6 +120,10 @@ class AdminNutritionService {
         porte: result.porte,
         especie: result.especie,
         nem_kcal_kg: result.nem_kcal_kg,
+        nem_source: energy.source,
+        recipe_key: energy.source === 'recipe' ? recipeKey : null,
+        parameter_set: { id: parameterSetUsed.id, status: parameterSetUsed.status },
+        decision_trace: result.decision_trace,
         display: {
           daily: formatDailyAmount(result.quantidade_g_dia, market),
           weight: formatWeight(result.pet.weight, market)

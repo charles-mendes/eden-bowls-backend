@@ -5,6 +5,7 @@ const {
 } = require('./subscription-dashboard');
 const { parseJsonColumn } = require('./stripe-subscription-map');
 const { canAccessMarket } = require('./admin-market-scope');
+const { parseWeightToGrams } = require('./plan-catalog-pricing');
 
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 
@@ -85,25 +86,44 @@ function packSizeFromItem(item) {
   return '';
 }
 
-function compactLineItems(items) {
+// Whole grams of a line, rounded like the catalog does: the stored grams, else the size read from its label.
+function packSizeGramsFromItem(item) {
+  const grams = Number(item && (item.pack_size_grams || item.packSizeGrams));
+  if (Number.isFinite(grams) && grams > 0) {
+    return Math.round(grams);
+  }
+  const fromLabel = parseWeightToGrams(packSizeFromItem(item));
+  return fromLabel > 0 ? Math.round(fromLabel) : null;
+}
+
+// The queue shows the catalog short name, then the full name, and the key only when no name exists.
+function displayFlavor(flavorKey, label, names) {
+  const catalog = names && names[flavorKey];
+  return (catalog && catalog.shortLabel) || label || (catalog && catalog.label) || flavorKey;
+}
+
+function compactLineItems(items, names) {
   const grouped = new Map();
   for (const item of items) {
-    const flavor = String(item.flavor || '').trim();
-    if (!flavor) {
+    const label = String(item.label || '').trim();
+    const flavorKey = String(item.flavor || '').trim() || label;
+    if (!flavorKey) {
       continue;
     }
     const packSize = packSizeFromItem(item);
     const petName = item.petName || item.pet_name || null;
-    const key = `${flavor}|${packSize}|${petName || ''}`;
+    const key = `${flavorKey}|${packSize}|${petName || ''}`;
     const quantity = Math.max(0, Number(item.quantity) || 0);
     const current = grouped.get(key);
     if (current) {
       current.quantity += quantity;
     } else {
       grouped.set(key, {
-        flavor,
+        flavor: displayFlavor(flavorKey, label, names),
+        flavorKey,
         quantity,
         packSize,
+        packSizeGrams: packSizeGramsFromItem(item),
         petName: petName ? String(petName) : null
       });
     }
@@ -111,7 +131,7 @@ function compactLineItems(items) {
   return [...grouped.values()].filter((item) => item.quantity > 0);
 }
 
-function lineItemsFromPets(plan) {
+function lineItemsFromPets(plan, names) {
   const items = [];
   for (const pet of Array.isArray(plan.pets) ? plan.pets : []) {
     const flavors = Array.isArray(pet.selected_flavors) ? pet.selected_flavors : [];
@@ -121,22 +141,24 @@ function lineItemsFromPets(plan) {
         flavor,
         quantity: weights[index] == null ? 1 : Number(weights[index]),
         packSize: packSizeFromItem(pet),
+        pack_size_grams: pet.pack_size_grams,
         petName: pet.pet_name || pet.name || null
       });
     });
   }
-  return compactLineItems(items);
+  return compactLineItems(items, names);
 }
 
-function lineItemsFromCatalog(catalog) {
+function lineItemsFromCatalog(catalog, names) {
   const raw = Array.isArray(catalog.line_items) ? catalog.line_items : [];
   return compactLineItems(raw.map((item) => ({
-    flavor: item.flavor || item.flavor_label || item.label,
+    flavor: item.flavor,
+    label: item.flavor_label || item.label,
     quantity: item.quantity,
     pack_size_label: item.pack_size_label,
     pack_size_grams: item.pack_size_grams,
     petName: item.pet_name || item.petName
-  })));
+  })), names);
 }
 
 function packSizeLabelFor(lineItems) {
@@ -167,8 +189,10 @@ function presentProductionQueueItem(row, options = {}) {
   const now = options.now || new Date();
   const plan = jsonColumn(row.planSelection || row.plan_selection);
   const catalog = catalogFrom(row);
-  const catalogItems = lineItemsFromCatalog(catalog);
-  const lineItems = catalogItems.length > 0 ? catalogItems : lineItemsFromPets(plan);
+  const stripeAccount = String(row.stripeAccount || row.stripe_account || 'us').toLowerCase() || 'us';
+  const names = options.recipeNames ? options.recipeNames[stripeAccount === 'br' ? 'BR' : 'US'] : null;
+  const catalogItems = lineItemsFromCatalog(catalog, names);
+  const lineItems = catalogItems.length > 0 ? catalogItems : lineItemsFromPets(plan, names);
   const packSizeLabel = packSizeLabelFor(lineItems);
   // A paid cycle is due on its preparation day; an unpaid one on its charge.
   const daysUntil = civilDaysUntil(row.dueAt || row.currentPeriodEnd || row.current_period_end, timezone, now);
@@ -211,7 +235,7 @@ function presentProductionQueueItem(row, options = {}) {
     note: row.note || row.production_note || null,
     subtotal,
     currency: catalog.currency || (country === 'BR' ? 'BRL' : null),
-    stripeAccount: String(row.stripeAccount || row.stripe_account || 'us').toLowerCase() || 'us',
+    stripeAccount,
     customerProfileInScope: canAccessMarket(options.actor || {}, row.profileMarket || row.profile_market),
     dense: lineItems.length > 3 || packSizeLabel === 'misto',
     lineItems

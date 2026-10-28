@@ -1025,6 +1025,25 @@ describe('StripeWebhookService', () => {
     }));
   });
 
+  test('passes Stripe ended_at to the ledger when a subscription is deleted', async () => {
+    const { service, stripeBilling, ledgerRepository } = buildService({
+      transactionalMailer: { notifyCancelled: jest.fn(), hasSentClaim: jest.fn().mockResolvedValue(true) }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ userId: 7, stripeSubscriptionId: 'sub_123' });
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.deleted',
+      subscriptionFixture({ status: 'canceled', canceled_at: 1790000000, ended_at: 1791640800 }),
+      {}
+    ));
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'canceled',
+      endedAt: 1791640800
+    }));
+  });
+
   test('returns 200 and keeps the event pending when dispatch throws', async () => {
     const { service, stripeBilling, eventsRepository, ledgerRepository } = buildService();
     stripeBilling.constructEvent.mockReturnValue({

@@ -52,6 +52,30 @@ const { AddUpsShipmentsActiveInvoiceUnique1700000000030 } = require('./migration
 const { AddShippingHeadquartersAddressFields1700000000031 } = require('./migrations/1700000000031-add-shipping-headquarters-address-fields');
 const { CreateCatalogSyncRuns1700000000032 } = require('./migrations/1700000000032-create-catalog-sync-runs');
 const { RenameNutritionistRoleToVeterinarian1700000000033 } = require('./migrations/1700000000033-rename-nutritionist-role-to-veterinarian');
+const { AddVariationLifeStage1700000000034 } = require('./migrations/1700000000034-add-variation-life-stage');
+const { CreateLifeStageLimits1700000000035 } = require('./migrations/1700000000035-create-life-stage-limits');
+const { AddPetAgeReference1700000000036 } = require('./migrations/1700000000036-add-pet-age-reference');
+const { CreatePetLifeStageTracking1700000000037 } = require('./migrations/1700000000037-create-pet-life-stage-tracking');
+const { CreateRecipeContents1700000000038 } = require('./migrations/1700000000038-create-recipe-contents');
+const { BackfillVariationRecipeKey1700000000039 } = require('./migrations/1700000000039-backfill-variation-recipe-key');
+const { AddRecipeRegistry1700000000040 } = require('./migrations/1700000000040-add-recipe-registry');
+const { SeedRecipeLabels1700000000041 } = require('./migrations/1700000000041-seed-recipe-labels');
+const { AddRecipeLifeStage1700000000042 } = require('./migrations/1700000000042-add-recipe-life-stage');
+const { AddRecipePlanImage1700000000043 } = require('./migrations/1700000000043-add-recipe-plan-image');
+const { SeedLifeStageVariations1700000000044 } = require('./migrations/1700000000044-seed-life-stage-variations');
+const { AddRecipePresentation1700000000045 } = require('./migrations/1700000000045-add-recipe-presentation');
+const { CreateFirstPurchaseTermDiscounts1700000000046 } = require('./migrations/1700000000046-create-first-purchase-term-discounts');
+const { AddUsMaxTransitDays1700000000047 } = require('./migrations/1700000000047-add-us-max-transit-days');
+const { AddRecipePresentationTag1700000000048 } = require('./migrations/1700000000048-add-recipe-presentation-tag');
+const { CreateNutritionParameterSets1700000000049 } = require('./migrations/1700000000049-create-nutrition-parameter-sets');
+const { CreateCompanyProfiles1700000000050 } = require('./migrations/1700000000050-create-company-profiles');
+const { AddInvoiceIssuerSnapshot1700000000051 } = require('./migrations/1700000000051-add-invoice-issuer-snapshot');
+const { CreateLegalDocuments1700000000052 } = require('./migrations/1700000000052-create-legal-documents');
+const { CreateAutomatedEmailSettings1700000000053 } = require('./migrations/1700000000053-create-automated-email-settings');
+const { CreatePackStock1700000000054 } = require('./migrations/1700000000054-create-pack-stock');
+const { AddSubscriptionLifecycleDates1700000000055 } = require('./migrations/1700000000055-add-subscription-lifecycle-dates');
+const { BackfillOnboardingUserStateMarket1700000000056 } = require('./migrations/1700000000056-backfill-onboarding-user-state-market');
+const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
 const { buildPrivacyConsentEntitySchema } = require('./entities/privacy-consent.entity');
@@ -89,6 +113,8 @@ function buildDataSourceOptions(env) {
       buildAdminAuditEventEntitySchema(),
       buildSubscriptionMailClaimEntitySchema(),
       buildSubscriptionProductionCycleEntitySchema(),
+      buildPackStockItemEntitySchema(),
+      buildPackStockMovementEntitySchema(),
       buildBackgroundJobCursorEntitySchema(),
       buildDeliveryClosedDayEntitySchema()
     ],
@@ -126,7 +152,30 @@ function buildDataSourceOptions(env) {
       AddUpsShipmentsActiveInvoiceUnique1700000000030,
       AddShippingHeadquartersAddressFields1700000000031,
       CreateCatalogSyncRuns1700000000032,
-      RenameNutritionistRoleToVeterinarian1700000000033
+      RenameNutritionistRoleToVeterinarian1700000000033,
+      AddVariationLifeStage1700000000034,
+      CreateLifeStageLimits1700000000035,
+      AddPetAgeReference1700000000036,
+      CreatePetLifeStageTracking1700000000037,
+      CreateRecipeContents1700000000038,
+      BackfillVariationRecipeKey1700000000039,
+      AddRecipeRegistry1700000000040,
+      SeedRecipeLabels1700000000041,
+      AddRecipeLifeStage1700000000042,
+      AddRecipePlanImage1700000000043,
+      SeedLifeStageVariations1700000000044,
+      AddRecipePresentation1700000000045,
+      CreateFirstPurchaseTermDiscounts1700000000046,
+      AddUsMaxTransitDays1700000000047,
+      AddRecipePresentationTag1700000000048,
+      CreateNutritionParameterSets1700000000049,
+      CreateCompanyProfiles1700000000050,
+      AddInvoiceIssuerSnapshot1700000000051,
+      CreateLegalDocuments1700000000052,
+      CreateAutomatedEmailSettings1700000000053,
+      CreatePackStock1700000000054,
+      AddSubscriptionLifecycleDates1700000000055,
+      BackfillOnboardingUserStateMarket1700000000056
     ],
     synchronize: false,
     logging: false,

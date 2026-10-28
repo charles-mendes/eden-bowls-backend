@@ -46,6 +46,7 @@ describe('ProductsRepository', () => {
         variation_id: 1,
         flavor: 'Frango',
         flavor_key: 'turkey',
+        life_stage: 'adult',
         flavor_aliases: [],
         weight: '300g',
         price: 29.9,
@@ -111,6 +112,34 @@ describe('ProductsRepository', () => {
 
     await expect(repository.findZoneIdByCountryCurrency('US', 'USD')).resolves.toBe('us');
     expect(priceZonePolicyRepository.findActiveZoneId).toHaveBeenCalledWith('US', 'USD');
+  });
+
+  describe('plan packaging of a market (plan-packaging)', () => {
+    test('reads the active variation weights, plan days and large-pack limit of the plan product', async () => {
+      const dataSource = {
+        isInitialized: true,
+        query: jest.fn()
+          .mockResolvedValueOnce([{ id: 200, days: '30', large_pack_limit: null }])
+          .mockResolvedValueOnce([{ weight: '10.6oz' }, { weight: '17.6oz' }, { weight: '10.6oz' }, { weight: '' }])
+      };
+
+      const packaging = await new ProductsRepository(dataSource).findPlanPackaging('us');
+
+      expect(packaging).toEqual({ packSizesGrams: [300, 500, 300], planDays: 30, largePackLimit: 0 });
+      expect(dataSource.query.mock.calls[0][0]).toContain("p.post_status = 'publish'");
+      expect(dataSource.query.mock.calls[0][0]).toContain('_cmpb_large_pack_limit');
+      expect(dataSource.query.mock.calls[0][1]).toEqual(['US']);
+      expect(dataSource.query.mock.calls[1][0]).toContain("v.post_status = 'publish'");
+      expect(dataSource.query.mock.calls[1][1]).toEqual(['attribute_pa_weight', 'attribute_weight', 'attribute_gram', 'attribute_peso', 200]);
+    });
+
+    test('has no packaging without a plan product or catalog tables', async () => {
+      const none = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+      const missing = { isInitialized: true, query: jest.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'ER_NO_SUCH_TABLE' })) };
+
+      await expect(new ProductsRepository(none).findPlanPackaging('BR')).resolves.toBeNull();
+      await expect(new ProductsRepository(missing).findPlanPackaging('BR')).resolves.toBeNull();
+    });
   });
 
   test('lists published flavor labels for a country', async () => {
@@ -213,5 +242,39 @@ describe('ProductsRepository', () => {
 
     expect(repository.hasStrictStripeBinding(variation, 'BRL')).toBe(true);
     expect(repository.hasStrictStripeBinding(variation, 'USD')).toBe(false);
+  });
+
+  test('reads the life stage line of each variation and filters by it', async () => {
+    const meta = (flavor, extra = {}) => ({
+      _br_regular_price: '40.00',
+      _stripe_product_id: 'prod_abc',
+      _stripe_price_id: 'price_1',
+      _stripe_price_ids_by_currency: '{"brl":"price_1"}',
+      attribute_pa_flavor: flavor,
+      attribute_pa_weight: '300g',
+      ...extra
+    });
+    const repository = new ProductsRepository(
+      { isInitialized: true, query: jest.fn() },
+      { priceZonePolicyRepository: { findActiveZoneId: jest.fn().mockResolvedValue('br') } }
+    );
+    const rows = [
+      { variation_id: 1, meta: meta('Bovino') },
+      { variation_id: 2, meta: meta('Receita de Carne para Cães Sênior', { _flavor_slug: 'senior-beef', _life_stage: 'senior' }) }
+    ];
+    expect(repository.mapVariations(rows, 'br', 'BRL', 'flavors').map((item) => [item.flavor_key, item.life_stage]))
+      .toEqual([['beef', 'adult'], ['senior-beef', 'senior']]);
+
+    repository.ensureDataSourceReady = jest.fn();
+    repository.findCategoryBySlug = jest.fn().mockResolvedValue({ id: 10, slug: 'flavors', name: 'Flavors' });
+    repository.findProducts = jest.fn().mockResolvedValue([{ id: 100, name: 'Flavors BR', slug: 'flavors-br', days: 30 }]);
+    repository.findZoneIdByCountryCurrency = jest.fn().mockResolvedValue('br');
+    repository.findVariationRowsByProductId = jest.fn().mockResolvedValue(rows);
+    repository.findProductTags = jest.fn().mockResolvedValue([]);
+
+    const senior = await repository.listByCategory({ categorySlug: 'flavors', country: 'BR', currency: 'BRL', lifeStage: 'senior' });
+    expect(senior.products[0].variations.map((item) => item.variation_id)).toEqual([2]);
+    const puppy = await repository.listByCategory({ categorySlug: 'flavors', country: 'BR', currency: 'BRL', lifeStage: 'puppy' });
+    expect(puppy.products).toEqual([]);
   });
 });

@@ -31,6 +31,28 @@ describe('AdminShippingService', () => {
     expect(shippingService.settings).toEqual(saved);
   });
 
+  test.each([0, 11, 1.5, 'two'])('Out of range: max_transit_days %j is refused with 422 and nothing is stored', async (days) => {
+    const repository = { save: jest.fn(), get: jest.fn() };
+    const shippingService = { settings: { us: { max_transit_days: 1 } } };
+    const service = new AdminShippingService({ repository, shippingService });
+
+    await expect(service.saveSettings({ us: { max_transit_days: days } })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'invalid_max_transit_days' }
+    });
+    expect(repository.save).not.toHaveBeenCalled();
+    expect(shippingService.settings.us.max_transit_days).toBe(1);
+  });
+
+  test('saves max_transit_days within 1 to 10', async () => {
+    const repository = { save: jest.fn(async (payload) => payload) };
+    const service = new AdminShippingService({ repository, shippingService: { settings: null } });
+
+    await service.saveSettings({ us: { max_transit_days: 10 } });
+
+    expect(repository.save).toHaveBeenCalledWith({ us: { max_transit_days: 10 } });
+  });
+
   test('throws 503 when the repository is missing', async () => {
     const service = new AdminShippingService({});
 

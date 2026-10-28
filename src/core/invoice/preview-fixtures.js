@@ -1,5 +1,7 @@
 // The sample data of the approved layout, shaped like a Stripe invoice (API 2025-09-30.clover) and a ledger row.
 // Used by src/scripts/render-invoice-previews.js and by the invoice tests.
+const { COMPANY_PROFILE_SEED } = require('../company-profile');
+const { issuerFor } = require('./invoice-copy');
 
 const SEPT_1 = Math.floor(Date.UTC(2026, 8, 1, 15) / 1000);
 const OCT_1 = Math.floor(Date.UTC(2026, 9, 1, 15) / 1000);
@@ -75,6 +77,7 @@ function sampleInvoice({ currency, status = 'open', customerName = 'Ana Mendes' 
 const PREVIEW_CASES = {
   'en-US': {
     stripeAccount: 'us',
+    issuer: issuerFor('en-US', COMPANY_PROFILE_SEED.US),
     invoice: (status) => sampleInvoice({ currency: 'usd', status }),
     ledger: {
       customerEmail: 'ana@example.com',
@@ -95,6 +98,7 @@ const PREVIEW_CASES = {
   },
   'pt-BR': {
     stripeAccount: 'br',
+    issuer: issuerFor('pt-BR', COMPANY_PROFILE_SEED.BR),
     invoice: (status) => sampleInvoice({ currency: 'brl', status }),
     ledger: {
       customerEmail: 'ana@example.com',
@@ -115,7 +119,26 @@ const PREVIEW_CASES = {
   }
 };
 
+// The new life-stage recipes print their full catalog name (2.15).
+const LIFE_STAGE_PREVIEW_CASES = {
+  'en-US': {
+    ...PREVIEW_CASES['en-US'],
+    variants: new Map([
+      ['price_first', { flavorKey: 'senior-beef', label: 'Beef Recipe for Senior Dogs', grams: 300 }],
+      ['price_second', { flavorKey: 'puppy-chicken-pork', label: 'Chicken & Pork Recipe for Puppies', grams: 300 }]
+    ])
+  },
+  'pt-BR': {
+    ...PREVIEW_CASES['pt-BR'],
+    variants: new Map([
+      ['price_first', { flavorKey: 'senior-beef', label: 'Receita de Carne para Cães Sênior', grams: 300 }],
+      ['price_second', { flavorKey: 'puppy-chicken-pork', label: 'Receita de Frango e Porco para Filhotes', grams: 300 }]
+    ])
+  }
+};
+
 module.exports = {
+  LIFE_STAGE_PREVIEW_CASES,
   PREVIEW_CASES,
   sampleInvoice
 };

@@ -153,6 +153,7 @@ class AuthService {
         marketingOptIn: Boolean(payload.marketingOptIn),
         privacyVersion: payload.privacyVersion,
         termsVersion: payload.termsVersion,
+        market: payload.market,
         ipHash: context.ipHash,
         userAgent: context.userAgent
       });

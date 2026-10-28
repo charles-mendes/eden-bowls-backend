@@ -1,5 +1,7 @@
 const { buildForPet } = require('../core/nutrition-recommendation');
+const { publishedParametersFor } = require('../infrastructure/repositories/onboarding-recommendation.repository');
 const { buildSimplifiedRecommendation } = require('../core/simplified-consumption');
+const { planPackagingFor } = require('../infrastructure/repositories/onboarding-recommendation.repository');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const {
   constrainMarketQuery,
@@ -151,6 +153,22 @@ class AdminOnboardingService {
   constructor(options = {}) {
     this.repository = options.repository;
     this.ledgerRepository = options.ledgerRepository;
+    this.lifeStageService = options.lifeStageService || null;
+    this.recipeEnergyService = options.recipeEnergyService || null;
+    this.productsRepository = options.productsRepository || null;
+    this.nutritionParameters = options.nutritionParameters || null;
+  }
+
+  // kcal/kg per checkout pet from the mean energyKg of its line, null to keep the engine default.
+  async energiesFor(pets, market) {
+    if (!this.recipeEnergyService || pets.length === 0) {
+      return pets.map(() => null);
+    }
+    const stages = this.lifeStageService ? await this.lifeStageService.resolveMany(pets, market) : [];
+    return Promise.all(pets.map((pet, index) => this.recipeEnergyService.forLifeStage(
+      market,
+      stages[index] ? stages[index].lifeStage : null
+    )));
   }
 
   scopedQuery(query = {}, actor = {}) {
@@ -204,7 +222,10 @@ class AdminOnboardingService {
     const scopedSubscriptions = shouldEnforceMarketScope(actor)
       ? subscriptions.filter((item) => constrainMarketQuery(actor, {}).stripeAccounts.includes(String(item.stripeAccount || '').toLowerCase()))
       : subscriptions;
-    const recommendations = checkout.pets.map((pet) => buildForPet({
+    const marketCountry = checkout.address && checkout.address.country === 'BR' ? 'BR' : 'US';
+    const energies = await this.energiesFor(checkout.pets, marketCountry);
+    const parameterSet = await publishedParametersFor(this.nutritionParameters);
+    const recommendations = checkout.pets.map((pet, index) => buildForPet({
       id: pet.id,
       name: pet.name,
       breed: pet.breed,
@@ -217,10 +238,9 @@ class AdminOnboardingService {
       activity_level: pet.activityLevel,
       pet_condition: pet.petCondition,
       neutered: pet.neutered
-    }));
-    const marketCountry = checkout.address && checkout.address.country === 'BR' ? 'BR' : 'US';
+    }, energies[index] ? { nem_kcal_kg: energies[index] } : null, '', parameterSet.parameters));
     const simplified = checkout.pets.length
-      ? buildSimplifiedRecommendation(recommendations, { country: marketCountry })
+      ? buildSimplifiedRecommendation(recommendations, { country: marketCountry }, await planPackagingFor(this.productsRepository, marketCountry))
       : null;
 
     return {

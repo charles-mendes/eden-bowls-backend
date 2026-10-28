@@ -49,7 +49,9 @@ const DEFAULT_SETTINGS = {
       width_in: 12,
       height_in: 12
     },
-    allowed_service_codes: ['03']
+    allowed_service_codes: ['03'],
+    // A US address whose UPS transit is longer than this is outside the delivery area.
+    max_transit_days: 1
   }
 };
 
@@ -181,7 +183,8 @@ function mergeSettings(base, overlay) {
       allowed_service_codes: parseServiceCodes(
         fileUs.allowed_service_codes,
         parseServiceCodes(baseUs.allowed_service_codes, ['03'])
-      )
+      ),
+      max_transit_days: toNumber(fileUs.max_transit_days, toNumber(baseUs.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days))
     }
   };
 }
@@ -290,7 +293,8 @@ function usFromRow(row) {
       width_in: toNumber(row.package_width_in, DEFAULT_SETTINGS.us.package.width_in),
       height_in: toNumber(row.package_height_in, DEFAULT_SETTINGS.us.package.height_in)
     },
-    allowed_service_codes: parseServiceCodes(row.allowed_service_codes, DEFAULT_SETTINGS.us.allowed_service_codes)
+    allowed_service_codes: parseServiceCodes(row.allowed_service_codes, DEFAULT_SETTINGS.us.allowed_service_codes),
+    max_transit_days: toNumber(row.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days)
   };
 }
 
@@ -347,7 +351,8 @@ function usToParams(us) {
     us.package?.length_in ?? 12,
     us.package?.width_in ?? 12,
     us.package?.height_in ?? 12,
-    JSON.stringify(parseServiceCodes(us.allowed_service_codes, ['03']))
+    JSON.stringify(parseServiceCodes(us.allowed_service_codes, ['03'])),
+    toNumber(us.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days)
   ];
 }
 
