@@ -53,7 +53,8 @@ class SubscriptionProductionRepository {
     };
   }
 
-  async findBySubscriptionAndPeriodEnd(subscriptionId, periodEnd) {
+  // `manager` runs the read inside a transaction; `forUpdate` locks the cycle row until it ends.
+  async findBySubscriptionAndPeriodEnd(subscriptionId, periodEnd, { manager, forUpdate = false } = {}) {
     this.ensureDataSource();
     const numericId = Number(subscriptionId);
     const period = toMysqlDateTime(periodEnd);
@@ -62,8 +63,8 @@ class SubscriptionProductionRepository {
     }
 
     try {
-      const rows = await this.dataSource.query(
-        `SELECT * FROM \`${this.tableName}\` WHERE \`subscription_id\` = ? AND \`period_end\` = ? LIMIT 1`,
+      const rows = await (manager || this.dataSource).query(
+        `SELECT * FROM \`${this.tableName}\` WHERE \`subscription_id\` = ? AND \`period_end\` = ? LIMIT 1${forUpdate ? ' FOR UPDATE' : ''}`,
         [numericId, period]
       );
       return this.mapRow(Array.isArray(rows) ? rows[0] : null);
@@ -138,7 +139,7 @@ class SubscriptionProductionRepository {
     }
   }
 
-  async upsert({ subscriptionId, periodEnd, status, note, updatedByUserId }) {
+  async upsert({ subscriptionId, periodEnd, status, note, updatedByUserId }, { manager } = {}) {
     this.ensureDataSource();
     const numericId = Number(subscriptionId);
     const period = toMysqlDateTime(periodEnd);
@@ -146,7 +147,8 @@ class SubscriptionProductionRepository {
       throw new HttpError(422, 'Invalid production cycle identity.');
     }
 
-    const existing = await this.findBySubscriptionAndPeriodEnd(numericId, period);
+    const runner = manager || this.dataSource;
+    const existing = await this.findBySubscriptionAndPeriodEnd(numericId, period, { manager, forUpdate: Boolean(manager) });
     const params = [
       String(status || 'to_prepare'),
       note == null || note === '' ? null : String(note),
@@ -155,12 +157,12 @@ class SubscriptionProductionRepository {
 
     try {
       if (existing) {
-        await this.dataSource.query(
+        await runner.query(
           `UPDATE \`${this.tableName}\` SET \`status\` = ?, \`note\` = ?, \`updated_by_user_id\` = ? WHERE \`subscription_id\` = ? AND \`period_end\` = ?`,
           [...params, numericId, period]
         );
       } else {
-        await this.dataSource.query(
+        await runner.query(
           `INSERT INTO \`${this.tableName}\` (\`subscription_id\`, \`period_end\`, \`status\`, \`note\`, \`updated_by_user_id\`) VALUES (?, ?, ?, ?, ?)`,
           [numericId, period, ...params]
         );
@@ -174,7 +176,7 @@ class SubscriptionProductionRepository {
       throw error;
     }
 
-    return this.findBySubscriptionAndPeriodEnd(numericId, period);
+    return this.findBySubscriptionAndPeriodEnd(numericId, period, { manager });
   }
 }
 

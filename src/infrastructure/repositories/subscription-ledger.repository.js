@@ -831,6 +831,26 @@ class SubscriptionLedgerRepository {
     }
   }
 
+  // Every queue row of the window, in queue order and without paging: stock demand and coverage need the whole
+  // window, so the committed packs are by construction the ones the queue shows.
+  async listQueueDemandRows(input = {}) {
+    this.ensureDataSource();
+    const { whereSql, params } = this.queueMembership(input);
+
+    try {
+      const rows = await this.dataSource.query(
+        [this.queueSelectSql(), this.queueJoinSql(), whereSql, 'ORDER BY q.due_at ASC, q.id ASC'].join(' '),
+        params
+      );
+      return (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean);
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
   async listQueueMetricRows(input = {}) {
     this.ensureDataSource();
     const { whereSql, params } = this.queueMembership({

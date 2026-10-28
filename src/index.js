@@ -48,6 +48,7 @@ const { SubscriptionsEditPreviewRepository } = require('./infrastructure/reposit
 const { SubscriptionsRepository } = require('./infrastructure/repositories/subscriptions.repository');
 const { SubscriptionLedgerRepository } = require('./infrastructure/repositories/subscription-ledger.repository');
 const { SubscriptionProductionRepository } = require('./infrastructure/repositories/subscription-production.repository');
+const { PackStockRepository } = require('./infrastructure/repositories/pack-stock.repository');
 const { StripeWebhookEventsRepository } = require('./infrastructure/repositories/stripe-webhook-events.repository');
 const { SubscriptionMailClaimsRepository } = require('./infrastructure/repositories/subscription-mail-claims.repository');
 const { createTransactionalMailer } = require('./infrastructure/mailers/transactional-mailer');
@@ -99,7 +100,7 @@ const { SubscriptionsEditPreviewService } = require('./services/subscriptions-ed
 const { PendingDeliveryChangesService } = require('./services/pending-delivery-changes.service');
 const { PaidCyclesService } = require('./services/paid-cycles.service');
 const { DeliveryEstimator } = require('./services/delivery-estimator.service');
-const { createAdminProductionService } = require('./config/production-services');
+const { createAdminPackStockService, createAdminProductionService } = require('./config/production-services');
 const { SubscriptionsService } = require('./services/subscriptions.service');
 const { StripeWebhookService } = require('./services/stripe-webhook.service');
 const { OnboardingPetDeleteService } = require('./services/onboarding-pets-delete.service');
@@ -746,12 +747,20 @@ async function bootstrap() {
     usersTableName: env.WP_USERS_TABLE_NAME,
     usermetaTableName: env.WP_USERMETA_TABLE_NAME
   });
+  const adminPackStockService = createAdminPackStockService({
+    stockRepository: new PackStockRepository(dataSource, { usersTableName: env.WP_USERS_TABLE_NAME }),
+    ledgerRepository: subscriptionLedgerRepository,
+    catalogRepository: adminCatalogRepository,
+    auditService: adminAuditService,
+    logger
+  });
   const adminProductionService = createAdminProductionService({
     ledgerRepository: subscriptionLedgerRepository,
     recipeNamesRepository: adminCatalogRepository,
     productionRepository: subscriptionProductionRepository,
     auditService: adminAuditService,
-    customerDeliveriesService
+    customerDeliveriesService,
+    packStockService: adminPackStockService
   });
   const adminTodayService = new AdminTodayService({
     ledgerRepository: subscriptionLedgerRepository,
@@ -837,6 +846,7 @@ async function bootstrap() {
     adminOnboardingService,
     adminBillingService,
     adminProductionService,
+    adminPackStockService,
     adminTodayService,
     adminDeliveryCalendarService,
     upsShipmentService,

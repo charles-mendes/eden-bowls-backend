@@ -117,6 +117,19 @@ describe('admin market scope helper', () => {
     }
   });
 
+  test('pack stock is scoped by the item market: an operator BR listing US is market_forbidden', async () => {
+    const { AdminPackStockService } = require('../src/services/admin-pack-stock.service');
+    const stockRepository = { listItems: jest.fn(), listMovements: jest.fn() };
+    const service = new AdminPackStockService({ stockRepository, ledgerRepository: { listQueueDemandRows: jest.fn() } });
+
+    await expect(service.overview({ market: 'US', windowDays: 7 }, operator(['BR'])))
+      .rejects.toMatchObject({ statusCode: 403, details: { code: 'market_forbidden' } });
+    await expect(service.listMovements({ market: 'US' }, { page: 1, perPage: 20, offset: 0 }, operator(['BR'])))
+      .rejects.toMatchObject({ statusCode: 403, details: { code: 'market_forbidden' } });
+    expect(stockRepository.listItems).not.toHaveBeenCalled();
+    expect(stockRepository.listMovements).not.toHaveBeenCalled();
+  });
+
   test('customers without a profile market are admin-only', () => {
     expect(canAccessMarket({ roles: ['admin'], markets: ['BR', 'US'] }, '')).toBe(true);
     expect(canAccessMarket(operator(['BR']), '')).toBe(false);

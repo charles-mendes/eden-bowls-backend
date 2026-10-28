@@ -15,6 +15,7 @@ const { LARGE_PACK_THRESHOLD } = require('../../core/simplified-consumption');
 const FINAL_IMAGE_READY_META = '_final_image_ready';
 const LABEL_DATA_READY_META = '_label_data_ready';
 const { RECIPE_KEY_META } = require('../../core/recipe-content');
+const { parseWeightToGrams } = require('../../core/plan-catalog-pricing');
 const SHORT_LABEL_META = '_short_label';
 
 function flagMeta(value) {
@@ -358,7 +359,8 @@ class AdminCatalogRepository {
         `MAX(CASE WHEN vm.meta_key = '${FLAVOR_SLUG_META}' THEN vm.meta_value END) AS flavorSlug,`,
         "MAX(CASE WHEN vm.meta_key = 'attribute_pa_flavor' THEN vm.meta_value END) AS label,",
         `MAX(CASE WHEN vm.meta_key = '${SHORT_LABEL_META}' THEN vm.meta_value END) AS shortLabel,`,
-        `MAX(CASE WHEN vm.meta_key = '${LIFE_STAGE_META}' THEN vm.meta_value END) AS lifeStage`,
+        `MAX(CASE WHEN vm.meta_key = '${LIFE_STAGE_META}' THEN vm.meta_value END) AS lifeStage,`,
+        "MAX(CASE WHEN vm.meta_key IN ('attribute_pa_weight', 'attribute_weight', 'attribute_gram', 'attribute_peso') THEN vm.meta_value END) AS weight",
         `FROM \`${this.tableNames.posts}\` v`,
         `INNER JOIN \`${this.tableNames.posts}\` p ON p.ID = v.post_parent AND p.post_type = 'product'`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` pc ON pc.post_id = p.ID AND pc.meta_key = '_cmpb_plan_country'`,
@@ -385,9 +387,22 @@ class AdminCatalogRepository {
         label,
         shortLabel: String(row.shortLabel || '').trim(),
         lifeStage: LIFE_STAGES.includes(lifeStage) ? lifeStage : 'adult',
-        published: row.variationStatus === 'publish' && row.productStatus === 'publish'
+        published: row.variationStatus === 'publish' && row.productStatus === 'publish',
+        packSizeGrams: Math.round(parseWeightToGrams(row.weight)) || null
       };
     }).filter((row) => row.market && row.key);
+  }
+
+  // Recipe and whole grams of every variation the market sells or sold, in any status (pack-stock).
+  async listRecipeSizes(market) {
+    const normalized = String(market || '').trim().toUpperCase();
+    const sizes = new Set();
+    for (const row of await this.recipeVariationRows()) {
+      if (row.market === normalized && row.packSizeGrams) {
+        sizes.add(`${row.key}|${row.packSizeGrams}`);
+      }
+    }
+    return sizes;
   }
 
   // Variations of one recipe in a market, by content key (recipe-content).

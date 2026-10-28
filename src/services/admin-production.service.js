@@ -12,8 +12,10 @@ const {
 const {
   constrainMarketQuery,
   assertStripeAccountMarket,
+  marketFromStripeAccount,
   shouldEnforceMarketScope
 } = require('../core/admin-market-scope');
+const { emptyStock } = require('./admin-pack-stock.service');
 
 const QUEUE_MEMBERSHIP_STATUSES = new Set(['active', 'trialing', 'past_due']);
 
@@ -56,6 +58,17 @@ function periodEndsMatch(left, right) {
   return Boolean(left && right && toMysqlDateTime(left) === toMysqlDateTime(right));
 }
 
+// Separating a cycle takes its packs off the shelf; returning it from ready puts them back.
+function stockMoveFor(fromStatus, toStatus) {
+  if (fromStatus === 'in_production' && toStatus === 'ready') {
+    return 'separate';
+  }
+  if (fromStatus === 'ready' && toStatus === 'in_production') {
+    return 'reverse';
+  }
+  return null;
+}
+
 function emptyMetrics() {
   return { today: 0, tomorrow: 0, upcoming: 0, overdue: 0 };
 }
@@ -87,7 +100,22 @@ class AdminProductionService {
     this.auditService = options.auditService || null;
     this.deliverySchedule = options.deliverySchedule || null;
     this.recipeNamesRepository = options.recipeNamesRepository || null;
+    this.packStock = options.packStock || null;
     this.now = options.now || (() => new Date());
+  }
+
+  // Coverage is extra information: without stock storage, or if it fails, the queue lists as before.
+  async loadStockCoverage({ stripeAccounts, account, windowDays, timezone }) {
+    if (!this.packStock) {
+      return null;
+    }
+    const accounts = stripeAccounts && stripeAccounts.length ? stripeAccounts : (account ? [account] : ['br', 'us']);
+    const markets = [...new Set(accounts.map(marketFromStripeAccount).filter(Boolean))];
+    try {
+      return await this.packStock.queueCoverage({ markets, windowDays, timezone });
+    } catch (_error) {
+      return null;
+    }
   }
 
   // Current catalog names per market and flavor key, so older subscriptions also show the short name.
@@ -143,7 +171,7 @@ class AdminProductionService {
       perPage: pagination.perPage
     };
 
-    const [result, metricRows, recipeNames] = await Promise.all([
+    const [result, metricRows, recipeNames, coverage] = await Promise.all([
       this.ledgerRepository.listQueue(listInput),
       this.ledgerRepository.listQueueMetricRows({
         ...bounds,
@@ -151,12 +179,16 @@ class AdminProductionService {
         account,
         stripeAccounts
       }),
-      this.loadRecipeNames()
+      this.loadRecipeNames(),
+      this.loadStockCoverage({ stripeAccounts, account, windowDays: query.windowDays, timezone })
     ]);
 
     return {
       ...paginatedEnvelope({
-        items: result.items.map((item) => this.present(item, timezone, actor, recipeNames)),
+        items: result.items.map((row) => {
+          const item = this.present(row, timezone, actor, recipeNames);
+          return { ...item, stockCoverage: coverage ? (coverage.get(`${item.id}|${item.currentPeriodEnd}`) || null) : null };
+        }),
         total: result.total,
         page: pagination.page,
         perPage: pagination.perPage
@@ -221,13 +253,35 @@ class AdminProductionService {
       await this.ledgerRepository.setPendingDeliveryChanges(row.stripeSubscriptionId, rest.packs ? rest : null);
     }
 
-    await this.productionRepository.upsert({
+    const cycleChange = {
       subscriptionId: row.id,
       periodEnd,
       status: body.status,
       note: body.status === 'blocked' ? body.note : (body.note || null),
       updatedByUserId: actor.userId || (actor.adminIdentity && actor.adminIdentity.userId) || null
-    });
+    };
+    // Stock storage is checked before the transaction: in MySQL a missing-table error inside it would already
+    // have rolled back the status change.
+    const stockMove = stockMoveFor(fromStatus, body.status);
+    let stock = emptyStock();
+    if (stockMove && this.packStock && await this.packStock.isAvailable()) {
+      const lineItems = stockMove === 'separate'
+        ? this.present(await this.ledgerRepository.findQueueRowById(row.id, periodEnd) || row, timezone, actor).lineItems
+        : [];
+      stock = await this.packStock.transaction(async (manager) => {
+        const cycle = await this.productionRepository.upsert(cycleChange, { manager });
+        return this.packStock.applyCycleMove(manager, {
+          move: stockMove,
+          productionCycleId: cycle.id,
+          subscriptionId: row.id,
+          market: marketFromStripeAccount(ledgerStripeAccount(row)),
+          lineItems,
+          actor
+        });
+      });
+    } else {
+      await this.productionRepository.upsert(cycleChange);
+    }
 
     if (this.deliverySchedule && typeof this.deliverySchedule.onProductionStatus === 'function') {
       const delivery = mapDeliverySubscription(row);
@@ -276,7 +330,10 @@ class AdminProductionService {
     }
 
     const updated = await this.ledgerRepository.findQueueRowById(row.id, periodEnd);
-    return this.present(updated || { ...row, productionStatus: body.status, note: body.note }, timezone, actor, await this.loadRecipeNames());
+    return {
+      ...this.present(updated || { ...row, productionStatus: body.status, note: body.note }, timezone, actor, await this.loadRecipeNames()),
+      stock
+    };
   }
 }
 

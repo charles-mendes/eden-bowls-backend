@@ -12,6 +12,13 @@ const {
   parseProductionQueuePatch
 } = require('../validators/admin-production.validator');
 const {
+  parseStockAdjustment,
+  parseStockMinimum,
+  parseStockMovementsQuery,
+  parseStockOverviewQuery,
+  parseStockProduction
+} = require('../validators/admin-pack-stock.validator');
+const {
   parseCreateAccessInput,
   parseUpdateAccessInput,
   parsePasswordChangeInput
@@ -516,6 +523,49 @@ function registerAdminRoutes(app, dependencies = {}) {
         request.adminIdentity
       );
     });
+  });
+
+  function packStockService() {
+    if (!dependencies.adminPackStockService) {
+      throw new HttpError(503, 'Stock service is not available.');
+    }
+    return dependencies.adminPackStockService;
+  }
+
+  app.get('/api/v1/admin/stock', requirePermission('production.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().overview(
+      parseStockOverviewQuery(request.query || {}),
+      request.adminIdentity
+    ));
+  });
+
+  app.get('/api/v1/admin/stock/movements', requirePermission('production.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().listMovements(
+      parseStockMovementsQuery(request.query || {}),
+      parsePageQuery(request.query, { defaultPerPage: 20 }),
+      request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/stock/production', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().recordProduction(
+      parseStockProduction(request.body || {}),
+      request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/stock/adjustments', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().recordAdjustment(
+      parseStockAdjustment(request.body || {}),
+      request.adminIdentity
+    ));
+  });
+
+  app.put('/api/v1/admin/stock/minimum', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().setMinimum(
+      parseStockMinimum(request.body || {}),
+      request.adminIdentity
+    ));
   });
 
   app.get('/api/v1/admin/billing/subscriptions', requirePermission('billing.subscribers.read', { market: 'query' }), async (request, response, next) => {

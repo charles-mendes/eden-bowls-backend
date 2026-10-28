@@ -48,9 +48,20 @@ describe('presentProductionQueueItem', () => {
     expect(item.subtotal).toBe(189.9);
     expect(item.dense).toBe(false);
     expect(item.lineItems).toEqual([
-      { flavor: 'Bovino', flavorKey: 'beef', quantity: 2, packSize: '500 g', petName: 'Luna' },
-      { flavor: 'Frango', flavorKey: 'turkey', quantity: 1, packSize: '500 g', petName: 'Luna' }
+      { flavor: 'Bovino', flavorKey: 'beef', quantity: 2, packSize: '500 g', packSizeGrams: 500, petName: 'Luna' },
+      { flavor: 'Frango', flavorKey: 'turkey', quantity: 1, packSize: '500 g', packSizeGrams: 500, petName: 'Luna' }
     ]);
+  });
+
+  test('gives each line its grams: stored, read from the label, or null', () => {
+    const present = (lineItem) => presentProductionQueueItem(baseRow({
+      planSelection: { catalog_pricing: { line_items: [{ flavor: 'frango', quantity: 3, ...lineItem }] } }
+    }), { timezone: 'America/Sao_Paulo', now: new Date('2026-09-20T15:00:00.000Z') }).lineItems[0];
+
+    expect(present({ pack_size_grams: 299.6, pack_size_label: '300 g' })).toMatchObject({ packSize: '300 g', packSizeGrams: 300 });
+    expect(present({ pack_size_label: '300 g' })).toMatchObject({ packSize: '300 g', packSizeGrams: 300 });
+    expect(present({ pack_size_label: '16.0 oz' }).packSizeGrams).toBe(454);
+    expect(present({})).toMatchObject({ packSize: '', packSizeGrams: null });
   });
 
   test('shows the catalog short name first, then the full name, then the key', () => {

@@ -68,8 +68,9 @@ Canonical fields MUST be:
 | Feedbacks | `country` |
 | Privacy requests | `market` |
 | Shipping settings | the BR or US settings document |
+| Pack stock items, stock movements, stock overview | item `market` |
 
-Customers without a profile market MUST appear only to admins. Nutrition simulate MUST reject a `country` outside the actor’s markets with `403 market_forbidden`.
+Customers without a profile market MUST appear only to admins. Nutrition simulate MUST reject a `country` outside the actor’s markets with `403 market_forbidden`. Stock writes MUST reject a body `market` outside the actor’s markets with `403 market_forbidden`.
 
 #### Scenario: Operator BR lists only Brazil customers
 
@@ -85,6 +86,11 @@ Customers without a profile market MUST appear only to admins. Nutrition simulat
 
 - **WHEN** an admin lists billing with `account=us`
 - **THEN** the system returns only `stripe_account=us` rows
+
+#### Scenario: Operator BR cannot move US stock
+
+- **WHEN** an operator assigned `BR` records production or an adjustment with `market` `US`, or lists stock with `market=US`
+- **THEN** the system responds `403` with code `market_forbidden` and no movement is written
 
 ### Requirement: Record scope hides the other market with 404
 

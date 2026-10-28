@@ -1,0 +1,34 @@
+# Tasks
+
+Este change cobre a API e sai antes do change irmão de mesmo nome no painel (`eden-bowls-admin`). Use o próximo número livre de migração e registre-a em `src/infrastructure/db.js`. Rode só os testes relacionados (`npx jest tests/<arquivo>`); integração MySQL só com `RUN_DB_INTEGRATION_TESTS=true` no arquivo afetado.
+
+## 1. Tabelas e repositório
+
+- [x] 1.1 Criar a migração de `pack_stock_items` e `pack_stock_movements` (colunas, chave única e índices da decisão 2), as entidades TypeORM e o registro em `db.js`. Verificar com um teste de migração novo (`tests/pack-stock.migration.test.js`): as duas tabelas, a chave única `(market, flavor_key, pack_size_grams)` e `down` remove as duas.
+- [x] 1.2 Criar `src/infrastructure/repositories/pack-stock.repository.js` com `isAvailable()` (verifica as tabelas uma vez por processo), `applyMovements(manager, movements)` (trava os itens na ordem da chave, cria o item que faltar, insere os movimentos e atualiza `on_hand`), `listItems(market)`, `listMovements(filters, pagination)`, `openSeparationsForCycle(manager, cycleId)` e `setMinimum(...)`, tratando tabela ausente como vazia nas leituras. Verificar com `tests/pack-stock.repository.test.js` e com `RUN_DB_INTEGRATION_TESTS=true npx jest tests/integration/pack-stock.integration.test.js`: o cenário "Balance after mixed movements", que confere `on_hand` igual à soma dos movimentos.
+
+## 2. Tamanho em gramas na fila e demanda da janela
+
+- [x] 2.1 Em `production-queue-presenter.js`, expor `packSizeGrams` em cada linha (de `pack_size_grams`, senão lido do rótulo, senão `null`) sem mudar o agrupamento nem os campos atuais. Verificar com `tests/production-queue-presenter.test.js`: um caso com `pack_size_grams`, um só com rótulo `"300 g"` e um sem tamanho, além de todos os testes atuais passando sem alteração.
+- [x] 2.2 Acrescentar `listQueueDemandRows(input)` ao repositório do ledger, com o mesmo `queueMembership` e join de `listQueue`, sem `LIMIT` (decisão 4). Verificar com `RUN_DB_INTEGRATION_TESTS=true npx jest tests/integration/subscription-ledger-queue.integration.test.js`: para a mesma janela, as linhas devolvidas são as mesmas da soma de todas as páginas de `listQueue`.
+
+## 3. Serviço de estoque
+
+- [x] 3.1 Criar `src/core/pack-stock.js` com funções puras: somar a demanda por item a partir das linhas da fila (só `to_prepare` e `in_production`, separando o que aguarda pagamento) devolvendo também as linhas sem tamanho, montar a visão (disponível, a produzir, abaixo do mínimo, `unsizedLines`) e distribuir o saldo pelos ciclos em ordem de vencimento (cobertura). Verificar com `tests/pack-stock.core.test.js`: os cenários "Kitchen plans the week", "Blocked and ready cycles are left out", "New recipe with demand only", "Below minimum after commitments", "Earlier delivery takes the stock first", "Line without pack size", "Overview reports a line without size" e "Nothing unsized".
+- [x] 3.2 Criar `src/services/admin-pack-stock.service.js` com a visão, o histórico, o lançamento de produção, o ajuste e o mínimo, incluindo a validação da chave contra o catálogo do mercado (decisão 6, 422 `stock_item_unknown`), a validação do mercado do corpo (403 `market_forbidden`), a auditoria `stock.production`, `stock.adjustment` e `stock.minimum.update`, e o `logger.warn` `stock.unsized_line` por linha descartada. Verificar com `tests/admin-pack-stock.service.test.js`: os cenários "Known recipe and size", "Size not sold in the market", "Kitchen records a batch", "Zero quantity", "Expired packs written off", "Other without note" e "Operator BR cannot move US stock", e que a visão com uma linha sem tamanho chama o logger com o ID da assinatura.
+- [x] 3.3 Criar `src/core/stock-metrics.js` no padrão de `job-metrics.js`, com o histograma `eden_stock_coverage_duration_seconds` (rótulo `source`) e o gauge `eden_stock_demand_rows`, medidos em volta do cálculo da visão e da cobertura. Verificar com `tests/stock-metrics.test.js`: depois de uma visão, `client.register.metrics()` contém as duas métricas com `source="overview"`.
+
+## 4. Baixa e estorno na fila de produção
+
+- [x] 4.1 Em `AdminProductionService.updateStatus`, rodar o upsert do ciclo e os movimentos de estoque numa única transação: baixa uma vez em `in_production → ready` e estorno exato em `ready → in_production` (decisão 3), devolvendo `stock: { shortages, unsized }` e registrando `stock.unsized_line` para cada linha pulada. Consultar `isAvailable()` antes de abrir a transação e, sem tabelas, pular os movimentos sem tocar no fluxo atual (Migration Plan, item 4). Verificar com `tests/admin-production.service.test.js`: os cenários "Cycle separated", "Ready sent twice", "Return after a pack change", "Separation with too little stock" e "Status change after a migration rollback", e que as transições sem `ready` não escrevem movimento.
+- [x] 4.2 Em `listQueue`, calcular a cobertura uma vez por requisição com `listQueueDemandRows` e o saldo do mercado, medida por `eden_stock_coverage_duration_seconds{source="queue"}`, e anotar `stockCoverage` em cada item (`null` fora de `to_prepare`/`in_production` e quando o estoque não existe). Verificar com `tests/admin-production.service.test.js`: o cenário "Earlier delivery takes the stock first" com os dois ciclos em páginas diferentes.
+- [x] 4.3 Verificar o conjunto com `RUN_DB_INTEGRATION_TESTS=true npx jest tests/integration/production-block-wiring.integration.test.js tests/integration/pack-stock.integration.test.js`: separar, voltar e separar de novo um ciclo pago deixa o saldo e o histórico corretos; uma falha simulada no movimento desfaz também a mudança de status; e, com as tabelas de estoque removidas (`down`) e a API reiniciada, marcar como pronto continua funcionando.
+
+## 5. Rotas
+
+- [x] 5.1 Criar o validador `src/api/validators/admin-pack-stock.validator.js` (mercado, janela 7/14/30 com `invalid_window_days`, quantidades e motivos da spec) e registrar as cinco rotas da decisão 5 em `admin.routes.js` com `production.read`/`production.write` e `market: 'query'`, injetando o serviço em `src/config/production-services.js`. Rodar `npm run routes:manifest`. Verificar com `tests/admin-pack-stock.routes.test.js` (o cenário "Readonly cannot record", "Invalid window" e "History of one item"), `tests/admin-market-scope-registry.test.js` e `tests/api-routes-manifest.test.js`.
+- [x] 5.2 Atualizar `tests/admin-market-scope.test.js` com o estoque na tabela de campos canônicos. Verificar com o mesmo teste: um operador BR listando `market=US` recebe `403 market_forbidden`.
+
+## 6. Integração
+
+- [x] 6.1 Na base local com a migração, lançar a contagem inicial de dois itens por ajuste `count`, separar e voltar um ciclo pela fila e conferir que a visão (`GET /api/v1/admin/stock?market=BR&windowDays=7`) bate com a soma dos packs que a fila mostra para a mesma janela. Registrar o resultado no PR.

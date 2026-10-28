@@ -5,6 +5,7 @@ const {
 } = require('./subscription-dashboard');
 const { parseJsonColumn } = require('./stripe-subscription-map');
 const { canAccessMarket } = require('./admin-market-scope');
+const { parseWeightToGrams } = require('./plan-catalog-pricing');
 
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 
@@ -85,6 +86,16 @@ function packSizeFromItem(item) {
   return '';
 }
 
+// Whole grams of a line, rounded like the catalog does: the stored grams, else the size read from its label.
+function packSizeGramsFromItem(item) {
+  const grams = Number(item && (item.pack_size_grams || item.packSizeGrams));
+  if (Number.isFinite(grams) && grams > 0) {
+    return Math.round(grams);
+  }
+  const fromLabel = parseWeightToGrams(packSizeFromItem(item));
+  return fromLabel > 0 ? Math.round(fromLabel) : null;
+}
+
 // The queue shows the catalog short name, then the full name, and the key only when no name exists.
 function displayFlavor(flavorKey, label, names) {
   const catalog = names && names[flavorKey];
@@ -112,6 +123,7 @@ function compactLineItems(items, names) {
         flavorKey,
         quantity,
         packSize,
+        packSizeGrams: packSizeGramsFromItem(item),
         petName: petName ? String(petName) : null
       });
     }
@@ -129,6 +141,7 @@ function lineItemsFromPets(plan, names) {
         flavor,
         quantity: weights[index] == null ? 1 : Number(weights[index]),
         packSize: packSizeFromItem(pet),
+        pack_size_grams: pet.pack_size_grams,
         petName: pet.pet_name || pet.name || null
       });
     });

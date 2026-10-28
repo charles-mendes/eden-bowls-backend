@@ -400,6 +400,26 @@
     "path": "/api/v1/admin/shipping/test"
   },
   {
+    "method": "GET",
+    "path": "/api/v1/admin/stock"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/stock/adjustments"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/stock/minimum"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/stock/movements"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/stock/production"
+  },
+  {
     "method": "POST",
     "path": "/api/v1/admin/stripe/first-purchase-coupons"
   },

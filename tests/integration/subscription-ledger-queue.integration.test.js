@@ -127,4 +127,25 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     expect(new Date(overdue.cyclePeriodEnd).toISOString()).toBe('2026-09-17T08:00:00.000Z');
     expect(result.items.find((item) => item.stripeSubscriptionId === 'sub_today').paymentState).toBe('awaiting_payment');
   });
+
+  test('demand rows are every row of every queue page for the same window', async () => {
+    const window = {
+      startOfToday: '2026-09-20 03:00:00',
+      windowEndExclusive: '2026-09-27 03:00:00',
+      overdueFloor: '2026-09-13 03:00:00',
+      includeOverdue: true
+    };
+    const pages = [];
+    for (let offset = 0; ; offset += 1) {
+      const page = await repository.listQueue({ ...window, offset, perPage: 1 });
+      if (!page.items.length) break;
+      pages.push(...page.items);
+    }
+
+    const demand = await repository.listQueueDemandRows(window);
+
+    const key = (item) => `${item.id}|${new Date(item.cyclePeriodEnd).toISOString()}`;
+    expect(pages.length).toBeGreaterThan(1);
+    expect(demand.map(key)).toEqual(pages.map(key));
+  });
 });
