@@ -83,5 +83,5 @@
 ## 6. Integração
 
 - [x] 6.1 Rodar `npx jest --changedSince=main` e corrigir as falhas.
-- [x] 6.2 Com `RUN_DB_INTEGRATION_TESTS=true`, rodar a migração 055 e os testes de integração do ledger contra o MySQL local. Depois, chamar `GET /api/v1/admin/reports/summary` com uma sessão admin (devem vir os dois blocos) e abrir um `export.csv` no Excel em pt-BR (colunas e acentos corretos). Anotar o resultado no PR. Feito em 2026-10-28: migrações 055 e 056 e 32 suítes de integração (97 testes) passando no MySQL local; `summary` ao vivo com os dois blocos; CSV aberto pelo usuário (conferência no Excel pt-BR aguardando retorno).
+- [x] 6.2 Com `RUN_DB_INTEGRATION_TESTS=true`, rodar a migração 055 e os testes de integração do ledger contra o MySQL local. Depois, chamar `GET /api/v1/admin/reports/summary` com uma sessão admin (devem vir os dois blocos) e abrir um `export.csv` no Excel em pt-BR (colunas e acentos corretos). Anotar o resultado no PR. Feito em 2026-10-28: migrações 055 e 056 e 32 suítes de integração (97 testes) passando no MySQL local; `summary` ao vivo com os dois blocos; CSV conferido pelo usuário no Excel pt-BR (colunas e acentos corretos).
 - [x] 6.3 Avisar o change irmão do painel (`eden-bowls-admin/openspec/changes/add-admin-reports`) que o manifesto está pronto para `npm run contract:sync`.
