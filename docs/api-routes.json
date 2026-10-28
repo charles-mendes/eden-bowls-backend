@@ -357,6 +357,38 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/reports/acquisition"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/export.csv"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/mix"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/operations"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/revenue"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/stock"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/subscriptions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/summary"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/settings/automated-emails"
   },
   {

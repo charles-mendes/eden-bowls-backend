@@ -48,6 +48,59 @@ describe('SubscriptionLedgerRepository', () => {
     expect(query.mock.calls[1][0]).toContain('INSERT INTO');
   });
 
+  function upsertRepository(existing = null) {
+    const query = jest.fn(async (sql) => {
+      if (sql.includes('INSERT INTO')) return { affectedRows: 1 };
+      return existing ? [existing] : [];
+    });
+    return { query, repository: new SubscriptionLedgerRepository({ isInitialized: true, query }) };
+  }
+
+  function lifecycleParams(query) {
+    const call = query.mock.calls.find(([sql]) => sql.includes('INSERT INTO'));
+    return { sql: call[0], activatedAt: call[1][20], canceledAt: call[1][21] };
+  }
+
+  const base = { userId: 7, stripeSubscriptionId: 'sub_123', stripeCustomerId: 'cus_1' };
+
+  test('an active row proposes an activation date that the upsert never overwrites', async () => {
+    const { query, repository } = upsertRepository();
+    await repository.upsert({ ...base, status: 'active' });
+    const { sql, activatedAt, canceledAt } = lifecycleParams(query);
+
+    expect(activatedAt).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(canceledAt).toBeNull();
+    expect(sql).toContain('`activated_at` = COALESCE(`activated_at`, VALUES(`activated_at`))');
+  });
+
+  test('an incomplete row never activates', async () => {
+    const { query, repository } = upsertRepository();
+    await repository.upsert({ ...base, status: 'incomplete' });
+    expect(lifecycleParams(query).activatedAt).toBeNull();
+  });
+
+  test('a cancellation request leaves the end date empty', async () => {
+    const { query, repository } = upsertRepository();
+    await repository.upsert({ ...base, status: 'active', cancelAtPeriodEnd: true, endedAt: 1791640800 });
+    expect(lifecycleParams(query).canceledAt).toBeNull();
+  });
+
+  test('a canceled row stores Stripe ended_at and keeps the first stored date', async () => {
+    const { query, repository } = upsertRepository();
+    await repository.upsert({ ...base, status: 'canceled', endedAt: 1791640800 });
+    const { sql, canceledAt } = lifecycleParams(query);
+
+    expect(canceledAt).toBe('2026-10-10 14:00:00');
+    expect(sql).toContain("`canceled_at` = IF(VALUES(`status`) = 'canceled', COALESCE(`canceled_at`, VALUES(`canceled_at`)), NULL)");
+  });
+
+  test('a row that is no longer canceled clears the end date and its approximate flag', async () => {
+    const { query, repository } = upsertRepository();
+    await repository.upsert({ ...base, status: 'active' });
+    const { sql } = lifecycleParams(query);
+    expect(sql).toContain("`canceled_at_approximate` = IF(VALUES(`status`) = 'canceled', `canceled_at_approximate`, 0)");
+  });
+
   test('returns an empty list when the table is missing', async () => {
     const query = jest.fn().mockRejectedValue(Object.assign(new Error("Table 'stripe_subscriptions' doesn't exist"), {
       code: 'ER_NO_SUCH_TABLE',
@@ -174,6 +227,8 @@ describe('SubscriptionLedgerRepository', () => {
     expect(query.mock.calls[0][0]).not.toContain('SELECT *');
     expect(query.mock.calls[0][0]).toContain('`stripe_account` = ?');
     expect(query.mock.calls[0][1]).toEqual(expect.arrayContaining(['br']));
+    expect(query.mock.calls[0][0]).toContain("`activated_at` IS NOT NULL AND `canceled_at` >= ?");
+    expect(query.mock.calls[0][0]).not.toContain('`updated_at` >= ?');
   });
 
   function chargedRow(overrides = {}) {

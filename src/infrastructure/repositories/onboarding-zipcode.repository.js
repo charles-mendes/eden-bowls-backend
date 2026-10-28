@@ -12,9 +12,12 @@ class OnboardingZipcodeRepository {
       throw new HttpError(503, 'Database connection is not initialized.');
     }
 
+    // Other steps (plan, recurrence, shipping, checkout) may create the row first without a market, so the
+    // first address fills it when empty; a later address never moves the checkout to another market.
     const market = canonicalMarketFromCountry(payload.country);
     await this.dataSource.query(
-      `INSERT INTO \`${this.tableName}\` (\`user_id\`, \`address\`, \`market\`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE \`address\` = VALUES(\`address\`)`,
+      `INSERT INTO \`${this.tableName}\` (\`user_id\`, \`address\`, \`market\`) VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE \`address\` = VALUES(\`address\`), \`market\` = COALESCE(NULLIF(\`market\`, ''), VALUES(\`market\`))`,
       [userId, JSON.stringify(payload), market]
     );
 

@@ -15,7 +15,8 @@ const ROLE_PERMISSIONS = {
     'feedbacks.read',
     'privacy.requests.read',
     'production.read',
-    'settings.read'
+    'settings.read',
+    'reports.read'
   ],
   operator: [
     'nutrition.simulate',
@@ -39,7 +40,9 @@ const ROLE_PERMISSIONS = {
     'production.read',
     'production.write',
     'settings.read',
-    'settings.email.write'
+    'settings.email.write',
+    'reports.read',
+    'reports.export'
   ]
 };
 

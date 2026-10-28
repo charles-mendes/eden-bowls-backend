@@ -285,6 +285,16 @@ function parseStaffAssignmentMarket(input, roles = []) {
   return [normalized];
 }
 
+// A report sums money in one currency, so it needs exactly one market once the query is scoped.
+function requireSingleReportMarket(marketQuery = {}) {
+  const markets = Array.isArray(marketQuery.markets) ? marketQuery.markets : [];
+  if (markets.length !== 1) {
+    throw new HttpError(400, 'Choose one market for this report.', { code: 'report_market_required' });
+  }
+
+  return markets[0];
+}
+
 module.exports = {
   ADMIN_MARKETS_META_KEY,
   MARKET_PERMISSIONS,
@@ -306,6 +316,7 @@ module.exports = {
   marketsFromIdentity,
   parseMarkets,
   parseStaffAssignmentMarket,
+  requireSingleReportMarket,
   requiresStaffMarket,
   resolveStaffMarkets,
   shouldEnforceMarketScope,

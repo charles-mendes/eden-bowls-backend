@@ -5,6 +5,7 @@ const {
   assertRecordMarket,
   effectiveMarkets,
   parseMarkets,
+  requireSingleReportMarket,
   resolveStaffMarkets,
   marketPermissions,
   stripeAccountForMarkets
@@ -46,6 +47,20 @@ describe('admin market scope helper', () => {
     expect(scoped.markets).toEqual(['BR']);
     expect(scoped.stripeAccounts).toEqual(['br']);
     expect(scoped.filtered).toBe(false);
+  });
+
+  test('resolves a single report market from the scoped query', () => {
+    const admin = { userId: '1', roles: ['admin'], markets: ['BR', 'US'], permissions: marketPermissions(['BR', 'US']) };
+    expect(requireSingleReportMarket(constrainMarketQuery(operator(['BR']), {}))).toBe('BR');
+    expect(requireSingleReportMarket(constrainMarketQuery(admin, { market: 'US' }))).toBe('US');
+    try {
+      requireSingleReportMarket(constrainMarketQuery(admin, {}));
+      throw new Error('expected report_market_required');
+    } catch (error) {
+      expect(error).toBeInstanceOf(HttpError);
+      expect(error.statusCode).toBe(400);
+      expect(error.details.code).toBe('report_market_required');
+    }
   });
 
   test('marks a requested in-scope filter as filtered', () => {

@@ -744,6 +744,8 @@ class StripeWebhookService {
       currentPeriodStart: period.start,
       currentPeriodEnd: period.end,
       cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+      // canceled_at alone is the cancellation request; ended_at is when the subscription stopped.
+      endedAt: subscription.ended_at || subscription.canceled_at || undefined,
       paymentMethodLast4: card.last4 || undefined,
       paymentMethodBrand: card.brand || undefined
     });

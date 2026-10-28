@@ -43,6 +43,15 @@ describe('admin roles', () => {
     expect(ROLE_PERMISSIONS.veterinarian).not.toContain('production.read');
   });
 
+  test('lets readonly read reports but only operator and admin export them', () => {
+    expect(ROLE_PERMISSIONS.readonly).toContain('reports.read');
+    expect(ROLE_PERMISSIONS.readonly).not.toContain('reports.export');
+    for (const role of ['operator', 'admin']) {
+      expect(ROLE_PERMISSIONS[role]).toEqual(expect.arrayContaining(['reports.read', 'reports.export']));
+    }
+    expect(ROLE_PERMISSIONS.veterinarian.some((permission) => permission.startsWith('reports.'))).toBe(false);
+  });
+
   test('lets readonly list feedbacks but not write them', () => {
     expect(ROLE_PERMISSIONS.readonly).toContain('feedbacks.read');
     expect(ROLE_PERMISSIONS.readonly).not.toContain('feedbacks.write');

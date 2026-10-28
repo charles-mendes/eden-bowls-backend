@@ -9,10 +9,17 @@ describe('OnboardingZipcodeRepository', () => {
     const result = await repository.saveZipcode(7, payload);
 
     expect(result).toEqual({ zipcode: payload });
-    expect(dataSource.query).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO `onboarding_user_state` (`user_id`, `address`, `market`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `address` = VALUES(`address`)'),
-      [7, JSON.stringify(payload), 'US']
-    );
-    expect(dataSource.query.mock.calls[0][0]).not.toContain('market` = VALUES');
+    const [sql, params] = dataSource.query.mock.calls[0];
+    expect(sql.replace(/\s+/g, ' ')).toContain('INSERT INTO `onboarding_user_state` (`user_id`, `address`, `market`) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE `address` = VALUES(`address`)');
+    expect(params).toEqual([7, JSON.stringify(payload), 'US']);
+  });
+
+  test('fills an empty market on a row another step created, and never replaces a stored one', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValue({ affectedRows: 2 }) };
+    await new OnboardingZipcodeRepository(dataSource).saveZipcode(7, { zipcode: '01310100', country: 'BR' });
+
+    const [sql] = dataSource.query.mock.calls[0];
+    expect(sql).toContain("`market` = COALESCE(NULLIF(`market`, ''), VALUES(`market`))");
+    expect(sql).not.toContain('`market` = VALUES(`market`)');
   });
 });

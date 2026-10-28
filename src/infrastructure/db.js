@@ -73,6 +73,8 @@ const { AddInvoiceIssuerSnapshot1700000000051 } = require('./migrations/17000000
 const { CreateLegalDocuments1700000000052 } = require('./migrations/1700000000052-create-legal-documents');
 const { CreateAutomatedEmailSettings1700000000053 } = require('./migrations/1700000000053-create-automated-email-settings');
 const { CreatePackStock1700000000054 } = require('./migrations/1700000000054-create-pack-stock');
+const { AddSubscriptionLifecycleDates1700000000055 } = require('./migrations/1700000000055-add-subscription-lifecycle-dates');
+const { BackfillOnboardingUserStateMarket1700000000056 } = require('./migrations/1700000000056-backfill-onboarding-user-state-market');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -171,7 +173,9 @@ function buildDataSourceOptions(env) {
       AddInvoiceIssuerSnapshot1700000000051,
       CreateLegalDocuments1700000000052,
       CreateAutomatedEmailSettings1700000000053,
-      CreatePackStock1700000000054
+      CreatePackStock1700000000054,
+      AddSubscriptionLifecycleDates1700000000055,
+      BackfillOnboardingUserStateMarket1700000000056
     ],
     synchronize: false,
     logging: false,

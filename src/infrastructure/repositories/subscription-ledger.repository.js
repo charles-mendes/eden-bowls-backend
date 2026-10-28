@@ -7,6 +7,9 @@ const {
 const { PROFILE_MARKET_META_KEY, appendInFilter } = require('../../core/admin-market-scope');
 const { dateOnly } = require('./subscription-production.repository');
 
+// A subscription is activated the first time it reaches a status Stripe bills.
+const BILLABLE_STATUSES = new Set(['active', 'trialing', 'past_due']);
+
 function isMissingTableError(error) {
   const message = String(error && error.message ? error.message : '');
   return Boolean(
@@ -307,6 +310,17 @@ class SubscriptionLedgerRepository {
     return toMysqlDateTime(value);
   }
 
+  // Candidate values only: the upsert keeps the first activation and the first end date it stored.
+  // endedAt is Stripe ended_at (or canceled_at) and only counts once the row is canceled; a cancellation
+  // request with cancel_at_period_end leaves the row active and the date empty.
+  lifecycleDates(status, endedAt) {
+    const now = toMysqlDateTime(new Date());
+    return [
+      BILLABLE_STATUSES.has(status) ? now : null,
+      status === 'canceled' ? (this.periodValue(endedAt) || now) : null
+    ];
+  }
+
   async upsert(input = {}) {
     this.ensureDataSource();
     const subscriptionId = String(input.stripeSubscriptionId || '').trim();
@@ -365,7 +379,8 @@ class SubscriptionLedgerRepository {
       jsonOrNull(next.address) || null,
       next.subscriptionTermMonths == null ? null : Number(next.subscriptionTermMonths),
       next.editPaymentPending ? 1 : 0,
-      jsonOrNull(next.editPending) || null
+      jsonOrNull(next.editPending) || null,
+      ...this.lifecycleDates(next.status, input.endedAt)
     ];
 
     await this.dataSource.query(
@@ -374,8 +389,8 @@ class SubscriptionLedgerRepository {
         \`stripe_account\`, \`status\`, \`plan_label\`, \`stripe_price_id\`, \`current_period_start\`, \`current_period_end\`,
         \`cancel_at_period_end\`, \`payment_method_last4\`, \`payment_method_brand\`,
         \`pets_snapshot\`, \`plan_selection\`, \`shipping\`, \`address\`, \`subscription_term_months\`,
-        \`edit_payment_pending\`, \`edit_pending\`
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        \`edit_payment_pending\`, \`edit_pending\`, \`activated_at\`, \`canceled_at\`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         \`user_id\` = VALUES(\`user_id\`),
         \`customer_email\` = VALUES(\`customer_email\`),
@@ -395,7 +410,10 @@ class SubscriptionLedgerRepository {
         \`address\` = VALUES(\`address\`),
         \`subscription_term_months\` = VALUES(\`subscription_term_months\`),
         \`edit_payment_pending\` = VALUES(\`edit_payment_pending\`),
-        \`edit_pending\` = VALUES(\`edit_pending\`)`,
+        \`edit_pending\` = VALUES(\`edit_pending\`),
+        \`activated_at\` = COALESCE(\`activated_at\`, VALUES(\`activated_at\`)),
+        \`canceled_at_approximate\` = IF(VALUES(\`status\`) = 'canceled', \`canceled_at_approximate\`, 0),
+        \`canceled_at\` = IF(VALUES(\`status\`) = 'canceled', COALESCE(\`canceled_at\`, VALUES(\`canceled_at\`)), NULL)`,
       params
     );
 
@@ -605,7 +623,7 @@ class SubscriptionLedgerRepository {
           "SUM(CASE WHEN `status` IN ('active', 'trialing') THEN 1 ELSE 0 END) AS active,",
           "SUM(CASE WHEN `cancel_at_period_end` = 1 AND `status` IN ('active', 'trialing', 'past_due') THEN 1 ELSE 0 END) AS canceling,",
           "SUM(CASE WHEN `status` = 'past_due' THEN 1 ELSE 0 END) AS pastDue,",
-          "SUM(CASE WHEN `status` = 'canceled' AND `updated_at` IS NOT NULL AND `updated_at` >= ? THEN 1 ELSE 0 END) AS canceled30d,",
+          "SUM(CASE WHEN `status` = 'canceled' AND `activated_at` IS NOT NULL AND `canceled_at` >= ? THEN 1 ELSE 0 END) AS canceled30d,",
           "SUM(CASE WHEN `current_period_end` IS NOT NULL AND `current_period_end` > ? AND `current_period_end` <= ? AND `status` IN ('active', 'trialing', 'past_due') THEN 1 ELSE 0 END) AS renewing7d",
           `FROM \`${this.tableName}\``,
           whereSql

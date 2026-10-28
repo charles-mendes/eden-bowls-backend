@@ -44,6 +44,6 @@ describe('CreatePackStock1700000000054', () => {
 
   test('is registered after the automated email settings', () => {
     const names = buildDataSourceOptions({}).migrations.map((migration) => migration.name);
-    expect(names[names.length - 1]).toBe('CreatePackStock1700000000054');
+    expect(names[names.indexOf('CreatePackStock1700000000054') - 1]).toBe('CreateAutomatedEmailSettings1700000000053');
   });
 });

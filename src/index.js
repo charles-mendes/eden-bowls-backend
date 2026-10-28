@@ -49,6 +49,7 @@ const { SubscriptionsRepository } = require('./infrastructure/repositories/subsc
 const { SubscriptionLedgerRepository } = require('./infrastructure/repositories/subscription-ledger.repository');
 const { SubscriptionProductionRepository } = require('./infrastructure/repositories/subscription-production.repository');
 const { PackStockRepository } = require('./infrastructure/repositories/pack-stock.repository');
+const { AdminReportsRepository } = require('./infrastructure/repositories/admin-reports.repository');
 const { StripeWebhookEventsRepository } = require('./infrastructure/repositories/stripe-webhook-events.repository');
 const { SubscriptionMailClaimsRepository } = require('./infrastructure/repositories/subscription-mail-claims.repository');
 const { createTransactionalMailer } = require('./infrastructure/mailers/transactional-mailer');
@@ -118,6 +119,7 @@ const { RecipeEnergyService } = require('./services/recipe-energy.service');
 const { AdminShippingService } = require('./services/admin-shipping.service');
 const { ShippingHeadquartersService } = require('./services/shipping-headquarters.service');
 const { AdminTodayService } = require('./services/admin-today.service');
+const { AdminReportsService } = require('./services/admin-reports.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
@@ -762,6 +764,11 @@ async function bootstrap() {
     customerDeliveriesService,
     packStockService: adminPackStockService
   });
+  const adminReportsService = new AdminReportsService({
+    repository: new AdminReportsRepository(dataSource),
+    recipeNamesRepository: adminCatalogRepository,
+    logger
+  });
   const adminTodayService = new AdminTodayService({
     ledgerRepository: subscriptionLedgerRepository,
     upsShipmentRepository,
@@ -848,6 +855,7 @@ async function bootstrap() {
     adminProductionService,
     adminPackStockService,
     adminTodayService,
+    adminReportsService,
     adminDeliveryCalendarService,
     upsShipmentService,
     customerInvoicesService,

@@ -568,6 +568,29 @@ function registerAdminRoutes(app, dependencies = {}) {
     ));
   });
 
+  function reportsService() {
+    if (!dependencies.adminReportsService) {
+      throw new HttpError(503, 'Reports service is not available.');
+    }
+    return dependencies.adminReportsService;
+  }
+
+  for (const report of ['summary', 'revenue', 'subscriptions', 'acquisition', 'mix', 'operations', 'stock']) {
+    app.get(`/api/v1/admin/reports/${report}`, requirePermission('reports.read', { market: 'query' }), async (request, response, next) => {
+      await handle(response, next, async () => reportsService().report(report, request.query || {}, request.marketQuery, request.adminIdentity));
+    });
+  }
+
+  // Export asks for reports.export; reading the figures still needs reports.read.
+  app.get('/api/v1/admin/reports/export.csv', requirePermission('reports.export', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!request.adminIdentity.permissions.includes('reports.read')) {
+        throw new HttpError(403, 'Forbidden.');
+      }
+      return reportsService().exportCsv(request.query || {}, request.marketQuery, request.adminIdentity);
+    });
+  });
+
   app.get('/api/v1/admin/billing/subscriptions', requirePermission('billing.subscribers.read', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminBillingService) {
