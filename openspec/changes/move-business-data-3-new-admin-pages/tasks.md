@@ -41,4 +41,4 @@ Fase 3 de 3. Depende das fases 1 e 2 aplicadas. Este change cobre a API e sai an
 
 ## 7. Integração
 
-- [ ] 7.1 Na base local com todas as migrações, conferir que nada visível mudou: as prévias da fatura batem com o PDF aprovado, as prévias de e-mail mostram o mesmo rodapé, uma simulação de cada teste de nutrição dá o mesmo resultado, e `GET /api/v1/legal/terms?market=BR` devolve o texto atual da loja. Registrar o resultado no PR.
+- [x] 7.1 Na base local com todas as migrações, conferir que nada visível mudou: as prévias da fatura batem com o PDF aprovado, as prévias de e-mail mostram o mesmo rodapé, uma simulação de cada teste de nutrição dá o mesmo resultado, e `GET /api/v1/legal/terms?market=BR` devolve o texto atual da loja. Registrar o resultado no PR.
