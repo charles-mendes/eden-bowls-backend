@@ -20,21 +20,19 @@ function dataSourceReturning(...results) {
   return { isInitialized: true, query };
 }
 
+// A transaction that locks the image row, then updates the recipe, then reads it back.
+  function linkingDataSource(assetRows, readBack) {
+    const manager = { query: jest.fn() };
+    manager.query.mockResolvedValueOnce(assetRows).mockResolvedValueOnce([]);
+    return {
+      manager,
+      isInitialized: true,
+      transaction: jest.fn(async (work) => work(manager)),
+      query: jest.fn().mockResolvedValueOnce(readBack)
+    };
+  }
+
 describe('RecipeContentRepository', () => {
-  test('upserts the image on the market and flavor key, so a second upload updates the same row', async () => {
-    const dataSource = dataSourceReturning([], [row()], [], [row({ image_url: 'https://api.example/recipe-images/new.webp' })]);
-    const repository = new RecipeContentRepository(dataSource);
-
-    const first = await repository.upsertImage({ market: 'br', flavorSlug: 'senior-beef', imageUrl: row().image_url, actorId: 7 });
-    const second = await repository.upsertImage({ market: 'BR', flavorSlug: 'senior-beef', imageUrl: 'https://api.example/recipe-images/new.webp', actorId: 7 });
-
-    const [insertSql, insertParams] = dataSource.query.mock.calls[0];
-    expect(insertSql).toContain('ON DUPLICATE KEY UPDATE image_url = VALUES(image_url)');
-    expect(insertParams).toEqual(['BR', 'senior-beef', row().image_url, 7]);
-    expect(first).toMatchObject({ market: 'BR', flavorSlug: 'senior-beef', imageUrl: row().image_url, label: null });
-    expect(second.imageUrl).toBe('https://api.example/recipe-images/new.webp');
-  });
-
   test('reads one market only, so BR and US content of the same flavor stay apart', async () => {
     const dataSource = dataSourceReturning([row({ market: 'US', flavor_slug: 'beef', label: '{"ingredients":["Beef"]}' })]);
     const repository = new RecipeContentRepository(dataSource);
@@ -65,28 +63,56 @@ describe('RecipeContentRepository', () => {
     expect(dataSource.query).not.toHaveBeenCalled();
   });
 
-  test('clears the image of one market and flavor', async () => {
-    const dataSource = dataSourceReturning([], [row({ image_url: null })]);
-    const content = await new RecipeContentRepository(dataSource).clearImage({ market: 'BR', flavorSlug: 'senior-beef', actorId: 7 });
+  describe('banner link', () => {
+    const URL = '/recipe-images/banner-br-0123456789abcdef0123456789abcdef.webp';
 
-    expect(dataSource.query.mock.calls[0][0]).toContain('SET image_url = NULL');
-    expect(dataSource.query.mock.calls[0][1]).toEqual([7, 'BR', 'senior-beef']);
-    expect(content.imageUrl).toBeNull();
+    test('links a library banner by id, writing its URL with it after locking the image', async () => {
+      const dataSource = linkingDataSource([{ url: URL, archived_at: null }], [row({ image_url: URL, image_asset_id: 31 })]);
+
+      const content = await new RecipeContentRepository(dataSource).setImage({ market: 'br', flavorSlug: 'senior-beef', assetId: 31, actorId: 7 });
+
+      expect(dataSource.manager.query.mock.calls[0]).toEqual([expect.stringContaining('FROM `media_assets` WHERE id = ? FOR UPDATE'), [31]]);
+      const [updateSql, updateParams] = dataSource.manager.query.mock.calls[1];
+      expect(updateSql).toContain('SET image_url = ?, image_asset_id = ?, image_updated_at = CURRENT_TIMESTAMP');
+      expect(updateSql).not.toContain('plan_image');
+      expect(updateParams).toEqual([URL, 31, 7, 'BR', 'senior-beef']);
+      expect(content).toMatchObject({ imageUrl: URL, imageAssetId: 31 });
+    });
+
+    test('unlinks without reading any image', async () => {
+      const manager = { query: jest.fn().mockResolvedValueOnce([]) };
+      const dataSource = {
+        isInitialized: true,
+        transaction: jest.fn(async (work) => work(manager)),
+        query: jest.fn().mockResolvedValueOnce([row({ image_url: null, image_asset_id: null })])
+      };
+
+      const content = await new RecipeContentRepository(dataSource).setImage({ market: 'BR', flavorSlug: 'senior-beef', assetId: null, actorId: 7 });
+
+      expect(manager.query).toHaveBeenCalledTimes(1);
+      expect(manager.query.mock.calls[0][1]).toEqual([null, null, 7, 'BR', 'senior-beef']);
+      expect(content).toMatchObject({ imageUrl: null, imageAssetId: null });
+    });
+
+    test('refuses an archived banner and an unknown one', async () => {
+      const archived = linkingDataSource([{ url: URL, archived_at: new Date() }], []);
+      await expect(new RecipeContentRepository(archived).setImage({ market: 'BR', flavorSlug: 'beef', assetId: 31 }))
+        .rejects.toMatchObject({ statusCode: 409, details: { code: 'media_asset_archived' } });
+
+      const missing = linkingDataSource([], []);
+      await expect(new RecipeContentRepository(missing).setImage({ market: 'BR', flavorSlug: 'beef', assetId: 99 }))
+        .rejects.toMatchObject({ statusCode: 404 });
+    });
+
+    test('has no way to write or clear a banner URL without a library image', () => {
+      const methods = Object.getOwnPropertyNames(RecipeContentRepository.prototype);
+      expect(methods).not.toContain('upsertImage');
+      expect(methods).not.toContain('clearImage');
+    });
   });
 
   describe('plan thumbnail link', () => {
     const URL = '/recipe-images/plan-br-0123456789abcdef0123456789abcdef.webp';
-
-    function linkingDataSource(assetRows, readBack) {
-      const manager = { query: jest.fn() };
-      manager.query.mockResolvedValueOnce(assetRows).mockResolvedValueOnce([]);
-      return {
-        manager,
-        isInitialized: true,
-        transaction: jest.fn(async (work) => work(manager)),
-        query: jest.fn().mockResolvedValueOnce(readBack)
-      };
-    }
 
     test('links a library image by id, writing its URL with it after locking the image', async () => {
       const dataSource = linkingDataSource([{ url: URL, archived_at: null }], [row({ plan_image_url: URL, plan_image_asset_id: 12 })]);

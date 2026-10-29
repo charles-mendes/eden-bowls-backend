@@ -16,38 +16,16 @@ describe('LocalRecipeImageStorage', () => {
     await fs.rm(directory, { recursive: true, force: true });
   });
 
-  test('writes a new file per upload under the market and flavor and returns its public URL', async () => {
-    const storage = new LocalRecipeImageStorage({ directory, publicBaseUrl: 'https://qa-api.edenbowls.com/recipe-images/' });
-
-    const first = await storage.write({ market: 'BR', flavorSlug: 'senior-beef', buffer: Buffer.from('one') });
-    const second = await storage.write({ market: 'BR', flavorSlug: 'senior-beef', buffer: Buffer.from('two') });
-
-    expect(first).toMatch(/^https:\/\/qa-api\.edenbowls\.com\/recipe-images\/recipe-br-senior-beef-[a-f0-9]{32}\.webp$/);
-    expect(second).not.toBe(first);
-    expect(await fs.readFile(path.join(directory, path.basename(first)), 'utf8')).toBe('one');
-  });
-
-  test('deletes only its own recipe image names', async () => {
-    const storage = new LocalRecipeImageStorage({ directory, publicBaseUrl: '/recipe-images' });
-    const url = await storage.write({ market: 'US', flavorSlug: 'beef', buffer: Buffer.from('x') });
-    await fs.writeFile(path.join(directory, 'other.png'), 'keep');
-
-    await storage.delete(url);
-    await storage.delete('/recipe-images/other.png');
-    await storage.delete('/recipe-images/../../etc/passwd');
-    await storage.delete(url);
-
-    expect(await fs.readdir(directory)).toEqual(['other.png']);
-  });
-
   test('writes a library image without the recipe slug, under a new name per write', async () => {
     const storage = new LocalRecipeImageStorage({ directory, publicBaseUrl: '/recipe-images' });
 
     const first = await storage.writeAsset({ market: 'BR', kind: 'plan', buffer: Buffer.from('one') });
     const second = await storage.writeAsset({ market: 'BR', kind: 'plan', buffer: Buffer.from('one') });
+    const banner = await storage.writeAsset({ market: 'US', kind: 'banner', buffer: Buffer.from('two') });
 
     expect(first).toMatch(/^\/recipe-images\/plan-br-[a-f0-9]{32}\.webp$/);
     expect(second).not.toBe(first);
+    expect(banner).toMatch(/^\/recipe-images\/banner-us-[a-f0-9]{32}\.webp$/);
     expect(await fs.readFile(path.join(directory, path.basename(first)), 'utf8')).toBe('one');
   });
 
@@ -58,18 +36,15 @@ describe('LocalRecipeImageStorage', () => {
     expect(await fs.readdir(directory)).toEqual([]);
   });
 
-  test('never deletes a library image file', async () => {
-    const storage = new LocalRecipeImageStorage({ directory, publicBaseUrl: '/recipe-images' });
-    const url = await storage.writeAsset({ market: 'US', kind: 'plan', buffer: Buffer.from('x') });
-
-    await storage.delete(url);
-
-    expect(await fs.readdir(directory)).toEqual([path.basename(url)]);
+  test('has no way to delete or overwrite a file', () => {
+    const methods = Object.getOwnPropertyNames(LocalRecipeImageStorage.prototype);
+    expect(methods.filter((name) => /delete|remove|unlink|destroy/i.test(name))).toEqual([]);
+    expect(methods).not.toContain('write');
   });
 
   test('the stored URL is served as a public static file', async () => {
     const storage = new LocalRecipeImageStorage({ directory, publicBaseUrl: '/recipe-images' });
-    const url = await storage.write({ market: 'US', flavorSlug: 'beef', buffer: Buffer.from('webp-bytes') });
+    const url = await storage.writeAsset({ market: 'US', kind: 'banner', buffer: Buffer.from('webp-bytes') });
     const app = createApp({ corsOrigins: ['http://localhost:5173'], recipeImagePublicDir: directory });
 
     const response = await request(app).get(url);

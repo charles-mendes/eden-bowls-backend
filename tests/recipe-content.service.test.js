@@ -16,10 +16,13 @@ const REGISTERED = [
 const LIBRARY = [
   { id: 12, kind: 'plan', market: 'BR', url: '/recipe-images/plan-br-12.webp', archived: false },
   { id: 13, kind: 'plan', market: 'US', url: '/recipe-images/plan-us-13.webp', archived: false },
-  { id: 14, kind: 'plan', market: 'BR', url: '/recipe-images/plan-br-14.webp', archived: true }
+  { id: 14, kind: 'plan', market: 'BR', url: '/recipe-images/plan-br-14.webp', archived: true },
+  { id: 31, kind: 'banner', market: 'BR', url: '/recipe-images/banner-br-31.webp', archived: false },
+  { id: 32, kind: 'banner', market: 'US', url: '/recipe-images/banner-us-32.webp', archived: false },
+  { id: 33, kind: 'banner', market: 'BR', url: '/recipe-images/banner-br-33.webp', archived: true }
 ];
 
-function setup({ variations = SENIOR_BEEF_BR, stored = null, processImage } = {}) {
+function setup({ variations = SENIOR_BEEF_BR, stored = null } = {}) {
   const library = new Map(LIBRARY.map((asset) => [asset.id, { ...asset }]));
   const mediaLibraryService = {
     get: jest.fn(async (id) => {
@@ -57,11 +60,6 @@ function setup({ variations = SENIOR_BEEF_BR, stored = null, processImage } = {}
     deleteRecipe: jest.fn(async ({ market, flavorSlug }) => {
       rows.delete(`${market}:${flavorSlug}`);
     }),
-    upsertImage: jest.fn(async ({ market, flavorSlug, imageUrl }) => {
-      const row = { ...(rows.get(`${market}:${flavorSlug}`) || { market, flavorSlug, label: null }), imageUrl };
-      rows.set(`${market}:${flavorSlug}`, row);
-      return row;
-    }),
     upsertLabel: jest.fn(async ({ market, flavorSlug, label }) => {
       const row = { ...(rows.get(`${market}:${flavorSlug}`) || { market, flavorSlug, imageUrl: null }), label };
       rows.set(`${market}:${flavorSlug}`, row);
@@ -72,40 +70,31 @@ function setup({ variations = SENIOR_BEEF_BR, stored = null, processImage } = {}
       rows.set(`${market}:${flavorSlug}`, row);
       return row;
     }),
-    setPlanImage: jest.fn(async ({ market, flavorSlug, assetId }) => {
-      const asset = assetId == null ? null : library.get(assetId);
-      if (asset && asset.archived) {
-        throw Object.assign(new Error('archived'), { statusCode: 409, details: { code: 'media_asset_archived' } });
-      }
-      const row = { ...rows.get(`${market}:${flavorSlug}`), planImageUrl: asset ? asset.url : null, planImageAssetId: asset ? asset.id : null };
-      rows.set(`${market}:${flavorSlug}`, row);
-      return row;
-    }),
-    clearImage: jest.fn(async ({ market, flavorSlug }) => {
-      const row = { ...rows.get(`${market}:${flavorSlug}`), imageUrl: null };
-      rows.set(`${market}:${flavorSlug}`, row);
-      return row;
-    })
+    setImage: jest.fn(async ({ market, flavorSlug, assetId }) => link(market, flavorSlug, assetId, 'imageUrl', 'imageAssetId')),
+    setPlanImage: jest.fn(async ({ market, flavorSlug, assetId }) => link(market, flavorSlug, assetId, 'planImageUrl', 'planImageAssetId'))
   };
+  // Links a library image into a recipe row like the repository: an archived image is refused.
+  function link(market, flavorSlug, assetId, urlField, idField) {
+    const asset = assetId == null ? null : library.get(assetId);
+    if (asset && asset.archived) {
+      throw Object.assign(new Error('archived'), { statusCode: 409, details: { code: 'media_asset_archived' } });
+    }
+    const row = { ...rows.get(`${market}:${flavorSlug}`), [urlField]: asset ? asset.url : null, [idField]: asset ? asset.id : null };
+    rows.set(`${market}:${flavorSlug}`, row);
+    return row;
+  }
   const catalogRepository = {
     listRecipeVariations: jest.fn(async (market, key) => (market === 'BR' && key === 'senior-beef') || (market === 'US' && key === 'beef') ? variations : []),
     setRecipeLifeStage: jest.fn().mockResolvedValue(undefined)
-  };
-  let counter = 0;
-  const imageStorage = {
-    write: jest.fn(async ({ market, flavorSlug }) => `/recipe-images/recipe-${market.toLowerCase()}-${flavorSlug}-${++counter}.webp`),
-    delete: jest.fn().mockResolvedValue(undefined)
   };
   const auditService = { record: jest.fn().mockResolvedValue(undefined) };
   const service = new RecipeContentService({
     repository,
     catalogRepository,
-    imageStorage,
     mediaLibraryService,
-    auditService,
-    processImage: processImage || jest.fn(async () => ({ buffer: Buffer.from('webp'), ext: 'webp', mimeType: 'image/webp' }))
+    auditService
   });
-  return { service, repository, catalogRepository, imageStorage, mediaLibraryService, auditService, rows, library };
+  return { service, repository, catalogRepository, mediaLibraryService, auditService, rows, library };
 }
 
 const actor = { userId: '7', email: 'ops@edenbowls.com' };
@@ -113,7 +102,7 @@ const upload = { mimeType: 'image/png', imageBase64: Buffer.from('png').toString
 
 describe('RecipeContentService', () => {
   test('one image serves every size of the flavor in that market only', async () => {
-    const { service, repository } = setup();
+    const { service, repository, library } = setup();
 
     const result = await service.uploadImage('br', 'senior-beef', upload, actor);
 
@@ -121,11 +110,12 @@ describe('RecipeContentService', () => {
       market: 'BR',
       flavorSlug: 'senior-beef',
       name: 'Sênior Carne',
-      imageUrl: '/recipe-images/recipe-br-senior-beef-1.webp',
+      imageUrl: library.get(result.imageAssetId).url,
       labelStatus: 'missing',
       variations: SENIOR_BEEF_BR
     });
-    expect(repository.upsertImage).toHaveBeenCalledWith({ market: 'BR', flavorSlug: 'senior-beef', imageUrl: result.imageUrl, actorId: 7 });
+    expect(library.get(result.imageAssetId)).toMatchObject({ kind: 'banner', market: 'BR' });
+    expect(repository.setImage).toHaveBeenCalledWith({ market: 'BR', flavorSlug: 'senior-beef', assetId: result.imageAssetId, actorId: 7 });
     await expect(service.get('US', 'senior-beef')).rejects.toMatchObject({ statusCode: 404 });
   });
 
@@ -208,14 +198,14 @@ describe('RecipeContentService', () => {
 
   describe('registration', () => {
     test('registers a recipe without variations that can then hold an image', async () => {
-      const { service, repository, auditService } = setup({ variations: [] });
+      const { service, repository, auditService, library } = setup({ variations: [] });
 
       const created = await service.create('BR', { key: 'senior-duck', name: '  Sênior Pato  ', lifeStage: 'senior' }, actor);
       const withImage = await service.uploadImage('BR', 'senior-duck', upload, actor);
 
       expect(repository.createRecipe).toHaveBeenCalledWith({ market: 'BR', flavorSlug: 'senior-duck', name: 'Sênior Pato', lifeStage: 'senior', actorId: 7 });
       expect(created).toMatchObject({ flavorSlug: 'senior-duck', name: 'Sênior Pato', lifeStage: 'senior', variations: [], imageUrl: null });
-      expect(withImage.imageUrl).toBe('/recipe-images/recipe-br-senior-duck-1.webp');
+      expect(withImage.imageUrl).toBe(library.get(withImage.imageAssetId).url);
       expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
         action: 'catalog.recipe.create',
         metadata: { market: 'BR', flavorSlug: 'senior-duck', name: 'Sênior Pato', lifeStage: 'senior' }
@@ -302,87 +292,152 @@ describe('RecipeContentService', () => {
       expect(repository.deleteRecipe).not.toHaveBeenCalled();
     });
 
-    test('deletes an unused recipe with its image file', async () => {
-      const { service, repository, imageStorage, auditService } = setup({ variations: [] });
+    test('deletes an unused recipe and only unlinks its banner, which stays in the library', async () => {
+      const { service, repository, auditService, library } = setup({
+        variations: [],
+        stored: { market: 'BR', flavorSlug: 'senior-lamb', name: 'Sênior Cordeiro', imageUrl: '/recipe-images/banner-br-31.webp', imageAssetId: 31, label: null }
+      });
 
       const result = await service.remove('BR', 'senior-lamb', actor);
 
       expect(result).toEqual({ deleted: true, market: 'BR', flavorSlug: 'senior-lamb' });
       expect(repository.deleteRecipe).toHaveBeenCalledWith({ market: 'BR', flavorSlug: 'senior-lamb' });
-      expect(imageStorage.delete).toHaveBeenCalledWith('/recipe-images/lamb.webp');
+      expect(library.get(31)).toMatchObject({ archived: false, url: '/recipe-images/banner-br-31.webp' });
       expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'catalog.recipe.delete' }));
       await expect(service.get('BR', 'senior-lamb')).rejects.toMatchObject({ statusCode: 404 });
     });
   });
 
-  test('a refused image keeps the current one', async () => {
-    const refusal = Object.assign(new Error('Image must be 1024 x 636 pixels.'), {
-      statusCode: 422,
-      details: { code: 'recipe_image_invalid', reason: 'dimensions', width: 1200, height: 800, expectedWidth: 1024, expectedHeight: 636 }
+  describe('banner', () => {
+    const LINKED = { market: 'BR', flavorSlug: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', imageUrl: '/recipe-images/banner-br-31.webp', imageAssetId: 31, label: null };
+
+    test('links an existing library banner by id and audits the image id', async () => {
+      const { service, repository, auditService } = setup();
+
+      const result = await service.uploadImage('BR', 'senior-beef', { assetId: 31 }, actor);
+
+      expect(repository.setImage).toHaveBeenCalledWith({ market: 'BR', flavorSlug: 'senior-beef', assetId: 31, actorId: 7 });
+      expect(result).toMatchObject({ imageAssetId: 31, imageUrl: '/recipe-images/banner-br-31.webp' });
+      expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'catalog.recipe.image.update',
+        metadata: { market: 'BR', flavorSlug: 'senior-beef', assetId: 31 }
+      }));
     });
-    const stored = { market: 'BR', flavorSlug: 'senior-beef', imageUrl: '/recipe-images/old.webp', label: null };
-    const { service, repository, imageStorage } = setup({ stored, processImage: jest.fn().mockRejectedValue(refusal) });
 
-    await expect(service.uploadImage('BR', 'senior-beef', upload, actor)).rejects.toBe(refusal);
-    expect(imageStorage.write).not.toHaveBeenCalled();
-    expect(repository.upsertImage).not.toHaveBeenCalled();
-    expect((await service.get('BR', 'senior-beef')).imageUrl).toBe('/recipe-images/old.webp');
-  });
+    test('refuses a plan thumbnail and a banner of another market, keeping the current banner', async () => {
+      const { service, repository } = setup({ stored: LINKED });
 
-  test('refuses empty image data', async () => {
-    const { service } = setup();
-    await expect(service.uploadImage('BR', 'senior-beef', { mimeType: 'image/png', imageBase64: '' }, actor))
-      .rejects.toMatchObject({ statusCode: 422, details: { code: 'recipe_image_invalid', reason: 'data' } });
-  });
-
-  test('a new image replaces the old one and the old file goes after the row is saved', async () => {
-    const stored = { market: 'BR', flavorSlug: 'senior-beef', imageUrl: '/recipe-images/old.webp', label: null };
-    const { service, repository, imageStorage } = setup({ stored });
-
-    const result = await service.uploadImage('BR', 'senior-beef', upload, actor);
-
-    expect(result.imageUrl).toBe('/recipe-images/recipe-br-senior-beef-1.webp');
-    expect(imageStorage.delete).toHaveBeenCalledWith('/recipe-images/old.webp');
-    expect(repository.upsertImage.mock.invocationCallOrder[0]).toBeLessThan(imageStorage.delete.mock.invocationCallOrder[0]);
-  });
-
-  test('a failed save removes the new file and keeps the old one', async () => {
-    const stored = { market: 'BR', flavorSlug: 'senior-beef', imageUrl: '/recipe-images/old.webp', label: null };
-    const { service, repository, imageStorage } = setup({ stored });
-    repository.upsertImage.mockRejectedValueOnce(new Error('db down'));
-
-    await expect(service.uploadImage('BR', 'senior-beef', upload, actor)).rejects.toThrow('db down');
-    expect(imageStorage.delete).toHaveBeenCalledWith('/recipe-images/recipe-br-senior-beef-1.webp');
-    expect(imageStorage.delete).not.toHaveBeenCalledWith('/recipe-images/old.webp');
-  });
-
-  test('refuses to remove the image while a variation of the flavor is active', async () => {
-    const stored = { market: 'US', flavorSlug: 'beef', imageUrl: '/recipe-images/beef.webp', label: null };
-    const { service, repository, imageStorage } = setup({ stored, variations: [{ id: '11', name: 'Beef 300g', sku: 'B-300', active: true }] });
-
-    await expect(service.removeImage('US', 'beef', actor)).rejects.toMatchObject({
-      statusCode: 409,
-      details: { code: 'recipe_content_in_use', activeVariations: ['11'] }
+      await expect(service.uploadImage('BR', 'senior-beef', { assetId: 12 }, actor))
+        .rejects.toMatchObject({ statusCode: 422, details: { code: 'media_asset_invalid', reason: 'kind' } });
+      await expect(service.uploadImage('BR', 'senior-beef', { assetId: 32 }, actor))
+        .rejects.toMatchObject({ statusCode: 422, details: { code: 'media_asset_invalid', reason: 'market' } });
+      expect(repository.setImage).not.toHaveBeenCalled();
     });
-    expect(repository.clearImage).not.toHaveBeenCalled();
-    expect(imageStorage.delete).not.toHaveBeenCalled();
-  });
 
-  test('removes the image when every variation is inactive', async () => {
-    const stored = { market: 'BR', flavorSlug: 'senior-beef', imageUrl: '/recipe-images/old.webp', label: null };
-    const { service, imageStorage } = setup({ stored });
+    test('refuses an archived banner and an unknown one, keeping the current banner', async () => {
+      const { service, rows } = setup({ stored: LINKED });
 
-    const result = await service.removeImage('BR', 'senior-beef', actor);
+      await expect(service.uploadImage('BR', 'senior-beef', { assetId: 33 }, actor))
+        .rejects.toMatchObject({ statusCode: 409, details: { code: 'media_asset_archived' } });
+      await expect(service.uploadImage('BR', 'senior-beef', { assetId: 99 }, actor)).rejects.toMatchObject({ statusCode: 404 });
+      expect(rows.get('BR:senior-beef').imageAssetId).toBe(31);
+    });
 
-    expect(result.imageUrl).toBeNull();
-    expect(imageStorage.delete).toHaveBeenCalledWith('/recipe-images/old.webp');
+    test('refuses a body with both an asset id and an image, or with neither', async () => {
+      const { service } = setup();
+      await expect(service.uploadImage('BR', 'senior-beef', { assetId: 31, ...upload }, actor))
+        .rejects.toMatchObject({ statusCode: 422, details: { code: 'media_asset_invalid' } });
+      await expect(service.uploadImage('BR', 'senior-beef', {}, actor))
+        .rejects.toMatchObject({ statusCode: 422, details: { code: 'media_asset_invalid' } });
+    });
+
+    test('an upload goes into the banner library of the recipe market and replaces the link, keeping the old banner', async () => {
+      const { service, mediaLibraryService, library } = setup({ stored: LINKED });
+
+      const result = await service.uploadImage('BR', 'senior-beef', { ...upload, originalFilename: 'senior-carne.png' }, actor);
+
+      expect(mediaLibraryService.upload).toHaveBeenCalledWith(
+        { kind: 'banner', market: 'BR', originalFilename: 'senior-carne.png', mimeType: 'image/png', imageBase64: upload.imageBase64 },
+        actor
+      );
+      expect(result.imageAssetId).not.toBe(31);
+      expect(result.imageUrl).toBe(library.get(result.imageAssetId).url);
+      expect(library.get(31)).toMatchObject({ archived: false, url: '/recipe-images/banner-br-31.webp' });
+    });
+
+    test('a backfilled banner stays in the library when a new one is uploaded', async () => {
+      const backfilled = { id: 40, kind: 'banner', market: 'BR', url: '/recipe-images/recipe-br-turkey-0123456789abcdef0123456789abcdef.webp', archived: false };
+      const { service, library } = setup({
+        stored: { market: 'BR', flavorSlug: 'senior-beef', name: 'Sênior Carne', imageUrl: backfilled.url, imageAssetId: 40, label: null }
+      });
+      library.set(40, backfilled);
+
+      const result = await service.uploadImage('BR', 'senior-beef', upload, actor);
+
+      expect(result.imageAssetId).not.toBe(40);
+      expect(library.get(40)).toEqual(backfilled);
+    });
+
+    test('the upload is named after the recipe when the file name is missing', async () => {
+      const { service, mediaLibraryService } = setup();
+      await service.uploadImage('BR', 'senior-beef', upload, actor);
+      expect(mediaLibraryService.upload).toHaveBeenCalledWith(expect.objectContaining({ kind: 'banner', originalFilename: 'senior-beef-banner' }), actor);
+    });
+
+    test('a 1200 x 800 upload is refused by the real image check and keeps the current banner', async () => {
+      const sharp = require('sharp');
+      const { MediaLibraryService } = require('../src/services/media-library.service');
+      const { processRecipeImage } = require('../src/infrastructure/imaging/recipe-image');
+      const { rows, repository } = setup({ stored: LINKED });
+      const writeAsset = jest.fn();
+      const realLibrary = new MediaLibraryService({ repository: {}, imageStorage: { writeAsset }, processImage: processRecipeImage });
+      const service = new RecipeContentService({ repository, catalogRepository: { listRecipeVariations: async () => [] }, mediaLibraryService: realLibrary });
+      const png = await sharp({ create: { width: 1200, height: 800, channels: 3, background: { r: 244, g: 239, b: 227 } } }).png().toBuffer();
+
+      await expect(service.uploadImage('BR', 'senior-beef', { mimeType: 'image/png', imageBase64: png.toString('base64') }, actor))
+        .rejects.toMatchObject({ statusCode: 422, details: { code: 'recipe_image_invalid', width: 1200, height: 800, expectedWidth: 1024, expectedHeight: 636 } });
+      expect(writeAsset).not.toHaveBeenCalled();
+      expect(rows.get('BR:senior-beef').imageAssetId).toBe(31);
+    });
+
+    test('refuses to remove the banner while a variation of the flavor is active', async () => {
+      const stored = { market: 'US', flavorSlug: 'beef', imageUrl: '/recipe-images/banner-us-32.webp', imageAssetId: 32, label: null };
+      const { service, repository } = setup({ stored, variations: [{ id: '11', name: 'Beef 300g', sku: 'B-300', active: true }] });
+
+      await expect(service.removeImage('US', 'beef', actor)).rejects.toMatchObject({
+        statusCode: 409,
+        details: { code: 'recipe_content_in_use', activeVariations: ['11'] }
+      });
+      expect(repository.setImage).not.toHaveBeenCalled();
+    });
+
+    test('removing the banner with every variation inactive only unlinks it, and it links again to the same URL', async () => {
+      const { service, auditService, library } = setup({ stored: LINKED });
+
+      const removed = await service.removeImage('BR', 'senior-beef', actor);
+      const linkedAgain = await service.uploadImage('BR', 'senior-beef', { assetId: 31 }, actor);
+
+      expect(removed).toMatchObject({ imageUrl: null, imageAssetId: null });
+      expect(library.get(31)).toMatchObject({ archived: false, url: '/recipe-images/banner-br-31.webp' });
+      expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'catalog.recipe.image.delete',
+        metadata: { market: 'BR', flavorSlug: 'senior-beef', assetId: 31 }
+      }));
+      expect(linkedAgain.imageUrl).toBe('/recipe-images/banner-br-31.webp');
+    });
+
+    test('removing a recipe without a banner changes nothing', async () => {
+      const { service, repository } = setup();
+      await service.removeImage('BR', 'senior-beef', actor);
+      expect(repository.setImage).not.toHaveBeenCalled();
+    });
   });
 
   describe('plan thumbnail', () => {
     const LINKED = { market: 'BR', flavorSlug: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', imageUrl: '/recipe-images/banner.webp', planImageUrl: '/recipe-images/plan-br-12.webp', planImageAssetId: 12, label: null };
 
     test('links an existing library image by id, keeping the banner', async () => {
-      const { service, repository, auditService, imageStorage } = setup();
+      const { service, repository, auditService, rows } = setup();
 
       const result = await service.uploadPlanImage('BR', 'senior-beef', { assetId: 12 }, actor);
 
@@ -392,7 +447,7 @@ describe('RecipeContentService', () => {
         action: 'catalog.recipe.plan_image.update',
         metadata: { market: 'BR', flavorSlug: 'senior-beef', assetId: 12 }
       }));
-      expect(imageStorage.delete).not.toHaveBeenCalled();
+      expect(rows.get('BR:senior-beef').imageUrl).toBeNull();
     });
 
     test('refuses an image of another market and keeps the current thumbnail', async () => {
@@ -421,7 +476,7 @@ describe('RecipeContentService', () => {
     });
 
     test('an upload goes into the library of the recipe market and replaces the link, keeping the old image', async () => {
-      const { service, mediaLibraryService, imageStorage, library } = setup({ stored: LINKED });
+      const { service, mediaLibraryService, library } = setup({ stored: LINKED });
 
       const result = await service.uploadPlanImage('BR', 'senior-beef', { ...upload, originalFilename: 'senior-carne_400.png' }, actor);
 
@@ -432,12 +487,10 @@ describe('RecipeContentService', () => {
       expect(result.planImageAssetId).not.toBe(12);
       expect(result.planImageUrl).toBe(library.get(result.planImageAssetId).url);
       expect(library.get(12)).toBeTruthy();
-      expect(imageStorage.write).not.toHaveBeenCalled();
-      expect(imageStorage.delete).not.toHaveBeenCalled();
     });
 
     test('unlinks the thumbnail even with an active variation, keeping the banner and the library image', async () => {
-      const { service, imageStorage, auditService, library } = setup({
+      const { service, auditService, library } = setup({
         variations: SENIOR_BEEF_BR.map((item) => ({ ...item, active: true })),
         stored: LINKED
       });
@@ -446,7 +499,6 @@ describe('RecipeContentService', () => {
       const linkedAgain = await service.uploadPlanImage('BR', 'senior-beef', { assetId: 12 }, actor);
 
       expect(result).toMatchObject({ imageUrl: '/recipe-images/banner.webp', planImageUrl: null, planImageAssetId: null });
-      expect(imageStorage.delete).not.toHaveBeenCalled();
       expect(library.get(12).archived).toBe(false);
       expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
         action: 'catalog.recipe.plan_image.delete',
@@ -455,16 +507,16 @@ describe('RecipeContentService', () => {
       expect(linkedAgain.planImageUrl).toBe('/recipe-images/plan-br-12.webp');
     });
 
-    test('deleting an unused recipe removes its banner file and only unlinks its thumbnail', async () => {
-      const { service, imageStorage, library } = setup({
+    test('deleting an unused recipe only unlinks its banner and its thumbnail', async () => {
+      const { service, library } = setup({
         variations: [],
-        stored: { ...LINKED, flavorSlug: 'senior-lamb', imageUrl: '/recipe-images/lamb.webp' }
+        stored: { ...LINKED, flavorSlug: 'senior-lamb', imageUrl: '/recipe-images/banner-br-31.webp', imageAssetId: 31 }
       });
 
       await service.remove('BR', 'senior-lamb', actor);
 
-      expect(imageStorage.delete.mock.calls).toEqual([['/recipe-images/lamb.webp']]);
       expect(library.get(12)).toBeTruthy();
+      expect(library.get(31)).toBeTruthy();
     });
 
     test('a 200 x 200 upload is refused by the real image check and keeps the current thumbnail', async () => {
@@ -493,15 +545,15 @@ describe('RecipeContentService', () => {
     });
   });
 
-  test('records one audit event per upload and removal, with market and flavor', async () => {
+  test('records one audit event per upload and removal, with market, flavor and library image', async () => {
     const { service, auditService } = setup();
 
-    await service.uploadImage('BR', 'senior-beef', upload, actor);
+    const uploaded = await service.uploadImage('BR', 'senior-beef', upload, actor);
     await service.removeImage('BR', 'senior-beef', actor);
 
     expect(auditService.record.mock.calls.map(([event]) => [event.action, event.metadata])).toEqual([
-      ['catalog.recipe.image.update', { market: 'BR', flavorSlug: 'senior-beef' }],
-      ['catalog.recipe.image.delete', { market: 'BR', flavorSlug: 'senior-beef' }]
+      ['catalog.recipe.image.update', { market: 'BR', flavorSlug: 'senior-beef', assetId: uploaded.imageAssetId }],
+      ['catalog.recipe.image.delete', { market: 'BR', flavorSlug: 'senior-beef', assetId: uploaded.imageAssetId }]
     ]);
     expect(auditService.record.mock.calls[0][0].actor).toBe(actor);
   });

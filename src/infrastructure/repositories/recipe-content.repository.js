@@ -4,8 +4,14 @@ const { toIsoDateTime } = require('./onboarding-pets.repository');
 const { LIFE_STAGES } = require('../../core/flavors');
 const { MEDIA_ASSET_ARCHIVED } = require('../../core/recipe-content');
 
-const COLUMNS = 'market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_asset_id, plan_image_updated_at, '
+const COLUMNS = 'market, flavor_slug, name, life_stage, image_url, image_asset_id, image_updated_at, plan_image_url, plan_image_asset_id, plan_image_updated_at, '
   + 'label, label_updated_at, presentation, presentation_updated_at';
+
+// The URL, id and timestamp columns of each library image a recipe links to.
+const IMAGE_SLOTS = {
+  banner: { url: 'image_url', assetId: 'image_asset_id', updatedAt: 'image_updated_at' },
+  plan: { url: 'plan_image_url', assetId: 'plan_image_asset_id', updatedAt: 'plan_image_updated_at' }
+};
 
 // Recipe registration with its image, label and store presentation, one row per market and recipe key (recipe-content).
 class RecipeContentRepository {
@@ -32,6 +38,7 @@ class RecipeContentRepository {
       name: String(row.name || '').trim() || String(row.flavor_slug || ''),
       lifeStage: LIFE_STAGES.includes(row.life_stage) ? row.life_stage : 'adult',
       imageUrl: row.image_url ? String(row.image_url) : null,
+      imageAssetId: row.image_asset_id == null ? null : Number(row.image_asset_id),
       imageUpdatedAt: toIsoDateTime(row.image_updated_at),
       planImageUrl: row.plan_image_url ? String(row.plan_image_url) : null,
       planImageAssetId: row.plan_image_asset_id == null ? null : Number(row.plan_image_asset_id),
@@ -115,18 +122,6 @@ class RecipeContentRepository {
     );
   }
 
-  async upsertImage({ market, flavorSlug, imageUrl, actorId = null }) {
-    this.ensureDataSource();
-    await this.dataSource.query(
-      `INSERT INTO \`${this.tableName}\` (market, flavor_slug, image_url, image_updated_at, updated_by)
-       VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
-       ON DUPLICATE KEY UPDATE image_url = VALUES(image_url), image_updated_at = VALUES(image_updated_at),
-         updated_by = VALUES(updated_by)`,
-      [String(market).toUpperCase(), String(flavorSlug), String(imageUrl), actorId]
-    );
-    return this.findByMarketAndSlug(market, flavorSlug);
-  }
-
   async upsertLabel({ market, flavorSlug, label, actorId = null }) {
     this.ensureDataSource();
     await this.dataSource.query(
@@ -150,9 +145,19 @@ class RecipeContentRepository {
     return this.findByMarketAndSlug(market, flavorSlug);
   }
 
-  // Links the recipe to a library image, or unlinks it with a null assetId. The image row is locked first, so an
-  // archive running at the same time (MediaAssetRepository.archive) either sees this link or finds it archived.
+  // Links the recipe banner to a library image, or unlinks it with a null assetId.
+  async setImage({ market, flavorSlug, assetId, actorId = null }) {
+    return this.linkImage(IMAGE_SLOTS.banner, { market, flavorSlug, assetId, actorId });
+  }
+
+  // Links the plan thumbnail to a library image, or unlinks it with a null assetId.
   async setPlanImage({ market, flavorSlug, assetId, actorId = null }) {
+    return this.linkImage(IMAGE_SLOTS.plan, { market, flavorSlug, assetId, actorId });
+  }
+
+  // The image row is locked first, so an archive running at the same time (MediaAssetRepository.archive) either
+  // sees this link or finds it archived. URL and id are written together, so the store keeps reading the URL.
+  async linkImage(slot, { market, flavorSlug, assetId, actorId }) {
     this.ensureDataSource();
     const normalizedMarket = String(market).toUpperCase();
     await this.dataSource.transaction(async (manager) => {
@@ -171,21 +176,11 @@ class RecipeContentRepository {
         url = String(asset.url);
       }
       await manager.query(
-        `UPDATE \`${this.tableName}\` SET plan_image_url = ?, plan_image_asset_id = ?, plan_image_updated_at = CURRENT_TIMESTAMP, updated_by = ?
+        `UPDATE \`${this.tableName}\` SET ${slot.url} = ?, ${slot.assetId} = ?, ${slot.updatedAt} = CURRENT_TIMESTAMP, updated_by = ?
          WHERE market = ? AND flavor_slug = ?`,
         [url, assetId == null ? null : Number(assetId), actorId, normalizedMarket, String(flavorSlug)]
       );
     });
-    return this.findByMarketAndSlug(market, flavorSlug);
-  }
-
-  async clearImage({ market, flavorSlug, actorId = null }) {
-    this.ensureDataSource();
-    await this.dataSource.query(
-      `UPDATE \`${this.tableName}\` SET image_url = NULL, image_updated_at = CURRENT_TIMESTAMP, updated_by = ?
-       WHERE market = ? AND flavor_slug = ?`,
-      [actorId, String(market).toUpperCase(), String(flavorSlug)]
-    );
     return this.findByMarketAndSlug(market, flavorSlug);
   }
 }

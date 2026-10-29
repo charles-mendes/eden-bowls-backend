@@ -741,10 +741,8 @@ async function bootstrap() {
   const recipeContentService = new RecipeContentService({
     repository: recipeContentRepository,
     catalogRepository: adminCatalogRepository,
-    imageStorage: recipeImageStorage,
     mediaLibraryService,
-    auditService: adminAuditService,
-    logger
+    auditService: adminAuditService
   });
   const adminSystemHealthService = new AdminSystemHealthService({
     marketConflictsRepository: new MarketConflictsRepository(dataSource, {

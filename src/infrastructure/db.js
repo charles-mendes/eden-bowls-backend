@@ -77,6 +77,7 @@ const { AddSubscriptionLifecycleDates1700000000055 } = require('./migrations/170
 const { BackfillOnboardingUserStateMarket1700000000056 } = require('./migrations/1700000000056-backfill-onboarding-user-state-market');
 const { CreateMediaAssets1700000000057 } = require('./migrations/1700000000057-create-media-assets');
 const { LinkRecipePlanImageAsset1700000000058 } = require('./migrations/1700000000058-link-recipe-plan-image-asset');
+const { LinkRecipeBannerImageAsset1700000000059 } = require('./migrations/1700000000059-link-recipe-banner-image-asset');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -179,7 +180,8 @@ function buildDataSourceOptions(env) {
       AddSubscriptionLifecycleDates1700000000055,
       BackfillOnboardingUserStateMarket1700000000056,
       CreateMediaAssets1700000000057,
-      LinkRecipePlanImageAsset1700000000058
+      LinkRecipePlanImageAsset1700000000058,
+      LinkRecipeBannerImageAsset1700000000059
     ],
     synchronize: false,
     logging: false,

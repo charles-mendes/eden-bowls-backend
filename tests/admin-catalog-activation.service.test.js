@@ -74,6 +74,17 @@ describe('AdminCatalogService.setVariationActive', () => {
     expect(repository.updatePostStatus).toHaveBeenCalledWith('3001', 'publish');
   });
 
+  test('activates a BR variation whose banner is a library image', async () => {
+    const { service, repository } = serviceFor({
+      product: published('BR', [variant({ recipeKey: 'senior-beef', finalImageReady: false })]),
+      contents: { 'BR:senior-beef': { imageUrl: '/recipe-images/banner-br-0123456789abcdef0123456789abcdef.webp', imageAssetId: 31, label: null } }
+    });
+
+    await service.setVariationActive('100', '3001', true, actor);
+
+    expect(repository.updatePostStatus).toHaveBeenCalledWith('3001', 'publish');
+  });
+
   test('a stored image of another market does not count', async () => {
     const { service } = serviceFor({
       product: published('BR', [variant({ recipeKey: 'senior-beef', finalImageReady: false })]),

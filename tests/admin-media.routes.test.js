@@ -72,6 +72,27 @@ describe('admin media routes', () => {
     expect(mediaLibraryService.upload).toHaveBeenCalledWith(upload, expect.objectContaining({ userId: '7' }));
   });
 
+  test('a banner uploads, deduplicates and lists through the same routes', async () => {
+    const banner = { ...asset, id: 31, kind: 'banner', url: '/recipe-images/banner-br-0123456789abcdef0123456789abcdef.webp', originalFilename: 'filhote-frango-porco.png' };
+    const { app, mediaLibraryService } = appFor({
+      service: {
+        upload: jest.fn().mockResolvedValueOnce({ asset: banner, duplicate: false }).mockResolvedValueOnce({ asset: banner, duplicate: true }),
+        list: jest.fn().mockResolvedValue({ market: 'BR', items: [banner] })
+      }
+    });
+    const bannerUpload = { ...upload, kind: 'banner', originalFilename: 'filhote-frango-porco.png' };
+
+    const created = await request(app).post('/api/v1/admin/media').set('Authorization', `Bearer ${token()}`).send(bannerUpload);
+    const again = await request(app).post('/api/v1/admin/media').set('Authorization', `Bearer ${token()}`).send(bannerUpload);
+    const listed = await request(app).get('/api/v1/admin/media?market=BR&kind=banner').set('Authorization', `Bearer ${token()}`);
+
+    expect([created.status, again.status]).toEqual([201, 200]);
+    expect(again.body).toMatchObject({ id: 31, kind: 'banner', duplicate: true });
+    expect(mediaLibraryService.upload).toHaveBeenCalledWith(bannerUpload, expect.objectContaining({ userId: '7' }));
+    expect(listed.body.items).toEqual([banner]);
+    expect(mediaLibraryService.list).toHaveBeenCalledWith(expect.objectContaining({ market: 'BR', kind: 'banner' }), expect.anything());
+  });
+
   test('accepts a 5 MB image in base64', async () => {
     const { app } = appFor();
     const imageBase64 = Buffer.alloc(5 * 1024 * 1024).toString('base64');
@@ -113,6 +134,18 @@ describe('admin media routes', () => {
     });
 
     const response = await request(app).post('/api/v1/admin/media/12/archive').set('Authorization', `Bearer ${token()}`);
+
+    expect(response.status).toBe(409);
+    expect(response.body.details).toMatchObject({ code: 'media_asset_in_use', usedBy });
+  });
+
+  test('archiving a banner in use answers 409 with its recipes', async () => {
+    const usedBy = [{ key: 'senior-beef', name: 'Sênior Carne', market: 'BR' }];
+    const { app } = appFor({
+      service: { archive: jest.fn().mockRejectedValue(new HttpError(409, 'A library image in use cannot be archived.', { code: 'media_asset_in_use', usedBy })) }
+    });
+
+    const response = await request(app).post('/api/v1/admin/media/31/archive').set('Authorization', `Bearer ${token()}`);
 
     expect(response.status).toBe(409);
     expect(response.body.details).toMatchObject({ code: 'media_asset_in_use', usedBy });

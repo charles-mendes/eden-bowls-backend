@@ -84,8 +84,8 @@ describe('LinkRecipePlanImageAsset1700000000058', () => {
     expect(runner.dropColumn).toHaveBeenCalledWith('recipe_contents', 'plan_image_asset_id');
   });
 
-  test('is registered last, after the library table', () => {
+  test('is registered right after the library table', () => {
     const names = buildDataSourceOptions({}).migrations.map((migration) => migration.name);
-    expect(names.slice(-2)).toEqual(['CreateMediaAssets1700000000057', 'LinkRecipePlanImageAsset1700000000058']);
+    expect(names.indexOf('LinkRecipePlanImageAsset1700000000058')).toBe(names.indexOf('CreateMediaAssets1700000000057') + 1);
   });
 });

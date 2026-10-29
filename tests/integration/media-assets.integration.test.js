@@ -3,6 +3,7 @@ const { CreateRecipeContents1700000000038 } = require('../../src/infrastructure/
 const { AddRecipePlanImage1700000000043 } = require('../../src/infrastructure/migrations/1700000000043-add-recipe-plan-image');
 const { CreateMediaAssets1700000000057 } = require('../../src/infrastructure/migrations/1700000000057-create-media-assets');
 const { LinkRecipePlanImageAsset1700000000058 } = require('../../src/infrastructure/migrations/1700000000058-link-recipe-plan-image-asset');
+const { LinkRecipeBannerImageAsset1700000000059 } = require('../../src/infrastructure/migrations/1700000000059-link-recipe-banner-image-asset');
 const { MediaAssetRepository } = require('../../src/infrastructure/repositories/media-asset.repository');
 const { RecipeContentRepository } = require('../../src/infrastructure/repositories/recipe-content.repository');
 
@@ -24,8 +25,9 @@ const connection = {
 };
 
 const OLD_URL = 'https://api.example.com/recipe-images/recipe-br-turkey-plan-0123456789abcdef0123456789abcdef.webp';
+const OLD_BANNER_URL = 'https://api.example.com/recipe-images/recipe-br-turkey-fedcba9876543210fedcba9876543210.webp';
 
-// The library migrations on a real MySQL: backfill of a stored thumbnail, a second run, and the restricting key.
+// The library migrations on a real MySQL: backfill of a stored thumbnail and banner, a second run, and the restricting keys.
 describeIntegration('media_assets migrations (MySQL)', () => {
   const database = `it_${Date.now()}_media_assets`;
   const admin = new DataSource({ ...connection, database: process.env.INTEGRATION_DB_NAME || 'eden_bowls' });
@@ -54,10 +56,10 @@ describeIntegration('media_assets migrations (MySQL)', () => {
         ADD COLUMN presentation json NULL, ADD COLUMN presentation_updated_at datetime NULL`
     );
     await dataSource.query(
-      "INSERT INTO recipe_contents (market, flavor_slug, plan_image_url) VALUES ('BR', 'turkey', ?), ('BR', 'beef', NULL)",
-      [OLD_URL]
+      "INSERT INTO recipe_contents (market, flavor_slug, plan_image_url, image_url) VALUES ('BR', 'turkey', ?, ?), ('BR', 'beef', NULL, NULL)",
+      [OLD_URL, OLD_BANNER_URL]
     );
-    await migrate(new CreateMediaAssets1700000000057(), new LinkRecipePlanImageAsset1700000000058());
+    await migrate(new CreateMediaAssets1700000000057(), new LinkRecipePlanImageAsset1700000000058(), new LinkRecipeBannerImageAsset1700000000059());
   });
 
   afterAll(async () => {
@@ -71,7 +73,7 @@ describeIntegration('media_assets migrations (MySQL)', () => {
   });
 
   test('a stored thumbnail becomes a linked library image with the same URL', async () => {
-    const assets = await dataSource.query('SELECT id, kind, market, url, original_filename, mime_type FROM media_assets');
+    const assets = await dataSource.query("SELECT id, kind, market, url, original_filename, mime_type FROM media_assets WHERE kind = 'plan'");
     expect(assets).toEqual([expect.objectContaining({
       kind: 'plan',
       market: 'BR',
@@ -86,14 +88,31 @@ describeIntegration('media_assets migrations (MySQL)', () => {
     ]);
   });
 
+  test('a stored banner becomes a linked library banner with the same URL', async () => {
+    const assets = await dataSource.query("SELECT id, kind, market, url, original_filename, mime_type FROM media_assets WHERE kind = 'banner'");
+    expect(assets).toEqual([expect.objectContaining({
+      kind: 'banner',
+      market: 'BR',
+      url: OLD_BANNER_URL,
+      original_filename: 'recipe-br-turkey-fedcba9876543210fedcba9876543210.webp',
+      mime_type: 'image/webp'
+    })]);
+    const recipes = await dataSource.query('SELECT flavor_slug, image_url, image_asset_id FROM recipe_contents ORDER BY flavor_slug');
+    expect(recipes).toEqual([
+      { flavor_slug: 'beef', image_url: null, image_asset_id: null },
+      { flavor_slug: 'turkey', image_url: OLD_BANNER_URL, image_asset_id: assets[0].id }
+    ]);
+  });
+
   test('a second run adds nothing', async () => {
-    await migrate(new CreateMediaAssets1700000000057(), new LinkRecipePlanImageAsset1700000000058());
+    await migrate(new CreateMediaAssets1700000000057(), new LinkRecipePlanImageAsset1700000000058(), new LinkRecipeBannerImageAsset1700000000059());
     const [{ total }] = await dataSource.query('SELECT COUNT(*) AS total FROM media_assets');
-    expect(Number(total)).toBe(1);
+    expect(Number(total)).toBe(2);
   });
 
   test('a linked library image cannot be deleted', async () => {
-    await expect(dataSource.query('DELETE FROM media_assets')).rejects.toThrow(/foreign key/i);
+    await expect(dataSource.query("DELETE FROM media_assets WHERE kind = 'plan'")).rejects.toThrow(/foreign key/i);
+    await expect(dataSource.query("DELETE FROM media_assets WHERE kind = 'banner'")).rejects.toThrow(/foreign key/i);
   });
 
   test('two rows without a hash do not collide, the same hash in a market does', async () => {

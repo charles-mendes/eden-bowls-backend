@@ -99,6 +99,26 @@ describe('admin recipe content routes', () => {
     expect(recipeContentService.uploadImage).toHaveBeenCalledWith('BR', 'senior-beef', upload, expect.objectContaining({ userId: '7' }));
   });
 
+  test('operator links a library banner by id, and a body with neither id nor image is refused', async () => {
+    const invalid = new HttpError(422, 'Send either assetId of a library image or a new image.', { code: 'media_asset_invalid', reason: 'body' });
+    const { app, recipeContentService } = appFor({
+      service: {
+        uploadImage: jest.fn()
+          .mockResolvedValueOnce({ ...content, imageAssetId: 31, imageUrl: '/recipe-images/banner-br-31.webp' })
+          .mockRejectedValueOnce(invalid)
+      }
+    });
+
+    const linked = await request(app).put(`${base}/image?market=BR`).set('Authorization', `Bearer ${token()}`).send({ assetId: 31 });
+    const refused = await request(app).put(`${base}/image?market=BR`).set('Authorization', `Bearer ${token()}`).send({});
+
+    expect(linked.status).toBe(200);
+    expect(linked.body).toMatchObject({ imageAssetId: 31, imageUrl: '/recipe-images/banner-br-31.webp' });
+    expect(recipeContentService.uploadImage).toHaveBeenCalledWith('BR', 'senior-beef', { assetId: 31 }, expect.objectContaining({ userId: '7' }));
+    expect(refused.status).toBe(422);
+    expect(refused.body.details).toMatchObject({ code: 'media_asset_invalid', reason: 'body' });
+  });
+
   test('accepts an image body larger than the default 1 MB JSON limit', async () => {
     const { app } = appFor();
     const large = { mimeType: 'image/png', imageBase64: 'A'.repeat(3 * 1024 * 1024) };
