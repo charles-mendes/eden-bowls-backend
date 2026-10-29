@@ -1,0 +1,17 @@
+Miniaturas do seletor de sabor (tela Plano)
+
+PNG quadrado, fundo bege do site (#F4EFE3), embalagem em destaque.
+Tamanhos: _200.png (200 x 200 px) e _400.png (400 x 400 px, para telas de alta resolucao).
+Pastas: pt/ (embalagem em portugues, site .com.br) e en/ (embalagem em ingles, site .com).
+
+pt/                       en/
+adulto-carne              adult-beef
+adulto-frango             adult-chicken
+adulto-peixe              adult-fish
+adulto-porco              adult-pork
+filhote-frango-porco      puppy-chicken-pork
+filhote-carne-frango      puppy-beef-chicken
+senior-carne              senior-beef
+senior-frango             senior-chicken
+
+Sugestao de uso: <img src="..._200.png" srcset="..._400.png 2x" width="200" height="200">
