@@ -30,7 +30,7 @@ describe('MediaAssetRepository', () => {
   test('lists one market and kind, without archived images, with the recipes using each', async () => {
     const dataSource = dataSourceReturning(
       [assetRow(), assetRow({ id: 13, original_filename: 'adulto-frango_400.png' })],
-      [{ plan_image_asset_id: 12, market: 'BR', flavor_slug: 'beef', name: 'Adulto Carne' }]
+      [{ asset_id: 12, market: 'BR', flavor_slug: 'beef', name: 'Adulto Carne' }]
     );
     const repository = new MediaAssetRepository(dataSource);
 
@@ -45,6 +45,39 @@ describe('MediaAssetRepository', () => {
       expect.objectContaining({ id: 12, archived: false, usedBy: [{ key: 'beef', name: 'Adulto Carne', market: 'BR' }] }),
       expect.objectContaining({ id: 13, originalFilename: 'adulto-frango_400.png', usedBy: [] })
     ]);
+  });
+
+  test('a banner is used through the recipe banner, not through a plan thumbnail with the same id', async () => {
+    const dataSource = dataSourceReturning(
+      [assetRow({ id: 31, kind: 'banner', original_filename: 'filhote-frango-porco.png', width: 1024, height: 636 })],
+      [{ asset_id: 31, market: 'BR', flavor_slug: 'puppy-chicken-pork', name: 'Filhote Frango e Porco' }]
+    );
+
+    const [banner] = await new MediaAssetRepository(dataSource).list({ market: 'BR', kind: 'banner' });
+
+    const [usedBySql, usedByParams] = dataSource.query.mock.calls[1];
+    expect(usedBySql).toContain('image_asset_id IN');
+    expect(usedBySql).not.toContain('plan_image_asset_id');
+    expect(usedByParams).toEqual([31]);
+    expect(banner).toMatchObject({ kind: 'banner', usedBy: [{ key: 'puppy-chicken-pork', name: 'Filhote Frango e Porco', market: 'BR' }] });
+  });
+
+  test('a plan image reads its users from the plan thumbnail column only', async () => {
+    const dataSource = dataSourceReturning([assetRow()], []);
+    await new MediaAssetRepository(dataSource).list({ market: 'BR', kind: 'plan' });
+    expect(dataSource.query.mock.calls[1][0]).toContain('plan_image_asset_id IN');
+    expect(dataSource.query).toHaveBeenCalledTimes(2);
+  });
+
+  test('archive refuses a banner in use by its recipe banner', async () => {
+    const used = [{ asset_id: 31, market: 'BR', flavor_slug: 'senior-beef', name: 'Sênior Carne' }];
+    const dataSource = dataSourceReturning([{ id: 31, kind: 'banner' }], used, [assetRow({ id: 31, kind: 'banner' })], used);
+
+    const asset = await new MediaAssetRepository(dataSource).archive(31);
+
+    expect(dataSource.query.mock.calls[1][0]).toContain('image_asset_id IN');
+    expect(dataSource.query.mock.calls.some(([sql]) => sql.startsWith('UPDATE'))).toBe(false);
+    expect(asset).toMatchObject({ archived: false, usedBy: [{ key: 'senior-beef' }] });
   });
 
   test('lists only archived images when asked', async () => {
@@ -67,10 +100,10 @@ describe('MediaAssetRepository', () => {
 
   test('archive leaves an image in use as is and returns its users', async () => {
     const dataSource = dataSourceReturning(
-      [{ id: 12 }],
-      [{ plan_image_asset_id: 12, market: 'BR', flavor_slug: 'beef', name: 'Adulto Carne' }],
+      [{ id: 12, kind: 'plan' }],
+      [{ asset_id: 12, market: 'BR', flavor_slug: 'beef', name: 'Adulto Carne' }],
       [assetRow()],
-      [{ plan_image_asset_id: 12, market: 'BR', flavor_slug: 'beef', name: 'Adulto Carne' }]
+      [{ asset_id: 12, market: 'BR', flavor_slug: 'beef', name: 'Adulto Carne' }]
     );
 
     const asset = await new MediaAssetRepository(dataSource).archive(12);

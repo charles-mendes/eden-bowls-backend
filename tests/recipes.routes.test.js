@@ -29,6 +29,20 @@ describe('GET /api/v1/recipes/:key', () => {
     });
   });
 
+  test('a banner linked from the library is served by its URL, without exposing the library id', async () => {
+    const url = '/recipe-images/banner-br-0123456789abcdef0123456789abcdef.webp';
+    const app = appFor({
+      variations: { 'BR:puppy-chicken-pork': [{ id: '21', name: 'Filhote 300g', sku: 'P', active: true }] },
+      contents: { 'BR:puppy-chicken-pork': { name: 'Filhote Frango e Porco', imageUrl: url, imageAssetId: 31, label: null } }
+    });
+
+    const response = await request(app).get('/api/v1/recipes/puppy-chicken-pork?market=BR');
+
+    expect(response.status).toBe(200);
+    expect(response.body.imageUrl).toBe(url);
+    expect(response.body).not.toHaveProperty('imageAssetId');
+  });
+
   test('returns null content for a launched recipe with nothing stored', async () => {
     const app = appFor({ variations: { 'BR:pork': [{ id: '21', name: 'Porco 300g', sku: 'P', active: true }] } });
 

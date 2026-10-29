@@ -81,9 +81,32 @@ describe('MediaLibraryService', () => {
     expect(repository.insert).not.toHaveBeenCalled();
   });
 
+  test('stores a banner of the market at the banner size, validated as a banner', async () => {
+    const processImage = jest.fn(async () => ({ buffer: Buffer.from('webp'), mimeType: 'image/webp', ext: 'webp', width: 1024, height: 636 }));
+    const { service, repository, imageStorage } = setup({ processImage });
+
+    const result = await service.upload(payload({ kind: 'banner', originalFilename: 'filhote-frango-porco.png' }), ADMIN);
+
+    expect(processImage).toHaveBeenCalledWith({ mimeType: 'image/png', buffer: PNG, kind: 'banner' });
+    expect(imageStorage.writeAsset).toHaveBeenCalledWith({ market: 'BR', kind: 'banner', buffer: Buffer.from('webp') });
+    expect(repository.insert).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'banner', market: 'BR', originalFilename: 'filhote-frango-porco.png', width: 1024, height: 636
+    }));
+    expect(result.duplicate).toBe(false);
+    expect(result.asset.url).toMatch(/^\/recipe-images\/banner-br-[0-9]{32}\.webp$/);
+  });
+
+  test('the same bytes as a plan image and as a banner are two images', async () => {
+    const { service, imageStorage } = setup();
+    const plan = await service.upload(payload(), ADMIN);
+    const banner = await service.upload(payload({ kind: 'banner' }), ADMIN);
+    expect(banner.asset.id).not.toBe(plan.asset.id);
+    expect(imageStorage.writeAsset).toHaveBeenCalledTimes(2);
+  });
+
   test('refuses an unknown kind before reading the image', async () => {
     const { service, imageStorage } = setup();
-    await expect(service.upload(payload({ kind: 'banner' }), ADMIN))
+    await expect(service.upload(payload({ kind: 'avatar' }), ADMIN))
       .rejects.toMatchObject({ statusCode: 422, details: { code: 'media_asset_invalid' } });
     expect(imageStorage.writeAsset).not.toHaveBeenCalled();
   });

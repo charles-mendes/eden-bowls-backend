@@ -104,7 +104,7 @@ Before dropping the old host binds, copy the existing files into the new volumes
 
 ### Recipe image library backup
 
-The recipe images volume holds the image library of the admin (`media_assets`). The API never deletes a library file: replacing or unlinking a plan thumbnail, deleting a recipe and archiving an image all keep the file, so the volume only grows. Only the home banner of a recipe is still deleted when it is replaced or removed. The rows in `media_assets` point at these files by URL, so a database dump without the volume, or the volume without the dump, restores broken thumbnails.
+The recipe images volume holds the image library of the admin (`media_assets`): the plan thumbnails and the home banners of the recipes. The API never deletes a file in this volume: replacing or unlinking a thumbnail or a banner, deleting a recipe and archiving an image all keep the file, so the volume only grows. The rows in `media_assets` point at these files by URL, so a database dump without the volume, or the volume without the dump, restores broken thumbnails and banners. The same backup covers both kinds.
 
 Back up the volume on the same schedule as the database dump. Compose prefixes the volume with the project name, so find it with `docker volume ls | grep recipe-images`, then copy it out:
 

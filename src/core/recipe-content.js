@@ -19,7 +19,7 @@ const RECIPE_IMAGE_WEBP_QUALITY = 85;
 const RECIPE_IMAGE_INVALID = 'recipe_image_invalid';
 const RECIPE_CONTENT_IN_USE = 'recipe_content_in_use';
 // Image library (plan-image-library).
-const MEDIA_ASSET_KINDS = ['plan'];
+const MEDIA_ASSET_KINDS = ['plan', 'banner'];
 const MEDIA_ASSET_INVALID = 'media_asset_invalid';
 const MEDIA_ASSET_IN_USE = 'media_asset_in_use';
 const MEDIA_ASSET_ARCHIVED = 'media_asset_archived';

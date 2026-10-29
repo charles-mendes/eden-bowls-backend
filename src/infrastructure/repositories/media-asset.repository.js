@@ -2,6 +2,8 @@ const { HttpError } = require('../../core/http-error');
 const { toIsoDateTime } = require('./onboarding-pets.repository');
 
 const COLUMNS = 'id, kind, market, url, original_filename, mime_type, width, height, bytes, uploaded_by, created_at, archived_at';
+// The recipe_contents column that links to an image of each kind. Fixed here, never taken from a request.
+const LINK_COLUMNS = { plan: 'plan_image_asset_id', banner: 'image_asset_id' };
 
 // Admin image library (plan-image-library). There is no delete: archived_at only hides an image from the list.
 class MediaAssetRepository {
@@ -40,29 +42,33 @@ class MediaAssetRepository {
     };
   }
 
-  // Recipes linking to each image, by image id: [{ key, name, market }].
-  async usedByIds(ids, runner = this.dataSource) {
-    const byId = new Map(ids.map((id) => [Number(id), []]));
-    if (ids.length === 0) {
-      return byId;
-    }
-    const rows = await runner.query(
-      `SELECT plan_image_asset_id, market, flavor_slug, name FROM \`${this.recipeTableName}\`
-        WHERE plan_image_asset_id IN (${ids.map(() => '?').join(', ')}) ORDER BY flavor_slug`,
-      ids.map(Number)
-    );
-    for (const row of rows) {
-      byId.get(Number(row.plan_image_asset_id)).push({
-        key: String(row.flavor_slug),
-        name: String(row.name || '').trim() || String(row.flavor_slug),
-        market: String(row.market || '').toUpperCase()
-      });
+  // Recipes linking to each image, by image id: [{ key, name, market }]. A plan image is used through the plan
+  // thumbnail and a banner through the recipe banner, so each kind reads its own column.
+  async usedByIds(images, runner = this.dataSource) {
+    const byId = new Map(images.map((image) => [Number(image.id), []]));
+    for (const [kind, column] of Object.entries(LINK_COLUMNS)) {
+      const ids = images.filter((image) => String(image.kind) === kind).map((image) => Number(image.id));
+      if (ids.length === 0) {
+        continue;
+      }
+      const rows = await runner.query(
+        `SELECT ${column} AS asset_id, market, flavor_slug, name FROM \`${this.recipeTableName}\`
+          WHERE ${column} IN (${ids.map(() => '?').join(', ')}) ORDER BY flavor_slug`,
+        ids
+      );
+      for (const row of rows) {
+        byId.get(Number(row.asset_id)).push({
+          key: String(row.flavor_slug),
+          name: String(row.name || '').trim() || String(row.flavor_slug),
+          market: String(row.market || '').toUpperCase()
+        });
+      }
     }
     return byId;
   }
 
   async withUsage(rows, runner) {
-    const usedBy = await this.usedByIds(rows.map((row) => row.id), runner);
+    const usedBy = await this.usedByIds(rows, runner);
     return rows.map((row) => this.mapRow(row, usedBy.get(Number(row.id))));
   }
 
@@ -115,16 +121,16 @@ class MediaAssetRepository {
     }
   }
 
-  // Locks the image so a concurrent link waits (RecipeContentRepository.setPlanImage locks it too). An image in
+  // Locks the image so a concurrent link waits (RecipeContentRepository.setPlanImage and setImage lock it too). An image in
   // use is left as is and returned with its usedBy; an archived one stays archived since its first archive.
   async archive(id) {
     this.ensureDataSource();
     return this.dataSource.transaction(async (manager) => {
-      const rows = await manager.query(`SELECT id FROM \`${this.tableName}\` WHERE id = ? FOR UPDATE`, [Number(id)]);
+      const rows = await manager.query(`SELECT id, kind FROM \`${this.tableName}\` WHERE id = ? FOR UPDATE`, [Number(id)]);
       if (rows.length === 0) {
         return null;
       }
-      const usedBy = (await this.usedByIds([id], manager)).get(Number(id));
+      const usedBy = (await this.usedByIds(rows, manager)).get(Number(id));
       if (usedBy.length === 0) {
         await manager.query(
           `UPDATE \`${this.tableName}\` SET archived_at = COALESCE(archived_at, CURRENT_TIMESTAMP) WHERE id = ?`,

@@ -38,6 +38,13 @@ describe('processRecipeImage', () => {
     expect(error.details.acceptedSizes).toBeUndefined();
   });
 
+  test('refuses a plan-sized image as a banner, naming 1024 x 636', async () => {
+    const error = await refusal(processRecipeImage({ mimeType: 'image/png', buffer: await image(400, 400), kind: 'banner' }));
+
+    expect(error.statusCode).toBe(422);
+    expect(error.details).toMatchObject({ code: 'recipe_image_invalid', width: 400, height: 400, expectedWidth: 1024, expectedHeight: 636 });
+  });
+
   test('accepts JPEG at the banner size', async () => {
     const result = await processRecipeImage({ mimeType: 'image/jpeg', buffer: await image(1024, 636, { format: 'jpeg' }) });
     expect((await sharp(result.buffer).metadata()).width).toBe(1024);
