@@ -427,6 +427,35 @@ function registerAdminRoutes(app, dependencies = {}) {
     ));
   });
 
+  function requireMediaLibraryService() {
+    if (!dependencies.mediaLibraryService) {
+      throw new HttpError(503, 'Image library is not available.');
+    }
+    return dependencies.mediaLibraryService;
+  }
+
+  app.get('/api/v1/admin/media', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireMediaLibraryService().list(request.query || {}, request.adminIdentity));
+  });
+
+  // 201 for a new image, 200 when the same bytes were already in the library.
+  app.post('/api/v1/admin/media', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    try {
+      const { asset, duplicate } = await requireMediaLibraryService().upload(request.body || {}, request.adminIdentity);
+      response.status(duplicate ? 200 : 201).json({ ...asset, duplicate });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/api/v1/admin/media/:id/archive', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireMediaLibraryService().archive(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/media/:id/restore', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireMediaLibraryService().restore(request.params.id, request.adminIdentity));
+  });
+
   app.get('/api/v1/admin/catalog/pricing', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminCatalogService) {

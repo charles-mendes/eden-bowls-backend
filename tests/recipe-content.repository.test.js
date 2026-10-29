@@ -74,21 +74,58 @@ describe('RecipeContentRepository', () => {
     expect(content.imageUrl).toBeNull();
   });
 
-  test('sets and clears the plan thumbnail apart from the banner', async () => {
-    const dataSource = dataSourceReturning(
-      [], [row({ plan_image_url: '/recipe-images/recipe-br-senior-beef-plan-1.webp' })],
-      [], [row({ plan_image_url: null })]
-    );
-    const repository = new RecipeContentRepository(dataSource);
+  describe('plan thumbnail link', () => {
+    const URL = '/recipe-images/plan-br-0123456789abcdef0123456789abcdef.webp';
 
-    const set = await repository.setPlanImage({ market: 'br', flavorSlug: 'senior-beef', imageUrl: '/recipe-images/recipe-br-senior-beef-plan-1.webp', actorId: 7 });
-    const cleared = await repository.setPlanImage({ market: 'BR', flavorSlug: 'senior-beef', imageUrl: null, actorId: 7 });
+    function linkingDataSource(assetRows, readBack) {
+      const manager = { query: jest.fn() };
+      manager.query.mockResolvedValueOnce(assetRows).mockResolvedValueOnce([]);
+      return {
+        manager,
+        isInitialized: true,
+        transaction: jest.fn(async (work) => work(manager)),
+        query: jest.fn().mockResolvedValueOnce(readBack)
+      };
+    }
 
-    expect(dataSource.query.mock.calls[0][0]).toContain('SET plan_image_url = ?, plan_image_updated_at = CURRENT_TIMESTAMP');
-    expect(dataSource.query.mock.calls[0][1]).toEqual(['/recipe-images/recipe-br-senior-beef-plan-1.webp', 7, 'BR', 'senior-beef']);
-    expect(dataSource.query.mock.calls[2][1]).toEqual([null, 7, 'BR', 'senior-beef']);
-    expect(set.planImageUrl).toBe('/recipe-images/recipe-br-senior-beef-plan-1.webp');
-    expect(cleared.planImageUrl).toBeNull();
+    test('links a library image by id, writing its URL with it after locking the image', async () => {
+      const dataSource = linkingDataSource([{ url: URL, archived_at: null }], [row({ plan_image_url: URL, plan_image_asset_id: 12 })]);
+      const repository = new RecipeContentRepository(dataSource);
+
+      const content = await repository.setPlanImage({ market: 'br', flavorSlug: 'senior-beef', assetId: 12, actorId: 7 });
+
+      expect(dataSource.manager.query.mock.calls[0]).toEqual([expect.stringContaining('FROM `media_assets` WHERE id = ? FOR UPDATE'), [12]]);
+      expect(dataSource.manager.query.mock.calls[1][0]).toContain('SET plan_image_url = ?, plan_image_asset_id = ?');
+      expect(dataSource.manager.query.mock.calls[1][1]).toEqual([URL, 12, 7, 'BR', 'senior-beef']);
+      expect(content).toMatchObject({ planImageUrl: URL, planImageAssetId: 12 });
+    });
+
+    test('unlinks without reading any image', async () => {
+      const manager = { query: jest.fn().mockResolvedValueOnce([]) };
+      const dataSource = {
+        isInitialized: true,
+        transaction: jest.fn(async (work) => work(manager)),
+        query: jest.fn().mockResolvedValueOnce([row({ plan_image_url: null })])
+      };
+      const repository = new RecipeContentRepository(dataSource);
+
+      const content = await repository.setPlanImage({ market: 'BR', flavorSlug: 'senior-beef', assetId: null, actorId: 7 });
+
+      expect(manager.query).toHaveBeenCalledTimes(1);
+      expect(manager.query.mock.calls[0][1]).toEqual([null, null, 7, 'BR', 'senior-beef']);
+      expect(content).toMatchObject({ planImageUrl: null, planImageAssetId: null });
+    });
+
+    test('refuses an archived image and an unknown one', async () => {
+      const archived = linkingDataSource([{ url: URL, archived_at: new Date() }], []);
+      await expect(new RecipeContentRepository(archived).setPlanImage({ market: 'BR', flavorSlug: 'beef', assetId: 12 }))
+        .rejects.toMatchObject({ statusCode: 409, details: { code: 'media_asset_archived' } });
+      expect(archived.manager.query).toHaveBeenCalledTimes(1);
+
+      const missing = linkingDataSource([], []);
+      await expect(new RecipeContentRepository(missing).setPlanImage({ market: 'BR', flavorSlug: 'beef', assetId: 99 }))
+        .rejects.toMatchObject({ statusCode: 404 });
+    });
   });
 
   test('stores the label as JSON on the market and flavor key', async () => {

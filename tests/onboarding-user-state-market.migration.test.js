@@ -24,8 +24,9 @@ describe('BackfillOnboardingUserStateMarket1700000000056', () => {
     expect(runner.query).not.toHaveBeenCalled();
   });
 
-  test('is registered last, after the lifecycle dates', () => {
+  test('is registered right after the lifecycle dates', () => {
     const names = buildDataSourceOptions({}).migrations.map((migration) => migration.name);
-    expect(names.slice(-2)).toEqual(['AddSubscriptionLifecycleDates1700000000055', 'BackfillOnboardingUserStateMarket1700000000056']);
+    const index = names.indexOf('BackfillOnboardingUserStateMarket1700000000056');
+    expect(names[index - 1]).toBe('AddSubscriptionLifecycleDates1700000000055');
   });
 });

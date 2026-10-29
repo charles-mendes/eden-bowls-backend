@@ -121,6 +121,26 @@ describe('admin recipe content routes', () => {
     expect(recipeContentService.removePlanImage).toHaveBeenCalledWith('BR', 'senior-beef', expect.objectContaining({ userId: '7' }));
   });
 
+  test('operator links a library image by id and sees the refusal of one from another market', async () => {
+    const refusal = new HttpError(422, 'The library image must be a plan thumbnail of the recipe market.', { code: 'media_asset_invalid', reason: 'market' });
+    const { app, recipeContentService } = appFor({
+      service: {
+        uploadPlanImage: jest.fn()
+          .mockResolvedValueOnce({ ...content, planImageAssetId: 12, planImageUrl: '/recipe-images/plan-br-12.webp' })
+          .mockRejectedValueOnce(refusal)
+      }
+    });
+
+    const linked = await request(app).put(`${base}/plan-image?market=BR`).set('Authorization', `Bearer ${token()}`).send({ assetId: 12 });
+    const refused = await request(app).put(`${base}/plan-image?market=BR`).set('Authorization', `Bearer ${token()}`).send({ assetId: 13 });
+
+    expect(linked.status).toBe(200);
+    expect(linked.body).toMatchObject({ planImageAssetId: 12, planImageUrl: '/recipe-images/plan-br-12.webp' });
+    expect(recipeContentService.uploadPlanImage).toHaveBeenCalledWith('BR', 'senior-beef', { assetId: 12 }, expect.objectContaining({ userId: '7' }));
+    expect(refused.status).toBe(422);
+    expect(refused.body.details).toMatchObject({ code: 'media_asset_invalid' });
+  });
+
   test('operator saves the label sent under label', async () => {
     const { app, recipeContentService } = appFor();
     const label = { ingredients: ['Carne'] };

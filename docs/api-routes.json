@@ -257,6 +257,22 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/media"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/media"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/media/:id/archive"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/media/:id/restore"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/nutrition/parameters"
   },
   {

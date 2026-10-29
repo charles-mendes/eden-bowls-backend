@@ -124,6 +124,9 @@ function createApp(dependencies = {}) {
     if (request.method === 'PUT' && /^\/api\/v1\/admin\/catalog\/recipe-content\/[^/]+\/(plan-)?image\/?$/.test(request.path)) {
       return express.json({ limit: '8mb' })(request, response, next);
     }
+    if (request.method === 'POST' && /^\/api\/v1\/admin\/media\/?$/.test(request.path)) {
+      return express.json({ limit: '8mb' })(request, response, next);
+    }
     next();
   });
   app.use(express.json({ limit: '1mb' }));

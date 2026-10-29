@@ -83,7 +83,9 @@ async function processRecipeImage({ mimeType, buffer, kind = 'banner' }) {
   return {
     buffer: output,
     mimeType: RECIPE_IMAGE_OUTPUT_MIME,
-    ext: RECIPE_IMAGE_OUTPUT_EXT
+    ext: RECIPE_IMAGE_OUTPUT_EXT,
+    width: metadata.width,
+    height: metadata.height
   };
 }
 

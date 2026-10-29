@@ -1,5 +1,6 @@
 const { HttpError } = require('../core/http-error');
 const {
+  MEDIA_ASSET_INVALID,
   RECIPE_CONTENT_IN_USE,
   RECIPE_IMAGE_INVALID,
   labelCompleteness,
@@ -63,6 +64,7 @@ class RecipeContentService {
     this.repository = options.repository;
     this.catalogRepository = options.catalogRepository;
     this.imageStorage = options.imageStorage || null;
+    this.mediaLibraryService = options.mediaLibraryService || null;
     this.processImage = options.processImage || processRecipeImage;
     this.auditService = options.auditService || null;
     this.logger = options.logger || null;
@@ -167,10 +169,9 @@ class RecipeContentService {
       });
     }
     await this.repository.deleteRecipe({ market: recipe.market, flavorSlug: recipe.key });
-    for (const imageUrl of [recipe.content.imageUrl, recipe.content.planImageUrl]) {
-      if (imageUrl) {
-        await this.deleteFile(imageUrl);
-      }
+    // The plan thumbnail is a library image: the deleted row only drops the link, and the image stays.
+    if (recipe.content.imageUrl) {
+      await this.deleteFile(recipe.content.imageUrl);
     }
     await this.recordAudit(actor, 'catalog.recipe.delete', recipe);
     return { deleted: true, market: recipe.market, flavorSlug: recipe.key };
@@ -187,6 +188,7 @@ class RecipeContentService {
       imageUrl: content ? content.imageUrl : null,
       imageUpdatedAt: content ? content.imageUpdatedAt : null,
       planImageUrl: content ? content.planImageUrl || null : null,
+      planImageAssetId: content ? content.planImageAssetId || null : null,
       planImageUpdatedAt: content ? content.planImageUpdatedAt || null : null,
       label,
       labelUpdatedAt: content ? content.labelUpdatedAt : null,
@@ -265,44 +267,52 @@ class RecipeContentService {
     return this.present(recipe, content);
   }
 
-  // Package thumbnail of the plan flavor picker. Optional: without it the plan shows the banner image.
+  // Package thumbnail of the plan flavor picker, as a library image (plan-image-library): `{ assetId }` of an
+  // image already there, or an upload that goes into the library first. Optional: without it the plan shows the
+  // banner image. The image linked before stays in the library.
   async uploadPlanImage(market, flavorSlug, payload = {}, actor = {}) {
-    if (!this.imageStorage || typeof this.imageStorage.write !== 'function') {
-      throw new HttpError(503, 'Recipe image storage is not available.');
-    }
     const recipe = await this.resolve(market, flavorSlug);
-    const processed = await this.processImage({
-      mimeType: payload.mimeType,
-      buffer: decodeImageBase64(payload.imageBase64),
-      kind: 'plan'
-    });
-
-    const previous = recipe.content.planImageUrl;
-    const imageUrl = await this.imageStorage.write({ market: recipe.market, flavorSlug: `${recipe.key}-plan`, buffer: processed.buffer });
-    let content;
-    try {
-      content = await this.repository.setPlanImage({ market: recipe.market, flavorSlug: recipe.key, imageUrl, actorId: actorId(actor) });
-    } catch (error) {
-      await this.deleteFile(imageUrl);
-      throw error;
+    const hasAssetId = payload.assetId !== undefined && payload.assetId !== null && payload.assetId !== '';
+    const hasUpload = payload.imageBase64 !== undefined && payload.imageBase64 !== null && payload.imageBase64 !== '';
+    if (hasAssetId === hasUpload) {
+      throw new HttpError(422, 'Send either assetId of a library image or a new image.', { code: MEDIA_ASSET_INVALID, reason: 'body' });
     }
-    if (previous && previous !== imageUrl) {
-      await this.deleteFile(previous);
+    if (!this.mediaLibraryService) {
+      throw new HttpError(503, 'Image library is not available.');
     }
 
-    await this.recordAudit(actor, 'catalog.recipe.plan_image.update', recipe);
+    const asset = hasAssetId
+      ? await this.mediaLibraryService.get(payload.assetId, actor)
+      : (await this.mediaLibraryService.upload({
+        kind: 'plan',
+        market: recipe.market,
+        originalFilename: payload.originalFilename || `${recipe.key}-plan`,
+        mimeType: payload.mimeType,
+        imageBase64: payload.imageBase64
+      }, actor)).asset;
+    if (asset.kind !== 'plan' || asset.market !== recipe.market) {
+      throw new HttpError(422, 'The library image must be a plan thumbnail of the recipe market.', {
+        code: MEDIA_ASSET_INVALID,
+        reason: 'market',
+        assetMarket: asset.market,
+        assetKind: asset.kind
+      });
+    }
+
+    const content = await this.repository.setPlanImage({ market: recipe.market, flavorSlug: recipe.key, assetId: asset.id, actorId: actorId(actor) });
+    await this.recordAudit(actor, 'catalog.recipe.plan_image.update', recipe, { assetId: asset.id });
     return this.present(recipe, content);
   }
 
+  // Unlinks the thumbnail only: the library image and its file stay.
   async removePlanImage(market, flavorSlug, actor = {}) {
     const recipe = await this.resolve(market, flavorSlug);
-    const previous = recipe.content.planImageUrl;
-    if (!previous) {
+    const previous = recipe.content.planImageAssetId || null;
+    if (!previous && !recipe.content.planImageUrl) {
       return this.present(recipe, recipe.content);
     }
-    const content = await this.repository.setPlanImage({ market: recipe.market, flavorSlug: recipe.key, imageUrl: null, actorId: actorId(actor) });
-    await this.deleteFile(previous);
-    await this.recordAudit(actor, 'catalog.recipe.plan_image.delete', recipe);
+    const content = await this.repository.setPlanImage({ market: recipe.market, flavorSlug: recipe.key, assetId: null, actorId: actorId(actor) });
+    await this.recordAudit(actor, 'catalog.recipe.plan_image.delete', recipe, { assetId: previous });
     return this.present(recipe, content);
   }
 

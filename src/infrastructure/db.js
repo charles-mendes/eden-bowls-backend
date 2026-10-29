@@ -75,6 +75,8 @@ const { CreateAutomatedEmailSettings1700000000053 } = require('./migrations/1700
 const { CreatePackStock1700000000054 } = require('./migrations/1700000000054-create-pack-stock');
 const { AddSubscriptionLifecycleDates1700000000055 } = require('./migrations/1700000000055-add-subscription-lifecycle-dates');
 const { BackfillOnboardingUserStateMarket1700000000056 } = require('./migrations/1700000000056-backfill-onboarding-user-state-market');
+const { CreateMediaAssets1700000000057 } = require('./migrations/1700000000057-create-media-assets');
+const { LinkRecipePlanImageAsset1700000000058 } = require('./migrations/1700000000058-link-recipe-plan-image-asset');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -175,7 +177,9 @@ function buildDataSourceOptions(env) {
       CreateAutomatedEmailSettings1700000000053,
       CreatePackStock1700000000054,
       AddSubscriptionLifecycleDates1700000000055,
-      BackfillOnboardingUserStateMarket1700000000056
+      BackfillOnboardingUserStateMarket1700000000056,
+      CreateMediaAssets1700000000057,
+      LinkRecipePlanImageAsset1700000000058
     ],
     synchronize: false,
     logging: false,

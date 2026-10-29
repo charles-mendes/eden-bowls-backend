@@ -7,6 +7,7 @@ public/feedback-photos/*
 !public/feedback-photos/.gitkeep
 public/pet-photos/*
 !public/pet-photos/.gitkeep
+public/recipe-images/
 data/ups-labels/
 data/invoices/
 .local/
