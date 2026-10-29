@@ -2,8 +2,9 @@ const { HttpError } = require('../../core/http-error');
 const { parseJsonColumn } = require('../../core/stripe-subscription-map');
 const { toIsoDateTime } = require('./onboarding-pets.repository');
 const { LIFE_STAGES } = require('../../core/flavors');
+const { MEDIA_ASSET_ARCHIVED } = require('../../core/recipe-content');
 
-const COLUMNS = 'market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_updated_at, '
+const COLUMNS = 'market, flavor_slug, name, life_stage, image_url, image_updated_at, plan_image_url, plan_image_asset_id, plan_image_updated_at, '
   + 'label, label_updated_at, presentation, presentation_updated_at';
 
 // Recipe registration with its image, label and store presentation, one row per market and recipe key (recipe-content).
@@ -11,6 +12,7 @@ class RecipeContentRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
     this.tableName = options.tableName || 'recipe_contents';
+    this.assetTableName = options.assetTableName || 'media_assets';
   }
 
   ensureDataSource() {
@@ -32,6 +34,7 @@ class RecipeContentRepository {
       imageUrl: row.image_url ? String(row.image_url) : null,
       imageUpdatedAt: toIsoDateTime(row.image_updated_at),
       planImageUrl: row.plan_image_url ? String(row.plan_image_url) : null,
+      planImageAssetId: row.plan_image_asset_id == null ? null : Number(row.plan_image_asset_id),
       planImageUpdatedAt: toIsoDateTime(row.plan_image_updated_at),
       label: parseJsonColumn(row.label),
       labelUpdatedAt: toIsoDateTime(row.label_updated_at),
@@ -147,13 +150,32 @@ class RecipeContentRepository {
     return this.findByMarketAndSlug(market, flavorSlug);
   }
 
-  async setPlanImage({ market, flavorSlug, imageUrl, actorId = null }) {
+  // Links the recipe to a library image, or unlinks it with a null assetId. The image row is locked first, so an
+  // archive running at the same time (MediaAssetRepository.archive) either sees this link or finds it archived.
+  async setPlanImage({ market, flavorSlug, assetId, actorId = null }) {
     this.ensureDataSource();
-    await this.dataSource.query(
-      `UPDATE \`${this.tableName}\` SET plan_image_url = ?, plan_image_updated_at = CURRENT_TIMESTAMP, updated_by = ?
-       WHERE market = ? AND flavor_slug = ?`,
-      [imageUrl == null ? null : String(imageUrl), actorId, String(market).toUpperCase(), String(flavorSlug)]
-    );
+    const normalizedMarket = String(market).toUpperCase();
+    await this.dataSource.transaction(async (manager) => {
+      let url = null;
+      if (assetId != null) {
+        const [asset] = await manager.query(
+          `SELECT url, archived_at FROM \`${this.assetTableName}\` WHERE id = ? FOR UPDATE`,
+          [Number(assetId)]
+        );
+        if (!asset) {
+          throw new HttpError(404, 'Library image not found.');
+        }
+        if (asset.archived_at != null) {
+          throw new HttpError(409, 'An archived library image cannot be linked. Restore it first.', { code: MEDIA_ASSET_ARCHIVED });
+        }
+        url = String(asset.url);
+      }
+      await manager.query(
+        `UPDATE \`${this.tableName}\` SET plan_image_url = ?, plan_image_asset_id = ?, plan_image_updated_at = CURRENT_TIMESTAMP, updated_by = ?
+         WHERE market = ? AND flavor_slug = ?`,
+        [url, assetId == null ? null : Number(assetId), actorId, normalizedMarket, String(flavorSlug)]
+      );
+    });
     return this.findByMarketAndSlug(market, flavorSlug);
   }
 

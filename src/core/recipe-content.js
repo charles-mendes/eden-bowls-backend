@@ -6,8 +6,9 @@ const RECIPE_CONTENT_MARKETS = ['BR', 'US'];
 // Recipe banner image accepted by the store (recipe-content): the size of public/images/recipe-*.png.
 const RECIPE_IMAGE_WIDTH = 1024;
 const RECIPE_IMAGE_HEIGHT = 636;
-// Square package thumbnail of the plan flavor picker (recipe-content): 400 px for retina screens, or 200 px.
-const RECIPE_PLAN_IMAGE_SIZES = [400, 200];
+// Square package thumbnail of the plan flavor picker (plan-image-library): 400 px only, which covers retina
+// screens at the card size.
+const RECIPE_PLAN_IMAGE_SIZES = [400];
 const MAX_RECIPE_IMAGE_BYTES = 5 * 1024 * 1024;
 const RECIPE_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 // sharp's decoded format for each accepted type, so a renamed GIF is refused.
@@ -17,6 +18,11 @@ const RECIPE_IMAGE_OUTPUT_EXT = 'webp';
 const RECIPE_IMAGE_WEBP_QUALITY = 85;
 const RECIPE_IMAGE_INVALID = 'recipe_image_invalid';
 const RECIPE_CONTENT_IN_USE = 'recipe_content_in_use';
+// Image library (plan-image-library).
+const MEDIA_ASSET_KINDS = ['plan'];
+const MEDIA_ASSET_INVALID = 'media_asset_invalid';
+const MEDIA_ASSET_IN_USE = 'media_asset_in_use';
+const MEDIA_ASSET_ARCHIVED = 'media_asset_archived';
 
 // Explicit link of a variation to a recipe (recipe-content): blank means no recipe.
 const RECIPE_KEY_META = '_recipe_key';
@@ -231,5 +237,9 @@ module.exports = {
   RECIPE_IMAGE_OUTPUT_EXT,
   RECIPE_IMAGE_WEBP_QUALITY,
   RECIPE_IMAGE_INVALID,
-  RECIPE_CONTENT_IN_USE
+  RECIPE_CONTENT_IN_USE,
+  MEDIA_ASSET_KINDS,
+  MEDIA_ASSET_INVALID,
+  MEDIA_ASSET_IN_USE,
+  MEDIA_ASSET_ARCHIVED
 };

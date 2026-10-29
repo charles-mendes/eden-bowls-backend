@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const RECIPE_IMAGE_FILENAME_PATTERN = /^recipe-(br|us)-[a-z0-9-]+-[a-f0-9]{32}\.webp$/;
+const MEDIA_ASSET_FILENAME_PATTERN = /^(plan|banner)-(br|us)-[a-f0-9]{32}\.webp$/;
 
 // Recipe banner images on local disk (RECIPE_IMAGE_DIR), served at /recipe-images. A new name per upload
 // keeps browsers and CDNs from serving the replaced image.
@@ -20,6 +21,18 @@ class LocalRecipeImageStorage {
     return `${this.publicBaseUrl}/${filename}`;
   }
 
+  // Library image (plan-image-library): no recipe slug in the name, since a recipe only points at it.
+  async writeAsset({ market, kind, buffer }) {
+    await fs.mkdir(this.directory, { recursive: true });
+    const filename = `${String(kind).toLowerCase()}-${String(market).toLowerCase()}-${crypto.randomUUID().replace(/-/g, '')}.webp`;
+    if (!MEDIA_ASSET_FILENAME_PATTERN.test(filename)) {
+      throw new Error('Invalid library image kind or market.');
+    }
+    await fs.writeFile(path.join(this.directory, filename), buffer);
+    return `${this.publicBaseUrl}/${filename}`;
+  }
+
+  // Banner files only: the API never deletes a library image's file.
   async delete(publicUrl) {
     const filename = this.filenameFromUrl(publicUrl);
     if (!filename || !RECIPE_IMAGE_FILENAME_PATTERN.test(filename)) {
