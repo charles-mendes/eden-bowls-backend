@@ -3,6 +3,7 @@ const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
 const { ROLE_PERMISSIONS } = require('../src/core/admin-roles');
 const { HttpError } = require('../src/core/http-error');
+const { CONSENT_SOURCES } = require('../src/core/privacy');
 
 const corsOrigins = ['http://localhost:5173'];
 const jwt = { secret: 'secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
@@ -73,6 +74,22 @@ describe('privacy customer routes', () => {
       type: 'access',
       market: 'BR'
     }));
+  });
+
+  test('checkout is a consent source the cookie route does not accept', async () => {
+    const privacyService = {
+      contextFromRequest: jest.fn().mockReturnValue({ ipHash: 'h', userAgent: 'ua' }),
+      setCookies: jest.fn()
+    };
+    const app = createApp({ privacyService, corsOrigins, jwt });
+    const response = await request(app)
+      .put('/api/v1/privacy/cookies')
+      .set('Authorization', `Bearer ${issueAccessToken(77)}`)
+      .send({ analytics: 'granted', source: 'checkout' });
+
+    expect(CONSENT_SOURCES).toContain('checkout');
+    expect(response.status).toBe(400);
+    expect(privacyService.setCookies).not.toHaveBeenCalled();
   });
 
   test('requires authentication to list consents', async () => {

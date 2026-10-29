@@ -82,6 +82,9 @@ function buildService(overrides = {}) {
   const petsSyncRepository = overrides.petsSyncRepository || {
     syncPets: jest.fn().mockResolvedValue({ pets: [] })
   };
+  const privacyService = 'privacyService' in overrides ? overrides.privacyService : {
+    recordCheckoutConsents: jest.fn().mockResolvedValue(undefined)
+  };
 
   return {
     service: new OnboardingSubscriptionCheckoutService(repository, {
@@ -95,9 +98,11 @@ function buildService(overrides = {}) {
       lockStore,
       planPreviewRepository: overrides.planPreviewRepository || null,
       petsSyncRepository,
+      privacyService,
       shippingQuoteSigner: overrides.shippingQuoteSigner || quoteSigner
     }),
     petsSyncRepository,
+    privacyService,
     repository,
     authService,
     discountEligibilityRepository,
@@ -108,7 +113,11 @@ function buildService(overrides = {}) {
   };
 }
 
-const payload = { paymentMethodId: 'pm_123', billing: { first_name: 'Jane', last_name: 'Doe' } };
+const payload = {
+  paymentMethodId: 'pm_123',
+  billing: { first_name: 'Jane', last_name: 'Doe' },
+  legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' }
+};
 
 describe('OnboardingSubscriptionCheckoutService', () => {
   test('checks fresh account status before creating checkout', async () => {
@@ -139,7 +148,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('rejects checkout without a Stripe payment method', async () => {
     const { service, stripeBilling } = buildService();
 
-    await expect(service.checkout({ userId: 7, payload: {} })).rejects.toMatchObject({
+    await expect(service.checkout({ userId: 7, payload: { legal_consent: { accepted: true } } })).rejects.toMatchObject({
       statusCode: 422,
       details: { code: 'invalid_payment_method' }
     });
@@ -290,6 +299,108 @@ describe('OnboardingSubscriptionCheckoutService', () => {
         })
       })
     }));
+  });
+
+  describe('Checkout records the acceptance before charging', () => {
+    const requestContext = { ipHash: 'hash', userAgent: 'jest-agent' };
+
+    test('Box not ticked: 422 before the account guard runs', async () => {
+      const { service, authService, privacyService, stripeBilling } = buildService();
+
+      await expect(service.checkout({ userId: 7, payload: { ...payload, legal_consent: { accepted: false } } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'legal_consent_required' }
+      });
+      expect(authService.assertCriticalOperationAllowed).not.toHaveBeenCalled();
+      expect(privacyService.recordCheckoutConsents).not.toHaveBeenCalled();
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    });
+
+    test('Accepted checkout: privacy and terms recorded for the delivery market before the subscription', async () => {
+      const { service, privacyService, stripeBilling } = buildService();
+
+      await service.checkout({ userId: 7, payload, requestContext });
+
+      expect(privacyService.recordCheckoutConsents).toHaveBeenCalledWith({
+        userId: 7,
+        market: 'US',
+        privacyVersion: '2026-10-22',
+        termsVersion: '2026-10-22',
+        ipHash: 'hash',
+        userAgent: 'jest-agent'
+      });
+      expect(privacyService.recordCheckoutConsents.mock.invocationCallOrder[0])
+        .toBeLessThan(stripeBilling.createOnboardingSubscription.mock.invocationCallOrder[0]);
+    });
+
+    test('a reused subscription records the acceptance too, and a retry records it again', async () => {
+      const lockStore = createCheckoutLockStore();
+      const first = buildService({ lockStore });
+      await first.service.checkout({ userId: 7, payload: { ...payload, attempt_id: 'attempt-1' }, requestContext });
+      const stored = first.repository.checkout.mock.calls[0][1].checkout;
+      const stripeBilling = {
+        automaticTaxEnabled: true,
+        createOnboardingSubscription: jest.fn(),
+        retrievePaymentIntent: jest.fn().mockResolvedValue({ status: 'requires_confirmation', client_secret: 'secret_123' }),
+        resolvePaymentState: jest.fn().mockReturnValue('requires_confirmation')
+      };
+      const second = buildService({
+        lockStore,
+        stripeBilling,
+        privacyService: first.privacyService,
+        repository: {
+          ...first.repository,
+          getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, checkoutReference: stored }),
+          checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout)
+        }
+      });
+
+      const reused = await second.service.checkout({ userId: 7, payload: { ...payload, attempt_id: 'attempt-1' }, requestContext });
+
+      expect(reused.data.reused).toBe(true);
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+      expect(first.privacyService.recordCheckoutConsents).toHaveBeenCalledTimes(2);
+    });
+
+    test('Checkout refused by another validation: no consent recorded', async () => {
+      const { service, privacyService } = buildService({
+        repository: {
+          checkout: jest.fn(),
+          getPlanSelection: jest.fn().mockResolvedValue(validContext.planSelection),
+          getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, shipping: { rate_id: 'fixed_us:default', cost: 12.9 } }),
+          resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+          getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+        }
+      });
+
+      await expect(service.checkout({ userId: 7, payload, requestContext })).rejects.toMatchObject({
+        details: { code: 'delivery_area_unverified' }
+      });
+      expect(privacyService.recordCheckoutConsents).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['the trail fails', { recordCheckoutConsents: jest.fn().mockRejectedValue(new Error('db down')) }],
+      ['the privacy service is not bound', null]
+    ])('Consent trail unavailable (%s): 503 and no subscription', async (_name, privacyService) => {
+      const { service, stripeBilling, repository } = buildService({ privacyService });
+
+      await expect(service.checkout({ userId: 7, payload, requestContext })).rejects.toMatchObject({
+        statusCode: 503,
+        details: { code: 'legal_consent_unavailable' }
+      });
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+      expect(repository.checkout).not.toHaveBeenCalled();
+    });
+
+    test('the lock is released after a consent failure', async () => {
+      const lockStore = createCheckoutLockStore();
+      const failing = buildService({ lockStore, privacyService: { recordCheckoutConsents: jest.fn().mockRejectedValue(new Error('db down')) } });
+      await expect(failing.service.checkout({ userId: 7, payload })).rejects.toMatchObject({ statusCode: 503 });
+
+      const next = buildService({ lockStore });
+      await expect(next.service.checkout({ userId: 7, payload })).resolves.toMatchObject({ success: true });
+    });
   });
 
   test('upserts an incomplete ledger row after Stripe create', async () => {

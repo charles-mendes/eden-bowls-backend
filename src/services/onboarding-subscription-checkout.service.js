@@ -125,15 +125,43 @@ class OnboardingSubscriptionCheckoutService {
     this.shippingQuoteSigner = options.shippingQuoteSigner || null;
     this.lifeStageService = options.lifeStageService || null;
     this.petsRepository = options.petsRepository || null;
+    // Bound after construction in index.js, like AuthService (legal-documents).
+    this.privacyService = options.privacyService || null;
   }
 
-  async checkout({ userId, payload = {} }) {
+  // The checkout consent (legal-documents): recorded before the subscription is created or reused, or no charge.
+  async recordLegalConsent({ userId, market, payload, requestContext }) {
+    if (!this.privacyService || typeof this.privacyService.recordCheckoutConsents !== 'function') {
+      throw new HttpError(503, 'The consent trail is not available.', { code: 'legal_consent_unavailable' });
+    }
+    const consent = payload.legal_consent || {};
+    try {
+      await this.privacyService.recordCheckoutConsents({
+        userId,
+        market,
+        privacyVersion: consent.privacy_version,
+        termsVersion: consent.terms_version,
+        ipHash: requestContext.ipHash,
+        userAgent: requestContext.userAgent
+      });
+    } catch (error) {
+      throw new HttpError(503, 'The checkout consent could not be recorded.', { code: 'legal_consent_unavailable' });
+    }
+  }
+
+  async checkout({ userId, payload = {}, requestContext = {} }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding subscription checkout repository is not available.');
     }
 
     if (!userId) {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    if (!payload.legal_consent || payload.legal_consent.accepted !== true) {
+      throw new HttpError(422, 'Accepting the Terms of Service and Privacy Policy is required.', {
+        code: 'legal_consent_required'
+      });
     }
 
     if (!this.authService) {
@@ -255,6 +283,7 @@ class OnboardingSubscriptionCheckoutService {
 
     const releaseLock = this.lockStore.acquire(userId, fingerprint);
     try {
+      await this.recordLegalConsent({ userId, market: deliveryMarket, payload, requestContext });
       const freshContext = this.repository.getCheckoutContext
         ? await this.repository.getCheckoutContext(userId)
         : context;
