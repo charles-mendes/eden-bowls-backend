@@ -164,6 +164,7 @@ describe('subscription checkout checks the saved plan', () => {
       customerStore: { getCustomerId: jest.fn().mockResolvedValue(''), saveCustomerId: jest.fn() },
       lockStore: createCheckoutLockStore(),
       petsSyncRepository: { syncPets: jest.fn().mockResolvedValue({ pets: [] }) },
+      privacyService: { recordCheckoutConsents: jest.fn().mockResolvedValue(undefined) },
       shippingQuoteSigner: signer,
       lifeStageService: lifeStageService(publishedLines),
       petsRepository: { listPets: jest.fn().mockResolvedValue({ pets: planPets.map((pet) => ({ ...pet, id: pet.pet_id })) }) }
@@ -171,7 +172,7 @@ describe('subscription checkout checks the saved plan', () => {
     return { service, stripeBilling, repository };
   }
 
-  const payload = { paymentMethodId: 'pm_123', billing: { first_name: 'Jane', last_name: 'Doe' } };
+  const payload = { paymentMethodId: 'pm_123', billing: { first_name: 'Jane', last_name: 'Doe' }, legal_consent: { accepted: true } };
 
   test('a puppy with an adult recipe is refused and no subscription is created', async () => {
     const { service, stripeBilling, repository } = checkoutFor([petWith(DOGS.puppy, ['beef'])]);

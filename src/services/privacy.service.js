@@ -117,15 +117,15 @@ class PrivacyService {
     return current;
   }
 
-  async recordOtpConsents({ userId, marketingOptIn, privacyVersion, termsVersion, market, ipHash, userAgent }) {
-    const context = { ipHash: ipHash || '', userAgent: userAgent || '' };
+  // The privacy policy and terms accepted together, at sign-in or at checkout (legal-documents).
+  async recordLegalConsents({ userId, privacyVersion, termsVersion, market, source, context }) {
     const legalMarket = String(market || '').toUpperCase() === 'BR' ? 'BR' : 'US';
     await this.recordConsent({
       userId,
       consentType: 'privacy_policy',
       status: 'granted',
       documentVersion: await this.consentVersion(legalMarket, 'privacy', privacyVersion),
-      source: 'otp_verify',
+      source,
       ...context
     });
     await this.recordConsent({
@@ -133,9 +133,14 @@ class PrivacyService {
       consentType: 'terms',
       status: 'granted',
       documentVersion: await this.consentVersion(legalMarket, 'terms', termsVersion),
-      source: 'otp_verify',
+      source,
       ...context
     });
+  }
+
+  async recordOtpConsents({ userId, marketingOptIn, privacyVersion, termsVersion, market, ipHash, userAgent }) {
+    const context = { ipHash: ipHash || '', userAgent: userAgent || '' };
+    await this.recordLegalConsents({ userId, privacyVersion, termsVersion, market, source: 'otp_verify', context });
     await this.recordConsent({
       userId,
       consentType: 'marketing_email',
@@ -143,6 +148,12 @@ class PrivacyService {
       source: 'otp_verify',
       ...context
     });
+  }
+
+  // The box ticked at checkout: privacy policy and terms only, the checkout does not ask about marketing.
+  async recordCheckoutConsents({ userId, market, privacyVersion, termsVersion, ipHash, userAgent }) {
+    const context = { ipHash: ipHash || '', userAgent: userAgent || '' };
+    await this.recordLegalConsents({ userId, privacyVersion, termsVersion, market, source: 'checkout', context });
   }
 
   async listConsents({ userId }) {

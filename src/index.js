@@ -615,6 +615,7 @@ async function bootstrap() {
     logger
   });
   authService.privacyService = privacyService;
+  onboardingSubscriptionCheckoutService.privacyService = privacyService;
   profileService.privacyRepository = privacyRepository;
   const feedbackPhotoPublicDir = path.resolve(env.FEEDBACK_PHOTO_DIR);
   const feedbackPhotoPublicBaseUrl = env.FEEDBACK_PHOTO_PUBLIC_BASE_URL

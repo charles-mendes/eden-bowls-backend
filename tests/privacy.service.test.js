@@ -154,6 +154,28 @@ describe('PrivacyService', () => {
       expect(logger.warn.mock.calls[0][0]).toEqual({ market: 'BR', kind: 'privacy', received: '2020-01-01', recorded: '2026-09-13' });
     });
 
+    test('Checkout with a version the store loaded before a publication', async () => {
+      const { service, repository } = createService({ options: { legalDocuments } });
+
+      await service.recordCheckoutConsents({ userId: 77, market: 'BR', privacyVersion: '2026-09-13', termsVersion: '2026-09-13', ipHash: 'abc', userAgent: 'jest' });
+
+      expect(repository.insertConsent).toHaveBeenCalledTimes(2);
+      expect(repository.insertConsent.mock.calls.map(([input]) => [input.consentType, input.status, input.documentVersion, input.source, input.ipHash])).toEqual([
+        ['privacy_policy', 'granted', '2026-09-13', 'checkout', 'abc'],
+        ['terms', 'granted', '2026-09-13', 'checkout', 'abc']
+      ]);
+    });
+
+    test('Checkout with an unknown version', async () => {
+      const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+      const { service, repository } = createService({ options: { legalDocuments, logger } });
+
+      await service.recordCheckoutConsents({ userId: 77, market: 'US', privacyVersion: '2020-01-01', termsVersion: '2026-09-13' });
+
+      expect(versions(repository)).toEqual(['2026-09-13', '2026-09-13']);
+      expect(logger.warn.mock.calls[0][0]).toEqual({ market: 'US', kind: 'privacy', received: '2020-01-01', recorded: '2026-09-13' });
+    });
+
     test('a version of another market is not recorded: a consent without market reads as US', async () => {
       const { service, repository } = createService({ options: { legalDocuments } });
       await service.recordOtpConsents({ userId: 77, termsVersion: '2026-11-01' });
