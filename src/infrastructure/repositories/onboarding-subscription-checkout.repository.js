@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { TAX_DOCUMENT_META_KEY } = require('../../core/tax-document');
 const { collectPriceItems } = require('../../core/checkout-state');
 const { discountAmountFromSubtotal } = require('../../core/first-purchase-discount');
 
@@ -27,6 +28,7 @@ class OnboardingSubscriptionCheckoutRepository {
     this.petsTableName = options.petsTableName || 'onboarding_pets';
     this.postmetaTableName = options.postmetaTableName || 'wp_postmeta';
     this.usersTableName = options.usersTableName || 'wp_users';
+    this.usermetaTableName = options.usermetaTableName || 'wp_usermeta';
   }
 
   ensureDataSource() {
@@ -74,6 +76,18 @@ class OnboardingSubscriptionCheckoutRepository {
       recurrence: parseJsonColumn(state && state.recurrence),
       checkoutReference: parseJsonColumn(state && state.checkout_reference)
     };
+  }
+
+  async saveTaxDocument(userId, document) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `DELETE FROM \`${this.usermetaTableName}\` WHERE \`user_id\` = ? AND \`meta_key\` = ?`,
+      [userId, TAX_DOCUMENT_META_KEY]
+    );
+    await this.dataSource.query(
+      `INSERT INTO \`${this.usermetaTableName}\` (\`user_id\`, \`meta_key\`, \`meta_value\`) VALUES (?, ?, ?)`,
+      [userId, TAX_DOCUMENT_META_KEY, document]
+    );
   }
 
   async getUserEmail(userId) {

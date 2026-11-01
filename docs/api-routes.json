@@ -33,6 +33,10 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/billing/subscriptions/:id/nfe"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/billing/subscriptions/:id/shipments"
   },
   {
@@ -58,6 +62,14 @@
   {
     "method": "GET",
     "path": "/api/v1/admin/billing/webhooks/health"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/bling/connection"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/bling/connection/authorize"
   },
   {
     "method": "GET",
@@ -254,6 +266,18 @@
   {
     "method": "POST",
     "path": "/api/v1/admin/me/password"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/nfe"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/nfe/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/nfe/:id/retry"
   },
   {
     "method": "GET",
@@ -582,6 +606,10 @@
   {
     "method": "GET",
     "path": "/api/v1/billing/catalog/sync/status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/bling/oauth/callback"
   },
   {
     "method": "GET",

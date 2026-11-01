@@ -116,6 +116,7 @@ function buildService(overrides = {}) {
 const payload = {
   paymentMethodId: 'pm_123',
   billing: { first_name: 'Jane', last_name: 'Doe' },
+  tax_document: '529.982.247-25',
   legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' }
 };
 
@@ -935,6 +936,59 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     const result = await nearRun.service.checkout({ userId: 7, payload });
     expect(result.success).toBe(true);
     expect(nearRun.stripeBilling.createOnboardingSubscription).toHaveBeenCalled();
+  });
+
+  test('a BR checkout needs a valid CPF or CNPJ, saves it and takes no charge without it', async () => {
+    const context = {
+      ...validContext,
+      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      planSelection: {
+        ...validContext.planSelection,
+        catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
+      },
+      shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 49 })
+    };
+    const buildRun = () => {
+      const billing = {
+        automaticTaxEnabled: false,
+        createOnboardingSubscription: jest.fn().mockResolvedValue({
+          customerId: 'cus_br',
+          subscription: { id: 'sub_br', status: 'incomplete' },
+          checkout: { order_id: 0, payment_state: 'requires_confirmation', stripe_client_secret: 'secret', stripe_subscription_id: 'sub_br', status: 'incomplete' }
+        }),
+        retrievePaymentIntent: jest.fn(),
+        resolvePaymentState: jest.fn().mockReturnValue('requires_confirmation')
+      };
+      const repository = {
+        checkout: jest.fn().mockImplementation(async (_userId, body) => body.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(context.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue(context),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' }),
+        saveTaxDocument: jest.fn().mockResolvedValue(undefined)
+      };
+      const run = buildService({
+        stripeBrEnabled: true,
+        stripeBilling: billing,
+        stripeAccounts: { getForCreation: jest.fn(() => billing), get: jest.fn(() => billing) },
+        repository
+      });
+      return { service: run.service, billing, repository };
+    };
+
+    for (const taxDocument of [undefined, '12345678901']) {
+      const refused = buildRun();
+      await expect(refused.service.checkout({ userId: 7, payload: { ...payload, tax_document: taxDocument } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'tax_document_required' }
+      });
+      expect(refused.repository.saveTaxDocument).not.toHaveBeenCalled();
+      expect(refused.billing.createOnboardingSubscription).not.toHaveBeenCalled();
+    }
+
+    const accepted = buildRun();
+    await accepted.service.checkout({ userId: 7, payload });
+    expect(accepted.repository.saveTaxDocument).toHaveBeenCalledWith(7, '52998224725');
   });
 
   test('accepts a Brazil address at exactly 50 km', async () => {

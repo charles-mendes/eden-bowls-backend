@@ -93,6 +93,10 @@ const { LocalUpsLabelStorage } = require('./infrastructure/storage/local-ups-lab
 const { LocalInvoiceStorage } = require('./infrastructure/storage/local-invoice-storage');
 const { CustomerInvoicesRepository } = require('./infrastructure/repositories/customer-invoices.repository');
 const { CustomerInvoicesService } = require('./services/customer-invoices.service');
+const { BlingClient } = require('./infrastructure/bling/bling-client');
+const { BlingConnectionRepository } = require('./infrastructure/repositories/bling-connection.repository');
+const { BlingNfeRepository } = require('./infrastructure/repositories/bling-nfe.repository');
+const { BlingNfeService } = require('./services/bling-nfe.service');
 const { renderInvoicePdf } = require('./infrastructure/invoices/invoice-pdf-renderer');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
@@ -443,8 +447,9 @@ async function bootstrap() {
     logger
   });
   // Eden Bowls invoice PDFs (EB-YYYY-NNNNNN): issued on invoice.paid, kept in INVOICE_PDF_DIR, emailed to the customer.
+  const customerInvoicesRepository = new CustomerInvoicesRepository(dataSource, { postmetaTableName: env.WP_POSTMETA_TABLE_NAME });
   const customerInvoicesService = new CustomerInvoicesService({
-    repository: new CustomerInvoicesRepository(dataSource, { postmetaTableName: env.WP_POSTMETA_TABLE_NAME }),
+    repository: customerInvoicesRepository,
     storage: new LocalInvoiceStorage({ directory: env.INVOICE_PDF_DIR }),
     renderPdf: renderInvoicePdf,
     mailer: otpMailer,
@@ -456,10 +461,30 @@ async function bootstrap() {
     emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
     logger
   });
+  // NF-e through Bling: recorded on invoice.paid, emitted by the bling_nfe job. Without BLING_* nothing is emitted.
+  const blingNfeService = new BlingNfeService({
+    repository: new BlingNfeRepository(dataSource, {
+      usersTableName: env.WP_USERS_TABLE_NAME,
+      usermetaTableName: env.WP_USERMETA_TABLE_NAME
+    }),
+    client: new BlingClient({
+      clientId: env.BLING_CLIENT_ID,
+      clientSecret: env.BLING_CLIENT_SECRET,
+      redirectUri: env.BLING_REDIRECT_URI,
+      connection: new BlingConnectionRepository(dataSource, { clientSecret: env.BLING_CLIENT_SECRET })
+    }),
+    billingFor: (account) => resolveStripeBilling({ stripeAccounts, stripeBilling }, account),
+    variants: customerInvoicesRepository,
+    ledgerRepository: subscriptionLedgerRepository,
+    naturezaOperacaoId: env.BLING_NATUREZA_OPERACAO_ID,
+    adminAppUrl: env.ADMIN_APP_URL,
+    logger
+  });
   const stripeWebhookService = new StripeWebhookService({
     stripeAccounts,
     stripeBilling,
     customerInvoices: customerInvoicesService,
+    blingNfe: blingNfeService,
     webhookSecret: env.STRIPE_US_WEBHOOK_SECRET,
     eventsRepository: stripeWebhookEventsRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -860,6 +885,7 @@ async function bootstrap() {
     adminDeliveryCalendarService,
     upsShipmentService,
     customerInvoicesService,
+    blingNfeService,
     adminCatalogService,
     recipeContentService,
     adminSystemHealthService,
@@ -897,6 +923,7 @@ async function bootstrap() {
       ledgerRepository: subscriptionLedgerRepository,
       transactionalMailer,
       customerInvoicesService,
+      blingNfeService,
       upsShipmentRepository,
       upsClient,
       refreshTokenRepository: authRefreshTokenRepository,

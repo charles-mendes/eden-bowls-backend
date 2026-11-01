@@ -21,7 +21,8 @@ const JOB_INTERVALS = {
   refresh_cleanup: DAY_MS,
   webhook_retention: DAY_MS,
   delivery_calendar_stripe_sync: 60 * 1000,
-  life_stage_change_email: DAY_MS
+  life_stage_change_email: DAY_MS,
+  bling_nfe: 60 * 1000
 };
 
 const LOCKS = {
@@ -33,7 +34,8 @@ const LOCKS = {
   refresh_cleanup: 'eden_job_refresh_cleanup',
   webhook_retention: 'eden_job_webhook_retention',
   delivery_calendar_stripe_sync: 'eden_job_delivery_calendar_stripe_sync',
-  life_stage_change_email: 'eden_job_life_stage_change_email'
+  life_stage_change_email: 'eden_job_life_stage_change_email',
+  bling_nfe: 'eden_job_bling_nfe'
 };
 
 function upsTrackTimeoutMs(clientTimeoutMs) {
@@ -203,6 +205,12 @@ function createJobDefinitions(deps) {
       lockName: LOCKS.life_stage_change_email,
       intervalMs: JOB_INTERVALS.life_stage_change_email,
       run: () => (deps.lifeStageChangeEmailService ? deps.lifeStageChangeEmailService.runDaily() : { skipped: true })
+    },
+    {
+      name: 'bling_nfe',
+      lockName: LOCKS.bling_nfe,
+      intervalMs: JOB_INTERVALS.bling_nfe,
+      run: () => (deps.blingNfeService ? deps.blingNfeService.runDue() : { skipped: true })
     }
   ];
 }

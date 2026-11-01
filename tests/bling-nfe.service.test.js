@@ -1,0 +1,419 @@
+const { BlingNfeService } = require('../src/services/bling-nfe.service');
+const { BlingApiError, BlingClient, BlingNotConnectedError } = require('../src/infrastructure/bling/bling-client');
+const { StripeWebhookService } = require('../src/services/stripe-webhook.service');
+const { buildNfeOrderLines, nfeStatusFromSituacao, protocolFromXml } = require('../src/core/nfe');
+
+const CPF = '52998224725';
+const NOW = new Date('2026-10-31T12:00:00Z');
+
+function memoryRepository(customer = { name: 'Ana', email: 'ana@example.com', taxDocument: CPF, address: { street: 'Rua A', number: '1', neighborhood: 'Centro', city: 'SP', state: 'SP', zipcode: '01001000' } }) {
+  const rows = new Map();
+  let nextId = 1;
+  return {
+    rows,
+    findCustomer: jest.fn(async () => customer),
+    findById: jest.fn(async (id) => rows.get(id) || null),
+    findByStripeInvoice: jest.fn(async (account, invoiceId) => [...rows.values()].find((row) => row.stripeAccount === account && row.stripeInvoiceId === invoiceId) || null),
+    insertOrGet: jest.fn(async (input) => {
+      const found = [...rows.values()].find((row) => row.stripeInvoiceId === input.stripeInvoiceId);
+      if (found) return found;
+      const row = { id: nextId, attempts: 0, blingContactId: null, blingOrderId: null, blingNfeId: null, ...input };
+      rows.set(nextId, row);
+      nextId += 1;
+      return row;
+    }),
+    update: jest.fn(async (id, patch) => { Object.assign(rows.get(id), patch); }),
+    requeue: jest.fn(async (id) => {
+      const row = rows.get(id);
+      if (!['error', 'rejected', 'blocked_missing_document'].includes(row.status)) return false;
+      row.status = 'pending';
+      return true;
+    }),
+    listDue: jest.fn(async () => [...rows.values()].filter((row) => ['pending', 'error', 'submitted'].includes(row.status) && row.nextAttemptAt))
+  };
+}
+
+function fakeClient(overrides = {}) {
+  return {
+    isConfigured: () => true,
+    isConnected: async () => true,
+    keepAlive: jest.fn(async () => {}),
+    findContactByDocument: jest.fn(async () => null),
+    createContact: jest.fn(async () => ({ id: 10 })),
+    findProductByCode: jest.fn(async () => ({ id: 20 })),
+    createProduct: jest.fn(async () => ({ id: 21 })),
+    findOrderByStoreNumber: jest.fn(async () => null),
+    createOrder: jest.fn(async () => ({ id: 30 })),
+    getOrder: jest.fn(async () => ({ id: 30 })),
+    generateNfe: jest.fn(async () => ({ idNotaFiscal: 40 })),
+    getNfe: jest.fn()
+      .mockResolvedValueOnce({ id: 40, situacao: 1 })
+      .mockResolvedValue({ id: 40, situacao: 5, numero: '158', serie: 1, chaveAcesso: '3525', linkDanfe: 'https://bling/danfe', linkPDF: 'https://bling/pdf', xml: 'https://bling/xml' }),
+    sendNfe: jest.fn(async () => ({})),
+    ...overrides
+  };
+}
+
+const paidInvoice = {
+  id: 'in_1',
+  total: 15000,
+  currency: 'brl',
+  status_transitions: { paid_at: 1793448000 },
+  lines: {
+    data: [
+      { amount: 14000, quantity: 2, description: 'Recipe', pricing: { price_details: { product: 'prod_food', price: 'price_food' } } },
+      { amount: 3000, quantity: 1, description: 'Shipping', pricing: { price_details: { product: 'prod_ship', price: 'price_ship' } } }
+    ]
+  },
+  total_discount_amounts: [{ amount: 2000 }]
+};
+
+function build({ repository = memoryRepository(), client = fakeClient(), naturezaOperacaoId = 99 } = {}) {
+  const billing = { shippingProductId: 'prod_ship', retrieveInvoiceWithLines: jest.fn(async () => paidInvoice) };
+  const service = new BlingNfeService({
+    repository,
+    client,
+    naturezaOperacaoId,
+    billingFor: () => billing,
+    now: () => NOW,
+    logger: { error() {}, warn() {}, info() {} }
+  });
+  return { service, repository, client, billing };
+}
+
+const record = (service, overrides = {}) => service.recordPaidInvoice({
+  invoice: paidInvoice,
+  account: 'br',
+  userId: 7,
+  subscriptionId: 'sub_1',
+  ...overrides
+});
+
+describe('recordPaidInvoice', () => {
+  test('does not emit for the US account or a zero total', async () => {
+    const { service, repository } = build();
+    expect(await record(service, { account: 'us' })).toBeNull();
+    expect(await record(service, { invoice: { ...paidInvoice, total: 0 } })).toBeNull();
+    expect(repository.insertOrGet).not.toHaveBeenCalled();
+  });
+
+  test('a repeated webhook keeps one row', async () => {
+    const { service, repository } = build();
+    const first = await record(service);
+    const second = await record(service);
+    expect(second.id).toBe(first.id);
+    expect(repository.rows.size).toBe(1);
+  });
+
+  test('two events racing past the lookup still meet the unique key', async () => {
+    const { service, repository } = build();
+    repository.findByStripeInvoice.mockResolvedValue(null);
+    await Promise.all([record(service), record(service)]);
+    expect(repository.rows.size).toBe(1);
+  });
+
+  test('without a valid document the note is blocked and Bling is not called', async () => {
+    const { service, repository, client } = build({ repository: memoryRepository({ name: 'Ana', email: 'a@b.co', taxDocument: '12345678901', address: {} }) });
+    const row = await record(service);
+    expect(row.status).toBe('blocked_missing_document');
+    await service.runDue();
+    expect(repository.rows.get(row.id).status).toBe('blocked_missing_document');
+    expect(client.findContactByDocument).not.toHaveBeenCalled();
+    expect(client.createContact).not.toHaveBeenCalled();
+  });
+});
+
+describe('runDue', () => {
+  test('emits nothing while Bling is not configured, and the row waits', async () => {
+    const { service, repository, client } = build({ naturezaOperacaoId: 0 });
+    const row = await record(service);
+    expect(await service.runDue()).toEqual({ skipped: true });
+    expect(repository.rows.get(row.id).status).toBe('pending');
+    expect(client.createContact).not.toHaveBeenCalled();
+  });
+
+  test('creates contact, order and NF-e, and stores the authorized note', async () => {
+    const { service, repository, client } = build();
+    const { id } = await record(service);
+    expect(await service.runDue()).toMatchObject({ scanned: 1, done: 1, failed: 0 });
+
+    const order = client.createOrder.mock.calls[0][0];
+    expect(order).toMatchObject({
+      numeroLoja: 'in_1',
+      contato: { id: 10 },
+      transporte: { frete: 30 },
+      desconto: { valor: 20, unidade: 'REAL' }
+    });
+    expect(order.itens[0]).toMatchObject({ quantidade: 2, valor: 70, naturezaOperacao: { id: 99 } });
+    expect(client.createContact.mock.calls[0][0]).toMatchObject({ tipo: 'F', numeroDocumento: CPF });
+
+    const row = repository.rows.get(id);
+    expect(row).toMatchObject({
+      status: 'authorized',
+      blingContactId: 10,
+      blingOrderId: 30,
+      blingNfeId: 40,
+      nfeNumber: '158',
+      nfeSeries: '1',
+      accessKey: '3525',
+      danfeUrl: 'https://bling/danfe',
+      xmlUrl: 'https://bling/xml',
+      attempts: 1,
+      lastError: null,
+      nextAttemptAt: null
+    });
+    expect(row.requestPayload.order.numeroLoja).toBe('in_1');
+    expect(JSON.stringify([row.requestPayload, row.responsePayload])).not.toMatch(/token/i);
+  });
+
+  test('a Bling error stays on the row, with a next attempt', async () => {
+    const client = fakeClient({ createOrder: jest.fn(async () => { throw new BlingApiError('Bling answered 500.', { status: 500 }); }) });
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    expect(await service.runDue()).toMatchObject({ failed: 1 });
+    const row = repository.rows.get(id);
+    expect(row).toMatchObject({ status: 'error', attempts: 1, lastError: 'Bling answered 500.', blingContactId: 10 });
+    expect(row.nextAttemptAt.getTime()).toBe(NOW.getTime() + 5 * 60 * 1000);
+  });
+
+  test('a 403 records the error and stops the job for that note', async () => {
+    const client = fakeClient({ generateNfe: jest.fn(async () => { throw new BlingApiError('Escopo ausente', { status: 403 }); }) });
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    await service.runDue();
+    expect(repository.rows.get(id)).toMatchObject({ status: 'error', lastError: 'Escopo ausente', nextAttemptAt: null });
+    await service.runDue();
+    expect(client.generateNfe).toHaveBeenCalledTimes(1);
+  });
+
+  test('a retry resumes from the saved ids and repeats no create', async () => {
+    const client = fakeClient();
+    client.sendNfe.mockRejectedValueOnce(new BlingApiError('timeout', { status: 0 }));
+    client.getNfe = jest.fn(async () => ({ id: 40, situacao: 1 }));
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    await service.runDue();
+    expect(repository.rows.get(id)).toMatchObject({ status: 'error', blingNfeId: 40 });
+
+    client.getNfe = jest.fn().mockResolvedValueOnce({ id: 40, situacao: 1 }).mockResolvedValue({ id: 40, situacao: 3 });
+    await service.runDue();
+    expect(repository.rows.get(id).status).toBe('submitted');
+    expect(client.createContact).toHaveBeenCalledTimes(1);
+    expect(client.createOrder).toHaveBeenCalledTimes(1);
+    expect(client.generateNfe).toHaveBeenCalledTimes(1);
+  });
+
+  test('an order or NF-e created by a call that timed out here is reused', async () => {
+    const client = fakeClient({
+      findOrderByStoreNumber: jest.fn(async () => ({ id: 31, numeroLoja: 'in_1' })),
+      getOrder: jest.fn(async () => ({ id: 31, notaFiscal: { id: 41 } }))
+    });
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    await service.runDue();
+    expect(client.createOrder).not.toHaveBeenCalled();
+    expect(client.generateNfe).not.toHaveBeenCalled();
+    expect(repository.rows.get(id)).toMatchObject({ blingOrderId: 31, blingNfeId: 41 });
+  });
+
+  test('a note already sent is not sent again', async () => {
+    const client = fakeClient({ getNfe: jest.fn(async () => ({ id: 40, situacao: 8 })) });
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    await service.runDue();
+    expect(client.sendNfe).not.toHaveBeenCalled();
+    expect(repository.rows.get(id).status).toBe('submitted');
+  });
+
+  test('a SEFAZ rejection on send becomes rejected, with the reason', async () => {
+    const client = fakeClient({
+      sendNfe: jest.fn(async () => { throw new BlingApiError('Rejeição 539', { status: 400 }); }),
+      getNfe: jest.fn().mockResolvedValueOnce({ id: 40, situacao: 1 }).mockResolvedValue({ id: 40, situacao: 4 })
+    });
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    await service.runDue();
+    expect(repository.rows.get(id)).toMatchObject({ status: 'rejected', lastError: 'Rejeição 539', nextAttemptAt: null });
+  });
+
+  test('polls a submitted note until it resolves', async () => {
+    const client = fakeClient({ getNfe: jest.fn(async () => ({ id: 40, situacao: 3 })) });
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    await service.runDue();
+    repository.rows.get(id).blingNfeId = 40;
+    client.getNfe = jest.fn(async () => ({ id: 40, situacao: 6, numero: '9' }));
+    await service.runDue();
+    expect(repository.rows.get(id)).toMatchObject({ status: 'authorized', authorizedAt: NOW });
+  });
+
+  test('a lost grant keeps the note due and spends no attempt', async () => {
+    const client = fakeClient({ findContactByDocument: jest.fn(async () => { throw new BlingNotConnectedError(); }) });
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    expect(await service.runDue()).toMatchObject({ reason: 'bling_not_connected' });
+    expect(repository.rows.get(id)).toMatchObject({ status: 'pending', attempts: 0 });
+  });
+});
+
+describe('retry', () => {
+  test.each(['error', 'rejected', 'blocked_missing_document'])('requeues %s', async (status) => {
+    const { service, repository } = build();
+    const { id } = await record(service);
+    repository.rows.get(id).status = status;
+    await service.retry(id);
+    expect(repository.rows.get(id).status).toBe('pending');
+  });
+
+  test.each(['pending', 'submitted', 'authorized'])('refuses %s', async (status) => {
+    const { service, repository } = build();
+    const { id } = await record(service);
+    repository.rows.get(id).status = status;
+    await expect(service.retry(id)).rejects.toMatchObject({ statusCode: 409, details: { code: 'nfe_not_retryable' } });
+    expect(repository.requeue).not.toHaveBeenCalled();
+  });
+
+  test('a blocked note takes the document saved after it was recorded', async () => {
+    const customer = { name: 'Ana', email: 'a@b.co', taxDocument: '', address: {} };
+    const { service, repository } = build({ repository: memoryRepository(customer) });
+    const { id } = await record(service);
+    customer.taxDocument = CPF;
+    await service.retry(id);
+    expect(repository.rows.get(id)).toMatchObject({ status: 'pending', customerDocument: CPF });
+  });
+
+  test('a blocked note with still no document stays blocked', async () => {
+    const { service, repository } = build({ repository: memoryRepository({ name: 'Ana', email: 'a@b.co', taxDocument: '', address: {} }) });
+    const { id } = await record(service);
+    await service.retry(id);
+    expect(repository.rows.get(id).status).toBe('blocked_missing_document');
+  });
+});
+
+describe('invoice.paid', () => {
+  function webhook(blingNfe) {
+    const service = new StripeWebhookService({
+      blingNfe,
+      ledgerRepository: {
+        findByStripeSubscriptionId: async () => ({ userId: 7 }),
+        upsert: async () => {},
+        updateCheckoutReference: async () => {}
+      },
+      logger: { error() {}, warn() {}, info() {} }
+    });
+    return service;
+  }
+  const invoice = { id: 'in_1', total: 100, customer: 'cus_1', subscription_details: { metadata: { eden_env: 'qa' } }, subscription: 'sub_1' };
+  const runtime = { account: 'br', stripeBilling: { retrieveSubscription: async () => ({ metadata: { eden_env: 'qa' } }) } };
+
+  beforeEach(() => { process.env.EDEN_RUNTIME = 'qa'; });
+
+  test('records the note and never reaches Bling', async () => {
+    const blingNfe = { recordPaidInvoice: jest.fn(async () => ({})) };
+    await webhook(blingNfe).handleInvoicePaid(invoice, runtime, {});
+    expect(blingNfe.recordPaidInvoice).toHaveBeenCalledWith(expect.objectContaining({ account: 'br', userId: 7, subscriptionId: 'sub_1' }));
+  });
+
+  test('skips an event of another environment', async () => {
+    const blingNfe = { recordPaidInvoice: jest.fn() };
+    await webhook(blingNfe).handleInvoicePaid(invoice, { ...runtime, stripeBilling: { retrieveSubscription: async () => ({ metadata: { eden_env: 'production' } }) } }, {});
+    expect(blingNfe.recordPaidInvoice).not.toHaveBeenCalled();
+  });
+
+  test('a failed row finishes the other steps first, then the event retries', async () => {
+    const failure = new Error('db down');
+    const service = webhook({ recordPaidInvoice: jest.fn(async () => { throw failure; }) });
+    service.recordChargedDelivery = jest.fn(async () => {});
+    service.finishCustomerInvoice = jest.fn(async () => {});
+    await expect(service.handleInvoicePaid(invoice, runtime, {})).rejects.toBe(failure);
+    expect(service.recordChargedDelivery).toHaveBeenCalled();
+    expect(service.finishCustomerInvoice).toHaveBeenCalled();
+  });
+});
+
+describe('helpers', () => {
+  test('the order closes on the invoice total', () => {
+    const order = buildNfeOrderLines({
+      lines: [
+        { amountMinor: 10000, quantity: 3, code: 'A', description: 'A' },
+        { amountMinor: -1000, quantity: 1, code: 'C', description: 'Credit' },
+        { amountMinor: 500, quantity: 1, code: 'S', ship: true }
+      ],
+      totalMinor: 9000,
+      isShipping: (line) => Boolean(line.ship)
+    });
+    expect(order.items).toEqual([{ code: 'A', description: 'A', quantity: 1, unitMinor: 10000 }]);
+    expect(10000 + order.freightMinor - order.discountMinor + order.otherExpensesMinor).toBe(9000);
+  });
+
+  test('situacao uses the /nfe table', () => {
+    expect(nfeStatusFromSituacao(4)).toBe('rejected');
+    expect(nfeStatusFromSituacao(5)).toBe('authorized');
+    expect(nfeStatusFromSituacao(6)).toBe('authorized');
+    expect(nfeStatusFromSituacao(3)).toBe('submitted');
+    expect(nfeStatusFromSituacao(9)).toBe('rejected');
+  });
+
+  test('the protocol is read from an inline XML only', () => {
+    expect(protocolFromXml('<protNFe><nProt>135</nProt></protNFe>')).toBe('135');
+    expect(protocolFromXml('https://bling/xml')).toBeNull();
+  });
+});
+
+describe('BlingClient', () => {
+  function connection(grant) {
+    return {
+      read: jest.fn(async () => grant),
+      saveTokens: jest.fn(async () => {}),
+      markNeedsAuthorization: jest.fn(async () => {}),
+      saveState: jest.fn(async () => {}),
+      consumeState: jest.fn(async () => true)
+    };
+  }
+  function response(status, body) {
+    return { ok: status < 400, status, text: async () => JSON.stringify(body) };
+  }
+  const options = { clientId: 'id', clientSecret: 'secret', redirectUri: 'https://x', now: () => NOW, wait: async () => {} };
+
+  test('sends the code with Basic auth and stores the rotated tokens', async () => {
+    const store = connection(null);
+    const fetchImpl = jest.fn(async () => response(200, { access_token: 'a', refresh_token: 'r', expires_in: 21600 }));
+    await new BlingClient({ ...options, connection: store, fetchImpl }).exchangeCode('code-1');
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('https://bling.com.br/Api/v3/oauth/token');
+    expect(init.headers.Authorization).toBe(`Basic ${Buffer.from('id:secret').toString('base64')}`);
+    expect(init.body).toBe('grant_type=authorization_code&code=code-1');
+    expect(store.saveTokens).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'a', refreshToken: 'r' }));
+  });
+
+  test('an expired access token is renewed before the call', async () => {
+    const store = connection({ accessToken: 'old', refreshToken: 'r1', accessExpiresAt: new Date(NOW.getTime() - 1), refreshedAt: NOW, needsAuthorization: false });
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce(response(200, { access_token: 'new', refresh_token: 'r2', expires_in: 60 * 60 }))
+      .mockResolvedValueOnce(response(200, { data: [] }));
+    await new BlingClient({ ...options, connection: store, fetchImpl }).findContactByDocument(CPF);
+    expect(fetchImpl.mock.calls[1][1].headers.Authorization).toBe('Bearer new');
+    expect(fetchImpl.mock.calls[1][0]).toContain('numeroDocumento=52998224725');
+  });
+
+  test('a refused refresh asks for a new authorization', async () => {
+    const store = connection({ accessToken: '', refreshToken: 'r1', accessExpiresAt: null, refreshedAt: NOW, needsAuthorization: false });
+    const fetchImpl = jest.fn(async () => response(400, { error: 'invalid_grant' }));
+    await expect(new BlingClient({ ...options, connection: store, fetchImpl }).getNfe(1)).rejects.toBeInstanceOf(BlingNotConnectedError);
+    expect(store.markNeedsAuthorization).toHaveBeenCalled();
+  });
+
+  test('a 403 surfaces with its status and field messages', async () => {
+    const store = connection({ accessToken: 'a', refreshToken: 'r', accessExpiresAt: new Date(NOW.getTime() + 3600000), refreshedAt: NOW, needsAuthorization: false });
+    const fetchImpl = jest.fn(async () => response(403, { error: { type: 'FORBIDDEN', message: 'Sem permissão', fields: [{ msg: 'escopo' }] } }));
+    await expect(new BlingClient({ ...options, connection: store, fetchImpl }).sendNfe(1)).rejects.toMatchObject({ status: 403, message: 'Sem permissão · escopo' });
+  });
+
+  test('the authorize URL carries a state that only its hash is stored for', async () => {
+    const store = connection(null);
+    const url = new URL(await new BlingClient({ ...options, connection: store }).buildAuthorizeUrl());
+    const state = url.searchParams.get('state');
+    expect(state).toMatch(/^[0-9a-f]{64}$/);
+    expect(store.saveState.mock.calls[0][0].stateHash).not.toBe(state);
+  });
+});

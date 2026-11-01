@@ -316,5 +316,9 @@ module.exports = {
   formatLongDate,
   formatServicePeriod,
   invoiceLocale,
-  linePriceId
+  isShippingLine,
+  linePriceId,
+  lineProductId,
+  recipeDescription,
+  shippingProductIdsFrom
 };

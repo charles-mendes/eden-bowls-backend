@@ -22,7 +22,8 @@ const checkoutPayloadSchema = z.object({
   paymentMethodId: z.string().trim().optional(),
   billing: billingSchema.optional(),
   attempt_id: z.string().trim().min(1).max(128).optional(),
-  legal_consent: legalConsentSchema.optional()
+  legal_consent: legalConsentSchema.optional(),
+  tax_document: z.string().trim().max(32).optional()
 });
 
 function legalConsentRequired(issues) {
@@ -70,6 +71,7 @@ function parseOnboardingSubscriptionCheckoutInput(payload = {}, headers = {}) {
     paymentMethodId,
     billing: parsed.billing || {},
     attempt_id: attemptId || undefined,
+    tax_document: parsed.tax_document || undefined,
     legal_consent: {
       accepted: true,
       terms_version: consent.terms_version || undefined,

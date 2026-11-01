@@ -99,7 +99,11 @@ const rawEnvSchema = z.object({
   INVOICE_PDF_DIR: z.string().optional(),
   SHIPPING_QUOTE_SECRET: z.string().optional(),
   SHIPPING_US_FIXED_TRANSIT_DAYS: z.string().optional(),
-  METRICS_TOKEN: z.string().optional()
+  METRICS_TOKEN: z.string().optional(),
+  BLING_CLIENT_ID: z.string().optional(),
+  BLING_CLIENT_SECRET: z.string().optional(),
+  BLING_REDIRECT_URI: z.string().optional(),
+  BLING_NATUREZA_OPERACAO_ID: z.string().optional()
 });
 
 function firstNonEmpty(...values) {
@@ -374,7 +378,11 @@ function parseEnv(source = process.env) {
     SHIPPING_QUOTE_SECRET: firstNonEmpty(rawEnv.SHIPPING_QUOTE_SECRET)
       || (String(rawEnv.EDEN_RUNTIME || '').trim() === 'production' ? '' : LOCAL_SHIPPING_QUOTE_SECRET),
     SHIPPING_US_FIXED_TRANSIT_DAYS: Number(firstNonEmpty(rawEnv.SHIPPING_US_FIXED_TRANSIT_DAYS, '1')),
-    METRICS_TOKEN: firstNonEmpty(rawEnv.METRICS_TOKEN)
+    METRICS_TOKEN: firstNonEmpty(rawEnv.METRICS_TOKEN),
+    BLING_CLIENT_ID: firstNonEmpty(rawEnv.BLING_CLIENT_ID),
+    BLING_CLIENT_SECRET: firstNonEmpty(rawEnv.BLING_CLIENT_SECRET),
+    BLING_REDIRECT_URI: firstNonEmpty(rawEnv.BLING_REDIRECT_URI),
+    BLING_NATUREZA_OPERACAO_ID: firstNonEmpty(rawEnv.BLING_NATUREZA_OPERACAO_ID)
   };
 
   assertShippingQuoteSecret(rawEnv, resolved);

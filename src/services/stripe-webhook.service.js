@@ -44,6 +44,7 @@ class StripeWebhookService {
     this.pendingDeliveryChanges = options.pendingDeliveryChanges || null;
     this.paidCycles = options.paidCycles || null;
     this.customerInvoices = options.customerInvoices || null;
+    this.blingNfe = options.blingNfe || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.withTimeout = options.withTimeout || withTimeout;
   }
@@ -403,6 +404,8 @@ class StripeWebhookService {
       stripe_invoice_id: invoice.id || undefined
     });
 
+    const nfeFailure = await this.recordNfe({ invoice, runtime, userId: context.userId, subscriptionId });
+
     // One delivery estimate for this payment: the confirmation email and the production cycle use the same one.
     const delivery = await this.estimateDelivery(invoice, subscriptionId);
 
@@ -426,6 +429,26 @@ class StripeWebhookService {
     });
 
     await this.finishCustomerInvoice(invoice, runtime, issued, letter);
+
+    // Only the row failed to save: the steps above went on, and the event comes back to write it.
+    if (nfeFailure) {
+      throw nfeFailure;
+    }
+  }
+
+  // Writes the NF-e row of a paid BR invoice. Nothing here calls Bling; the bling_nfe job does, so Bling being slow
+  // or down never touches this event.
+  async recordNfe({ invoice, runtime, userId, subscriptionId }) {
+    if (!this.blingNfe) {
+      return null;
+    }
+    try {
+      await this.blingNfe.recordPaidInvoice({ invoice, account: runtime.account, userId, subscriptionId });
+      return null;
+    } catch (error) {
+      this.logger.error({ invoiceId: invoice && invoice.id, code: error && error.code }, 'NF-e row could not be saved.');
+      return error;
+    }
   }
 
   // Issues the Eden Bowls invoice PDF of a paid invoice above zero without emailing it. A failure here does not stop

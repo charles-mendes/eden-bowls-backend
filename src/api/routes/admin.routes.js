@@ -6,6 +6,7 @@ const { parseHeadquartersValidateInput, parseShippingSettingsInput, parseShippin
 const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = require('../validators/admin-coupons.validator');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../../core/admin-market-scope');
 const { parsePageQuery } = require('../validators/admin-pagination');
+const { parseNfeListQuery } = require('../validators/admin-nfe.validator');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
 const {
   parseProductionQueueQuery,
@@ -671,6 +672,42 @@ function registerAdminRoutes(app, dependencies = {}) {
 
   app.post('/api/v1/admin/billing/customer-invoices/:id/send', requirePermission('billing.subscribers.sync', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => requireCustomerInvoices().resendEmail(request.params.id, request.adminIdentity));
+  });
+
+  function requireBlingNfe() {
+    if (!dependencies.blingNfeService) {
+      throw new HttpError(503, 'NF-e service is not available.');
+    }
+    return dependencies.blingNfeService;
+  }
+
+  // NF-e issued through Bling. A separate flow from the Eden Bowls invoices above.
+  app.get('/api/v1/admin/nfe', requirePermission('nfe.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().list(
+      parseNfeListQuery(request.query),
+      parsePageQuery(request.query, { defaultPerPage: 20 }),
+      request.adminIdentity
+    ));
+  });
+
+  app.get('/api/v1/admin/nfe/:id', requirePermission('nfe.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().detail(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/nfe/:id/retry', requirePermission('nfe.retry', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().retry(request.params.id, request.adminIdentity));
+  });
+
+  app.get('/api/v1/admin/billing/subscriptions/:id/nfe', requirePermission('nfe.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().listForSubscription(request.params.id, request.adminIdentity));
+  });
+
+  app.get('/api/v1/admin/bling/connection', requirePermission('nfe.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().connectionStatus());
+  });
+
+  app.post('/api/v1/admin/bling/connection/authorize', requirePermission('bling.connect', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().authorizeUrl());
   });
 
   app.get('/api/v1/admin/billing/invoices/:id/pdf',requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
