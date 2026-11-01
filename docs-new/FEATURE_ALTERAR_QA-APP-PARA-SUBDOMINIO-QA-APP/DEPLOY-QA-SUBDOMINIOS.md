@@ -1,12 +1,14 @@
 # Deploy QA — subdomínios
 
-Guia operacional para publicar o corte:
+Guia operacional do QA, publicado em três subdomínios:
 
 ```text
-edenbowls.com/qa-app    →  qa.edenbowls.com
-edenbowls.com/qa-admin  →  qa-admin.edenbowls.com
-edenbowls.com/qa-api    →  qa-api.edenbowls.com
+qa.edenbowls.com        →  loja
+qa-admin.edenbowls.com  →  painel
+qa-api.edenbowls.com    →  API
 ```
+
+Os paths antigos `/qa-app`, `/qa-admin` e `/qa-api` em `edenbowls.com` não são mais usados e não têm redirect.
 
 Arquitetura: [edenbowls-qa-architecture.md](./edenbowls-qa-architecture.md).
 
@@ -125,16 +127,6 @@ PROFILE_AVATAR_PUBLIC_BASE_URL=https://qa-api.edenbowls.com/avatars
 FEEDBACK_PHOTO_PUBLIC_BASE_URL=https://qa-api.edenbowls.com/feedback-photos
 ```
 
-Valores antigos que devem sumir:
-
-```env
-# CORS_ORIGINS=https://edenbowls.com,https://www.edenbowls.com
-# JWT_AUTH_ISSUER=https://edenbowls.com/qa-api
-# AUTH_REFRESH_COOKIE_PATH=/qa-api/api/v1/auth
-# PROFILE_AVATAR_PUBLIC_BASE_URL=https://edenbowls.com/qa-api/avatars
-# FEEDBACK_PHOTO_PUBLIC_BASE_URL=https://edenbowls.com/qa-api/feedback-photos
-```
-
 Não mexa em: `DB_*`, `MYSQL_ROOT_PASSWORD`, `JWT_AUTH_SECRET_KEY`, `AUTH_OTP_PEPPER`, `STRIPE_*`, `AUTH_SMTP_*`.
 
 Gabarito completo: `$BACKEND/.env.qa.example`.
@@ -156,7 +148,7 @@ O Caddy lê o `Caddyfile` do git via volume. Depois do `git pull`, o reload já 
 
 ### 3.3 `$STORE/.env`
 
-`VITE_*` entra na **imagem no build**. Sem `--build`, a loja continua chamando `/qa-api`.
+`VITE_*` entra na **imagem no build**. Sem `--build`, a loja continua com os valores da imagem anterior.
 
 ```bash
 cd "$STORE"
@@ -181,13 +173,6 @@ VITE_GEO_SIM_FORCE_ENABLED=false
 VITE_GEO_SIM_OVERLAY=false
 ```
 
-Valores antigos:
-
-```env
-# VITE_API_BASE_URL=https://edenbowls.com/qa-api
-# VITE_APP_BASE_PATH=/qa-app/
-```
-
 Gabarito: `$STORE/.env.qa.example`.
 
 ### 3.4 `$ADMIN/.env`
@@ -202,21 +187,13 @@ VITE_ADMIN_API_BASE_URL=https://qa-api.edenbowls.com/api/v1
 VITE_APP_BASE_PATH=/
 ```
 
-Valores antigos:
-
-```env
-# VITE_ADMIN_API_BASE_URL=https://edenbowls.com/qa-api/api/v1
-# VITE_APP_BASE_PATH=/qa-admin/
-```
-
 Gabarito: `$ADMIN/.env.qa.example`.
 
 ### 3.5 Stripe (painel, não é arquivo no VPS)
 
 No dashboard Stripe **modo test**:
 
-- Webhook: `https://qa-api.edenbowls.com/stripe/v1/webhook`  
-  (não use mais `https://edenbowls.com/qa-api/stripe/v1/webhook`)
+- Webhook: `https://qa-api.edenbowls.com/stripe/v1/webhook`
 - Se gerar um endpoint novo, atualize `STRIPE_US_WEBHOOK_SECRET` em `$BACKEND/.env` e recrie só a API. `STRIPE_WEBHOOK_SECRET` is not read.
 
 ---
@@ -308,11 +285,6 @@ curl -sS https://qa-api.edenbowls.com/health
 curl -sI https://qa.edenbowls.com/robots.txt
 curl -sI https://qa-admin.edenbowls.com/robots.txt
 curl -sI https://qa-api.edenbowls.com/robots.txt
-
-# Redirects antigos
-curl -sI https://edenbowls.com/qa-app/ | head
-curl -sI https://edenbowls.com/qa-admin/ | head
-curl -sI https://edenbowls.com/qa-api/health | head
 ```
 
 Checklist no navegador:
@@ -323,12 +295,11 @@ Checklist no navegador:
 - [ ] Login da loja e refresh de sessão funcionam
 - [ ] Login do admin funciona
 - [ ] Checkout de teste (Stripe test)
-- [ ] `/qa-app/...` redireciona para `qa.edenbowls.com/...`
 - [ ] Certificado válido nos três hosts (cadeado, sem aviso HSTS)
 
 Se o login da loja falhar com cookie: confirme `AUTH_REFRESH_COOKIE_PATH=/api/v1/auth`, `SECURE=true` e que **não** existe `Domain=.edenbowls.com`.
 
-Se a loja ainda chama `edenbowls.com/qa-api`: a imagem da loja foi reutilizada sem `--build`. Rode de novo o passo 4.1.
+Se a loja chama outra API que não `qa-api.edenbowls.com`: a imagem da loja foi reutilizada sem `--build`. Rode de novo o passo 4.1.
 
 ---
 
