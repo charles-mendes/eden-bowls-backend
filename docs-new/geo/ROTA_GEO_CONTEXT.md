@@ -156,7 +156,7 @@ Preferir IP publico. Lista so com privado → string vazia.
 | `*.com.br` | `com.br` |
 | `edenbowls.com`, `localhost`, IP, qualquer outro | `com` |
 
-`qa-app` em `edenbowls.com` resolve `com`, mesmo com `Accept-Language: pt`.
+`qa.edenbowls.com` resolve `com`, mesmo com `Accept-Language: pt`.
 
 ### Pais (MaxMind)
 
@@ -281,12 +281,12 @@ curl --url "http://localhost:3000/api/v1/geo/context" \
   -H "origin: https://www.edenbowls.com.br"
 ```
 
-QA, depois do cutover (o prefixo `/qa-api` e do proxy, nao da rota Express):
+QA:
 
 ```bash
-curl --url "https://edenbowls.com/qa-api/api/v1/geo/context" \
+curl --url "https://qa-api.edenbowls.com/api/v1/geo/context" \
   -H "accept: application/json" \
-  -H "referer: https://edenbowls.com/qa-app/plan"
+  -H "referer: https://qa.edenbowls.com/plan"
 ```
 
 ## Relacao com outras rotas Node

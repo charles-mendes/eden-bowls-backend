@@ -46,7 +46,6 @@ Não cadastre webhook em:
 
 - `https://www.edenbowls.com/...`
 - `https://www.edenbowls.com.br/...`
-- `https://edenbowls.com/qa-api/stripe/v1/webhook` (legado)
 
 URL pública de QA:
 
@@ -251,7 +250,7 @@ No detalhe do endpoint: **Send test webhook**. Use `invoice.paid` (evento que o 
 - `200 { "received": true }` → URL, secret e conta batem.
 - `400` → `signing secret ` do `.env` não é o deste endpoint, ou modo test/live trocado.
 - `503` → secret daquela conta vazio no `.env`.
-- Timeout / 404 → URL errada (loja em vez da API, ou path legado `/qa-api`).
+- Timeout / 404 → URL errada (loja em vez da API).
 
 Evento desconhecido pelo código ainda assim deve responder **200** (o Node ignora). Por isso dá para assinar a lista longa da seção 8 sem quebrar o receiver.
 
