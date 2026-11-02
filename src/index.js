@@ -461,6 +461,10 @@ async function bootstrap() {
     emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
     logger
   });
+  const adminAuditService = new AdminAuditService({
+    repository: new AdminAuditRepository(dataSource),
+    logger
+  });
   // NF-e through Bling: recorded on invoice.paid, emitted by the bling_nfe job. Without BLING_* nothing is emitted.
   const blingNfeService = new BlingNfeService({
     repository: new BlingNfeRepository(dataSource, {
@@ -478,6 +482,7 @@ async function bootstrap() {
     ledgerRepository: subscriptionLedgerRepository,
     naturezaOperacaoId: env.BLING_NATUREZA_OPERACAO_ID,
     adminAppUrl: env.ADMIN_APP_URL,
+    auditService: adminAuditService,
     logger
   });
   const stripeWebhookService = new StripeWebhookService({
@@ -740,10 +745,6 @@ async function bootstrap() {
     postsTableName: env.WP_POSTS_TABLE_NAME,
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
     termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
-  });
-  const adminAuditService = new AdminAuditService({
-    repository: new AdminAuditRepository(dataSource),
-    logger
   });
   const recipeContentRepository = new RecipeContentRepository(dataSource);
   const adminCatalogService = new AdminCatalogService({

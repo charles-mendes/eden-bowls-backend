@@ -26,7 +26,8 @@ const COLUMNS = {
   attempts: 'attempts',
   nextAttemptAt: 'next_attempt_at',
   submittedAt: 'submitted_at',
-  authorizedAt: 'authorized_at'
+  authorizedAt: 'authorized_at',
+  createdAt: 'created_at'
 };
 const JSON_COLUMNS = new Set(['customerAddress', 'requestPayload', 'responsePayload']);
 
@@ -110,6 +111,13 @@ class BlingNfeRepository {
       [stripeAccount, stripeInvoiceId]
     );
     return mapRow(rows && rows[0]);
+  }
+
+  async findByBlingNfeIds(ids) {
+    if (!ids.length) return new Map();
+    const marks = ids.map(() => '?').join(', ');
+    const rows = await this.dataSource.query(`SELECT * FROM \`${TABLE}\` WHERE \`bling_nfe_id\` IN (${marks})`, ids);
+    return new Map(rows.map(mapRow).map((row) => [row.blingNfeId, row]));
   }
 
   async listBySubscription(stripeSubscriptionId) {

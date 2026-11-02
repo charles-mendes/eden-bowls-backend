@@ -6,7 +6,7 @@ const { parseHeadquartersValidateInput, parseShippingSettingsInput, parseShippin
 const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = require('../validators/admin-coupons.validator');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../../core/admin-market-scope');
 const { parsePageQuery } = require('../validators/admin-pagination');
-const { parseNfeListQuery } = require('../validators/admin-nfe.validator');
+const { parseNfeCustomerInput, parseNfeListQuery } = require('../validators/admin-nfe.validator');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
 const {
   parseProductionQueueQuery,
@@ -696,6 +696,14 @@ function registerAdminRoutes(app, dependencies = {}) {
 
   app.post('/api/v1/admin/nfe/:id/retry', requirePermission('nfe.retry', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => requireBlingNfe().retry(request.params.id, request.adminIdentity));
+  });
+
+  app.patch('/api/v1/admin/nfe/:id/customer', requirePermission('nfe.edit', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().updateCustomer(
+      request.params.id,
+      parseNfeCustomerInput(request.body),
+      request.adminIdentity
+    ));
   });
 
   app.get('/api/v1/admin/billing/subscriptions/:id/nfe', requirePermission('nfe.read', { market: 'record' }), async (request, response, next) => {

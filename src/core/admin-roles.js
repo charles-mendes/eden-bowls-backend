@@ -45,7 +45,8 @@ const ROLE_PERMISSIONS = {
     'reports.read',
     'reports.export',
     'nfe.read',
-    'nfe.retry'
+    'nfe.retry',
+    'nfe.edit'
   ]
 };
 

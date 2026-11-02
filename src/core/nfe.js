@@ -4,6 +4,7 @@ const NFE_STATUS = {
   SUBMITTED: 'submitted',
   AUTHORIZED: 'authorized',
   REJECTED: 'rejected',
+  CANCELED: 'canceled',
   ERROR: 'error'
 };
 
@@ -44,8 +45,12 @@ function nfeStatusFromSituacao(situacao) {
   if (value === BLING_SITUACAO.AUTORIZADA || value === BLING_SITUACAO.EMITIDA_DANFE) {
     return NFE_STATUS.AUTHORIZED;
   }
+  // Separate from rejected: a rejected note can be sent again and a canceled one never can.
+  if (value === BLING_SITUACAO.CANCELADA) {
+    return NFE_STATUS.CANCELED;
+  }
   if (value === BLING_SITUACAO.REJEITADA || value === BLING_SITUACAO.DENEGADA
-    || value === BLING_SITUACAO.CANCELADA || value === BLING_SITUACAO.BLOQUEADA) {
+    || value === BLING_SITUACAO.BLOQUEADA) {
     return NFE_STATUS.REJECTED;
   }
   return NFE_STATUS.SUBMITTED;

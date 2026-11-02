@@ -26,6 +26,13 @@ const POLL_GAP_MS = 2 * 60 * 1000;
 const MAX_ERROR_LENGTH = 1000;
 const MAX_PAYLOAD_TEXT = 4000;
 const BLING_TIMEZONE = 'America/Sao_Paulo';
+const IMPORTED_PREFIX = 'bling:';
+const SYNC_PAGE_SIZE = 100;
+const SYNC_MAX_PAGES = 5;
+const SYNC_WINDOW_DAYS = 90;
+const OUTGOING_NOTE = 1;
+// Only these can still take new customer data. An authorized note cannot, and neither can a denied or blocked one.
+const EDITABLE_SITUACOES = new Set([BLING_SITUACAO.PENDENTE, BLING_SITUACAO.REJEITADA]);
 // Sent to Bling when the note is sent or already on its way: sending again would only repeat the attempt.
 const IN_FLIGHT_SITUACOES = new Set([
   BLING_SITUACAO.AGUARDANDO_RECIBO,
@@ -70,6 +77,53 @@ function isUrl(value) {
   return /^https?:\/\//i.test(String(value || ''));
 }
 
+// A note that exists only in Bling. It has no Stripe invoice behind it, so this system shows it and never sends it.
+function isImported(row) {
+  return String(row.stripeInvoiceId || '').startsWith(IMPORTED_PREFIX);
+}
+
+function customerEdited(row) {
+  return Boolean(row.requestPayload && row.requestPayload.customer_edited_at);
+}
+
+function canEdit(row) {
+  return NFE_RETRYABLE_STATUSES.includes(row.status)
+    && !isImported(row)
+    && (row.blingSituacao == null || EDITABLE_SITUACOES.has(row.blingSituacao));
+}
+
+const onlyDigits = (value) => String(value || '').replace(/\D/g, '');
+
+// What the note must carry, in Bling's names. Bling ignores an empty value, so a blank field is not a change.
+function wantedContact(row) {
+  const address = row.customerAddress || {};
+  return {
+    nome: row.customerName,
+    email: row.customerEmail,
+    numeroDocumento: row.customerDocument,
+    endereco: {
+      endereco: address.street,
+      numero: address.number,
+      complemento: address.complement,
+      bairro: address.neighborhood,
+      municipio: address.city,
+      uf: address.state,
+      cep: address.zipcode
+    }
+  };
+}
+
+function contactDiffers(current, wanted) {
+  const same = (key, left, right) => (['numeroDocumento', 'cep'].includes(key)
+    ? onlyDigits(left) === onlyDigits(right)
+    : String(left || '').trim() === String(right || '').trim());
+  const differs = (now, next) => Object.entries(next).some(([key, value]) => {
+    if (value && typeof value === 'object') return differs((now && now[key]) || {}, value);
+    return Boolean(value) && !same(key, now && now[key], value);
+  });
+  return differs(current, wanted);
+}
+
 function presentSummary(row) {
   return {
     id: row.id,
@@ -86,7 +140,11 @@ function presentSummary(row) {
     attempts: row.attempts,
     created_at: row.createdAt,
     authorized_at: row.authorizedAt,
-    can_retry: NFE_RETRYABLE_STATUSES.includes(row.status)
+    bling_situacao: row.blingSituacao,
+    bling_situacao_label: situacaoLabel(row.blingSituacao),
+    imported: isImported(row),
+    can_retry: NFE_RETRYABLE_STATUSES.includes(row.status) && !isImported(row),
+    can_edit: canEdit(row)
   };
 }
 
@@ -101,8 +159,6 @@ function presentDetail(row) {
     bling_order_id: row.blingOrderId,
     bling_nfe_id: row.blingNfeId,
     protocol: row.protocol,
-    bling_situacao: row.blingSituacao,
-    bling_situacao_label: situacaoLabel(row.blingSituacao),
     customer_address: row.customerAddress,
     request_payload: row.requestPayload,
     response_payload: row.responsePayload,
@@ -124,6 +180,7 @@ class BlingNfeService {
     this.ledgerRepository = options.ledgerRepository || null;
     this.naturezaOperacaoId = Number(options.naturezaOperacaoId) || 0;
     this.adminAppUrl = options.adminAppUrl || '';
+    this.auditService = options.auditService || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.now = options.now || (() => new Date());
   }
@@ -210,6 +267,104 @@ class BlingNfeService {
       }
     }
     return { scanned: rows.length, done, failed };
+  }
+
+  // Bling has no webhook for notes in its API, so the job reads the recent list. A note that did not change costs no
+  // extra call. This path only reads from Bling: it never creates, sends or changes anything there.
+  async syncFromBling() {
+    if (!this.repository || !this.isConfigured()) {
+      return { skipped: true };
+    }
+    const since = DateTime.fromJSDate(this.now()).setZone(BLING_TIMEZONE).minus({ days: SYNC_WINDOW_DAYS }).toISODate();
+    let scanned = 0;
+    let updated = 0;
+    let imported = 0;
+    let failed = 0;
+    try {
+      for (let pagina = 1; pagina <= SYNC_MAX_PAGES; pagina += 1) {
+        const notes = await this.client.listNfes({
+          pagina,
+          limite: SYNC_PAGE_SIZE,
+          tipo: OUTGOING_NOTE,
+          dataEmissaoInicial: since
+        });
+        scanned += notes.length;
+        const known = await this.repository.findByBlingNfeIds(notes.map((note) => Number(note.id)));
+        for (const note of notes) {
+          try {
+            const row = known.get(Number(note.id));
+            if (!row) {
+              imported += await this.importNote(note);
+            } else if (await this.syncRow(row, note)) {
+              updated += 1;
+            }
+          } catch (error) {
+            if (error instanceof BlingNotConnectedError) throw error;
+            failed += 1;
+            this.logger.warn({ blingNfeId: note.id, status: error && error.status }, 'NF-e status sync failed.');
+          }
+        }
+        if (notes.length < SYNC_PAGE_SIZE) break;
+      }
+    } catch (error) {
+      if (error instanceof BlingNotConnectedError) {
+        return { skipped: true, reason: 'bling_not_connected' };
+      }
+      throw error;
+    }
+    return { scanned, updated, imported, failed };
+  }
+
+  async syncRow(row, note) {
+    const situacao = Number(note.situacao);
+    if (situacao === row.blingSituacao) return false;
+    // Still a draft in Bling. A note of ours waiting for a retry stays in its queue, or it would never be sent.
+    if (situacao === BLING_SITUACAO.PENDENTE) {
+      await this.repository.update(row.id, { blingSituacao: situacao });
+      return true;
+    }
+    await this.applyNfe(row, await this.client.getNfe(row.blingNfeId));
+    return true;
+  }
+
+  async importNote(note) {
+    const nfe = await this.client.getNfe(note.id);
+    // Generated by a row of ours that lost its answer: emit links it, so it must not appear twice.
+    if (nfe.numeroPedidoLoja && await this.repository.findByStripeInvoice(BR_ACCOUNT, nfe.numeroPedidoLoja)) {
+      return 0;
+    }
+    const contact = nfe.contato || {};
+    const address = contact.endereco || {};
+    const row = await this.repository.insertOrGet({
+      status: NFE_STATUS.PENDING,
+      userId: null,
+      stripeAccount: BR_ACCOUNT,
+      stripeSubscriptionId: null,
+      stripeInvoiceId: `${IMPORTED_PREFIX}${note.id}`,
+      totalMinor: Math.round((Number(nfe.valorNota) || 0) * 100),
+      currency: 'brl',
+      customerName: contact.nome || null,
+      customerEmail: contact.email || null,
+      customerDocument: String(contact.numeroDocumento || '').replace(/\D/g, '').slice(0, 14) || null,
+      customerAddress: normalizedAddress({
+        street: address.endereco,
+        number: address.numero,
+        complement: address.complemento,
+        neighborhood: address.bairro,
+        city: address.municipio,
+        state: address.uf,
+        zipcode: address.cep
+      }),
+      nextAttemptAt: null
+    });
+    const issuedAt = DateTime.fromSQL(String(nfe.dataEmissao || ''), { zone: BLING_TIMEZONE });
+    await this.repository.update(row.id, {
+      blingNfeId: Number(note.id),
+      blingContactId: contact.id ? Number(contact.id) : null,
+      ...(issuedAt.isValid ? { createdAt: issuedAt.toJSDate() } : {})
+    });
+    await this.applyNfe(row, nfe);
+    return 1;
   }
 
   async recordFailure(row, error) {
@@ -378,7 +533,10 @@ class BlingNfeService {
   }
 
   async applyNfe(row, nfe, { message } = {}) {
-    const status = nfeStatusFromSituacao(nfe.situacao);
+    const imported = isImported(row);
+    const status = imported && Number(nfe.situacao) === BLING_SITUACAO.PENDENTE
+      ? NFE_STATUS.PENDING
+      : nfeStatusFromSituacao(nfe.situacao);
     const now = this.now();
     const xml = nfe.xml || '';
     await this.savePayloads(row, 'status', null, nfe);
@@ -395,10 +553,36 @@ class BlingNfeService {
       lastError: status === NFE_STATUS.REJECTED
         ? String(message || `Bling: ${situacaoLabel(nfe.situacao) || nfe.situacao}`).slice(0, MAX_ERROR_LENGTH)
         : null,
-      nextAttemptAt: status === NFE_STATUS.SUBMITTED ? new Date(now.getTime() + POLL_GAP_MS) : null,
+      nextAttemptAt: status === NFE_STATUS.SUBMITTED && !imported ? new Date(now.getTime() + POLL_GAP_MS) : null,
       ...(status === NFE_STATUS.AUTHORIZED ? { authorizedAt: now } : {})
     });
     return status;
+  }
+
+  // The operator's correction reaches Bling here, inside the job, because only the job may use the rotating token.
+  // Bling answers PUT with the whole note in mind: what comes from GET goes back, minus what it computes itself.
+  async applyCustomerEdit(row, nfeId) {
+    if (!customerEdited(row)) return;
+    const current = await this.client.getNfe(nfeId);
+    if (!EDITABLE_SITUACOES.has(Number(current.situacao))) return;
+    const wanted = wantedContact(row);
+    if (!contactDiffers(current.contato, wanted)) return;
+    const { id, situacao, chaveAcesso, xml, linkDanfe, linkPDF, ...editable } = current;
+    const payload = {
+      ...editable,
+      contato: {
+        ...current.contato,
+        nome: wanted.nome || current.contato.nome,
+        email: wanted.email || current.contato.email,
+        numeroDocumento: wanted.numeroDocumento || current.contato.numeroDocumento,
+        endereco: {
+          ...current.contato.endereco,
+          ...Object.fromEntries(Object.entries(wanted.endereco).filter(([, value]) => value))
+        }
+      }
+    };
+    const updated = await this.client.updateNfe(nfeId, payload);
+    await this.savePayloads(row, 'edit', { contato: payload.contato }, updated);
   }
 
   async send(row, nfeId) {
@@ -435,6 +619,7 @@ class BlingNfeService {
     const contactId = await this.ensureContact(row, document);
     const orderId = await this.ensureOrder(row, contactId);
     const nfeId = await this.ensureNfe(row, orderId);
+    await this.applyCustomerEdit(row, nfeId);
     return this.send(row, nfeId);
   }
 
@@ -479,10 +664,10 @@ class BlingNfeService {
   // how a blocked note picks up the document saved after it was recorded.
   async retry(id, actor = {}) {
     const row = await this.requireRow(id, actor);
-    if (!NFE_RETRYABLE_STATUSES.includes(row.status)) {
+    if (!NFE_RETRYABLE_STATUSES.includes(row.status) || isImported(row)) {
       throw new HttpError(409, 'This NF-e cannot be retried in its current status.', { code: 'nfe_not_retryable' });
     }
-    if (!row.blingContactId) {
+    if (!row.blingContactId && !customerEdited(row)) {
       const snapshot = await this.customerSnapshot(row.userId, null);
       await this.repository.update(row.id, {
         ...snapshot,
@@ -497,6 +682,34 @@ class BlingNfeService {
       throw new HttpError(409, 'This NF-e cannot be retried in its current status.', { code: 'nfe_not_retryable' });
     }
     await this.repository.update(row.id, { lastError: null });
+    return { success: true, data: presentDetail(await this.repository.findById(row.id)) };
+  }
+
+  // Saved here and sent by the job on the next retry. Nothing reaches Bling or SEFAZ from this call.
+  async updateCustomer(id, input, actor = {}) {
+    const row = await this.requireRow(id, actor);
+    if (!canEdit(row)) {
+      throw new HttpError(409, 'This NF-e cannot be changed in its current status.', { code: 'nfe_not_editable' });
+    }
+    const documentChanged = input.document !== row.customerDocument;
+    await this.repository.update(row.id, {
+      customerName: input.name,
+      customerEmail: input.email,
+      customerDocument: input.document,
+      customerAddress: input.address,
+      requestPayload: { ...(row.requestPayload || {}), customer_edited_at: this.now().toISOString() },
+      // Before the order exists, the contact can still be found again by the new document.
+      ...(documentChanged && !row.blingOrderId ? { blingContactId: null } : {})
+    });
+    if (this.auditService) {
+      await this.auditService.record({
+        actor,
+        action: 'nfe.customer.update',
+        targetUserId: row.userId,
+        targetEmail: null,
+        metadata: { nfeId: row.id, documentChanged }
+      });
+    }
     return { success: true, data: presentDetail(await this.repository.findById(row.id)) };
   }
 

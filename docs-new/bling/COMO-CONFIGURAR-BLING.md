@@ -119,10 +119,32 @@ A cada 60 segundos o job `bling_nfe` pega faturas pagas do Brasil que já virara
 
 O envio é automático. Com o Bling conectado, toda linha pendente em `bling_nfe` vira nota enviada sem nenhuma confirmação. Não insira linha de teste nessa tabela sem antes confirmar o ambiente da conta, como no passo 3.
 
+O job `bling_nfe_sync` roda a cada 5 minutos e só lê do Bling. Ele percorre as notas de saída dos últimos 90 dias, porque a API do Bling não oferece webhook de nota, e faz duas coisas:
+
+- Atualiza a nota que mudou de situação no Bling, como autorização, rejeição ou cancelamento. O painel mostra essa situação na coluna Bling.
+- Importa a nota que existe só no Bling, por exemplo uma criada à mão. Ela aparece no painel com a marca "Criada no Bling". Fica somente para consulta: não entra na fila, não pode ser reenviada e o sistema nunca a envia à SEFAZ.
+
+Ele usa o mesmo lock do `bling_nfe`, porque o Bling troca o refresh token a cada renovação. Se o outro job estiver rodando, esta rodada é pulada e a próxima vem em 5 minutos. A nota cancelada tem status próprio e não oferece reenvio.
+
 Leitura do log:
 
 - `skipped: true` sem `reason`: falta credencial ou falta `BLING_NATUREZA_OPERACAO_ID`.
 - `skipped: true` com `reason: bling_not_connected`: as variáveis estão preenchidas e ninguém autorizou ainda, ou o refresh morreu.
+- `scanned`, `updated`, `imported`, `failed`: resultado do `bling_nfe_sync`.
 - `scanned`, `done`, `failed`: o job rodou de verdade. `failed` maior que zero é tentativa recusada. O detalhe da nota no painel guarda o erro. 403 de escopo não volta a tentar sozinho: o escopo tem de ser corrigido no app e a nota reenviada pelo painel.
 
 Uma fatura sem CPF ou CNPJ válido fica bloqueada antes de qualquer chamada ao Bling.
+
+## 6. O que o operador faz pelo painel
+
+No detalhe da nota:
+
+- **Nova tentativa:** volta a nota com erro, rejeitada ou sem documento para a fila.
+- **Corrigir dados:** altera nome, e-mail, documento e endereço de uma nota ainda não autorizada. Exige a permissão `nfe.edit`, de operador e administrador. Fica registrado na auditoria. Nada vai ao Bling nessa hora: a correção é aplicada pelo job na próxima tentativa, antes de enviar a nota.
+- **Abrir no Bling:** abre a nota no site do Bling.
+
+A correção também altera o contato no Bling. Um campo apagado no painel não apaga o valor lá, porque o Bling ignora valor vazio. Para limpar um campo, use o Bling.
+
+Só no Bling, porque a API dele não oferece: cancelar nota autorizada, carta de correção, inutilizar numeração e alterar dados de nota autorizada. O painel avisa isso no detalhe da nota.
+
+Não existe exclusão de nota. A API do Bling permite, mas esta integração não usa esse recurso, para não perder histórico fiscal.

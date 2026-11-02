@@ -1,5 +1,6 @@
 const { z } = require('zod');
 const { HttpError } = require('../../core/http-error');
+const { parseTaxDocument } = require('../../core/tax-document');
 
 const querySchema = z.object({
   status: z.string().trim().max(32).optional(),
@@ -25,6 +26,36 @@ function parseNfeListQuery(query = {}) {
   };
 }
 
+const required = (max) => z.string().trim().min(1).max(max);
+
+const customerSchema = z.object({
+  name: required(255),
+  email: z.string().trim().email().max(255),
+  document: required(32),
+  address: z.object({
+    street: required(255),
+    number: required(32),
+    complement: z.string().trim().max(120).optional().default(''),
+    neighborhood: required(120),
+    city: required(120),
+    state: z.string().trim().regex(/^[A-Za-z]{2}$/).transform((value) => value.toUpperCase()),
+    zipcode: z.string().trim().regex(/^\d{5}-?\d{3}$/).transform((value) => value.replace('-', ''))
+  })
+});
+
+function parseNfeCustomerInput(body = {}) {
+  const parsed = customerSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new HttpError(422, 'Invalid customer data.', { code: 'invalid_nfe_customer' });
+  }
+  const document = parseTaxDocument(parsed.data.document);
+  if (!document) {
+    throw new HttpError(422, 'Invalid CPF or CNPJ.', { code: 'invalid_tax_document' });
+  }
+  return { ...parsed.data, document: document.digits };
+}
+
 module.exports = {
+  parseNfeCustomerInput,
   parseNfeListQuery
 };

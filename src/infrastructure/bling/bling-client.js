@@ -238,8 +238,18 @@ class BlingClient {
     return this.request('POST', `/pedidos/vendas/${orderId}/gerar-nfe`);
   }
 
+  async listNfes(query) {
+    const body = await this.request('GET', '/nfe', { query });
+    return body && Array.isArray(body.data) ? body.data : [];
+  }
+
   async getNfe(nfeId) {
     const body = await this.request('GET', `/nfe/${nfeId}`);
+    return body && body.data;
+  }
+
+  async updateNfe(nfeId, payload) {
+    const body = await this.request('PUT', `/nfe/${nfeId}`, { body: payload });
     return body && body.data;
   }
 

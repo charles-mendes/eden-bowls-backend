@@ -22,7 +22,8 @@ const JOB_INTERVALS = {
   webhook_retention: DAY_MS,
   delivery_calendar_stripe_sync: 60 * 1000,
   life_stage_change_email: DAY_MS,
-  bling_nfe: 60 * 1000
+  bling_nfe: 60 * 1000,
+  bling_nfe_sync: 5 * 60 * 1000
 };
 
 const LOCKS = {
@@ -211,6 +212,13 @@ function createJobDefinitions(deps) {
       lockName: LOCKS.bling_nfe,
       intervalMs: JOB_INTERVALS.bling_nfe,
       run: () => (deps.blingNfeService ? deps.blingNfeService.runDue() : { skipped: true })
+    },
+    {
+      name: 'bling_nfe_sync',
+      // The lock of bling_nfe on purpose: Bling rotates the refresh token, so only one of the two may talk to it.
+      lockName: LOCKS.bling_nfe,
+      intervalMs: JOB_INTERVALS.bling_nfe_sync,
+      run: () => (deps.blingNfeService ? deps.blingNfeService.syncFromBling() : { skipped: true })
     }
   ];
 }
