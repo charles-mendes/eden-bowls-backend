@@ -110,6 +110,29 @@ function parseShortLabel(value) {
   return shortLabel;
 }
 
+// Absent keeps the stored value. The note carries the 8 digits of the NCM.
+function parseVariationNcm(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const ncm = String(value == null ? '' : value).replace(/[.\s-]/g, '');
+  if (ncm && !/^\d{8}$/.test(ncm)) {
+    throw new HttpError(422, 'NCM must have 8 digits.', { code: 'invalid_ncm' });
+  }
+  return ncm;
+}
+
+function parseVariationOrigin(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const origin = Number(value);
+  if (!Number.isInteger(origin) || origin < 0 || origin > 8) {
+    throw new HttpError(422, 'The origin must be a code from 0 to 8.', { code: 'invalid_origin' });
+  }
+  return origin;
+}
+
 function parseReadinessFlag(value) {
   if (value == null || value === '') {
     return undefined;
@@ -574,6 +597,8 @@ class AdminCatalogService {
       let lifeStage = parseVariationLifeStage(item.lifeStage);
       const flags = Object.fromEntries(READINESS_FLAGS.map(([key]) => [key, parseReadinessFlag(item[key])]));
       const shortLabel = parseShortLabel(item.shortLabel);
+      const ncm = parseVariationNcm(item.ncm);
+      const origin = parseVariationOrigin(item.origin);
       // Explicit link to a recipe: absent keeps it, blank unlinks, a new variation without one has none.
       const recipeKey = item.recipeKey === undefined ? undefined : parseRecipeKey(item.recipeKey);
       if (recipeKey) {
@@ -602,6 +627,8 @@ class AdminCatalogService {
           lifeStage: lifeStage || 'adult',
           shortLabel,
           recipeKey: recipeKey || null,
+          ncm,
+          origin,
           ...flags,
           regularPrice,
           zoneId,
@@ -623,6 +650,8 @@ class AdminCatalogService {
         lifeStage,
         shortLabel,
         recipeKey,
+        ncm,
+        origin,
         ...flags,
         regularPrice,
         zoneId,
@@ -738,6 +767,10 @@ class AdminCatalogService {
       }
       if (country === 'US' && !variant.labelDataReady && variant.recipeLabelStatus !== 'complete') {
         missing.push('label_data');
+      }
+      // Without it, the first NF-e of this variation stops with an error after the customer paid.
+      if (country === 'BR' && !variant.ncm) {
+        missing.push('ncm');
       }
       // The store page of the recipe has no other source, so there is no manual confirmation.
       if (!variant.recipePresentationReady) {

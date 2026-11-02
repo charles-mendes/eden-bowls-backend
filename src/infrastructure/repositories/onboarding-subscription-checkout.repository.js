@@ -1,5 +1,5 @@
 const { HttpError } = require('../../core/http-error');
-const { TAX_DOCUMENT_META_KEY } = require('../../core/tax-document');
+const { FISCAL_NAME_META_KEY, TAX_DOCUMENT_META_KEY } = require('../../core/tax-document');
 const { collectPriceItems } = require('../../core/checkout-state');
 const { discountAmountFromSubtotal } = require('../../core/first-purchase-discount');
 
@@ -79,14 +79,22 @@ class OnboardingSubscriptionCheckoutRepository {
   }
 
   async saveTaxDocument(userId, document) {
+    await this.replaceUserMeta(userId, TAX_DOCUMENT_META_KEY, document);
+  }
+
+  async saveFiscalName(userId, name) {
+    await this.replaceUserMeta(userId, FISCAL_NAME_META_KEY, name);
+  }
+
+  async replaceUserMeta(userId, key, value) {
     this.ensureDataSource();
     await this.dataSource.query(
       `DELETE FROM \`${this.usermetaTableName}\` WHERE \`user_id\` = ? AND \`meta_key\` = ?`,
-      [userId, TAX_DOCUMENT_META_KEY]
+      [userId, key]
     );
     await this.dataSource.query(
       `INSERT INTO \`${this.usermetaTableName}\` (\`user_id\`, \`meta_key\`, \`meta_value\`) VALUES (?, ?, ?)`,
-      [userId, TAX_DOCUMENT_META_KEY, document]
+      [userId, key, value]
     );
   }
 

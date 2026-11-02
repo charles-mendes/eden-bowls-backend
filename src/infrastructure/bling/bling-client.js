@@ -218,6 +218,15 @@ class BlingClient {
     return body && body.data;
   }
 
+  async getProduct(id) {
+    const body = await this.request('GET', `/produtos/${id}`);
+    return body && body.data;
+  }
+
+  async updateProduct(id, payload) {
+    await this.request('PATCH', `/produtos/${id}`, { body: payload });
+  }
+
   async findOrderByStoreNumber(storeNumber) {
     const body = await this.request('GET', '/pedidos/vendas', { query: { 'numerosLojas[]': [storeNumber] } });
     const orders = body && Array.isArray(body.data) ? body.data : [];

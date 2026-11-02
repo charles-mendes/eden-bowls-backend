@@ -417,3 +417,41 @@ describe('BlingClient', () => {
     expect(store.saveState.mock.calls[0][0].stateHash).not.toBe(state);
   });
 });
+
+describe('product taxes', () => {
+  const item = { code: 'EDEN-3001', description: 'Carne', unitMinor: 7000, ncm: '23091000', origin: 0 };
+
+  test('creates a missing product with the NCM and origin of the catalog', async () => {
+    const client = fakeClient({ findProductByCode: jest.fn(async () => null) });
+    const { service } = build({ client });
+    await service.ensureProduct(item);
+    expect(client.createProduct).toHaveBeenCalledWith(expect.objectContaining({
+      codigo: 'EDEN-3001',
+      tributacao: { origem: 0, ncm: '2309.10.00' }
+    }));
+  });
+
+  test('does not create a product the catalog has no NCM for', async () => {
+    const client = fakeClient({ findProductByCode: jest.fn(async () => null) });
+    const { service } = build({ client });
+    await expect(service.ensureProduct({ ...item, ncm: null })).rejects.toThrow('has no NCM');
+    expect(client.createProduct).not.toHaveBeenCalled();
+  });
+
+  test('corrects a product that differs from the catalog and leaves an equal one alone', async () => {
+    const differs = fakeClient({ getProduct: jest.fn(async () => ({ tributacao: { ncm: '2309.90.10', origem: 0 } })), updateProduct: jest.fn() });
+    await build({ client: differs }).service.ensureProduct(item);
+    expect(differs.updateProduct).toHaveBeenCalledWith(20, { tributacao: { origem: 0, ncm: '2309.10.00' } });
+
+    const equal = fakeClient({ getProduct: jest.fn(async () => ({ tributacao: { ncm: '2309.10.00', origem: 0 } })), updateProduct: jest.fn() });
+    await build({ client: equal }).service.ensureProduct(item);
+    expect(equal.updateProduct).not.toHaveBeenCalled();
+  });
+
+  test('uses the variation id as the Bling code', async () => {
+    const { service } = build();
+    service.variants = { findVariantsByPriceIds: jest.fn(async () => new Map([['price_food', { variationId: 3001, flavorKey: 'beef', grams: 300, ncm: '23091000', origin: 2 }]])) };
+    const [line] = await service.invoiceLines({ lines: { data: [{ amount: 100, pricing: { price_details: { product: 'prod_food', price: 'price_food' } } }] } });
+    expect(line).toMatchObject({ code: 'EDEN-3001', ncm: '23091000', origin: 2 });
+  });
+});

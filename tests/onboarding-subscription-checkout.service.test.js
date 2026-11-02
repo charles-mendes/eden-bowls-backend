@@ -117,6 +117,7 @@ const payload = {
   paymentMethodId: 'pm_123',
   billing: { first_name: 'Jane', last_name: 'Doe' },
   tax_document: '529.982.247-25',
+  fiscal_name: 'Jane Doe',
   legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' }
 };
 
@@ -938,7 +939,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(nearRun.stripeBilling.createOnboardingSubscription).toHaveBeenCalled();
   });
 
-  test('a BR checkout needs a valid CPF or CNPJ, saves it and takes no charge without it', async () => {
+  test('a BR checkout needs a valid CPF and full name, saves them and takes no charge without them', async () => {
     const context = {
       ...validContext,
       address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
@@ -965,7 +966,8 @@ describe('OnboardingSubscriptionCheckoutService', () => {
         getCheckoutContext: jest.fn().mockResolvedValue(context),
         resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
         getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' }),
-        saveTaxDocument: jest.fn().mockResolvedValue(undefined)
+        saveTaxDocument: jest.fn().mockResolvedValue(undefined),
+        saveFiscalName: jest.fn().mockResolvedValue(undefined)
       };
       const run = buildService({
         stripeBrEnabled: true,
@@ -976,7 +978,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       return { service: run.service, billing, repository };
     };
 
-    for (const taxDocument of [undefined, '12345678901']) {
+    for (const taxDocument of [undefined, '12345678901', '11.222.333/0001-81']) {
       const refused = buildRun();
       await expect(refused.service.checkout({ userId: 7, payload: { ...payload, tax_document: taxDocument } })).rejects.toMatchObject({
         statusCode: 422,
@@ -986,9 +988,19 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       expect(refused.billing.createOnboardingSubscription).not.toHaveBeenCalled();
     }
 
+    for (const fiscalName of [undefined, 'Jane']) {
+      const refused = buildRun();
+      await expect(refused.service.checkout({ userId: 7, payload: { ...payload, fiscal_name: fiscalName } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'fiscal_name_required' }
+      });
+      expect(refused.billing.createOnboardingSubscription).not.toHaveBeenCalled();
+    }
+
     const accepted = buildRun();
     await accepted.service.checkout({ userId: 7, payload });
     expect(accepted.repository.saveTaxDocument).toHaveBeenCalledWith(7, '52998224725');
+    expect(accepted.repository.saveFiscalName).toHaveBeenCalledWith(7, 'Jane Doe');
   });
 
   test('accepts a Brazil address at exactly 50 km', async () => {

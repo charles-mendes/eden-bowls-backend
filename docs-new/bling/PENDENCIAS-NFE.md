@@ -46,30 +46,24 @@ Fazer só depois da seção 2 e de uma nota autorizada em homologação.
 |---|---|---|
 | 1 | Criar o aplicativo de produção, separado dos de local e QA, com os quatro escopos do guia | Bling, Área do Integrador |
 | 2 | Criar a natureza de operação de venda com CFOP e tributos definitivos | Bling |
-| 3 | Cadastrar todos os produtos com NCM, origem e tributação definitivos | Bling |
+| 3 | Preencher NCM e origem definitivos em cada variação do Brasil | Painel, Produtos |
 | 4 | Conferir dados da empresa e certificado A1 | Bling |
 | 5 | Preencher as quatro variáveis `BLING_*` no `.env` de produção | Servidor |
 | 6 | Autorizar pelo botão do painel, logado na conta real | Painel |
 | 7 | Emitir uma nota real de valor baixo e conferir com o contador | Bling e painel |
 
-Códigos de produto usados pela API:
-
-- Com peso: `EDEN-BEEF-300`, `EDEN-BEEF-500`, `EDEN-FISH-300`, `EDEN-FISH-500`, `EDEN-PORK-300`, `EDEN-PORK-500`, `EDEN-TURKEY-300`, `EDEN-TURKEY-500`.
-- Sem peso: `EDEN-BEEF-0`, `EDEN-TURKEY-0`, `EDEN-BOVINO-E-FRANGO-0`, `EDEN-PUPPY-BEEF-CHICKEN-0`, `EDEN-PUPPY-CHICKEN-PORK-0`, `EDEN-SENIOR-BEEF-0`, `EDEN-SENIOR-CHICKEN-0`. Estes juntam tamanhos diferentes no mesmo produto.
+A API cria os produtos no Bling na primeira nota de cada variação, com o código `EDEN-<id da variação>`.
 
 ## 4. Pendências de código
 
 | # | Pendência | Risco |
 |---|---|---|
 | 1 | Enviar a forma de pagamento certa no pedido | Sem isso, nota de venda pela Stripe sai como Dinheiro |
-| 2 | Decidir o que fazer com produto que não existe no Bling | Hoje a API cria o produto sem NCM, e a nota tende a ser recusada |
-| 3 | Exigir número e bairro no checkout e validar a UF | Endereço incompleto pode travar a nota |
-| 4 | Atualizar o endereço de contato já existente no Bling | Cliente que mudou de endereço sai com o endereço antigo |
-| 5 | Criar reautorização pelo painel | Com a conexão ativa, o botão fica oculto. Hoje é preciso limpar a conexão no banco |
-| 6 | Cobrir o CPF nos fluxos de LGPD | Pedidos de exportação e exclusão ainda não tratam esse dado |
-| 7 | Tratar CNPJ alfanumérico | O formato novo é recusado hoje |
-| 8 | Testar a correção de dados em nota rejeitada | Só foi testada em nota Pendente, porque ainda não há nota rejeitada real |
-| 9 | Renumerar a migration `1700000000057` antes do merge | O número colide com outra branch. Usar `061` se as demais entrarem antes |
+| 2 | Atualizar o endereço de contato já existente no Bling | Cliente que mudou de endereço sai com o endereço antigo, salvo correção pelo painel |
+| 3 | Criar reautorização pelo painel | Com a conexão ativa, o botão fica oculto. Hoje é preciso limpar a conexão no banco |
+| 4 | Cobrir o CPF e o nome fiscal nos fluxos de LGPD | Pedidos de exportação e exclusão ainda não tratam esses dados |
+| 5 | Testar a correção de dados em nota rejeitada | Só foi testada em nota Pendente, porque ainda não há nota rejeitada real |
+| 6 | Renumerar a migration `1700000000057` antes do merge | O número colide com outra branch. Usar `061` se as demais entrarem antes |
 
 ## 5. Dados de teste na conta Bling de teste
 
@@ -81,4 +75,4 @@ Estes registros podem ser excluídos pelo painel do Bling. A integração nunca 
 | Pedido | `27283535748` | Fatura fictícia `in_test_dryrun_002` |
 | Nota | `27283535836` | Nº 000001, Pendente |
 | Contato | `18487886964` | Cliente Teste Homologacao, CPF fictício. O complemento foi alterado nos testes de correção |
-| Produtos | 15 | Códigos da seção 3, com NCM provisório |
+| Produtos | 15 | Códigos antigos `EDEN-<sabor>-<gramas>`, com NCM provisório. A API não os usa mais |

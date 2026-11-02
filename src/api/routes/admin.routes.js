@@ -888,6 +888,15 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.patch('/api/v1/admin/users/:userId/fiscal', requirePermission('users.delivery.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.updateFiscal(request.params.userId, request.body || {}, request.adminIdentity);
+    });
+  });
+
   app.patch('/api/v1/admin/users/:userId/delivery-instructions', requirePermission('users.delivery.write', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminUsersService) {

@@ -353,6 +353,21 @@ class ProfileService {
       errors.zipCode = 'This field is required.';
     }
 
+    // Only the admin panel sends these: the customer profile screen does not edit them, and the merge keeps them.
+    const number = payload.number === undefined ? undefined : String(payload.number).trim();
+    const neighborhood = payload.neighborhood === undefined ? undefined : String(payload.neighborhood).trim();
+    if (country === 'BR' && number !== undefined) {
+      if (!number) {
+        errors.number = 'This field is required.';
+      }
+      if (!neighborhood) {
+        errors.neighborhood = 'This field is required.';
+      }
+      if (stateForStorage && !/^[A-Z]{2}$/.test(stateForStorage)) {
+        errors.state = 'Use the two-letter state code.';
+      }
+    }
+
     if (Object.keys(errors).length > 0) {
       throw new HttpError(422, 'Required fields are missing.', {
         code: 'validation_error',
@@ -377,7 +392,9 @@ class ProfileService {
       state: stateForStorage,
       zipcode: zipCode,
       postal_code: zipCode,
-      delivery_instructions: String(payload.deliveryInstructions || '').trim()
+      delivery_instructions: String(payload.deliveryInstructions || '').trim(),
+      ...(number === undefined ? {} : { number }),
+      ...(neighborhood === undefined ? {} : { neighborhood })
     };
 
     if (!addressRecord.exists) {

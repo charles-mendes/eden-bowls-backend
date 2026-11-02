@@ -1,6 +1,6 @@
 const { z } = require('zod');
 const { HttpError } = require('../../core/http-error');
-const { parseTaxDocument } = require('../../core/tax-document');
+const { parseCpf, parseFiscalName } = require('../../core/tax-document');
 
 const querySchema = z.object({
   status: z.string().trim().max(32).optional(),
@@ -29,7 +29,11 @@ function parseNfeListQuery(query = {}) {
 const required = (max) => z.string().trim().min(1).max(max);
 
 const customerSchema = z.object({
-  name: required(255),
+  name: required(255).transform((value, context) => {
+    const name = parseFiscalName(value);
+    if (!name) context.addIssue({ code: 'custom', message: 'Invalid name.' });
+    return name;
+  }),
   email: z.string().trim().email().max(255),
   document: required(32),
   address: z.object({
@@ -48,11 +52,11 @@ function parseNfeCustomerInput(body = {}) {
   if (!parsed.success) {
     throw new HttpError(422, 'Invalid customer data.', { code: 'invalid_nfe_customer' });
   }
-  const document = parseTaxDocument(parsed.data.document);
+  const document = parseCpf(parsed.data.document);
   if (!document) {
-    throw new HttpError(422, 'Invalid CPF or CNPJ.', { code: 'invalid_tax_document' });
+    throw new HttpError(422, 'Invalid CPF.', { code: 'invalid_tax_document' });
   }
-  return { ...parsed.data, document: document.digits };
+  return { ...parsed.data, document };
 }
 
 module.exports = {

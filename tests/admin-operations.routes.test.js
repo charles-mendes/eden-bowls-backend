@@ -91,6 +91,7 @@ describe('admin onboarding billing catalog users', () => {
     };
     const adminUsersService = new AdminUsersService({
       usersRepository: {
+        findFiscalData: jest.fn().mockResolvedValue({ fullName: null, cpf: null }),
         findUserById: jest.fn()
           .mockResolvedValueOnce({ ...brUser, id: '91', email: 'us@edenbowls.com', profileMarket: 'US' })
           .mockResolvedValueOnce(brUser)

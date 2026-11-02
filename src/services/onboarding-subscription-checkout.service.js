@@ -1,5 +1,5 @@
 const { HttpError } = require('../core/http-error');
-const { parseTaxDocument } = require('../core/tax-document');
+const { parseCpf, parseFiscalName } = require('../core/tax-document');
 const {
   canResolvePlanSelection,
   isPricedPlanSelection,
@@ -231,10 +231,14 @@ class OnboardingSubscriptionCheckoutService {
       ? { ...planSelection, catalog_pricing: catalogPricing }
       : planSelection;
 
-    // The NF-e needs it on every charge: a BR checkout does not go on without a valid CPF or CNPJ.
-    const taxDocument = stripeAccount === 'br' ? parseTaxDocument(payload.tax_document) : null;
+    // The NF-e needs both on every charge: a BR checkout does not go on without a valid CPF and the civil name.
+    const taxDocument = stripeAccount === 'br' ? parseCpf(payload.tax_document) : null;
     if (stripeAccount === 'br' && !taxDocument) {
-      throw new HttpError(422, 'A valid CPF or CNPJ is required.', { code: 'tax_document_required' });
+      throw new HttpError(422, 'A valid CPF is required.', { code: 'tax_document_required' });
+    }
+    const fiscalName = stripeAccount === 'br' ? parseFiscalName(payload.fiscal_name) : null;
+    if (stripeAccount === 'br' && !fiscalName) {
+      throw new HttpError(422, 'The full name is required.', { code: 'fiscal_name_required' });
     }
 
     const billing = payload.billing || {};
@@ -292,7 +296,10 @@ class OnboardingSubscriptionCheckoutService {
     try {
       await this.recordLegalConsent({ userId, market: deliveryMarket, payload, requestContext });
       if (taxDocument && this.repository.saveTaxDocument) {
-        await this.repository.saveTaxDocument(userId, taxDocument.digits);
+        await this.repository.saveTaxDocument(userId, taxDocument);
+      }
+      if (fiscalName && this.repository.saveFiscalName) {
+        await this.repository.saveFiscalName(userId, fiscalName);
       }
       const freshContext = this.repository.getCheckoutContext
         ? await this.repository.getCheckoutContext(userId)

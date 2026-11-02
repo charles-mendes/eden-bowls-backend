@@ -532,6 +532,10 @@
     "path": "/api/v1/admin/users/:userId/delivery-instructions"
   },
   {
+    "method": "PATCH",
+    "path": "/api/v1/admin/users/:userId/fiscal"
+  },
+  {
     "method": "POST",
     "path": "/api/v1/admin/users/:userId/invite"
   },

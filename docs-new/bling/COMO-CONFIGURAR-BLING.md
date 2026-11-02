@@ -81,7 +81,9 @@ Homologação emite nota de teste. Ela não vale, não substitui a fatura EB- da
 
 A natureza de operação, o certificado e os dados do emitente precisam existir nessa conta, senão o Bling recusa a nota mesmo com o OAuth certo.
 
-Os produtos precisam estar cadastrados com NCM antes da primeira nota. A API só reutiliza o produto pelo código, ou o cria sem NCM quando ele não existe, e o Bling pode recusar a nota por isso. Os códigos seguem o formato `EDEN-<sabor>-<gramas>`, por exemplo `EDEN-BEEF-300`.
+NCM e origem ficam no painel, em cada variação do Brasil: Produtos, editar variação, Dados fiscais. Uma variação do Brasil não ativa sem NCM. A API cria o produto no Bling com esses dados e, se o produto já existir com NCM ou origem diferente, corrige antes de usar. Uma variação ativa sem NCM para a nota com erro, e a nota volta pela Nova tentativa depois do preenchimento.
+
+O código do produto no Bling é `EDEN-<id da variação>`, por exemplo `EDEN-3001`. Ele usa o id porque o SKU do catálogo se repete entre variações e algumas não têm SKU.
 
 Na conta de teste, o NCM provisório é `2309.10.00` (alimentos para cães e gatos em embalagem de varejo), com origem 0. Na conta de produção, NCM, origem, CFOP e tributação vêm do contador do cliente. Não copie os valores de teste.
 
@@ -133,17 +135,19 @@ Leitura do log:
 - `scanned`, `updated`, `imported`, `failed`: resultado do `bling_nfe_sync`.
 - `scanned`, `done`, `failed`: o job rodou de verdade. `failed` maior que zero é tentativa recusada. O detalhe da nota no painel guarda o erro. 403 de escopo não volta a tentar sozinho: o escopo tem de ser corrigido no app e a nota reenviada pelo painel.
 
-Uma fatura sem CPF ou CNPJ válido fica bloqueada antes de qualquer chamada ao Bling.
+Uma fatura sem CPF válido fica bloqueada antes de qualquer chamada ao Bling.
 
 ## 6. O que o operador faz pelo painel
 
 No detalhe da nota:
 
 - **Nova tentativa:** volta a nota com erro, rejeitada ou sem documento para a fila.
-- **Corrigir dados:** altera nome, e-mail, documento e endereço de uma nota ainda não autorizada. Exige a permissão `nfe.edit`, de operador e administrador. Fica registrado na auditoria. Nada vai ao Bling nessa hora: a correção é aplicada pelo job na próxima tentativa, antes de enviar a nota.
+- **Corrigir dados:** altera nome, e-mail, CPF e endereço de uma nota ainda não autorizada. Exige a permissão `nfe.edit`, de operador e administrador. Fica registrado na auditoria. Nada vai ao Bling nessa hora: a correção é aplicada pelo job na próxima tentativa, antes de enviar a nota.
 - **Abrir no Bling:** abre a nota no site do Bling.
 
 A correção também altera o contato no Bling. Um campo apagado no painel não apaga o valor lá, porque o Bling ignora valor vazio. Para limpar um campo, use o Bling.
+
+No cadastro do cliente do Brasil, a seção Dados fiscais guarda o nome completo e o CPF usados nas próximas notas. O CPF só aparece para quem pode editar endereço. O endereço do cliente também tem número, bairro e UF. A loja vende só para pessoa física, então o documento é sempre CPF. O nome da nota é o nome completo pedido no checkout. Sem ele, a nota usa o nome de exibição.
 
 Só no Bling, porque a API dele não oferece: cancelar nota autorizada, carta de correção, inutilizar numeração e alterar dados de nota autorizada. O painel avisa isso no detalhe da nota.
 

@@ -1,3 +1,7 @@
+// Variation meta of the catalog: the digits of the NCM and the origin code of the goods.
+const NCM_META_KEY = '_eden_ncm';
+const ORIGIN_META_KEY = '_eden_origin';
+
 const NFE_STATUS = {
   PENDING: 'pending',
   BLOCKED_MISSING_DOCUMENT: 'blocked_missing_document',
@@ -75,6 +79,11 @@ function isInvoiceLinesPricedExactly(amountMinor, quantity) {
  * invoice.total, so the note never disagrees with the charge. Discounts and credit lines become the discount;
  * anything Stripe added on top of the lines becomes other expenses.
  */
+// `2309.10.00`, the way Bling shows it.
+function formatNcm(digits) {
+  return String(digits).replace(/^(\d{4})(\d{2})(\d{2})$/, '$1.$2.$3');
+}
+
 function buildNfeOrderLines({ lines, totalMinor, isShipping }) {
   const items = [];
   let freightMinor = 0;
@@ -90,6 +99,8 @@ function buildNfeOrderLines({ lines, totalMinor, isShipping }) {
     items.push({
       code: line.code,
       description: line.description,
+      ncm: line.ncm,
+      origin: line.origin,
       quantity: exact ? quantity : 1,
       unitMinor: exact ? amountMinor / quantity : amountMinor
     });
@@ -109,7 +120,10 @@ module.exports = {
   NFE_RETRYABLE_STATUSES,
   NFE_STATUS,
   NFE_STATUSES,
+  NCM_META_KEY,
+  ORIGIN_META_KEY,
   buildNfeOrderLines,
+  formatNcm,
   nfeStatusFromSituacao,
   protocolFromXml,
   situacaoLabel

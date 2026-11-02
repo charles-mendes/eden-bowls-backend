@@ -136,6 +136,25 @@ describe('AdminCatalogService', () => {
 
     const bovino = { id: '3000', name: 'Bovino', sku: '3000', regularPrice: 25, active: false, recipeKey: 'beef' };
 
+    test('stores the digits of the NCM and the origin code, and absent fields keep what is stored', async () => {
+      const { service, repository } = serviceWith([bovino]);
+
+      await service.patchProduct('100', { variants: [{ id: '3000', ncm: '2309.10.00', origin: 1 }] });
+      await service.patchProduct('100', { variants: [{ id: '3000', name: 'Bovino' }] });
+
+      expect(repository.updateVariation.mock.calls[0][0]).toMatchObject({ ncm: '23091000', origin: 1 });
+      expect(repository.updateVariation.mock.calls[1][0]).toMatchObject({ ncm: undefined, origin: undefined });
+    });
+
+    test.each([
+      [{ ncm: '2309' }, 'invalid_ncm'],
+      [{ origin: 9 }, 'invalid_origin']
+    ])('refuses %j', async (fields, code) => {
+      const { service } = serviceWith([bovino]);
+
+      await expect(service.patchProduct('100', { variants: [{ id: '3000', ...fields }] })).rejects.toMatchObject({ statusCode: 422, details: { code } });
+    });
+
     test('an empty key unlinks the variation and the change is audited', async () => {
       const { service, repository, auditService } = serviceWith([bovino]);
 

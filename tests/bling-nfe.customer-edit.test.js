@@ -159,6 +159,8 @@ describe('customer input', () => {
 
   test.each([
     ['an invalid document', { document: '11111111111' }, 'invalid_tax_document'],
+    ['a CNPJ', { document: '11222333000181' }, 'invalid_tax_document'],
+    ['a single name', { name: 'Ana' }, 'invalid_nfe_customer'],
     ['a missing name', { name: ' ' }, 'invalid_nfe_customer'],
     ['a bad email', { email: 'x' }, 'invalid_nfe_customer'],
     ['a bad zip code', { address: { ...input.address, zipcode: '123' } }, 'invalid_nfe_customer'],

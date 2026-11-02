@@ -1,6 +1,6 @@
 const { toMysqlDateTime } = require('../../core/stripe-subscription-map');
 const { NFE_RETRYABLE_STATUSES, NFE_STATUS } = require('../../core/nfe');
-const { TAX_DOCUMENT_META_KEY } = require('../../core/tax-document');
+const { FISCAL_NAME_META_KEY, TAX_DOCUMENT_META_KEY } = require('../../core/tax-document');
 
 const TABLE = 'bling_nfe';
 const COLUMNS = {
@@ -227,16 +227,18 @@ class BlingNfeRepository {
     const rows = await this.dataSource.query(
       `SELECT u.\`user_email\`, u.\`display_name\`, s.\`address\`,
          (SELECT m.\`meta_value\` FROM \`${this.usermetaTable}\` m
-           WHERE m.\`user_id\` = u.\`ID\` AND m.\`meta_key\` = ? ORDER BY m.\`umeta_id\` DESC LIMIT 1) AS tax_document
+           WHERE m.\`user_id\` = u.\`ID\` AND m.\`meta_key\` = ? ORDER BY m.\`umeta_id\` DESC LIMIT 1) AS tax_document,
+         (SELECT m.\`meta_value\` FROM \`${this.usermetaTable}\` m
+           WHERE m.\`user_id\` = u.\`ID\` AND m.\`meta_key\` = ? ORDER BY m.\`umeta_id\` DESC LIMIT 1) AS fiscal_name
        FROM \`${this.usersTable}\` u
        LEFT JOIN \`${this.stateTable}\` s ON s.\`user_id\` = u.\`ID\`
        WHERE u.\`ID\` = ? LIMIT 1`,
-      [TAX_DOCUMENT_META_KEY, userId]
+      [TAX_DOCUMENT_META_KEY, FISCAL_NAME_META_KEY, userId]
     );
     const row = rows && rows[0];
     if (!row) return null;
     return {
-      name: row.display_name || '',
+      name: row.fiscal_name || row.display_name || '',
       email: row.user_email || '',
       taxDocument: row.tax_document || '',
       address: parseJson(row.address)

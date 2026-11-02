@@ -16,6 +16,7 @@ const FINAL_IMAGE_READY_META = '_final_image_ready';
 const LABEL_DATA_READY_META = '_label_data_ready';
 const { RECIPE_KEY_META } = require('../../core/recipe-content');
 const { parseWeightToGrams } = require('../../core/plan-catalog-pricing');
+const { NCM_META_KEY, ORIGIN_META_KEY } = require('../../core/nfe');
 const SHORT_LABEL_META = '_short_label';
 
 function flagMeta(value) {
@@ -283,6 +284,8 @@ class AdminCatalogRepository {
         lifeStage: LIFE_STAGES.includes(storedLifeStage) ? storedLifeStage : 'adult',
         finalImageReady: variation.meta[FINAL_IMAGE_READY_META] === 'yes',
         labelDataReady: variation.meta[LABEL_DATA_READY_META] === 'yes',
+        ncm: String(variation.meta[NCM_META_KEY] || '').trim() || null,
+        origin: Number(variation.meta[ORIGIN_META_KEY]) || 0,
         shortLabel: String(variation.meta[SHORT_LABEL_META] || '').trim() || null,
         recipeKey: String(variation.meta[RECIPE_KEY_META] || '').trim() || null,
         weight: weight || null,
@@ -545,7 +548,7 @@ class AdminCatalogRepository {
   }
 
   // Every new variation starts inactive; the activation route publishes it after its checks.
-  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, regularPrice, zoneId, menuOrder }) {
+  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, ncm, origin, regularPrice, zoneId, menuOrder }) {
     this.ensureDataSource();
     const id = await this.nextPostId();
     const title = String(name || '').trim();
@@ -587,6 +590,7 @@ class AdminCatalogRepository {
     if (labelDataReady != null) {
       await this.upsertPostMeta(id, LABEL_DATA_READY_META, flagMeta(labelDataReady));
     }
+    await this.saveTaxMeta(id, { ncm, origin });
     if (regularPrice != null) {
       await this.writeVariationPrice(id, regularPrice, zoneId);
     }
@@ -594,7 +598,17 @@ class AdminCatalogRepository {
     return String(id);
   }
 
-  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, regularPrice, zoneId, priceChanged }) {
+  // Undefined keeps the stored value. A blank NCM clears it.
+  async saveTaxMeta(id, { ncm, origin }) {
+    if (ncm !== undefined) {
+      await this.upsertPostMeta(id, NCM_META_KEY, ncm || '');
+    }
+    if (origin !== undefined) {
+      await this.upsertPostMeta(id, ORIGIN_META_KEY, String(origin));
+    }
+  }
+
+  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, ncm, origin, regularPrice, zoneId, priceChanged }) {
     this.ensureDataSource();
     const title = name == null ? undefined : String(name).trim();
     const code = sku == null ? undefined : String(sku).trim();
@@ -633,6 +647,7 @@ class AdminCatalogRepository {
     if (labelDataReady != null) {
       await this.upsertPostMeta(id, LABEL_DATA_READY_META, flagMeta(labelDataReady));
     }
+    await this.saveTaxMeta(id, { ncm, origin });
     if (regularPrice != null && priceChanged !== false) {
       await this.writeVariationPrice(id, regularPrice, zoneId);
     }

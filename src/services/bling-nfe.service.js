@@ -9,11 +9,12 @@ const {
   NFE_STATUS,
   NFE_STATUSES,
   buildNfeOrderLines,
+  formatNcm,
   nfeStatusFromSituacao,
   protocolFromXml,
   situacaoLabel
 } = require('../core/nfe');
-const { parseTaxDocument } = require('../core/tax-document');
+const { digitsOf, parseTaxDocument } = require('../core/tax-document');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { BlingNotConnectedError } = require('../infrastructure/bling/bling-client');
 
@@ -427,7 +428,13 @@ class BlingNfeService {
 
   async ensureProduct(item) {
     const found = await this.client.findProductByCode(item.code);
-    if (found && found.id) return found.id;
+    if (found && found.id) {
+      await this.alignProductTaxes(found.id, item);
+      return found.id;
+    }
+    if (!item.ncm) {
+      throw new Error(`Product ${item.code} has no NCM in the catalog.`);
+    }
     const created = await this.client.createProduct({
       nome: item.description.slice(0, 120),
       codigo: item.code,
@@ -435,9 +442,19 @@ class BlingNfeService {
       tipo: 'P',
       situacao: 'A',
       formato: 'S',
-      unidade: 'UN'
+      unidade: 'UN',
+      tributacao: { origem: item.origin, ncm: formatNcm(item.ncm) }
     });
     return created.id;
+  }
+
+  // The catalog owns NCM and origin. A product without a catalog NCM keeps what Bling has.
+  async alignProductTaxes(productId, item) {
+    if (!item.ncm) return;
+    const product = await this.client.getProduct(productId);
+    const taxes = (product && product.tributacao) || {};
+    if (digitsOf(taxes.ncm) === item.ncm && Number(taxes.origem) === item.origin) return;
+    await this.client.updateProduct(productId, { tributacao: { origem: item.origin, ncm: formatNcm(item.ncm) } });
   }
 
   async invoiceLines(invoice) {
@@ -449,7 +466,10 @@ class BlingNfeService {
       return {
         ...line,
         amountMinor: line.amount,
-        code: variant ? `EDEN-${variant.flavorKey}-${variant.grams}`.toUpperCase().slice(0, 60) : String(lineProductId(line) || linePriceId(line) || 'EDEN-ITEM'),
+        // The variation id: the catalog SKU repeats between variations and some variations have none.
+        code: variant ? `EDEN-${variant.variationId}` : String(lineProductId(line) || linePriceId(line) || 'EDEN-ITEM'),
+        ncm: (variant && variant.ncm) || null,
+        origin: (variant && variant.origin) || 0,
         description: String(label || line.description || 'Eden Bowls')
       };
     });

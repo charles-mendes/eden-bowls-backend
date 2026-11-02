@@ -24,6 +24,7 @@ function variant(overrides = {}) {
     name: 'Senior Beef 300g',
     active: false,
     recipeKey: 'senior-beef',
+    ncm: '23091000',
     regularPrice: 40,
     stripePriceId: null,
     stripePriceIdsByCurrency: { brl: 'price_senior_beef_300' },
@@ -63,6 +64,14 @@ function published(country, variants) {
 }
 
 describe('AdminCatalogService.setVariationActive', () => {
+  test('a BR variation needs an NCM and a US variation does not', async () => {
+    const br = serviceFor({ product: published('BR', [variant({ ncm: null })]) });
+    await expect(br.service.setVariationActive('100', '3001', true, actor)).rejects.toMatchObject({
+      details: { code: 'recipe_publish_refused', missing: ['ncm'] }
+    });
+    expect(br.repository.updatePostStatus).not.toHaveBeenCalled();
+  });
+
   test('activates a BR variation with a stored image and no manual image confirmation', async () => {
     const { service, repository } = serviceFor({
       product: published('BR', [variant({ recipeKey: 'senior-beef', finalImageReady: false })]),

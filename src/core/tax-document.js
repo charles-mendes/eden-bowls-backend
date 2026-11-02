@@ -1,4 +1,7 @@
 const TAX_DOCUMENT_META_KEY = '_eden_tax_document';
+// Civil name for the NF-e. `display_name` can be a nickname and the note goes to the tax authority.
+const FISCAL_NAME_META_KEY = '_eden_fiscal_name';
+const FISCAL_NAME_MAX_LENGTH = 60;
 const CPF_LENGTH = 11;
 const CNPJ_LENGTH = 14;
 
@@ -32,8 +35,23 @@ function parseTaxDocument(value) {
   return null;
 }
 
+// New documents are CPF only: the store sells to individuals. A stored CNPJ stays valid for an old note.
+function parseCpf(value) {
+  const document = parseTaxDocument(value);
+  return document && document.kind === 'cpf' ? document.digits : null;
+}
+
+// The name with single spaces, or null without at least two words or past the size of the note field.
+function parseFiscalName(value) {
+  const name = String(value == null ? '' : value).trim().replace(/\s+/g, ' ');
+  return name.includes(' ') && name.length <= FISCAL_NAME_MAX_LENGTH ? name : null;
+}
+
 module.exports = {
+  FISCAL_NAME_META_KEY,
   TAX_DOCUMENT_META_KEY,
   digitsOf,
+  parseCpf,
+  parseFiscalName,
   parseTaxDocument
 };

@@ -311,7 +311,25 @@ describe('ProfileService', () => {
       payload: { address: 'Rua A', city: 'Sao Paulo', state: 'sp', zipCode: '01310-100' }
     });
     expect(saved.state).toBe('SP');
-    expect(br.repository.mergeAddress.mock.calls[0][1].state).toBe('SP');
+    const brPatch = br.repository.mergeAddress.mock.calls[0][1];
+    expect(brPatch.state).toBe('SP');
+    // The profile screen does not send them, so the merge keeps the stored values.
+    expect(brPatch).not.toHaveProperty('number');
+    expect(brPatch).not.toHaveProperty('neighborhood');
+
+    await br.service.updateDelivery({
+      userId: 77,
+      payload: { address: 'Rua A', number: '10', neighborhood: 'Centro', city: 'Sao Paulo', state: 'SP', zipCode: '01310-100' }
+    });
+    expect(br.repository.mergeAddress.mock.calls[1][1]).toMatchObject({ number: '10', neighborhood: 'Centro' });
+
+    await expect(br.service.updateDelivery({
+      userId: 77,
+      payload: { address: 'Rua A', number: ' ', neighborhood: '', city: 'Sao Paulo', state: 'Sao Paulo', zipCode: '01310-100' }
+    })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { errors: { number: expect.any(String), neighborhood: expect.any(String), state: expect.any(String) } }
+    });
 
     const us = createService();
     await expect(us.service.updateDelivery({
