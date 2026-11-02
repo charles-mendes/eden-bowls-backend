@@ -319,4 +319,26 @@ describe('UPS simulation client', () => {
       candidates: [{ street: '26601 ALISO CREEK RD', street2: '', city: 'ALISO VIEJO', state: 'CA', zipcode: '92656-4301' }]
     });
   });
+
+  test('Rating says PackagingType and Shipping says Packaging', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/rating/v2403/Shop': () => jsonResponse(200, {
+        RateResponse: { RatedShipment: [{ Service: { Code: '03' }, TotalCharges: { MonetaryValue: '1' } }] }
+      }),
+      '/api/shipments/v2409/ship': () => jsonResponse(200, {
+        ShipmentResponse: { ShipmentResults: { ShipmentIdentificationNumber: '1ZSHIP', PackageResults: { TrackingNumber: '1ZSHIP' } } }
+      })
+    });
+    const ups = clientFromEnv(envFor('local'), fetchImpl);
+    const parties = { shipFrom: { zipcode: '33101' }, shipTo: { zipcode: '10001' }, package: {} };
+
+    await ups.rate(parties);
+    await ups.createShipment(parties);
+
+    const bodyOf = (path) => JSON.parse(calls.find((call) => call.url.includes(path)).init.body);
+    const shipped = bodyOf('/shipments/').ShipmentRequest.Shipment.Package;
+    expect(shipped.Packaging).toMatchObject({ Code: '02' });
+    expect(shipped.PackagingType).toBeUndefined();
+    expect(bodyOf('/rating/').RateRequest.Shipment.Package.PackagingType).toMatchObject({ Code: '02' });
+  });
 });

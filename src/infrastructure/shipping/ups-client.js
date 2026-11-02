@@ -362,6 +362,8 @@ class UpsClient {
   async createShipment({ shipFrom, shipTo, package: pkg, serviceCode }) {
     this.ensureCanShip();
     const code = String(serviceCode || '03').trim() || '03';
+    // Rating calls this field PackagingType; Shipping refuses that name and wants Packaging.
+    const { PackagingType: packaging, ...packageBody } = this.buildPackage(pkg);
     const body = {
       ShipmentRequest: {
         Request: {
@@ -382,7 +384,8 @@ class UpsClient {
           },
           Service: { Code: code, Description: serviceLabel(code) },
           Package: {
-            ...this.buildPackage(pkg),
+            ...packageBody,
+            Packaging: packaging,
             Description: 'Eden Bowls'
           }
         },
