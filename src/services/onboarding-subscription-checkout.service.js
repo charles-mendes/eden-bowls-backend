@@ -305,7 +305,9 @@ class OnboardingSubscriptionCheckoutService {
         ? await this.repository.getCheckoutContext(userId)
         : context;
       const storedReference = freshContext.checkoutReference || {};
-      const fingerprintMatches = fingerprintsMatch(storedReference.checkout_context_fingerprint, fingerprint);
+      const storedSubscriptionEnded = await this.isStoredSubscriptionEnded(storedReference);
+      const fingerprintMatches = !storedSubscriptionEnded
+        && fingerprintsMatch(storedReference.checkout_context_fingerprint, fingerprint);
       const attemptId = resolveAttemptId({
         payloadAttemptId: payload.attempt_id,
         storedAttemptId: storedReference.attempt_id,
@@ -316,7 +318,8 @@ class OnboardingSubscriptionCheckoutService {
 
       const reuse = evaluateCheckoutReuse(storedReference, fingerprint, {
         currentPetIds,
-        subscribedPetIds
+        subscribedPetIds,
+        storedSubscriptionEnded
       });
       if (reuse.reuse) {
         const reusedCheckout = await this.buildReusedCheckout({
@@ -610,6 +613,17 @@ class OnboardingSubscriptionCheckoutService {
       reused: true,
       stripeAccount: stripeAccount || storedReference.stripe_account
     });
+  }
+
+  // A subscription missing from the ledger is not treated as ended: a retry right after payment must still reuse it.
+  async isStoredSubscriptionEnded(storedReference = {}) {
+    const subscriptionId = String(storedReference.stripe_subscription_id || '').trim();
+    if (!subscriptionId || !this.ledgerRepository
+      || typeof this.ledgerRepository.findByStripeSubscriptionId !== 'function') {
+      return false;
+    }
+    const row = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
+    return Boolean(row) && row.status === 'canceled';
   }
 
   async collectSubscribedPetIds(userId, storedReference = {}) {

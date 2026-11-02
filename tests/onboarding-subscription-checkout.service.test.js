@@ -459,6 +459,46 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(firstResult.data.stripe_subscription_id).toBe('sub_123');
   });
 
+  test.each([
+    ['the same cart', true],
+    ['a different cart', false]
+  ])('creates a new subscription after the last plan ended, with %s', async (_label, sameCart) => {
+    const lockStore = createCheckoutLockStore();
+    const first = buildService({ lockStore });
+    await first.service.checkout({ userId: 7, payload });
+    const previous = first.repository.checkout.mock.calls[0][1].checkout;
+    const stored = {
+      ...previous,
+      stripe_subscription_id: 'sub_old',
+      status: 'active',
+      stripe_subscription_status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      attempt_id: 'attempt-old',
+      ...(sameCart ? {} : { checkout_context_fingerprint: 'other-cart' })
+    };
+    const { service, stripeBilling } = buildService({
+      lockStore,
+      repository: {
+        ...first.repository,
+        getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, checkoutReference: stored }),
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout)
+      }
+    });
+    const findByStripeSubscriptionId = jest.fn().mockResolvedValue({ status: 'canceled' });
+    service.ledgerRepository = {
+      findByStripeSubscriptionId,
+      listByUserId: jest.fn().mockResolvedValue([{ status: 'canceled', petsSnapshot: { pet_ids: ['pet-1'] } }]),
+      upsert: jest.fn().mockResolvedValue({})
+    };
+
+    const result = await service.checkout({ userId: 7, payload });
+
+    expect(findByStripeSubscriptionId).toHaveBeenCalledWith('sub_old');
+    expect(stripeBilling.createOnboardingSubscription).toHaveBeenCalledTimes(1);
+    expect(stripeBilling.createOnboardingSubscription.mock.calls[0][0].attemptId).not.toBe('attempt-old');
+    expect(result.data.reused).toBe(false);
+  });
+
   test('creates a new subscription when shipping changes the fingerprint', async () => {
     const stored = {
       stripe_subscription_id: 'sub_old',
