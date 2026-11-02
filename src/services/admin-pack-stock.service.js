@@ -101,7 +101,7 @@ class AdminPackStockService {
         this.loadCycles({ markets: [market], windowDays }),
         this.loadCatalog(market)
       ]);
-      return { overview: buildOverview({ stockItems, cycles }), catalog: catalogEntries, rowCount: cycles.length };
+      return { overview: buildOverview({ stockItems, cycles, catalog: catalogEntries }), catalog: catalogEntries, rowCount: cycles.length };
     });
     this.warnUnsized(overview.unsizedLines);
     return { market, windowDays, ...overview, catalog };
@@ -196,6 +196,19 @@ class AdminPackStockService {
       reason: body.reason,
       note: body.note || null
     }, 'stock.adjustment');
+  }
+
+  // The counted total replaces on-hand through an adjustment, computed under the item lock.
+  async recordCount(body, actor = {}) {
+    const key = await this.resolveItemKey(body, actor);
+    const item = await this.stockRepository.transaction((manager) => this.stockRepository.applyCount(manager, key, body.countedQuantity, {
+      type: 'adjustment',
+      reason: 'count',
+      note: body.note || null,
+      actorUserId: actorUserId(actor)
+    }));
+    await this.audit(actor, 'stock.count', { ...key, countedQuantity: body.countedQuantity, note: body.note || null });
+    return item;
   }
 
   async setMinimum(body, actor = {}) {

@@ -421,7 +421,8 @@ class AdminCatalogRepository {
       entries.set(id, {
         flavorKey: row.key,
         packSizeGrams: row.packSizeGrams,
-        label: (current && current.label) || row.shortLabel || row.label || row.key
+        label: (current && current.label) || row.shortLabel || row.label || row.key,
+        published: Boolean((current && current.published) || row.published)
       });
     }
     return [...entries.values()].sort((left, right) => (

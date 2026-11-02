@@ -75,7 +75,8 @@ function sumDemand(cycles = []) {
 }
 
 // Every stored item and every item with demand, with what is free and what still has to be produced.
-function buildOverview({ stockItems = [], cycles = [] }) {
+// Published catalog entries without a stored item show with zero stock, so a new product reaches the screen.
+function buildOverview({ stockItems = [], cycles = [], catalog = [] }) {
   const { demand, unsized } = sumDemand(cycles);
   const rows = new Map();
   for (const item of stockItems) {
@@ -88,6 +89,12 @@ function buildOverview({ stockItems = [], cycles = [] }) {
   }
   for (const [key, entry] of demand) {
     if (!rows.has(key)) {
+      rows.set(key, { flavorKey: entry.flavorKey, packSizeGrams: entry.packSizeGrams, onHand: 0, minLevel: null });
+    }
+  }
+  for (const entry of catalog) {
+    const key = stockKey(entry.flavorKey, entry.packSizeGrams);
+    if (entry.published && !rows.has(key)) {
       rows.set(key, { flavorKey: entry.flavorKey, packSizeGrams: entry.packSizeGrams, onHand: 0, minLevel: null });
     }
   }

@@ -22,6 +22,21 @@ function itemOf(overview, flavorKey, packSizeGrams = 300) {
 }
 
 describe('pack stock core', () => {
+  test('a published catalog entry shows with zero stock, and a draft does not', () => {
+    const overview = buildOverview({
+      stockItems: [{ flavorKey: 'frango', packSizeGrams: 300, onHand: 5, minLevel: null }],
+      catalog: [
+        { flavorKey: 'frango', packSizeGrams: 300, label: 'Frango', published: true },
+        { flavorKey: 'carne', packSizeGrams: 500, label: 'Carne', published: true },
+        { flavorKey: 'peixe', packSizeGrams: 300, label: 'Peixe', published: false }
+      ]
+    });
+
+    expect(overview.items).toHaveLength(2);
+    expect(itemOf(overview, 'frango').onHand).toBe(5);
+    expect(itemOf(overview, 'carne', 500)).toMatchObject({ onHand: 0, available: 0, toProduce: 0, belowMinimum: false });
+  });
+
   test('Kitchen plans the week', () => {
     const overview = buildOverview({
       stockItems: [{ flavorKey: 'frango', packSizeGrams: 300, onHand: 40, minLevel: null }],

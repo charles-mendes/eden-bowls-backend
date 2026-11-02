@@ -468,6 +468,10 @@
     "path": "/api/v1/admin/stock/adjustments"
   },
   {
+    "method": "POST",
+    "path": "/api/v1/admin/stock/counts"
+  },
+  {
     "method": "PUT",
     "path": "/api/v1/admin/stock/minimum"
   },

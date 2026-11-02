@@ -14,6 +14,7 @@ const {
 } = require('../validators/admin-production.validator');
 const {
   parseStockAdjustment,
+  parseStockCount,
   parseStockMinimum,
   parseStockMovementsQuery,
   parseStockOverviewQuery,
@@ -558,6 +559,13 @@ function registerAdminRoutes(app, dependencies = {}) {
   app.post('/api/v1/admin/stock/adjustments', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => packStockService().recordAdjustment(
       parseStockAdjustment(request.body || {}),
+      request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/stock/counts', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().recordCount(
+      parseStockCount(request.body || {}),
       request.adminIdentity
     ));
   });
