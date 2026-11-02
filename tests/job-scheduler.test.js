@@ -1,4 +1,101 @@
-const { runTick } = require('../src/core/job-scheduler');
+const { MAX_CONCURRENT_JOBS, runTick, startScheduler } = require('../src/core/job-scheduler');
+const { createJobDefinitions } = require('../src/services/background-jobs.service');
+
+function flush() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function pooledDataSource(limit) {
+  let free = limit;
+  const waiters = [];
+  const release = async () => {
+    const next = waiters.shift();
+    if (next) {
+      next();
+    } else {
+      free += 1;
+    }
+  };
+  const acquire = () => {
+    if (free > 0) {
+      free -= 1;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => waiters.push(resolve));
+  };
+  return {
+    acquire,
+    release,
+    createQueryRunner: () => ({
+      connect: acquire,
+      query: async (sql) => (sql.includes('GET_LOCK') ? [{ locked: 1 }] : []),
+      release
+    })
+  };
+}
+
+describe('job scheduler concurrency', () => {
+  test('finishes every registered job on the default pool of 10 connections', async () => {
+    const dataSource = pooledDataSource(10);
+    const logger = { info: jest.fn(), error: jest.fn() };
+    const finished = [];
+    const jobs = createJobDefinitions({ cursorRepository: {} }).map((job) => ({
+      ...job,
+      intervalMs: 3600 * 1000,
+      run: async () => {
+        await dataSource.acquire();
+        await flush();
+        await dataSource.release();
+        finished.push(job.name);
+        return {};
+      }
+    }));
+
+    const scheduler = startScheduler({ jobs, dataSource, logger });
+    for (let i = 0; i < 100 && finished.length < jobs.length; i += 1) {
+      await flush();
+    }
+    scheduler.stop();
+
+    expect(finished.sort()).toEqual(jobs.map((job) => job.name).sort());
+  });
+
+  test('never runs more jobs at once than the limit and does not stack a running job', async () => {
+    const dataSource = pooledDataSource(10);
+    const logger = { info: jest.fn(), error: jest.fn() };
+    let running = 0;
+    let peak = 0;
+    const gates = [];
+    const run = jest.fn(() => {
+      running += 1;
+      peak = Math.max(peak, running);
+      return new Promise((resolve) => gates.push(() => {
+        running -= 1;
+        resolve({});
+      }));
+    });
+    const jobs = Array.from({ length: MAX_CONCURRENT_JOBS + 2 }, (_, index) => ({
+      name: `job_${index}`,
+      lockName: `lock_${index}`,
+      intervalMs: 5,
+      run
+    }));
+
+    const scheduler = startScheduler({ jobs, dataSource, logger });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(run).toHaveBeenCalledTimes(MAX_CONCURRENT_JOBS);
+    expect(peak).toBe(MAX_CONCURRENT_JOBS);
+
+    scheduler.stop();
+    while (gates.length) {
+      gates.shift()();
+      await flush();
+      await flush();
+    }
+    expect(peak).toBe(MAX_CONCURRENT_JOBS);
+  });
+});
 
 function runner(lockValue) {
   const query = jest.fn()

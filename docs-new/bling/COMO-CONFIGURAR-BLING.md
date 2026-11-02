@@ -40,7 +40,9 @@ Escopos. Em Lista de escopos, Adicionar, marque só estes:
 
 A API consulta e cria contato, produto e pedido, gera a NF-e a partir do pedido e envia a nota. Sem um desses escopos a chamada volta 403 e o job para de tentar aquela nota. Não marque nota de serviço, estoque, contratos nem categorias.
 
-Salvar só habilita depois do primeiro escopo. Incluir ou tirar escopo depois revoga todo mundo que já autorizou o app. É preciso autorizar de novo pelo painel.
+Em Clientes e Fornecedores, o escopo tem de permitir criar contato, não só ler. Só com leitura, `GET /contatos` funciona e `POST /contatos` volta `403 insufficient_scope`. Nenhum cliente novo chega à nota nesse caso.
+
+Salvar só habilita depois do primeiro escopo. Incluir ou tirar escopo depois revoga todo mundo que já autorizou o app. É preciso autorizar de novo pelo painel, como explica o passo 4 em "Autorizar de novo".
 
 Na aba Informações do app, copie Client Id e Client Secret. O Client Secret não entra em git, em doc nem em print. Redefinir o secret no Bling invalida o valor que está no `.env`.
 
@@ -63,13 +65,25 @@ O Compose de QA lê o `.env` do servidor. Na VPS, copie `.env.qa.example` para `
 
 Reinicie o processo depois de mudar o `.env`. A API lê essas variáveis só na subida. No local, pare e suba de novo o `npm run dev`.
 
+Trocar o Client Secret também derruba a conexão. Os tokens ficam cifrados com uma chave derivada dele, então o painel volta a mostrar "Sem conexão" e é preciso autorizar de novo.
+
+Depois da autorização, a API devolve o navegador para `ADMIN_APP_URL`. Esse valor tem de ser a mesma origem em que você abriu o painel: `http://localhost:5174` no local. O login do painel fica guardado por origem. Com outra porta, você volta sem sessão ou cai numa página que não abre.
+
 ## 3. Conta Bling em homologação
 
 O cadastro do aplicativo não escolhe o ambiente fiscal. Quem escolhe é a conta Bling, em configurações de NF-e, ambiente de emissão Homologação.
 
+Para conferir antes de testar: Todas as configurações, Notas fiscais, Configurações de NF-e, Configurações de Emissão. `<tpAmb>2</tpAmb>` é homologação e `<tpAmb>1</tpAmb>` é produção. A API do Bling não informa o ambiente, então essa conferência é manual. Se a conta estiver em produção, o job envia nota real à SEFAZ.
+
+Use uma conta Bling só de testes. Assim, nota, pedido e contato de teste não ficam na conta que emite as notas reais. Ao autorizar, confira se o login do navegador está nessa conta.
+
 Homologação emite nota de teste. Ela não vale, não substitui a fatura EB- da Eden Bowls e não deve ser enviada ao cliente como documento fiscal. Produção só quando a conta Bling e o aplicativo forem os de produção.
 
 A natureza de operação, o certificado e os dados do emitente precisam existir nessa conta, senão o Bling recusa a nota mesmo com o OAuth certo.
+
+Os produtos precisam estar cadastrados com NCM antes da primeira nota. A API só reutiliza o produto pelo código, ou o cria sem NCM quando ele não existe, e o Bling pode recusar a nota por isso. Os códigos seguem o formato `EDEN-<sabor>-<gramas>`, por exemplo `EDEN-BEEF-300`.
+
+Na conta de teste, o NCM provisório é `2309.10.00` (alimentos para cães e gatos em embalagem de varejo), com origem 0. Na conta de produção, NCM, origem, CFOP e tributação vêm do contador do cliente. Não copie os valores de teste.
 
 ## 4. Autorizar pelo painel
 
@@ -85,9 +99,25 @@ Com a API no ar e as quatro variáveis preenchidas:
 
 O token fica na API. O painel não guarda Client Secret. O refresh dura 30 dias. O job renova o acesso para a autorização não morrer num mês sem cobrança no Brasil.
 
+### Autorizar de novo
+
+O botão só aparece quando a API sabe que a conexão caiu. Depois de mudar escopo no app, ela só descobre isso numa próxima chamada ao Bling. Sem nota na fila, o painel continua sem o botão, mesmo com a autorização revogada.
+
+Para forçar, limpe a conexão no banco do ambiente e recarregue a página:
+
+```sql
+UPDATE bling_connection
+SET needs_authorization = 1, access_token_enc = NULL, refresh_token_enc = NULL
+WHERE id = 1;
+```
+
+Isso apaga só os tokens guardados. Nenhum dado do Bling muda. O botão Autorizar Bling volta a aparecer e o fluxo é o mesmo da lista acima.
+
 ## 5. O que o job faz depois
 
-A cada 60 segundos o job `bling_nfe` pega faturas pagas do Brasil que já viraram linha de NF-e e, para cada uma, cria ou reutiliza contato, produto e pedido, gera a NF-e e consulta a situação.
+A cada 60 segundos o job `bling_nfe` pega faturas pagas do Brasil que já viraram linha de NF-e e, para cada uma, cria ou reutiliza contato, produto e pedido, gera a NF-e, envia à SEFAZ e consulta a situação.
+
+O envio é automático. Com o Bling conectado, toda linha pendente em `bling_nfe` vira nota enviada sem nenhuma confirmação. Não insira linha de teste nessa tabela sem antes confirmar o ambiente da conta, como no passo 3.
 
 Leitura do log:
 
