@@ -77,6 +77,7 @@ const { AddSubscriptionLifecycleDates1700000000055 } = require('./migrations/170
 const { BackfillOnboardingUserStateMarket1700000000056 } = require('./migrations/1700000000056-backfill-onboarding-user-state-market');
 const { CreateBlingNfe1700000000057 } = require('./migrations/1700000000057-create-bling-nfe');
 const { AddBlingNfeEmail1700000000058 } = require('./migrations/1700000000058-add-bling-nfe-email');
+const { AddUpsShipmentTracking1700000000059 } = require('./migrations/1700000000059-add-ups-shipment-tracking');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -179,7 +180,8 @@ function buildDataSourceOptions(env) {
       AddSubscriptionLifecycleDates1700000000055,
       BackfillOnboardingUserStateMarket1700000000056,
       CreateBlingNfe1700000000057,
-      AddBlingNfeEmail1700000000058
+      AddBlingNfeEmail1700000000058,
+      AddUpsShipmentTracking1700000000059
     ],
     synchronize: false,
     logging: false,

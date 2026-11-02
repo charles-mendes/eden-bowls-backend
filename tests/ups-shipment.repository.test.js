@@ -5,6 +5,36 @@ function repositoryWith(query) {
   return new UpsShipmentRepository({ isInitialized: true, query });
 }
 
+describe('UpsShipmentRepository tracking', () => {
+  test('keeps the purchase answer in raw_response and can only deliver a created label', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    const payload = { trackResponse: {} };
+
+    await repositoryWith(query).recordTracking(9, { status: 'delivered', description: 'Delivered', deliveredAt: '2026-05-12 14:46:53' }, payload);
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).not.toContain('`raw_response`');
+    expect(sql).toContain("WHEN ? = 'delivered' AND `status` = 'created' THEN 'delivered'");
+    expect(params).toEqual(['delivered', 'Delivered', '2026-05-12 14:46:53', JSON.stringify(payload), 'delivered', 9]);
+  });
+
+  test('an answer without a package keeps the last status', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+
+    await repositoryWith(query).recordTracking(9, null, {});
+
+    expect(query.mock.calls[0][1].slice(0, 3)).toEqual([null, null, null]);
+  });
+
+  test('a delivered label still counts as labeled for the invoice', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+
+    await repositoryWith(query).listByInvoiceIds(['in_1']);
+
+    expect(query.mock.calls[0][0]).toContain("`status` IN ('created', 'delivered')");
+  });
+});
+
 describe('UpsShipmentRepository idempotency', () => {
   test('an unknown row still counts as active for the invoice', async () => {
     const query = jest.fn().mockResolvedValue([]);

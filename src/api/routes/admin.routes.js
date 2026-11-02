@@ -211,7 +211,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.upsShipmentService) {
         throw new HttpError(503, 'UPS shipment service is not available.');
       }
-      return dependencies.upsShipmentService.refreshTracking(request.params.id);
+      return dependencies.upsShipmentService.refreshTracking(request.params.id, request.adminIdentity);
     });
   });
 

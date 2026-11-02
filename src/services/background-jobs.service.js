@@ -1,3 +1,4 @@
+const { parseUpsTracking } = require('../core/ups-tracking');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const { withTimeout } = require('../core/with-timeout');
 const { startScheduler } = require('../core/job-scheduler');
@@ -113,10 +114,11 @@ async function runUpsTracking(deps) {
     scanned += 1;
     try {
       const payload = await deps.upsClient.track(row.tracking_number, { timeoutMs });
-      await deps.upsShipmentRepository.updateTracking(row.id, row.tracking_number, payload);
+      await deps.upsShipmentRepository.recordTracking(row.id, parseUpsTracking(payload), payload);
       updated += 1;
     } catch (error) {
       failed += 1;
+      await deps.upsShipmentRepository.markTrackingChecked(row.id).catch(() => {});
       if (deps.logger) {
         deps.logger.warn({
           shipmentId: row.id,

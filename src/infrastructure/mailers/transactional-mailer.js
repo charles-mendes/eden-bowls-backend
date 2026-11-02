@@ -1,3 +1,4 @@
+const { upsTrackingUrl } = require('../../core/ups-tracking');
 const { DateTime } = require('luxon');
 const { withTimeout } = require('../../core/with-timeout');
 const {
@@ -411,7 +412,7 @@ function createTransactionalMailer(options = {}) {
       petName: petNameFrom(source),
       trackingNumber,
       carrier: 'UPS',
-      trackingUrl: `https://www.ups.com/track?tracknum=${encodeURIComponent(trackingNumber)}`,
+      trackingUrl: upsTrackingUrl(trackingNumber),
       locale: localeFrom(source),
       assetBaseUrl: emailAssetBaseUrl
     });

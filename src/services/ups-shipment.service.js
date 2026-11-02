@@ -1,11 +1,17 @@
 const { HttpError } = require('../core/http-error');
-const { assertNotPoBoxAddress } = require('../core/po-box');
+const { isPoBoxAddress } = require('../core/po-box');
 const { assertStripeAccountMarket, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { ledgerStripeAccount } = require('../core/stripe-account');
+const { extractSubscriptionIdFromInvoice } = require('../core/stripe-subscription-map');
+const { parseUpsTracking, upsTrackingUrl } = require('../core/ups-tracking');
+
+function addressRecipient(address = {}) {
+  return String(address.name || address.full_name || address.recipient || '').trim();
+}
 
 function normalizeShipTo(address = {}) {
   return {
-    name: address.name || address.full_name || address.recipient || 'Customer',
+    name: addressRecipient(address),
     street: address.line1 || address.address || address.street || address.address1 || '',
     street2: address.line2 || address.street2 || address.address2 || address.complement || '',
     city: address.city || '',
@@ -52,6 +58,7 @@ class UpsShipmentService {
     this.shippingService = options.shippingService || null;
     this.adminBillingService = options.adminBillingService || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.profileRepository = options.profileRepository || null;
     this.transactionalMailer = options.transactionalMailer || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
   }
@@ -78,6 +85,11 @@ class UpsShipmentService {
       stripe_invoice_id: shipment.stripe_invoice_id,
       ups_shipment_id: shipment.ups_shipment_id,
       tracking_number: shipment.tracking_number,
+      tracking_url: upsTrackingUrl(shipment.tracking_number),
+      tracking_status: shipment.tracking_status || null,
+      tracking_description: shipment.tracking_description || null,
+      tracking_checked_at: shipment.tracking_checked_at || null,
+      delivered_at: shipment.delivered_at || null,
       service_code: shipment.service_code,
       label_format: shipment.label_format,
       has_label: Boolean(shipment.label_path),
@@ -119,12 +131,24 @@ class UpsShipmentService {
 
   async listForSubscription(subscriptionId, actor = {}) {
     this.ensureRepository();
-    await this.requireSubscriptionInScope(subscriptionId, actor);
+    const subscription = await this.requireSubscriptionInScope(subscriptionId, actor);
     const items = await this.repository.listBySubscriptionId(subscriptionId);
     return {
       success: true,
-      data: { items: items.map((item) => this.present(item)) }
+      data: {
+        items: items.map((item) => this.present(item)),
+        label_issues: await this.listLabelIssues(subscription)
+      }
     };
+  }
+
+  async listLabelIssues(subscription) {
+    const { issues } = await this.inspectLabel(subscription || {});
+    const configured = this.upsClient && this.upsClient.isConfigured();
+    return [
+      ...(configured ? [] : [{ code: 'ups_not_configured' }]),
+      ...issues.map(({ code, country }) => (country ? { code, country } : { code }))
+    ];
   }
 
   async createForSubscription({ subscriptionId, invoiceId, actor }) {
@@ -136,32 +160,21 @@ class UpsShipmentService {
       throw new HttpError(400, 'invoice_id is required.', { code: 'invoice_id_required' });
     }
 
-    await this.requireSubscriptionInScope(subscriptionId, actor);
+    if (!this.adminBillingService) {
+      throw new HttpError(503, 'Billing service is not available.');
+    }
+    const subscription = await this.adminBillingService.getSubscription(subscriptionId, actor);
+    await this.requirePaidInvoice(subscriptionId, subscription, invoice, actor);
 
     const existing = await this.repository.findActiveByInvoiceId(invoice);
     if (existing) {
       return this.reuseExisting(existing);
     }
 
-    if (!this.adminBillingService) {
-      throw new HttpError(503, 'Billing service is not available.');
-    }
-    const subscription = await this.adminBillingService.getSubscription(subscriptionId, actor);
-    const address = subscription.address || {};
-    const shipTo = normalizeShipTo(address);
-    assertNotPoBoxAddress({
-      line1: shipTo.street,
-      line2: shipTo.street2
-    });
-
-    if (String(shipTo.country || 'US').toUpperCase() !== 'US') {
-      throw new HttpError(422, 'UPS shipments are only available for US addresses.', { code: 'country_not_supported' });
-    }
-
-    const settings = this.shippingService?.settings?.us || {};
-    const shipFrom = settings.ship_from || {};
-    if (!String(shipFrom.zipcode || '').replace(/\D/g, '')) {
-      throw new HttpError(422, 'US ship-from is not configured.', { code: 'ship_from_missing' });
+    const { shipTo, settings, shipFrom, issues } = await this.inspectLabel(subscription);
+    if (issues.length) {
+      const [issue] = issues;
+      throw new HttpError(422, issue.message, { code: issue.code });
     }
 
     const quoted = Number(subscription.shipping?.cost || subscription.shipping?.total || settings.cost || 0);
@@ -258,6 +271,55 @@ class UpsShipmentService {
     return { success: true, data: { shipment: this.present(saved), reused: false } };
   }
 
+  // A label costs money: only a paid invoice of this subscription can buy one.
+  async requirePaidInvoice(subscriptionId, subscription, invoiceId, actor) {
+    const invoice = await this.adminBillingService.getSubscriptionInvoice(subscriptionId, invoiceId, actor);
+    if (extractSubscriptionIdFromInvoice(invoice) !== subscription.stripeSubscriptionId) {
+      throw new HttpError(422, 'This invoice does not belong to the subscription.', { code: 'invoice_not_in_subscription' });
+    }
+    if (invoice.status !== 'paid') {
+      throw new HttpError(422, 'Only a paid invoice can buy a UPS label.', { code: 'invoice_not_paid' });
+    }
+  }
+
+  // The checkout address has no name, so the account name goes on the label.
+  async resolveRecipientName(subscription) {
+    const fromAddress = addressRecipient(subscription.address || {});
+    if (fromAddress) {
+      return fromAddress;
+    }
+    const userId = (subscription.user && subscription.user.id) || subscription.userId;
+    const user = this.profileRepository ? await this.profileRepository.findUserById(userId) : null;
+    const name = String((user && user.displayName) || '').trim();
+    return name.includes('@') ? '' : name;
+  }
+
+  // Everything that stops a label before UPS is called, so the panel can warn ahead of the click.
+  async inspectLabel(subscription) {
+    const address = subscription.address || {};
+    const shipTo = normalizeShipTo(address);
+    const settings = this.shippingService?.settings?.us || {};
+    const shipFrom = settings.ship_from || {};
+    const issues = [];
+
+    if (shipTo.country !== 'US') {
+      issues.push({ code: 'country_not_supported', message: 'UPS shipments are only available for US addresses.', country: shipTo.country });
+    } else if (isPoBoxAddress(shipTo.street, shipTo.street2)) {
+      issues.push({ code: 'po_box_not_allowed', message: 'UPS cannot deliver to a P.O. Box. Please use a street address.' });
+    } else if (![shipTo.street, shipTo.city, shipTo.state, shipTo.zipcode].every((value) => String(value).trim())) {
+      issues.push({ code: 'address_incomplete', message: 'The delivery address is incomplete.' });
+    }
+    if (!String(shipFrom.zipcode || '').replace(/\D/g, '')) {
+      issues.push({ code: 'ship_from_missing', message: 'US ship-from is not configured.' });
+    }
+    shipTo.name = await this.resolveRecipientName(subscription);
+    if (!shipTo.name) {
+      issues.push({ code: 'recipient_name_missing', message: 'The customer has no name for the label. Fill in the account name first.' });
+    }
+
+    return { shipTo, settings, shipFrom, issues };
+  }
+
   reuseExisting(existing) {
     if (existing.status === 'created' || existing.ups_shipment_id) {
       return { success: true, data: { shipment: this.present(existing), reused: true } };
@@ -307,6 +369,9 @@ class UpsShipmentService {
     if (shipment.status === 'voided') {
       return { success: true, data: { shipment: this.present(shipment) } };
     }
+    if (shipment.status === 'delivered') {
+      throw new HttpError(422, 'A delivered shipment cannot be voided.', { code: 'shipment_delivered' });
+    }
     if (!shipment.ups_shipment_id) {
       if (shipment.status !== 'pending' && shipment.status !== 'unknown') {
         throw new HttpError(422, 'Shipment has no UPS id to void.', { code: 'missing_ups_id' });
@@ -323,25 +388,15 @@ class UpsShipmentService {
     return { success: true, data: { shipment: this.present(voided) } };
   }
 
-  async refreshTracking(shipmentId) {
-    this.ensureRepository();
+  async refreshTracking(shipmentId, actor = {}) {
+    const shipment = await this.requireShipmentInScope(shipmentId, actor);
     this.ensureUps();
-    const shipment = await this.repository.findById(shipmentId);
-    if (!shipment) {
-      throw new HttpError(404, 'Shipment not found.');
-    }
     if (!shipment.tracking_number) {
       throw new HttpError(422, 'Shipment has no tracking number.', { code: 'missing_tracking' });
     }
     const raw = await this.upsClient.track(shipment.tracking_number);
-    const updated = await this.repository.updateTracking(shipment.id, shipment.tracking_number, raw);
-    return {
-      success: true,
-      data: {
-        shipment: this.present(updated),
-        tracking: raw
-      }
-    };
+    const updated = await this.repository.recordTracking(shipment.id, parseUpsTracking(raw), raw);
+    return { success: true, data: { shipment: this.present(updated) } };
   }
 }
 

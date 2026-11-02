@@ -16,6 +16,7 @@ describe('UPS tracking job', () => {
     const sql = query.mock.calls[0][0];
     expect(sql).toContain("NOT IN ('delivered', 'voided')");
     expect(sql).toContain('`tracking_number` IS NOT NULL');
+    expect(sql).toContain('ORDER BY `tracking_checked_at` ASC, `id` ASC');
     expect(query.mock.calls[0][1]).toEqual([20]);
   });
 
@@ -23,7 +24,8 @@ describe('UPS tracking job', () => {
     const track = jest.fn()
       .mockResolvedValueOnce({ status: 'in_transit' })
       .mockRejectedValueOnce(new Error('ups down'));
-    const updateTracking = jest.fn().mockResolvedValue({});
+    const recordTracking = jest.fn().mockResolvedValue({});
+    const markTrackingChecked = jest.fn().mockResolvedValue();
     const result = await runUpsTracking({
       upsClient: { timeoutMs: 5000, track },
       upsShipmentRepository: {
@@ -33,14 +35,17 @@ describe('UPS tracking job', () => {
           { id: 3, tracking_number: '1ZDEL', status: 'delivered' },
           { id: 4, tracking_number: '1ZVOID', status: 'voided' }
         ],
-        updateTracking
+        recordTracking,
+        markTrackingChecked
       }
     });
 
     expect(track).toHaveBeenCalledTimes(2);
     expect(track).toHaveBeenCalledWith('1ZOK', { timeoutMs: 5000 });
-    expect(updateTracking).toHaveBeenCalledTimes(1);
-    expect(updateTracking).toHaveBeenCalledWith(1, '1ZOK', { status: 'in_transit' });
+    expect(recordTracking).toHaveBeenCalledTimes(1);
+    expect(recordTracking).toHaveBeenCalledWith(1, null, { status: 'in_transit' });
+    expect(markTrackingChecked).toHaveBeenCalledTimes(1);
+    expect(markTrackingChecked).toHaveBeenCalledWith(2);
     expect(result.failed).toBe(1);
     expect(JOB_INTERVALS.ups_tracking).toBe(30 * 60 * 1000);
   });
@@ -53,7 +58,8 @@ describe('UPS tracking job', () => {
       upsClient: { timeoutMs: 5000, track: jest.fn().mockRejectedValue(failure) },
       upsShipmentRepository: {
         listOpenForTracking: async () => [{ id: 2, tracking_number: '1ZFAIL', status: 'created' }],
-        updateTracking: jest.fn()
+        recordTracking: jest.fn(),
+        markTrackingChecked: jest.fn().mockResolvedValue()
       }
     });
 

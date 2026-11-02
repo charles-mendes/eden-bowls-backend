@@ -1,3 +1,4 @@
+const { upsTrackingUrl } = require('../../core/ups-tracking');
 const { toIsoDate } = require('../../core/stripe-subscription-map');
 const { mapLedgerToDashboardDetail } = require('../../core/subscription-dashboard');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
@@ -106,6 +107,9 @@ class SubscriptionsDetailRepository {
             status: String(invoice.status || ''),
             items: [],
             tracking_number: shipment?.tracking_number || null,
+            tracking_url: upsTrackingUrl(shipment?.tracking_number),
+            tracking_status: shipment?.tracking_status || null,
+            delivered_at: shipment?.delivered_at || null,
             shipped_at: shipment?.shipped_at || null
           };
         });

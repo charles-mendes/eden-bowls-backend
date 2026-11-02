@@ -186,6 +186,25 @@ class AdminBillingService {
     return { success: true, data: result };
   }
 
+  async getSubscriptionInvoice(id, invoiceId, actor = {}) {
+    const item = await this.ledgerRepository.findById(id);
+    if (!item) {
+      throw new HttpError(404, 'Subscription not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertStripeAccountMarket(actor, ledgerStripeAccount(item));
+    }
+
+    try {
+      return await this.billingFor(item).ensureClient().invoices.retrieve(invoiceId);
+    } catch (error) {
+      if (error && error.code === 'resource_missing') {
+        throw new HttpError(404, 'Invoice not found.', { code: 'invoice_not_found' });
+      }
+      throw new HttpError(502, 'Unable to read the invoice from Stripe.', { code: 'invoice_unavailable' });
+    }
+  }
+
   async syncInvoices(id, actor = {}) {
     const item = await this.ledgerRepository.findById(id);
     if (!item) {

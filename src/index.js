@@ -749,6 +749,7 @@ async function bootstrap() {
     shippingService,
     adminBillingService,
     ledgerRepository: subscriptionLedgerRepository,
+    profileRepository,
     transactionalMailer,
     logger
   });

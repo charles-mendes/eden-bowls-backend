@@ -28,12 +28,15 @@ function buildService(overrides = {}) {
         labelFormat: 'GIF'
       })
     },
+    profileRepository: overrides.profileRepository,
     adminBillingService: overrides.adminBillingService || {
+      getSubscriptionInvoice: overrides.getSubscriptionInvoice
+        || jest.fn().mockResolvedValue({ status: 'paid', subscription: 'sub_123' }),
       getSubscription: jest.fn().mockResolvedValue({
         id: '1',
         stripeSubscriptionId: 'sub_123',
         address: {
-          name: 'Ana Costa',
+          ...(overrides.addressName === undefined ? { name: 'Ana Costa' } : { name: overrides.addressName }),
           line1: '1 Main St',
           city: 'Miami',
           state: 'FL',
@@ -60,6 +63,135 @@ function buildService(overrides = {}) {
 
   return { service, repository, transactionalMailer };
 }
+
+describe('UpsShipmentService label guards', () => {
+  const create = (service) => service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} });
+
+  test.each([
+    ['an unpaid invoice', { status: 'open', subscription: 'sub_123' }, 'invoice_not_paid'],
+    ['an invoice of another subscription', { status: 'paid', subscription: 'sub_other' }, 'invoice_not_in_subscription']
+  ])('refuses %s before buying anything', async (_label, invoice, code) => {
+    const { service, repository } = buildService({ getSubscriptionInvoice: jest.fn().mockResolvedValue(invoice) });
+
+    await expect(create(service)).rejects.toMatchObject({ statusCode: 422, details: { code } });
+    expect(repository.insertPending).not.toHaveBeenCalled();
+    expect(service.upsClient.createShipment).not.toHaveBeenCalled();
+  });
+
+  test('accepts the subscription id of a newer Stripe invoice shape', async () => {
+    const { service } = buildService({
+      getSubscriptionInvoice: jest.fn().mockResolvedValue({
+        status: 'paid',
+        parent: { subscription_details: { subscription: 'sub_123' } }
+      })
+    });
+
+    await expect(create(service)).resolves.toMatchObject({ success: true });
+  });
+
+  test('prints the account name when the address has none', async () => {
+    const { service } = buildService({
+      addressName: '',
+      profileRepository: { findUserById: jest.fn().mockResolvedValue({ displayName: 'Ana Costa' }) }
+    });
+
+    await create(service);
+
+    expect(service.upsClient.createShipment.mock.calls[0][0].shipTo.name).toBe('Ana Costa');
+  });
+
+  test.each([['no name', ''], ['an email as name', 'ana@example.com']])('refuses a label with %s', async (_label, displayName) => {
+    const { service, repository } = buildService({
+      addressName: '',
+      profileRepository: { findUserById: jest.fn().mockResolvedValue({ displayName }) }
+    });
+
+    await expect(create(service)).rejects.toMatchObject({ details: { code: 'recipient_name_missing' } });
+    expect(repository.insertPending).not.toHaveBeenCalled();
+  });
+});
+
+describe('UpsShipmentService label issues', () => {
+  const address = { line1: '1 Main St', city: 'Miami', state: 'FL', postal_code: '33101', country: 'US', name: 'Ana Costa' };
+
+  async function issuesFor(subscriptionAddress, overrides = {}) {
+    const { service, repository } = buildService(overrides);
+    repository.listBySubscriptionId = jest.fn().mockResolvedValue([]);
+    service.adminBillingService.getSubscription.mockResolvedValue({ id: '1', address: subscriptionAddress, user: { id: '7' } });
+    const result = await service.listForSubscription('1', {});
+    return result.data.label_issues;
+  }
+
+  test('a complete US order has none', async () => {
+    await expect(issuesFor(address)).resolves.toEqual([]);
+  });
+
+  test.each([
+    ['a Brazilian address', { ...address, country: 'BR' }, [{ code: 'country_not_supported', country: 'BR' }]],
+    ['a PO Box', { ...address, line1: 'PO Box 12' }, [{ code: 'po_box_not_allowed' }]],
+    ['no zipcode', { ...address, postal_code: '' }, [{ code: 'address_incomplete' }]]
+  ])('warns about %s', async (_label, subscriptionAddress, expected) => {
+    await expect(issuesFor(subscriptionAddress)).resolves.toEqual(expected);
+  });
+
+  test('warns about everything at once, and the purchase stops on the same reason', async () => {
+    const overrides = { profileRepository: { findUserById: jest.fn().mockResolvedValue(null) } };
+    const issues = await issuesFor({ ...address, name: '', country: 'BR' }, overrides);
+    expect(issues.map((issue) => issue.code)).toEqual(['country_not_supported', 'recipient_name_missing']);
+
+    const { service, repository } = buildService({ ...overrides, addressName: '' });
+    await expect(service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} }))
+      .rejects.toMatchObject({ statusCode: 422, details: { code: 'recipient_name_missing' } });
+    expect(repository.insertPending).not.toHaveBeenCalled();
+  });
+
+  test('warns when UPS is not configured', async () => {
+    await expect(issuesFor(address, { upsClient: { isConfigured: () => false } }))
+      .resolves.toEqual([{ code: 'ups_not_configured' }]);
+  });
+});
+
+describe('UpsShipmentService tracking', () => {
+  const delivered = {
+    trackResponse: { shipment: [{ package: [{
+      currentStatus: { description: 'Delivered', code: '011' },
+      deliveryDate: [{ type: 'DEL', date: '20260512' }],
+      deliveryTime: { type: 'DEL', endTime: '144653' },
+      activity: [{ status: { type: 'D', description: 'DELIVERED ' }, date: '20260512', time: '144653' }]
+    }] }] }
+  };
+
+  test('records the delivery and answers with the shipment, not the UPS payload', async () => {
+    const shipment = { id: 9, subscription_id: '1', tracking_number: '1Z1', status: 'created' };
+    const { service, repository } = buildService();
+    repository.findById = jest.fn().mockResolvedValue(shipment);
+    repository.recordTracking = jest.fn().mockResolvedValue({
+      ...shipment, status: 'delivered', tracking_status: 'delivered', delivered_at: '2026-05-12 14:46:53'
+    });
+    service.upsClient.track = jest.fn().mockResolvedValue(delivered);
+
+    const result = await service.refreshTracking(9, {});
+
+    expect(repository.recordTracking).toHaveBeenCalledWith(9, {
+      status: 'delivered', description: 'Delivered', deliveredAt: '2026-05-12 14:46:53'
+    }, delivered);
+    expect(result.data.shipment).toMatchObject({
+      status: 'delivered',
+      tracking_status: 'delivered',
+      tracking_url: 'https://www.ups.com/track?tracknum=1Z1'
+    });
+    expect(result.data.tracking).toBeUndefined();
+  });
+
+  test('a delivered shipment cannot be voided', async () => {
+    const { service, repository } = buildService();
+    repository.findById = jest.fn().mockResolvedValue({ id: 9, subscription_id: '1', status: 'delivered', ups_shipment_id: 'ups_1' });
+    service.upsClient.voidShipment = jest.fn();
+
+    await expect(service.voidShipment(9, {})).rejects.toMatchObject({ details: { code: 'shipment_delivered' } });
+    expect(service.upsClient.voidShipment).not.toHaveBeenCalled();
+  });
+});
 
 describe('UpsShipmentService.createForSubscription', () => {
   test('sends shipped mail after markCreated when reused is false', async () => {

@@ -41,6 +41,10 @@ class UpsShipmentRepository {
       quoted_shipping_cost: row.quoted_shipping_cost == null ? null : Number(row.quoted_shipping_cost),
       ups_monetary_value: row.ups_monetary_value == null ? null : Number(row.ups_monetary_value),
       status: row.status,
+      tracking_status: row.tracking_status || null,
+      tracking_description: row.tracking_description || null,
+      tracking_checked_at: row.tracking_checked_at || null,
+      delivered_at: row.delivered_at || null,
       shipped_at: row.shipped_at || null,
       raw_response: rawResponse,
       created_at: row.created_at,
@@ -92,7 +96,7 @@ class UpsShipmentRepository {
     }
     const placeholders = ids.map(() => '?').join(', ');
     const rows = await this.dataSource.query(
-      `SELECT * FROM \`${this.tableName}\` WHERE \`stripe_invoice_id\` IN (${placeholders}) AND \`status\` = 'created'`,
+      `SELECT * FROM \`${this.tableName}\` WHERE \`stripe_invoice_id\` IN (${placeholders}) AND \`status\` IN ('created', 'delivered')`,
       ids
     );
     return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row));
@@ -179,17 +183,38 @@ class UpsShipmentRepository {
     );
   }
 
-  async updateTracking(id, trackingNumber, rawResponse = null) {
+  // Only a label in the 'created' state becomes delivered, so a voided row stays voided.
+  async recordTracking(id, summary, rawResponse = null) {
     this.ensureDataSource();
+    const tracking = summary || {};
     await this.dataSource.query(
-      `UPDATE \`${this.tableName}\` SET \`tracking_number\` = ?, \`raw_response\` = COALESCE(?, \`raw_response\`) WHERE \`id\` = ?`,
+      `UPDATE \`${this.tableName}\` SET
+        \`tracking_status\` = COALESCE(?, \`tracking_status\`),
+        \`tracking_description\` = COALESCE(?, \`tracking_description\`),
+        \`delivered_at\` = COALESCE(?, \`delivered_at\`),
+        \`tracking_response\` = COALESCE(?, \`tracking_response\`),
+        \`tracking_checked_at\` = CURRENT_TIMESTAMP,
+        \`status\` = CASE WHEN ? = 'delivered' AND \`status\` = 'created' THEN 'delivered' ELSE \`status\` END
+      WHERE \`id\` = ?`,
       [
-        trackingNumber || null,
+        tracking.status || null,
+        tracking.description || null,
+        tracking.deliveredAt || null,
         rawResponse == null ? null : JSON.stringify(rawResponse),
+        tracking.status || null,
         Number(id)
       ]
     );
     return this.findById(id);
+  }
+
+  // A failed read also moves the row to the end of the queue, so it cannot hold the batch.
+  async markTrackingChecked(id) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`tracking_checked_at\` = CURRENT_TIMESTAMP WHERE \`id\` = ?`,
+      [Number(id)]
+    );
   }
 
   async listOpenForTracking(limit) {
@@ -199,7 +224,8 @@ class UpsShipmentRepository {
         `SELECT * FROM \`${this.tableName}\``,
         "WHERE `tracking_number` IS NOT NULL AND `tracking_number` <> ''",
         "AND `status` NOT IN ('delivered', 'voided')",
-        'ORDER BY `id` ASC',
+        // MySQL sorts NULL first, so a shipment never read goes before the rest.
+        'ORDER BY `tracking_checked_at` ASC, `id` ASC',
         'LIMIT ?'
       ].join(' '),
       [limit]
