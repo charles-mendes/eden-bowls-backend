@@ -9,6 +9,8 @@ const {
   wrapEmailHtml
 } = require('./html');
 
+const NFE_PORTAL_URL = 'https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo&tipoConteudo=7PhJ+gAVw2g=';
+
 function joinList(items) {
   return (items || []).filter(Boolean).join(', ');
 }
@@ -677,6 +679,69 @@ function buildPlanChangedEmail({
   };
 }
 
+// The fiscal note. It is not the Eden Bowls invoice above, and the customer receives both.
+function buildNfeEmail({
+  firstName,
+  number,
+  series,
+  accessKey,
+  authorizedLabel,
+  totalLabel,
+  homologation,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const hello = greet(true, firstName);
+  const noteLabel = [number, series ? `série ${series}` : ''].filter(Boolean).join(', ');
+  const key = String(accessKey || '').replace(/(\d{4})(?=\d)/g, '$1 ');
+  const test = homologation ? 'Teste, sem valor fiscal. ' : '';
+  const intro = `${hello} A nota fiscal da sua compra foi autorizada pela SEFAZ. O DANFE em PDF e o arquivo XML estão anexados a este e-mail.`;
+  const keep = 'Guarde o XML: ele é a nota fiscal eletrônica. O DANFE é a versão para impressão.';
+  const other = 'Esta nota é diferente da fatura da Eden Bowls, que você recebe em outro e-mail.';
+  const consult = 'Você pode conferir a nota no Portal da NF-e com a chave de acesso.';
+  const text = [
+    test,
+    intro,
+    `Nota fiscal: ${noteLabel}`,
+    authorizedLabel ? `Autorizada em: ${authorizedLabel}` : '',
+    totalLabel ? `Valor: ${totalLabel}` : '',
+    `Chave de acesso: ${key}`,
+    keep,
+    other,
+    `${consult} ${NFE_PORTAL_URL}`
+  ].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    test ? paragraphHtml(test.trim()) : '',
+    paragraphHtml(intro),
+    detailsTableHtml([
+      { label: 'Nota fiscal', value: noteLabel },
+      { label: 'Autorizada em', value: authorizedLabel },
+      { label: 'Valor', value: totalLabel },
+      { label: 'Chave de acesso', value: key }
+    ]),
+    mutedHtml(keep),
+    mutedHtml(other),
+    mutedHtml(consult),
+    buttonHtml({ href: NFE_PORTAL_URL, label: 'Consultar no Portal da NF-e' })
+  ].join('');
+
+  return {
+    id: 'nfe',
+    subject: `${homologation ? '[TESTE] ' : ''}Sua nota fiscal Eden Bowls nº ${number}`,
+    text,
+    html: renderLetter({
+      locale: 'pt-BR',
+      preheader: `Nota fiscal nº ${number} autorizada. DANFE e XML em anexo.`,
+      kicker: 'Nota fiscal',
+      title: 'Sua nota fiscal foi autorizada',
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
 // Carries the invoice PDF as an attachment; the body only points to it.
 function buildInvoiceEmail({
   firstName,
@@ -739,6 +804,7 @@ function buildInvoiceEmail({
 module.exports = {
   buildAdminNewSubscriptionEmail,
   buildInvoiceEmail,
+  buildNfeEmail,
   buildAutoRenewOffEmail,
   buildCancelledEmail,
   buildOrderConfirmedEmail,

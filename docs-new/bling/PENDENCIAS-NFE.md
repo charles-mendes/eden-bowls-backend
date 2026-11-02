@@ -48,7 +48,7 @@ Fazer só depois da seção 2 e de uma nota autorizada em homologação.
 | 2 | Criar a natureza de operação de venda com CFOP e tributos definitivos | Bling |
 | 3 | Preencher NCM e origem definitivos em cada variação do Brasil | Painel, Produtos |
 | 4 | Conferir dados da empresa e certificado A1 | Bling |
-| 5 | Preencher as quatro variáveis `BLING_*` no `.env` de produção | Servidor |
+| 5 | Preencher as quatro variáveis `BLING_*` no `.env` de produção. O e-mail da nota já vem ligado | Servidor |
 | 6 | Autorizar pelo botão do painel, logado na conta real | Painel |
 | 7 | Emitir uma nota real de valor baixo e conferir com o contador | Bling e painel |
 
@@ -63,7 +63,9 @@ A API cria os produtos no Bling na primeira nota de cada variação, com o códi
 | 3 | Criar reautorização pelo painel | Com a conexão ativa, o botão fica oculto. Hoje é preciso limpar a conexão no banco |
 | 4 | Cobrir o CPF e o nome fiscal nos fluxos de LGPD | Pedidos de exportação e exclusão ainda não tratam esses dados |
 | 5 | Testar a correção de dados em nota rejeitada | Só foi testada em nota Pendente, porque ainda não há nota rejeitada real |
-| 6 | Renumerar a migration `1700000000057` antes do merge | O número colide com outra branch. Usar `061` se as demais entrarem antes |
+| 6 | Renumerar as migrations `1700000000057` e `058` antes do merge | O número `057` colide com outra branch. Usar `061` e `062` se as demais entrarem antes |
+| 7 | Testar o e-mail com uma nota autorizada real | O XML só existe depois da autorização, e o anexo ainda não foi testado com o arquivo real do Bling |
+| 8 | Definir o aviso ao cliente quando uma nota já enviada for cancelada no Bling | Hoje o cliente fica com a nota cancelada sem nenhum aviso |
 
 ## 5. Dados de teste na conta Bling de teste
 

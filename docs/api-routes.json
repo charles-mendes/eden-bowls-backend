@@ -281,6 +281,10 @@
   },
   {
     "method": "POST",
+    "path": "/api/v1/admin/nfe/:id/email"
+  },
+  {
+    "method": "POST",
     "path": "/api/v1/admin/nfe/:id/retry"
   },
   {

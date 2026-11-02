@@ -5,6 +5,7 @@ const { ledgerStripeAccount } = require('../core/stripe-account');
 const { linePriceId, lineProductId, isShippingLine, recipeDescription, shippingProductIdsFrom } = require('../core/invoice/invoice-document');
 const {
   BLING_SITUACAO,
+  NFE_EMAIL_STATUS,
   NFE_RETRYABLE_STATUSES,
   NFE_STATUS,
   NFE_STATUSES,
@@ -125,6 +126,10 @@ function contactDiffers(current, wanted) {
   return differs(current, wanted);
 }
 
+function canResendEmail(row) {
+  return row.status === NFE_STATUS.AUTHORIZED && !isImported(row) && row.emailStatus !== NFE_EMAIL_STATUS.SENDING;
+}
+
 function presentSummary(row) {
   return {
     id: row.id,
@@ -145,7 +150,8 @@ function presentSummary(row) {
     bling_situacao_label: situacaoLabel(row.blingSituacao),
     imported: isImported(row),
     can_retry: NFE_RETRYABLE_STATUSES.includes(row.status) && !isImported(row),
-    can_edit: canEdit(row)
+    can_edit: canEdit(row),
+    can_resend_email: canResendEmail(row)
   };
 }
 
@@ -166,6 +172,12 @@ function presentDetail(row) {
     danfe_url: row.danfeUrl,
     pdf_url: row.pdfUrl,
     xml_url: row.xmlUrl,
+    email_status: row.emailStatus,
+    email_to: row.emailTo,
+    email_sent_at: row.emailSentAt,
+    email_attempts: row.emailAttempts,
+    email_last_error: row.emailLastError,
+    email_next_attempt_at: row.emailNextAttemptAt,
     next_attempt_at: row.nextAttemptAt,
     submitted_at: row.submittedAt,
     updated_at: row.updatedAt
@@ -182,6 +194,7 @@ class BlingNfeService {
     this.naturezaOperacaoId = Number(options.naturezaOperacaoId) || 0;
     this.adminAppUrl = options.adminAppUrl || '';
     this.auditService = options.auditService || null;
+    this.emailService = options.emailService || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.now = options.now || (() => new Date());
   }
@@ -267,7 +280,19 @@ class BlingNfeService {
         await this.recordFailure(row, error);
       }
     }
-    return { scanned: rows.length, done, failed };
+    return { scanned: rows.length, done, failed, ...(await this.sendEmails()) };
+  }
+
+  // A failure here must not read as a failed note, and the next tick tries again.
+  async sendEmails() {
+    if (!this.emailService) return {};
+    try {
+      const { sent, failed } = await this.emailService.sendDue();
+      return { emailsSent: sent, emailsFailed: failed };
+    } catch (error) {
+      this.logger.error({ code: error && error.code ? error.code : 'nfe_email_run_failed' }, 'NF-e email run failed.');
+      return { emailsFailed: 1 };
+    }
   }
 
   // Bling has no webhook for notes in its API, so the job reads the recent list. A note that did not change costs no
@@ -574,9 +599,21 @@ class BlingNfeService {
         ? String(message || `Bling: ${situacaoLabel(nfe.situacao) || nfe.situacao}`).slice(0, MAX_ERROR_LENGTH)
         : null,
       nextAttemptAt: status === NFE_STATUS.SUBMITTED && !imported ? new Date(now.getTime() + POLL_GAP_MS) : null,
-      ...(status === NFE_STATUS.AUTHORIZED ? { authorizedAt: now } : {})
+      ...(status === NFE_STATUS.AUTHORIZED
+        ? { authorizedAt: row.authorizedAt ? new Date(row.authorizedAt) : now, ...this.emailOwed(row, now) }
+        : {})
     });
     return status;
+  }
+
+  // Set once, on the first authorization: Bling moving a note from Autorizada to Emitida DANFE queues nothing new. A
+  // note created by hand in Bling is not ours to announce.
+  emailOwed(row, now) {
+    if (row.emailStatus || isImported(row)) return {};
+    if (!this.emailService || !this.emailService.enabled) {
+      return { emailStatus: NFE_EMAIL_STATUS.SKIPPED, emailLastError: 'O envio de e-mail da NF-e está desligado neste ambiente.' };
+    }
+    return { emailStatus: NFE_EMAIL_STATUS.PENDING, emailNextAttemptAt: now };
   }
 
   // The operator's correction reaches Bling here, inside the job, because only the job may use the rotating token.
@@ -702,6 +739,27 @@ class BlingNfeService {
       throw new HttpError(409, 'This NF-e cannot be retried in its current status.', { code: 'nfe_not_retryable' });
     }
     await this.repository.update(row.id, { lastError: null });
+    return { success: true, data: presentDetail(await this.repository.findById(row.id)) };
+  }
+
+  // Queued for the job, which runs the same checks as the first send. Only an operator can repeat an email.
+  async resendEmail(id, actor = {}) {
+    const row = await this.requireRow(id, actor);
+    if (!this.emailService || !this.emailService.enabled) {
+      throw new HttpError(409, 'The NF-e email is turned off in this environment.', { code: 'nfe_email_disabled' });
+    }
+    if (!canResendEmail(row) || !(await this.repository.queueEmail(row.id, { now: this.now() }))) {
+      throw new HttpError(409, 'This NF-e email cannot be sent now.', { code: 'nfe_email_not_sendable' });
+    }
+    if (this.auditService) {
+      await this.auditService.record({
+        actor,
+        action: 'nfe.email.resend',
+        targetUserId: row.userId,
+        targetEmail: null,
+        metadata: { nfeId: row.id, previousStatus: row.emailStatus }
+      });
+    }
     return { success: true, data: presentDetail(await this.repository.findById(row.id)) };
   }
 

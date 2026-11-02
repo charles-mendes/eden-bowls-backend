@@ -706,6 +706,10 @@ function registerAdminRoutes(app, dependencies = {}) {
     await handle(response, next, async () => requireBlingNfe().retry(request.params.id, request.adminIdentity));
   });
 
+  app.post('/api/v1/admin/nfe/:id/email', requirePermission('nfe.retry', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().resendEmail(request.params.id, request.adminIdentity));
+  });
+
   app.patch('/api/v1/admin/nfe/:id/customer', requirePermission('nfe.edit', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => requireBlingNfe().updateCustomer(
       request.params.id,

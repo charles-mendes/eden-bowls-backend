@@ -22,6 +22,9 @@ class BlingApiError extends Error {
   }
 }
 
+const DOCUMENT_TIMEOUT_MS = 20 * 1000;
+const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+
 class BlingNotConnectedError extends Error {
   constructor(message = 'Bling is not authorized.') {
     super(message);
@@ -260,6 +263,23 @@ class BlingClient {
   async updateNfe(nfeId, payload) {
     const body = await this.request('PUT', `/nfe/${nfeId}`, { body: payload });
     return body && body.data;
+  }
+
+  // The DANFE and XML links carry their own access key, so they take no token.
+  async downloadDocument(url) {
+    if (!/^https:\/\//i.test(String(url || ''))) {
+      throw new Error('Bling returned no document link.');
+    }
+    const fetchImpl = this.fetchImpl || fetch;
+    const response = await fetchImpl(url, { signal: AbortSignal.timeout(DOCUMENT_TIMEOUT_MS) });
+    if (!response.ok) {
+      throw new Error(`Bling answered ${response.status} for the document.`);
+    }
+    const document = Buffer.from(await response.arrayBuffer());
+    if (document.length > MAX_DOCUMENT_BYTES) {
+      throw new Error('The Bling document is too large.');
+    }
+    return document;
   }
 
   async sendNfe(nfeId) {

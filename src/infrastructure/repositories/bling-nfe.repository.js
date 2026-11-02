@@ -1,5 +1,5 @@
 const { toMysqlDateTime } = require('../../core/stripe-subscription-map');
-const { NFE_RETRYABLE_STATUSES, NFE_STATUS } = require('../../core/nfe');
+const { NFE_EMAIL_STATUS, NFE_RETRYABLE_STATUSES, NFE_STATUS } = require('../../core/nfe');
 const { FISCAL_NAME_META_KEY, TAX_DOCUMENT_META_KEY } = require('../../core/tax-document');
 
 const TABLE = 'bling_nfe';
@@ -27,7 +27,12 @@ const COLUMNS = {
   nextAttemptAt: 'next_attempt_at',
   submittedAt: 'submitted_at',
   authorizedAt: 'authorized_at',
-  createdAt: 'created_at'
+  createdAt: 'created_at',
+  emailStatus: 'email_status',
+  emailTo: 'email_to',
+  emailSentAt: 'email_sent_at',
+  emailLastError: 'email_last_error',
+  emailNextAttemptAt: 'email_next_attempt_at'
 };
 const JSON_COLUMNS = new Set(['customerAddress', 'requestPayload', 'responsePayload']);
 
@@ -83,6 +88,12 @@ function mapRow(row) {
     nextAttemptAt: isoOrNull(row.next_attempt_at),
     submittedAt: isoOrNull(row.submitted_at),
     authorizedAt: isoOrNull(row.authorized_at),
+    emailStatus: row.email_status || null,
+    emailTo: row.email_to || null,
+    emailSentAt: isoOrNull(row.email_sent_at),
+    emailAttempts: Number(row.email_attempts) || 0,
+    emailLastError: row.email_last_error || null,
+    emailNextAttemptAt: isoOrNull(row.email_next_attempt_at),
     createdAt: isoOrNull(row.created_at),
     updatedAt: isoOrNull(row.updated_at)
   };
@@ -173,6 +184,47 @@ class BlingNfeRepository {
       [NFE_STATUS.PENDING, NFE_STATUS.ERROR, NFE_STATUS.SUBMITTED, toMysqlDateTime(now), limit]
     );
     return rows.map(mapRow);
+  }
+
+  async listEmailDue({ now = new Date(), limit = 10 } = {}) {
+    const rows = await this.dataSource.query(
+      `SELECT * FROM \`${TABLE}\`
+       WHERE \`status\` = ? AND \`email_status\` IN (?, ?) AND \`email_next_attempt_at\` IS NOT NULL AND \`email_next_attempt_at\` <= ?
+       ORDER BY \`email_next_attempt_at\` ASC LIMIT ?`,
+      [NFE_STATUS.AUTHORIZED, NFE_EMAIL_STATUS.PENDING, NFE_EMAIL_STATUS.FAILED, toMysqlDateTime(now), limit]
+    );
+    return rows.map(mapRow);
+  }
+
+  // Only one caller gets affectedRows = 1, so a note is never sent by two runs at once.
+  async claimEmail(id, { now = new Date() } = {}) {
+    const result = await this.dataSource.query(
+      `UPDATE \`${TABLE}\`
+       SET \`email_status\` = ?, \`email_claimed_at\` = ?, \`email_attempts\` = \`email_attempts\` + 1, \`email_next_attempt_at\` = NULL
+       WHERE \`id\` = ? AND \`status\` = ? AND \`email_status\` IN (?, ?) AND \`email_next_attempt_at\` IS NOT NULL`,
+      [NFE_EMAIL_STATUS.SENDING, toMysqlDateTime(now), id, NFE_STATUS.AUTHORIZED, NFE_EMAIL_STATUS.PENDING, NFE_EMAIL_STATUS.FAILED]
+    );
+    return Number(result && result.affectedRows) === 1;
+  }
+
+  // No retry: the message may have left before the process died.
+  async failStaleEmails({ before, error }) {
+    await this.dataSource.query(
+      `UPDATE \`${TABLE}\` SET \`email_status\` = ?, \`email_last_error\` = ?, \`email_next_attempt_at\` = NULL
+       WHERE \`email_status\` = ? AND \`email_claimed_at\` <= ?`,
+      [NFE_EMAIL_STATUS.FAILED, error, NFE_EMAIL_STATUS.SENDING, toMysqlDateTime(before)]
+    );
+  }
+
+  // An operator's decision to send again. A send in progress is left alone.
+  async queueEmail(id, { now = new Date() } = {}) {
+    const result = await this.dataSource.query(
+      `UPDATE \`${TABLE}\`
+       SET \`email_status\` = ?, \`email_attempts\` = 0, \`email_last_error\` = NULL, \`email_next_attempt_at\` = ?
+       WHERE \`id\` = ? AND \`status\` = ? AND (\`email_status\` IS NULL OR \`email_status\` <> ?)`,
+      [NFE_EMAIL_STATUS.PENDING, toMysqlDateTime(now), id, NFE_STATUS.AUTHORIZED, NFE_EMAIL_STATUS.SENDING]
+    );
+    return Number(result && result.affectedRows) === 1;
   }
 
   // The status check lives in the UPDATE, so two clicks or a stale screen cannot queue a note in any other state.

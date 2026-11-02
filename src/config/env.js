@@ -103,7 +103,8 @@ const rawEnvSchema = z.object({
   BLING_CLIENT_ID: z.string().optional(),
   BLING_CLIENT_SECRET: z.string().optional(),
   BLING_REDIRECT_URI: z.string().optional(),
-  BLING_NATUREZA_OPERACAO_ID: z.string().optional()
+  BLING_NATUREZA_OPERACAO_ID: z.string().optional(),
+  BLING_NFE_EMAIL_ENABLED: z.string().optional()
 });
 
 function firstNonEmpty(...values) {
@@ -382,7 +383,8 @@ function parseEnv(source = process.env) {
     BLING_CLIENT_ID: firstNonEmpty(rawEnv.BLING_CLIENT_ID),
     BLING_CLIENT_SECRET: firstNonEmpty(rawEnv.BLING_CLIENT_SECRET),
     BLING_REDIRECT_URI: firstNonEmpty(rawEnv.BLING_REDIRECT_URI),
-    BLING_NATUREZA_OPERACAO_ID: firstNonEmpty(rawEnv.BLING_NATUREZA_OPERACAO_ID)
+    BLING_NATUREZA_OPERACAO_ID: firstNonEmpty(rawEnv.BLING_NATUREZA_OPERACAO_ID),
+    BLING_NFE_EMAIL_ENABLED: toBoolean(rawEnv.BLING_NFE_EMAIL_ENABLED, true)
   };
 
   assertShippingQuoteSecret(rawEnv, resolved);

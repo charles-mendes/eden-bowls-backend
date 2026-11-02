@@ -137,13 +137,33 @@ Leitura do log:
 
 Uma fatura sem CPF válido fica bloqueada antes de qualquer chamada ao Bling.
 
-## 6. O que o operador faz pelo painel
+## 6. E-mail da nota ao cliente
+
+Quem envia é a Eden Bowls. A opção `enviarEmail` do Bling fica desligada, então existe um remetente só. Este e-mail não é a fatura `EB-`. O cliente recebe os dois.
+
+O envio fica ligado em todos os ambientes, e `BLING_NFE_EMAIL_ENABLED` vale `true` mesmo sem estar no `.env`. A nota autorizada entra na fila de e-mail. Os jobs `bling_nfe` (60 segundos, notas enviadas) e `bling_nfe_sync` (5 minutos, lista do Bling) descobrem a autorização. O `bling_nfe` envia no minuto seguinte, com o DANFE em PDF e o XML anexados.
+
+No local e no QA, a nota é de teste, autorizada pela SEFAZ de homologação. O e-mail vai de verdade para o endereço do cliente da nota, com `[TESTE]` no assunto e o aviso de que não tem valor fiscal. Use endereços de teste nesses ambientes. Em produção, a nota é autorizada pela SEFAZ e o e-mail sai sem esse aviso.
+
+Com `BLING_NFE_EMAIL_ENABLED=false`, a nota fica como "Não enviado" e não entra na fila. Religar depois não envia as notas antigas: use Enviar e-mail no detalhe da nota.
+
+Proteções contra envio repetido:
+
+- A nota entra na fila uma vez, na primeira autorização.
+- O job reserva a nota no banco antes de enviar. Duas rodadas ao mesmo tempo não enviam duas vezes.
+- O job consulta o Bling de novo logo antes do envio. Nota cancelada não sai.
+- Se o servidor de e-mail não responder, ou o processo cair no meio do envio, não há nova tentativa automática, porque a mensagem pode ter sido entregue. O detalhe da nota mostra o motivo, e o operador decide.
+- Outras falhas, como o Bling fora do ar, tentam até 6 vezes, com espera crescente de 5 minutos até 6 horas.
+- Nota criada à mão no Bling não recebe e-mail.
+
+## 7. O que o operador faz pelo painel
 
 No detalhe da nota:
 
 - **Nova tentativa:** volta a nota com erro, rejeitada ou sem documento para a fila.
 - **Corrigir dados:** altera nome, e-mail, CPF e endereço de uma nota ainda não autorizada. Exige a permissão `nfe.edit`, de operador e administrador. Fica registrado na auditoria. Nada vai ao Bling nessa hora: a correção é aplicada pelo job na próxima tentativa, antes de enviar a nota.
 - **Abrir no Bling:** abre a nota no site do Bling.
+- **Enviar e-mail ou Reenviar e-mail:** coloca o e-mail da nota autorizada na fila. Pede confirmação, exige a permissão `nfe.retry` e fica na auditoria.
 
 A correção também altera o contato no Bling. Um campo apagado no painel não apaga o valor lá, porque o Bling ignora valor vazio. Para limpar um campo, use o Bling.
 

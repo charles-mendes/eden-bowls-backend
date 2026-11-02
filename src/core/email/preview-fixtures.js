@@ -5,6 +5,7 @@ const {
   buildAdminNewSubscriptionEmail,
   buildAutoRenewOffEmail,
   buildCancelledEmail,
+  buildNfeEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,
   buildPausedEmail,
@@ -126,6 +127,21 @@ function listEmailPreviews(options = {}) {
       label: 'Pausa',
       wired: false,
       content: buildPausedEmail({ ...sample, ...shell })
+    },
+    {
+      id: 'nfe',
+      group: 'P1 · ciclo',
+      label: 'Nota fiscal',
+      wired: true,
+      content: buildNfeEmail({
+        firstName: 'Maria',
+        number: '000158',
+        series: '1',
+        accessKey: '35261165291985000105550010000001581000001589',
+        authorizedLabel: '2 de novembro de 2026',
+        totalLabel: 'R$ 199,00',
+        ...shell
+      })
     },
     {
       id: 'resumed',

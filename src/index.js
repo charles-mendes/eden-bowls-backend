@@ -97,6 +97,7 @@ const { BlingClient } = require('./infrastructure/bling/bling-client');
 const { BlingConnectionRepository } = require('./infrastructure/repositories/bling-connection.repository');
 const { BlingNfeRepository } = require('./infrastructure/repositories/bling-nfe.repository');
 const { BlingNfeService } = require('./services/bling-nfe.service');
+const { BlingNfeEmailService } = require('./services/bling-nfe-email.service');
 const { renderInvoicePdf } = require('./infrastructure/invoices/invoice-pdf-renderer');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
@@ -466,16 +467,26 @@ async function bootstrap() {
     logger
   });
   // NF-e through Bling: recorded on invoice.paid, emitted by the bling_nfe job. Without BLING_* nothing is emitted.
+  const blingNfeRepository = new BlingNfeRepository(dataSource, {
+    usersTableName: env.WP_USERS_TABLE_NAME,
+    usermetaTableName: env.WP_USERMETA_TABLE_NAME
+  });
+  const blingClient = new BlingClient({
+    clientId: env.BLING_CLIENT_ID,
+    clientSecret: env.BLING_CLIENT_SECRET,
+    redirectUri: env.BLING_REDIRECT_URI,
+    connection: new BlingConnectionRepository(dataSource, { clientSecret: env.BLING_CLIENT_SECRET })
+  });
   const blingNfeService = new BlingNfeService({
-    repository: new BlingNfeRepository(dataSource, {
-      usersTableName: env.WP_USERS_TABLE_NAME,
-      usermetaTableName: env.WP_USERMETA_TABLE_NAME
-    }),
-    client: new BlingClient({
-      clientId: env.BLING_CLIENT_ID,
-      clientSecret: env.BLING_CLIENT_SECRET,
-      redirectUri: env.BLING_REDIRECT_URI,
-      connection: new BlingConnectionRepository(dataSource, { clientSecret: env.BLING_CLIENT_SECRET })
+    repository: blingNfeRepository,
+    client: blingClient,
+    emailService: new BlingNfeEmailService({
+      repository: blingNfeRepository,
+      client: blingClient,
+      mailer: otpMailer,
+      enabled: env.BLING_NFE_EMAIL_ENABLED,
+      emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
+      logger
     }),
     billingFor: (account) => resolveStripeBilling({ stripeAccounts, stripeBilling }, account),
     variants: customerInvoicesRepository,

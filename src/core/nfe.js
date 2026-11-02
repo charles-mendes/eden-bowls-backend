@@ -12,6 +12,15 @@ const NFE_STATUS = {
   ERROR: 'error'
 };
 
+// `null` on a note that owes no email. `sending` is the claim that stops a second send.
+const NFE_EMAIL_STATUS = {
+  PENDING: 'pending',
+  SENDING: 'sending',
+  SENT: 'sent',
+  FAILED: 'failed',
+  SKIPPED: 'skipped'
+};
+
 const NFE_STATUSES = Object.values(NFE_STATUS);
 const NFE_RETRYABLE_STATUSES = [NFE_STATUS.ERROR, NFE_STATUS.REJECTED, NFE_STATUS.BLOCKED_MISSING_DOCUMENT];
 
@@ -117,6 +126,7 @@ function buildNfeOrderLines({ lines, totalMinor, isShipping }) {
 
 module.exports = {
   BLING_SITUACAO,
+  NFE_EMAIL_STATUS,
   NFE_RETRYABLE_STATUSES,
   NFE_STATUS,
   NFE_STATUSES,
