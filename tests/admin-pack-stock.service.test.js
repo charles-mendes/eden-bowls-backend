@@ -36,6 +36,27 @@ function build({ repository = stockRepository(), sizes = ['frango|300', 'carne|5
 }
 
 describe('AdminPackStockService', () => {
+  it('adds the catalog names and sizes of the market to the overview', async () => {
+    const catalog = [{ flavorKey: 'beef', packSizeGrams: 300, label: 'Carne' }];
+    const { service } = build();
+    service.catalogRepository.listRecipeCatalog = jest.fn().mockResolvedValue(catalog);
+
+    const result = await service.overview({ market: 'BR' }, { markets: ['BR'] });
+
+    expect(service.catalogRepository.listRecipeCatalog).toHaveBeenCalledWith('BR');
+    expect(result.catalog).toEqual(catalog);
+  });
+
+  it('keeps the overview working when the catalog fails', async () => {
+    const { service } = build();
+    service.catalogRepository.listRecipeCatalog = jest.fn().mockRejectedValue(new Error('down'));
+
+    const result = await service.overview({ market: 'BR' }, { markets: ['BR'] });
+
+    expect(result.catalog).toEqual([]);
+    expect(result.items).toBeDefined();
+  });
+
   test('Known recipe and size', async () => {
     const { service, repository } = build();
 

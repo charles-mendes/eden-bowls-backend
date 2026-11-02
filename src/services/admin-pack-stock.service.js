@@ -95,15 +95,28 @@ class AdminPackStockService {
   async overview(query = {}, actor = {}) {
     const market = this.resolveMarket(actor, query.market);
     const windowDays = query.windowDays || 7;
-    const { overview } = await measureStockComputation('overview', async () => {
-      const [stockItems, cycles] = await Promise.all([
+    const { overview, catalog } = await measureStockComputation('overview', async () => {
+      const [stockItems, cycles, catalogEntries] = await Promise.all([
         this.stockRepository.listItems(market),
-        this.loadCycles({ markets: [market], windowDays })
+        this.loadCycles({ markets: [market], windowDays }),
+        this.loadCatalog(market)
       ]);
-      return { overview: buildOverview({ stockItems, cycles }), rowCount: cycles.length };
+      return { overview: buildOverview({ stockItems, cycles }), catalog: catalogEntries, rowCount: cycles.length };
     });
     this.warnUnsized(overview.unsizedLines);
-    return { market, windowDays, ...overview };
+    return { market, windowDays, ...overview, catalog };
+  }
+
+  // Names and sizes are extra information: without them the screen still lists by recipe key.
+  async loadCatalog(market) {
+    if (!this.catalogRepository || typeof this.catalogRepository.listRecipeCatalog !== 'function') {
+      return [];
+    }
+    try {
+      return await this.catalogRepository.listRecipeCatalog(market);
+    } catch (_error) {
+      return [];
+    }
   }
 
   // Coverage of every committing cycle in the queue window, per market, or null without stock storage.

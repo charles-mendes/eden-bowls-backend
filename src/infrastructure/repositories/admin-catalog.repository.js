@@ -408,6 +408,27 @@ class AdminCatalogRepository {
     return sizes;
   }
 
+  // One entry per recipe and whole grams the market sells or sold, with its display name (pack-stock).
+  async listRecipeCatalog(market) {
+    const normalized = String(market || '').trim().toUpperCase();
+    const entries = new Map();
+    for (const row of await this.recipeVariationRows()) {
+      if (row.market !== normalized || !row.key || !row.packSizeGrams) {
+        continue;
+      }
+      const id = `${row.key}|${row.packSizeGrams}`;
+      const current = entries.get(id);
+      entries.set(id, {
+        flavorKey: row.key,
+        packSizeGrams: row.packSizeGrams,
+        label: (current && current.label) || row.shortLabel || row.label || row.key
+      });
+    }
+    return [...entries.values()].sort((left, right) => (
+      left.label.localeCompare(right.label) || left.packSizeGrams - right.packSizeGrams
+    ));
+  }
+
   // Variations of one recipe in a market, by content key (recipe-content).
   async listRecipeVariations(market, recipeKey) {
     const normalized = String(market || '').trim().toUpperCase();
