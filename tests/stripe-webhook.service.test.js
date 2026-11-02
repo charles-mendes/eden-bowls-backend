@@ -254,6 +254,40 @@ describe('StripeWebhookService', () => {
     }));
   });
 
+  test.each([
+    ['invoice.paid', { id: 'in_1', customer: 'cus_1', subscription: 'sub_123' }],
+    ['customer.subscription.updated', {
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      items: { data: [{ price: { id: 'price_abc' }, quantity: 1 }] },
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    }]
+  ])('%s keeps the Stripe account the checkout recorded', async (type, object) => {
+    const { service, stripeBilling, ledgerRepository } = buildService();
+    stripeBilling.constructEvent.mockReturnValue({ id: 'evt_account', type, data: { object } });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      items: { data: [{ price: { id: 'price_abc' }, quantity: 1 }] },
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_123',
+      stripeAccount: 'br'
+    });
+
+    await service.handle({ account: 'us', rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(ledgerRepository.upsert).toHaveBeenCalled();
+    for (const [row] of ledgerRepository.upsert.mock.calls) {
+      expect(row.stripeAccount).toBe('br');
+    }
+  });
+
   describe('Eden Bowls invoice PDF', () => {
     const row = { id: 1, invoiceNumber: 'EB-2026-000418', emailStatus: 'pending', emailTo: 'ana@example.com' };
     const attachment = { invoiceNumber: 'EB-2026-000418', filename: 'EB-2026-000418.pdf', content: Buffer.from('%PDF') };

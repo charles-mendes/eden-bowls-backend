@@ -380,7 +380,8 @@ class StripeWebhookService {
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(invoice.customer || (subscription && subscription.customer) || existing && existing.stripeCustomerId || ''),
-      stripeAccount: runtime.account || (existing && existing.stripeAccount) || 'us',
+      // The checkout chose the account from the address. The endpoint that delivered the event does not change it.
+      stripeAccount: (existing && existing.stripeAccount) || runtime.account || 'us',
       // A skip or a postponement pays a $0 invoice while the charge waits in trial.
       status: subscription && subscription.status === 'trialing' ? 'trialing' : 'active',
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
@@ -761,7 +762,7 @@ class StripeWebhookService {
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(subscription.customer || (context.ledger && context.ledger.stripeCustomerId) || ''),
-      stripeAccount: runtime.account || (context.ledger && context.ledger.stripeAccount) || 'us',
+      stripeAccount: (context.ledger && context.ledger.stripeAccount) || runtime.account || 'us',
       status: mapStripeStatus(subscription),
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
       currentPeriodStart: period.start,
