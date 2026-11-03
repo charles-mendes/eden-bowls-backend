@@ -1,6 +1,7 @@
 const { upsTrackingUrl } = require('../../core/ups-tracking');
 const { DateTime } = require('luxon');
 const { withTimeout } = require('../../core/with-timeout');
+const { PLAN_NOTICE_TEMPLATES } = require('../../core/plan-notice');
 const {
   buildAdminNewSubscriptionEmail,
   buildAutoRenewOffEmail,
@@ -9,7 +10,9 @@ const {
   buildPausedEmail,
   buildPaymentFailedEmail,
   buildPlanChangedEmail,
+  buildPlanEndingNoticeEmail,
   buildRenewalEmail,
+  buildRenewalNoticeEmail,
   buildResumedEmail,
   buildShippedEmail
 } = require('../../core/email/transactional-emails');
@@ -35,7 +38,9 @@ const TEMPLATES = {
   cancelled: 'cancelled',
   autoRenewOff: 'auto_renew_off',
   planChanged: 'plan_changed',
-  lifeStageChange: 'life_stage_change'
+  lifeStageChange: 'life_stage_change',
+  renewalNotice: PLAN_NOTICE_TEMPLATES.renewal,
+  planEndingNotice: PLAN_NOTICE_TEMPLATES.ending
 };
 
 const RESEND_TEMPLATES = [
@@ -466,6 +471,54 @@ function createTransactionalMailer(options = {}) {
     });
   }
 
+  // `total` is the amount of the next invoice from the Stripe preview, absent when the preview failed.
+  async function notifyRenewalNotice({ ledger = {}, subscriptionId, referenceId, renewsOn, total = null }) {
+    const target = customerTarget({ ledger, subscriptionId, referenceId });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.renewalNotice);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildRenewalNoticeEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      renewsOnLabel: formatLetterDate(renewsOn, locale),
+      totalLabel: total ? formatMoney(total.amount, total.currency) : '',
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.renewalNotice,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
+  async function notifyPlanEndingNotice({ ledger = {}, subscriptionId, referenceId, endsOn }) {
+    const target = customerTarget({ ledger, subscriptionId, referenceId });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.planEndingNotice);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildPlanEndingNoticeEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      endsOnLabel: formatLetterDate(endsOn, locale),
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.planEndingNotice,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
   async function notifyPaused({ ledger = {}, subscriptionId, referenceId, resumeAt }) {
     const target = customerTarget({ ledger, subscriptionId, referenceId });
     if (!target.id || !target.reference || !target.to) {
@@ -709,6 +762,8 @@ function createTransactionalMailer(options = {}) {
     notifyPaymentFailed,
     notifyShipped,
     notifyRenewal,
+    notifyRenewalNotice,
+    notifyPlanEndingNotice,
     notifyPaused,
     notifyResumed,
     notifyCancelled,

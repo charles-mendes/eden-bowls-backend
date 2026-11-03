@@ -1,5 +1,31 @@
 const { SubscriptionsDetailRepository } = require('../src/infrastructure/repositories/subscriptions-detail.repository');
 
+describe('SubscriptionsDetailRepository plan_notice', () => {
+  test('Explicit cancellation inside the window, with no Stripe call for the notice', async () => {
+    const periodEnd = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
+    const repository = new SubscriptionsDetailRepository({
+      ledgerRepository: {
+        findByUserIdAndSubscriptionId: async () => ({
+          stripeSubscriptionId: 'sub_1',
+          stripeAccount: 'us',
+          status: 'active',
+          autoRenew: true,
+          cancelAtPeriodEnd: true,
+          currentPeriodEnd: periodEnd,
+          petsSnapshot: [],
+          planSelection: {},
+          address: {}
+        })
+      },
+      settingsRepository: { forMarket: async () => ({ planNoticeDays: 7 }) }
+    });
+
+    const { subscription } = await repository.getDetail(7, 'sub_1');
+
+    expect(subscription.plan_notice).toEqual({ kind: 'ending', date: periodEnd.toISOString(), days_left: 2 });
+  });
+});
+
 describe('SubscriptionsDetailRepository billing history', () => {
   function build(invoices) {
     return new SubscriptionsDetailRepository({

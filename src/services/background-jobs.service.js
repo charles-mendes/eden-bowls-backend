@@ -19,6 +19,7 @@ const JOB_INTERVALS = {
   mail_resend: 5 * 60 * 1000,
   invoice_email: 5 * 60 * 1000,
   ups_tracking: 30 * 60 * 1000,
+  plan_notices: 60 * 60 * 1000,
   refresh_cleanup: DAY_MS,
   webhook_retention: DAY_MS,
   delivery_calendar_stripe_sync: 60 * 1000,
@@ -33,6 +34,7 @@ const LOCKS = {
   mail_resend: 'eden_job_mail_resend',
   invoice_email: 'eden_job_invoice_email',
   ups_tracking: 'eden_job_ups_tracking',
+  plan_notices: 'eden_job_plan_notices',
   refresh_cleanup: 'eden_job_refresh_cleanup',
   webhook_retention: 'eden_job_webhook_retention',
   delivery_calendar_stripe_sync: 'eden_job_delivery_calendar_stripe_sync',
@@ -184,6 +186,12 @@ function createJobDefinitions(deps) {
       lockName: LOCKS.ups_tracking,
       intervalMs: JOB_INTERVALS.ups_tracking,
       run: () => runUpsTracking(deps)
+    },
+    {
+      name: 'plan_notices',
+      lockName: LOCKS.plan_notices,
+      intervalMs: JOB_INTERVALS.plan_notices,
+      run: () => (deps.planNoticesService ? deps.planNoticesService.runDue() : { skipped: true })
     },
     {
       name: 'refresh_cleanup',

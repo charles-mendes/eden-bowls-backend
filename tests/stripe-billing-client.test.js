@@ -949,3 +949,28 @@ describe('StripeBillingClient.ensureRecurringPrice', () => {
     });
   });
 });
+
+describe('StripeBillingClient.previewUpcomingInvoice', () => {
+  function clientWith(createPreview) {
+    const client = new StripeBillingClient({ secretKey: 'sk_test_x' });
+    client.client = { invoices: { createPreview } };
+    client.ensureClient = () => client.client;
+    return client;
+  }
+
+  test('sends only the subscription id and returns the amount due', async () => {
+    const createPreview = jest.fn().mockResolvedValue({ amount_due: 8990, currency: 'brl', total: 9990 });
+    await expect(clientWith(createPreview).previewUpcomingInvoice('sub_1')).resolves.toEqual({ amount: 8990, currency: 'brl' });
+    expect(createPreview).toHaveBeenCalledWith({ subscription: 'sub_1' });
+  });
+
+  test('a Stripe error reaches the caller', async () => {
+    const createPreview = jest.fn().mockRejectedValue(new Error('stripe down'));
+    await expect(clientWith(createPreview).previewUpcomingInvoice('sub_1')).rejects.toThrow('stripe down');
+  });
+
+  test('a timeout reaches the caller', async () => {
+    const createPreview = jest.fn(() => new Promise(() => {}));
+    await expect(clientWith(createPreview).previewUpcomingInvoice('sub_1', { timeoutMs: 5 })).rejects.toBeDefined();
+  });
+});

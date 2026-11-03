@@ -1,3 +1,4 @@
+const { withTimeout } = require('../../core/with-timeout');
 function isSeedStripePriceId(priceId) {
   return String(priceId || '').startsWith('price_seed_');
 }
@@ -1333,6 +1334,13 @@ class StripeBillingClient {
         code: 'stripe_proration_preview_failed'
       });
     }
+  }
+
+  // The subscription's next invoice as it stands, with no plan change. Read only.
+  async previewUpcomingInvoice(subscriptionId, { timeoutMs = 15 * 1000 } = {}) {
+    const stripe = this.ensureClient();
+    const invoice = await withTimeout(stripe.invoices.createPreview({ subscription: subscriptionId }), timeoutMs);
+    return { amount: invoice.amount_due, currency: invoice.currency };
   }
 
   async updateSubscriptionItems({ subscriptionId, items, metadata, prorationBehavior = 'create_prorations' }) {

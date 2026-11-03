@@ -1,6 +1,22 @@
 const { SubscriptionMailClaimsRepository } = require('../src/infrastructure/repositories/subscription-mail-claims.repository');
 const { RESEND_TEMPLATES } = require('../src/infrastructure/mailers/transactional-mailer');
 
+describe('SubscriptionMailClaimsRepository.hasClaim', () => {
+  test('matches on subscription, template, and reference, sent or not', async () => {
+    const query = jest.fn().mockResolvedValueOnce([{ id: 1 }]).mockResolvedValueOnce([]);
+    const repository = new SubscriptionMailClaimsRepository({ isInitialized: true, query });
+    const key = { subscriptionId: 'sub_1', template: 'renewal_notice', referenceId: 'renewal_notice:1' };
+
+    await expect(repository.hasClaim(key)).resolves.toBe(true);
+    await expect(repository.hasClaim(key)).resolves.toBe(false);
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('`reference_id` = ?');
+    expect(sql).not.toContain('sent_at');
+    expect(params).toEqual(['sub_1', 'renewal_notice', 'renewal_notice:1']);
+  });
+});
+
 describe('SubscriptionMailClaimsRepository resend selection', () => {
   test('selects only unsent unexhausted transactional templates', async () => {
     const query = jest.fn().mockResolvedValue([]);

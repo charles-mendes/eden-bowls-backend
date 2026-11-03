@@ -620,6 +620,110 @@ function buildAutoRenewOffEmail({
   };
 }
 
+function planNoticeLetter({ id, pt, kicker, subject, sentence, details, buttonLabel, note, url, locale, assetBaseUrl, allowRelativeAssets }) {
+  const rows = details.filter((item) => item.value);
+  const text = [
+    sentence,
+    ...rows.map((item) => `${item.label}: ${item.value}`),
+    note,
+    url
+  ].filter(Boolean).join('\n');
+  const innerHtml = [
+    paragraphHtml(sentence),
+    detailsTableHtml(rows),
+    url ? buttonHtml({ href: url, label: buttonLabel }) : '',
+    mutedHtml(note)
+  ].join('');
+  return {
+    id,
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || (pt ? 'pt-BR' : 'en-US'),
+      preheader: sentence,
+      kicker,
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
+// Sent before the charge that starts a new contract. Without `totalLabel` the Stripe preview failed.
+function buildRenewalNoticeEmail({
+  firstName,
+  petName,
+  renewsOnLabel,
+  totalLabel,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  return planNoticeLetter({
+    id: 'renewal-notice',
+    pt,
+    kicker: pt ? 'Renovação' : 'Renewal',
+    subject: pt ? `Seu plano renova em ${renewsOnLabel}` : `Your plan renews on ${renewsOnLabel}`,
+    sentence: pt
+      ? `${hello} O plano de ${pet} renova automaticamente em ${renewsOnLabel}.`
+      : `${hello} ${pet}'s plan renews automatically on ${renewsOnLabel}.`,
+    details: [
+      { label: 'Pet', value: pet },
+      { label: pt ? 'Renovação' : 'Renewal date', value: renewsOnLabel },
+      { label: pt ? 'Valor' : 'Amount', value: totalLabel }
+    ],
+    buttonLabel: pt ? 'Ver meu plano' : 'View my plan',
+    note: pt
+      ? 'Para alterar ou desligar a renovação, acesse Meu Plano antes dessa data.'
+      : 'To change your plan or turn renewal off, go to My Plan before that date.',
+    url: String(dashboardUrl || '').trim(),
+    locale,
+    assetBaseUrl,
+    allowRelativeAssets
+  });
+}
+
+// Sent before a contract whose renewal was turned off comes to an end.
+function buildPlanEndingNoticeEmail({
+  firstName,
+  petName,
+  endsOnLabel,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  return planNoticeLetter({
+    id: 'plan-ending-notice',
+    pt,
+    kicker: pt ? 'Fim do plano' : 'Plan ending',
+    subject: pt ? `Seu plano termina em ${endsOnLabel}` : `Your plan ends on ${endsOnLabel}`,
+    sentence: pt
+      ? `${hello} O plano de ${pet} termina em ${endsOnLabel}, porque a renovação automática está desligada.`
+      : `${hello} ${pet}'s plan ends on ${endsOnLabel}, because automatic renewal is off.`,
+    details: [
+      { label: 'Pet', value: pet },
+      { label: pt ? 'Fim do plano' : 'Plan ends', value: endsOnLabel }
+    ],
+    buttonLabel: pt ? 'Manter meu plano' : 'Keep my plan',
+    note: pt
+      ? 'Para manter o plano, religue a renovação no Meu Plano antes dessa data.'
+      : 'To keep your plan, turn renewal back on in My Plan before that date.',
+    url: String(dashboardUrl || '').trim(),
+    locale,
+    assetBaseUrl,
+    allowRelativeAssets
+  });
+}
+
 function buildPlanChangedEmail({
   firstName,
   petName,
@@ -812,7 +916,9 @@ module.exports = {
   buildPausedEmail,
   buildPaymentFailedEmail,
   buildPlanChangedEmail,
+  buildPlanEndingNoticeEmail,
   buildRenewalEmail,
+  buildRenewalNoticeEmail,
   buildResumedEmail,
   buildShippedEmail
 };

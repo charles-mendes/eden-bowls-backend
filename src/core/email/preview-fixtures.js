@@ -11,7 +11,9 @@ const {
   buildPausedEmail,
   buildPaymentFailedEmail,
   buildPlanChangedEmail,
+  buildPlanEndingNoticeEmail,
   buildRenewalEmail,
+  buildRenewalNoticeEmail,
   buildResumedEmail,
   buildShippedEmail
 } = require('./transactional-emails');
@@ -120,6 +122,20 @@ function listEmailPreviews(options = {}) {
       label: 'Recibo de renovação',
       wired: false,
       content: buildRenewalEmail({ ...sample, ...shell })
+    },
+    {
+      id: 'renewal-notice',
+      group: 'P1 · ciclo',
+      label: 'Aviso de renovação',
+      wired: true,
+      content: buildRenewalNoticeEmail({ ...sample, renewsOnLabel: sample.nextDeliveryLabel, ...shell })
+    },
+    {
+      id: 'plan-ending-notice',
+      group: 'P1 · ciclo',
+      label: 'Aviso de fim de plano',
+      wired: true,
+      content: buildPlanEndingNoticeEmail({ ...sample, endsOnLabel: sample.endsAtLabel, ...shell })
     },
     {
       id: 'paused',

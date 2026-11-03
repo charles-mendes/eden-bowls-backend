@@ -2,6 +2,7 @@ const { upsTrackingUrl } = require('../../core/ups-tracking');
 const { toIsoDate } = require('../../core/stripe-subscription-map');
 const { mapLedgerToDashboardDetail } = require('../../core/subscription-dashboard');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
+const { dashboardPlanNotice } = require('../../core/plan-notice');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 
 // Moving the next charge date sets trial_end, and Stripe answers with a paid R$ 0 subscription_update invoice.
@@ -13,6 +14,7 @@ function isTrialMoveInvoice(invoice) {
 class SubscriptionsDetailRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
+    this.settingsRepository = options.settingsRepository || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.upsShipmentRepository = options.upsShipmentRepository || null;
@@ -119,7 +121,10 @@ class SubscriptionsDetailRepository {
     }
 
     return {
-      subscription: mapLedgerToDashboardDetail(row, extras)
+      subscription: {
+        ...mapLedgerToDashboardDetail(row, extras),
+        plan_notice: await dashboardPlanNotice(row, this.settingsRepository)
+      }
     };
   }
 }

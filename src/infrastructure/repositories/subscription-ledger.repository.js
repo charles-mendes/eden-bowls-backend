@@ -1041,6 +1041,28 @@ class SubscriptionLedgerRepository {
   }
 
   // Subscriptions that still have a delivery to make: the same statuses the production queue keeps.
+  // Subscriptions whose period ends inside the plan notice window, nearest first. No row limit: the window bounds
+  // the result, and a limit would let already-notified rows hide the ones after them.
+  async listPlanNoticeCandidates(stripeAccount, from, until) {
+    this.ensureDataSource();
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT * FROM \`${this.tableName}\`
+          WHERE \`stripe_account\` = ?
+            AND \`status\` IN ('active', 'trialing')
+            AND \`current_period_end\` BETWEEN ? AND ?
+          ORDER BY \`current_period_end\`, \`id\``,
+        [String(stripeAccount || '').toLowerCase(), from, until]
+      );
+      return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row));
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
   async listDeliverableByAccount(stripeAccount) {
     this.ensureDataSource();
     try {

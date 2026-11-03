@@ -139,6 +139,7 @@ const { LegalDocumentsRepository } = require('./infrastructure/repositories/lega
 const { LegalDocumentsService } = require('./services/legal-documents.service');
 const { AutomatedEmailSettingsRepository } = require('./infrastructure/repositories/automated-email-settings.repository');
 const { AutomatedEmailSettingsService } = require('./services/automated-email-settings.service');
+const { PlanNoticesService } = require('./services/plan-notices.service');
 const { LifeStageChangeEmailService } = require('./services/life-stage-change-email.service');
 const { LifeStageNoticesService } = require('./services/life-stage-notices.service');
 const { LifeStageAnnouncementsRepository } = require('./infrastructure/repositories/life-stage-announcements.repository');
@@ -447,6 +448,14 @@ async function bootstrap() {
     settings: automatedEmailSettingsRepository,
     logger
   });
+  const planNoticesService = new PlanNoticesService({
+    ledgerRepository: subscriptionLedgerRepository,
+    claimsRepository: subscriptionMailClaimsRepository,
+    settings: automatedEmailSettingsRepository,
+    mailer: transactionalMailer,
+    billingFor: (account) => resolveStripeBilling({ stripeAccounts, stripeBilling }, account),
+    logger
+  });
   // Eden Bowls invoice PDFs (EB-YYYY-NNNNNN): issued on invoice.paid, kept in INVOICE_PDF_DIR, emailed to the customer.
   const customerInvoicesRepository = new CustomerInvoicesRepository(dataSource, { postmetaTableName: env.WP_POSTMETA_TABLE_NAME });
   const customerInvoicesService = new CustomerInvoicesService({
@@ -540,6 +549,7 @@ async function bootstrap() {
   const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository, { authService });
   const subscriptionsDetailRepository = new SubscriptionsDetailRepository({
     ledgerRepository: subscriptionLedgerRepository,
+    settingsRepository: automatedEmailSettingsRepository,
     stripeAccounts,
     stripeBilling,
     upsShipmentRepository,
@@ -590,7 +600,8 @@ async function bootstrap() {
     deliveryGuard: customerDeliveriesService
   });
   const subscriptionsRepository = new SubscriptionsRepository({
-    ledgerRepository: subscriptionLedgerRepository
+    ledgerRepository: subscriptionLedgerRepository,
+    settingsRepository: automatedEmailSettingsRepository
   });
   const subscriptionsService = new SubscriptionsService(subscriptionsRepository, {
     lifeStageService,
@@ -942,7 +953,8 @@ async function bootstrap() {
       refreshTokenRepository: authRefreshTokenRepository,
       eventsRepository: stripeWebhookEventsRepository,
       deliveryCalendarSyncMaxAttempts: env.DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS,
-      lifeStageChangeEmailService
+      lifeStageChangeEmailService,
+      planNoticesService
     })
   });
 }
