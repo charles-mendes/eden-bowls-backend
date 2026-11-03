@@ -8,7 +8,7 @@ Tells customers ahead of time that a contract will renew or end, by email and in
 
 ### Requirement: Renewal notice before a new contract
 
-The system MUST email a renewal notice when a subscription is `active` or `trialing`, renewal is on, it is not set to cancel at period end, its period ends within the market's notice window, and the next charge starts a new contract. The window MUST run from now to now plus the configured days, so a period end in the past never qualifies.
+The system MUST email a renewal notice when a subscription is `active` or `trialing`, renewal is on, it is not set to cancel at period end, its period ends within the market's notice window, and the next charge starts a new contract, counting only deliveries of the current contract. The window MUST run from now to now plus the configured days, so a period end in the past never qualifies.
 
 #### Scenario: One-month plan
 
@@ -48,6 +48,16 @@ The system MUST email a renewal notice when a subscription is `active` or `trial
 #### Scenario: Subscription not in good standing
 
 - **WHEN** the subscription is `past_due`, `paused`, or `canceled`
+- **THEN** no renewal notice is sent
+
+#### Scenario: Term change before the last delivery
+
+- **WHEN** a plan with 3 charged deliveries changed to three months and has 1 delivery charged since
+- **THEN** no renewal notice is sent
+
+#### Scenario: First charge after a term change
+
+- **WHEN** a plan changed term and no delivery was charged since
 - **THEN** no renewal notice is sent
 
 ### Requirement: Renewal notice content
