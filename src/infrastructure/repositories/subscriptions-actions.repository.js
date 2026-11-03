@@ -4,6 +4,7 @@ const { mapLedgerToActionSummary } = require('../../core/subscription-dashboard'
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 const {
+  contractPaid,
   lastContractedDeliveryCharged,
   resolveAutoRenew,
   stripeChargedInvoiceCount
@@ -107,7 +108,7 @@ class SubscriptionsActionsRepository {
     }
     const plan = row.planSelection || {};
     const term = Number(row.subscriptionTermMonths || plan.subscription_term_months || 1) || 1;
-    return lastContractedDeliveryCharged(paid, term);
+    return lastContractedDeliveryCharged(contractPaid(paid, row), term);
   }
 
   async updateCardSnapshot(row, paymentMethodId, stripeBilling) {

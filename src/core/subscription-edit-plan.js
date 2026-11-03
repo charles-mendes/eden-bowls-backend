@@ -62,14 +62,31 @@ function diffSubscriptionItems(currentItems, proposedItems) {
   return updates;
 }
 
+function isProrationLine(line) {
+  const details = line.parent && line.parent.subscription_item_details;
+  return Boolean(line.proration || (details && details.proration));
+}
+
+function lineTotalMinor(line) {
+  const taxes = Array.isArray(line.taxes) ? line.taxes : [];
+  const discounts = Array.isArray(line.discount_amounts) ? line.discount_amounts : [];
+  const exclusiveTax = taxes
+    .filter((tax) => tax.tax_behavior === 'exclusive')
+    .reduce((sum, tax) => sum + (Number(tax.amount) || 0), 0);
+  const discount = discounts.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+  return (Number(line.amount) || 0) - discount + exclusiveTax;
+}
+
+// The preview is the whole next invoice: the regular cycle plus any proration. Only the proration is due now.
 function mapProrationFromInvoice(invoice = {}, currencyFallback = 'USD') {
-  const amountDueMinor = Number(invoice.amount_due == null ? invoice.total : invoice.amount_due) || 0;
+  const lines = invoice.lines && Array.isArray(invoice.lines.data) ? invoice.lines.data : [];
+  const amountDueMinor = lines.filter(isProrationLine).reduce((sum, line) => sum + lineTotalMinor(line), 0);
   const amountDue = Number((amountDueMinor / 100).toFixed(2));
-  const creditMinor = amountDueMinor < 0 ? Math.abs(amountDueMinor) : Number(invoice.starting_balance < 0 ? Math.abs(invoice.starting_balance) : 0);
+  const creditMinor = Math.max(0, -amountDueMinor);
   let direction = 'none';
   if (amountDue > 0) {
     direction = 'charge';
-  } else if (amountDue < 0 || creditMinor > 0) {
+  } else if (amountDue < 0) {
     direction = 'credit';
   }
 

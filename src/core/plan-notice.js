@@ -1,4 +1,4 @@
-const { resolveAutoRenew } = require('./contract-deliveries');
+const { contractPaid, resolveAutoRenew } = require('./contract-deliveries');
 const { ledgerStripeAccount } = require('./stripe-account');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -19,9 +19,9 @@ function toInstant(value) {
 // longer term it could be an instalment, so nothing is announced. A stored 0 has no contract to renew yet.
 function nextChargeStartsContract(row) {
   const term = Math.max(1, Number(row.subscriptionTermMonths || (row.planSelection || {}).subscription_term_months) || 1);
-  const charged = row.chargedDeliveries;
+  const charged = contractPaid(row.chargedDeliveries, row);
   if (charged == null) return term === 1;
-  return Number(charged) > 0 && Number(charged) % term === 0;
+  return charged > 0 && charged % term === 0;
 }
 
 /**

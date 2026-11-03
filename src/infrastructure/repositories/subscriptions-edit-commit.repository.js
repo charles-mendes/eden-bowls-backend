@@ -9,8 +9,10 @@ const {
   resolveProposedPlan,
   withLedgerMarket
 } = require('../../core/subscription-edit-plan');
+const { isChargedDeliveryInvoice, startNewContract } = require('../../core/contract-deliveries');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
+const { extractInvoicePayment } = require('../stripe/stripe-billing-client');
 const { verifiedEditShipping } = require('../../core/shipping-quote-token');
 const { resolveMarket } = require('../../core/market');
 const { assertPackOnlyChange, withStoredPets } = require('../../core/pack-adjustment');
@@ -133,6 +135,10 @@ class SubscriptionsEditCommitRepository {
       }
     }
 
+    if (termChange) {
+      await this.seedChargedCount(row, stripeBilling);
+    }
+
     const shippingCost = shippingCostFrom(shipping);
     const metadata = {
       ...(subscription.metadata || {}),
@@ -165,16 +171,16 @@ class SubscriptionsEditCommitRepository {
     const invoice = updated.latest_invoice && typeof updated.latest_invoice === 'object'
       ? updated.latest_invoice
       : {};
-    const paymentIntent = invoice.payment_intent && typeof invoice.payment_intent === 'object'
-      ? invoice.payment_intent
-      : {};
-    const paymentIntentStatus = String(paymentIntent.status || '');
+    const payment = extractInvoicePayment(invoice);
+    const paymentIntentStatus = payment.paymentIntentStatus;
+    const invoicePaid = invoice.status === 'paid';
     const paymentState = stripeBilling.resolvePaymentState({
       paymentMethodId: payload.payment_method_id || (updated.default_payment_method && updated.default_payment_method.id),
-      paymentIntentStatus: paymentIntentStatus || (proration.direction === 'charge' ? 'requires_confirmation' : 'succeeded')
+      paymentIntentStatus: paymentIntentStatus || (proration.direction === 'charge' && !invoicePaid ? 'requires_confirmation' : 'succeeded')
     });
-    const needsConfirmation = Boolean(paymentIntent.client_secret)
-      && ['requires_action', 'requires_confirmation'].includes(paymentIntentStatus);
+    // The current API returns only confirmation_secret, with no payment intent status.
+    const needsConfirmation = Boolean(payment.clientSecret) && !invoicePaid
+      && ['', 'requires_action', 'requires_confirmation'].includes(paymentIntentStatus);
     const editPaymentPending = proration.direction === 'charge' && (needsConfirmation || paymentState === 'requires_confirmation');
 
     const nextPlanSelection = {
@@ -183,6 +189,11 @@ class SubscriptionsEditCommitRepository {
     };
     const nextPets = buildPetsSnapshot(nextPlanSelection);
     const savedAddress = payload.address ? addressWithTransit(payload.address, shipping) : row.address;
+
+    // Before the term is saved: a failure here leaves the old term, and saving again repeats both steps safely.
+    if (termChange && !editPaymentPending) {
+      await startNewContract({ ledgerRepository: this.ledgerRepository, billing: stripeBilling, row, subscriptionId });
+    }
 
     if (editPaymentPending) {
       await this.ledgerRepository.upsert({
@@ -195,9 +206,10 @@ class SubscriptionsEditCommitRepository {
         editPending: {
           plan_selection: nextPlanSelection,
           term_months: proposedTerm,
+          term_changed: termChange,
           shipping,
           invoice_id: invoice.id || null,
-          payment_intent_id: paymentIntent.id || null
+          payment_intent_id: payment.paymentIntentId || null
         }
       });
     } else {
@@ -236,11 +248,24 @@ class SubscriptionsEditCommitRepository {
       proration,
       payment_state: editPaymentPending ? 'requires_confirmation' : (proration.direction === 'charge' ? paymentState : 'paid'),
       stripe_invoice_id: invoice.id || undefined,
-      stripe_payment_intent_id: paymentIntent.id || undefined,
-      stripe_client_secret: editPaymentPending ? (paymentIntent.client_secret || null) : null,
+      stripe_payment_intent_id: payment.paymentIntentId || undefined,
+      stripe_client_secret: editPaymentPending ? (payment.clientSecret || null) : null,
       stripe_payment_intent_status: paymentIntentStatus || undefined,
       edit_payment_pending: editPaymentPending
     };
+  }
+
+  // Without the lifetime count, the new contract's start would be 0 and every earlier invoice would count once seeded.
+  async seedChargedCount(row, stripeBilling) {
+    if (row.chargedDeliveries != null) return;
+    let invoices;
+    try {
+      invoices = await stripeBilling.listPaidInvoicesForSubscription(row.stripeSubscriptionId);
+    } catch (_error) {
+      throw new HttpError(502, 'Unable to read the charged deliveries.', { code: 'contract_count_unavailable' });
+    }
+    const earlier = invoices.filter((item) => item.id && isChargedDeliveryInvoice(item)).map((item) => item.id);
+    await this.ledgerRepository.seedChargedDeliveries(row.stripeSubscriptionId, earlier);
   }
 
   async notifyPlanChangedMail({

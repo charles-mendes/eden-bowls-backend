@@ -15,6 +15,12 @@ function signedShipping({ cost = 12.9, deliveryDays = 1, zipcode = '94105', sign
   };
 }
 
+const prorationInvoice = (amount) => ({
+  amount_due: 437500 + amount,
+  currency: 'usd',
+  lines: { data: [{ amount, parent: { subscription_item_details: { proration: true } } }] }
+});
+
 describe('SubscriptionsEditCommitRepository', () => {
   const previousRuntime = process.env.EDEN_RUNTIME;
 
@@ -63,13 +69,15 @@ describe('SubscriptionsEditCommitRepository', () => {
       stripeCustomerId: 'cus_1',
       status: 'active',
       subscriptionTermMonths: 1,
+      chargedDeliveries: 1,
       address: { country: 'US' },
       shipping: { cost: 12.9 },
       ...overrides.ledgerRow
     };
     const ledgerRepository = {
       findByUserIdAndSubscriptionId: jest.fn().mockResolvedValue(ledgerRow),
-      upsert: jest.fn().mockResolvedValue(ledgerRow)
+      upsert: jest.fn().mockResolvedValue(ledgerRow),
+      startContract: jest.fn()
     };
     const planPreviewRepository = {
       previewPlan: jest.fn().mockResolvedValue({
@@ -91,6 +99,98 @@ describe('SubscriptionsEditCommitRepository', () => {
   }
 
   const moreRecipes = [{ price: 'price_abc', quantity: 2 }];
+
+  describe('term change', () => {
+    const save = (repository, term = 3) => repository.commit(7, 'sub_123', {
+      subscription_term_months: term,
+      expected_current_hash: hash,
+      pets: [{ pet_name: 'Milo', enabled: true, selected_flavors: ['chicken'], flavor_weights: [100] }],
+      address: US_EDIT_ADDRESS,
+      shipping: signedShipping()
+    });
+
+    test('One month to three: the contract starts before the term is saved', async () => {
+      const repository = buildRepo({ ledgerRow: { chargedDeliveries: 1 } });
+      const order = [];
+      repository.ledgerRepository.startContract = jest.fn(async () => { order.push('start'); });
+      repository.ledgerRepository.upsert.mockImplementation(async () => { order.push('upsert'); });
+
+      await save(repository);
+
+      expect(repository.ledgerRepository.startContract).toHaveBeenCalledWith('sub_123');
+      expect(order).toEqual(['start', 'upsert']);
+    });
+
+    test('Other edit', async () => {
+      const repository = buildRepo({ proposedItems: moreRecipes, ledgerRow: { chargedDeliveries: 1 } });
+      repository.ledgerRepository.startContract = jest.fn();
+      await save(repository, 1);
+      expect(repository.ledgerRepository.startContract).not.toHaveBeenCalled();
+    });
+
+    test('Renewal off after the last charge: removes the scheduled end', async () => {
+      const setCancelAtPeriodEnd = jest.fn().mockResolvedValue({});
+      const repository = buildRepo({
+        stripeBilling: { setCancelAtPeriodEnd },
+        ledgerRow: { chargedDeliveries: 1, autoRenew: false, cancelAtPeriodEnd: true }
+      });
+      repository.ledgerRepository.startContract = jest.fn();
+      await save(repository);
+      expect(setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_123', false);
+    });
+
+    test.each([[true], [null]])('Explicit cancellation with stored auto_renew %s keeps the scheduled end', async (autoRenew) => {
+      const setCancelAtPeriodEnd = jest.fn();
+      const repository = buildRepo({
+        stripeBilling: { setCancelAtPeriodEnd },
+        ledgerRow: { chargedDeliveries: 1, autoRenew, cancelAtPeriodEnd: true }
+      });
+      repository.ledgerRepository.startContract = jest.fn();
+      await save(repository);
+      expect(setCancelAtPeriodEnd).not.toHaveBeenCalled();
+      expect(repository.ledgerRepository.startContract).toHaveBeenCalled();
+    });
+
+    test('seeds an unknown count from Stripe before changing anything', async () => {
+      const listPaidInvoicesForSubscription = jest.fn().mockResolvedValue([
+        { id: 'in_1', billing_reason: 'subscription_create', subtotal: 3000 },
+        { id: 'in_move', billing_reason: 'subscription_update', subtotal: 0 }
+      ]);
+      const repository = buildRepo({ stripeBilling: { listPaidInvoicesForSubscription }, ledgerRow: { chargedDeliveries: null } });
+      repository.ledgerRepository.seedChargedDeliveries = jest.fn();
+      repository.ledgerRepository.startContract = jest.fn();
+      await save(repository);
+      expect(repository.ledgerRepository.seedChargedDeliveries).toHaveBeenCalledWith('sub_123', ['in_1']);
+    });
+
+    test('refuses the edit when the count cannot be read, with nothing changed', async () => {
+      const repository = buildRepo({
+        stripeBilling: { listPaidInvoicesForSubscription: jest.fn().mockRejectedValue(new Error('stripe down')) },
+        ledgerRow: { chargedDeliveries: null }
+      });
+      await expect(save(repository)).rejects.toMatchObject({ details: { code: 'contract_count_unavailable' } });
+      expect(repository.stripeBilling.updateSubscriptionItems).not.toHaveBeenCalled();
+      expect(repository.ledgerRepository.upsert).not.toHaveBeenCalled();
+    });
+
+    test('Edit waiting for payment: stores the change and starts nothing yet', async () => {
+      const repository = buildRepo({
+        ledgerRow: { chargedDeliveries: 1 },
+        stripeBilling: {
+          previewProration: jest.fn().mockResolvedValue(prorationInvoice(1000)),
+          updateSubscriptionItems: jest.fn().mockResolvedValue({
+            latest_invoice: { id: 'in_edit', payment_intent: { id: 'pi_1', status: 'requires_action', client_secret: 'cs_1' } },
+            default_payment_method: { id: 'pm_123' }
+          }),
+          resolvePaymentState: jest.fn().mockReturnValue('requires_confirmation')
+        }
+      });
+      repository.ledgerRepository.startContract = jest.fn();
+      await save(repository);
+      expect(repository.ledgerRepository.startContract).not.toHaveBeenCalled();
+      expect(repository.ledgerRepository.upsert.mock.calls[0][0].editPending).toMatchObject({ term_months: 3, term_changed: true });
+    });
+  });
 
   test('applies credit/none without a client secret and without first-purchase discounts', async () => {
     const repository = buildRepo({ proposedItems: moreRecipes });
@@ -114,6 +214,61 @@ describe('SubscriptionsEditCommitRepository', () => {
     expect(updateArg.promotion_code).toBeUndefined();
   });
 
+  test('holds the edit when the invoice carries only a confirmation secret', async () => {
+    const repository = buildRepo({
+      proposedItems: moreRecipes,
+      stripeBilling: {
+        previewProration: jest.fn().mockResolvedValue(prorationInvoice(1250)),
+        updateSubscriptionItems: jest.fn().mockResolvedValue({
+          latest_invoice: { id: 'in_edit', status: 'open', confirmation_secret: { client_secret: 'pi_9_secret_x' } },
+          default_payment_method: { id: 'pm_123' }
+        }),
+        resolvePaymentState: jest.fn().mockReturnValue('requires_confirmation')
+      }
+    });
+
+    const result = await repository.commit(7, 'sub_123', {
+      subscription_term_months: 1,
+      expected_current_hash: hash,
+      pets: [{ pet_name: 'Milo', enabled: true, selected_flavors: ['chicken'], flavor_weights: [100] }],
+      address: US_EDIT_ADDRESS,
+      shipping: signedShipping(),
+      payment_method_id: 'pm_123'
+    });
+
+    expect(result.stripe_client_secret).toBe('pi_9_secret_x');
+    expect(result.payment_state).toBe('requires_confirmation');
+    expect(result.edit_payment_pending).toBe(true);
+  });
+
+  test('does not hold the edit when the invoice is already paid', async () => {
+    const resolvePaymentState = jest.fn().mockReturnValue('paid');
+    const repository = buildRepo({
+      proposedItems: moreRecipes,
+      stripeBilling: {
+        previewProration: jest.fn().mockResolvedValue(prorationInvoice(1250)),
+        updateSubscriptionItems: jest.fn().mockResolvedValue({
+          latest_invoice: { id: 'in_edit', status: 'paid', confirmation_secret: { client_secret: 'pi_9_secret_x' } },
+          default_payment_method: { id: 'pm_123' }
+        }),
+        resolvePaymentState
+      }
+    });
+
+    const result = await repository.commit(7, 'sub_123', {
+      subscription_term_months: 1,
+      expected_current_hash: hash,
+      pets: [{ pet_name: 'Milo', enabled: true, selected_flavors: ['chicken'], flavor_weights: [100] }],
+      address: US_EDIT_ADDRESS,
+      shipping: signedShipping(),
+      payment_method_id: 'pm_123'
+    });
+
+    expect(resolvePaymentState).toHaveBeenCalledWith(expect.objectContaining({ paymentIntentStatus: 'succeeded' }));
+    expect(result.stripe_client_secret).toBeNull();
+    expect(result.edit_payment_pending).toBe(false);
+  });
+
   test('returns requires_confirmation when the proration invoice needs a PaymentIntent', async () => {
     const repository = buildRepo({
       proposedItems: moreRecipes,
@@ -126,7 +281,7 @@ describe('SubscriptionsEditCommitRepository', () => {
           items: { data: currentItems.map((item) => ({ id: item.id, price: { id: item.price }, quantity: item.quantity })) },
           metadata: {}
         }),
-        previewProration: jest.fn().mockResolvedValue({ amount_due: 1250, total: 1250, currency: 'usd' }),
+        previewProration: jest.fn().mockResolvedValue(prorationInvoice(1250)),
         updateSubscriptionItems: jest.fn().mockResolvedValue({
           latest_invoice: {
             id: 'in_prorate',
@@ -200,7 +355,7 @@ describe('SubscriptionsEditCommitRepository', () => {
           items: { data: currentItems.map((item) => ({ id: item.id, price: { id: item.price }, quantity: item.quantity })) },
           metadata: {}
         }),
-        previewProration: jest.fn().mockResolvedValue({ amount_due: 1250, total: 1250, currency: 'usd' }),
+        previewProration: jest.fn().mockResolvedValue(prorationInvoice(1250)),
         updateSubscriptionItems: jest.fn().mockResolvedValue({
           latest_invoice: {
             id: 'in_prorate',

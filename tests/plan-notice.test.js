@@ -31,6 +31,15 @@ describe('planNoticeFor', () => {
     expect(notice({ subscriptionTermMonths: 3, chargedDeliveries: 1 })).toBeNull();
   });
 
+  test('Term change before the last delivery', () => {
+    expect(notice({ subscriptionTermMonths: 3, chargedDeliveries: 4, contractStartCharged: 3 })).toBeNull();
+    expect(notice({ subscriptionTermMonths: 3, chargedDeliveries: 6, contractStartCharged: 3 })).toMatchObject({ kind: 'renewal' });
+  });
+
+  test('First charge after a term change', () => {
+    expect(notice({ subscriptionTermMonths: 3, chargedDeliveries: 3, contractStartCharged: 3 })).toBeNull();
+  });
+
   test('One-month plan without a stored count', () => {
     expect(notice({ chargedDeliveries: null })).toMatchObject({ kind: 'renewal' });
   });

@@ -81,6 +81,7 @@ class SubscriptionLedgerRepository {
       editPaymentPending: Boolean(Number(row.edit_payment_pending)),
       editPending: parseJsonColumn(row.edit_pending),
       chargedDeliveries: row.charged_deliveries == null ? null : Number(row.charged_deliveries),
+      contractStartCharged: Number(row.contract_start_charged) || 0,
       lastChargedInvoiceId: row.last_charged_invoice_id ? String(row.last_charged_invoice_id) : null,
       autoRenew: row.auto_renew == null ? null : Boolean(Number(row.auto_renew)),
       pendingDeliveryChanges: row.pending_delivery_changes === undefined
@@ -459,6 +460,15 @@ class SubscriptionLedgerRepository {
       );
     }
     return this.findByStripeSubscriptionId(subscriptionId);
+  }
+
+  // A term change: the contract starts from the stored count, not from one read earlier in the request.
+  async startContract(subscriptionId) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`contract_start_charged\` = COALESCE(\`charged_deliveries\`, 0) WHERE \`stripe_subscription_id\` = ?`,
+      [subscriptionId]
+    );
   }
 
   async setPendingDeliveryChanges(subscriptionId, changes) {

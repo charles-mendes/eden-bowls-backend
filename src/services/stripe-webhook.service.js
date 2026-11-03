@@ -10,8 +10,10 @@ const {
   extractCardFromPaymentMethod
 } = require('../core/stripe-subscription-map');
 const {
+  contractPaid,
   isChargedDeliveryInvoice,
-  lastContractedDeliveryCharged
+  lastContractedDeliveryCharged,
+  startNewContract
 } = require('../core/contract-deliveries');
 
 const WEBHOOK_EVENT_TIMEOUT_MS = 30 * 1000;
@@ -376,6 +378,16 @@ class StripeWebhookService {
       && existing.editPending.invoice_id
       && existing.editPending.invoice_id === invoice.id;
 
+    // Before the promotion below clears the pending edit, so a retried event still does it.
+    if (promotedPending && existing.editPending.term_changed) {
+      await startNewContract({
+        ledgerRepository: this.ledgerRepository,
+        billing: runtime.stripeBilling || this.stripeBilling,
+        row: existing,
+        subscriptionId
+      });
+    }
+
     await this.ledgerRepository.upsert({
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
@@ -545,7 +557,7 @@ class StripeWebhookService {
     }
     const plan = row.planSelection || {};
     const term = Number(row.subscriptionTermMonths || plan.subscription_term_months || 1) || 1;
-    if (!lastContractedDeliveryCharged(row.chargedDeliveries, term)) {
+    if (!lastContractedDeliveryCharged(contractPaid(row.chargedDeliveries, row), term)) {
       return;
     }
     if (!billing || typeof billing.setCancelAtPeriodEnd !== 'function') {

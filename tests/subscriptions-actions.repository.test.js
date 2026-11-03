@@ -96,6 +96,12 @@ describe('SubscriptionsActionsRepository automatic renewal', () => {
     expect(ledgerRepository.setAutoRenew).toHaveBeenCalledWith('sub_123', false);
   });
 
+  test('counts only the current contract when renewal is turned off', async () => {
+    const { repository, stripeBilling } = build({ chargedDeliveries: 3, contractStartCharged: 1 });
+    await repository.executeAction(7, 'sub_123', { action: 'toggle_auto_renew', enabled: false });
+    expect(stripeBilling.setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_123', false);
+  });
+
   test('turning renewal on clears cancel_at_period_end', async () => {
     const { repository, stripeBilling, ledgerRepository } = build({ autoRenew: false, cancelAtPeriodEnd: true, chargedDeliveries: 3 });
     await repository.executeAction(7, 'sub_123', { action: 'toggle_auto_renew' });
