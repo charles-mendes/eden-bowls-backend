@@ -8,6 +8,7 @@ const { constrainMarketQuery, shouldEnforceMarketScope } = require('../../core/a
 const { parsePageQuery } = require('../validators/admin-pagination');
 const { parseNfeCustomerInput, parseNfeListQuery } = require('../validators/admin-nfe.validator');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
+const { parseCourierBody, parseCourierDeliveryId } = require('../validators/admin-courier.validator');
 const {
   parseProductionQueueQuery,
   parseProductionQueuePatch
@@ -222,6 +223,52 @@ function registerAdminRoutes(app, dependencies = {}) {
       }
       return dependencies.upsShipmentService.refreshTracking(request.params.id, request.adminIdentity);
     });
+  });
+
+  // Brazil courier deliveries (courier-delivery): recorded by hand, no courier API.
+  function courierService() {
+    if (!dependencies.courierDeliveryService) {
+      throw new HttpError(503, 'Courier delivery service is not available.');
+    }
+    return dependencies.courierDeliveryService;
+  }
+
+  app.get('/api/v1/admin/courier-deliveries/queue', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().listQueue(request.adminIdentity));
+  });
+
+  app.get('/api/v1/admin/billing/subscriptions/:id/courier-deliveries', requirePermission('shipping.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().listForSubscription(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/billing/subscriptions/:id/courier-deliveries', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().dispatch({
+      subscriptionId: request.params.id,
+      body: parseCourierBody(request.body),
+      actor: request.adminIdentity
+    }));
+  });
+
+  app.patch('/api/v1/admin/courier-deliveries/:id', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().updateDetails(
+      parseCourierDeliveryId(request.params.id), parseCourierBody(request.body), request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/courier-deliveries/:id/delivered', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().markDelivered(
+      parseCourierDeliveryId(request.params.id), parseCourierBody(request.body), request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/courier-deliveries/:id/failed', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().markFailed(
+      parseCourierDeliveryId(request.params.id), parseCourierBody(request.body), request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/courier-deliveries/:id/cancel', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().cancel(parseCourierDeliveryId(request.params.id), request.adminIdentity));
   });
 
   app.get('/api/v1/admin/onboarding/checkouts.csv', requirePermission('onboarding.read', { market: 'query' }), async (request, response, next) => {

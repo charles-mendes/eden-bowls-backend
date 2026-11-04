@@ -1,4 +1,6 @@
 const { deliveryTimeline } = require('../../core/delivery-timeline');
+const { activeCourierDelivery, courierTimeline } = require('../../core/courier-timeline');
+const { isChargedDeliveryInvoice } = require('../../core/contract-deliveries');
 const { upsTrackingUrl } = require('../../core/ups-tracking');
 const { toIsoDate } = require('../../core/stripe-subscription-map');
 const { mapLedgerToDashboardDetail } = require('../../core/subscription-dashboard');
@@ -12,6 +14,28 @@ function isTrialMoveInvoice(invoice) {
   return String(invoice.billing_reason || '') === 'subscription_update' && !(Number(invoice.total) > 0);
 }
 
+function invoicePaidAt(invoice) {
+  const paidAt = invoice.status_transitions && invoice.status_transitions.paid_at;
+  const seconds = Number(paidAt || invoice.created || 0);
+  return seconds > 0 ? new Date(seconds * 1000).toISOString() : null;
+}
+
+// A Brazil plan is delivered by courier (courier-delivery). The store only gets the stages and the link:
+// never the method, cost, note, failure reason or staff.
+function courierFields(invoice, rows) {
+  if (invoice.status !== 'paid' || !isChargedDeliveryInvoice(invoice)) {
+    return { tracking_url: null, out_for_delivery_at: null, delivered_at: null, delivery_timeline: null };
+  }
+  const active = activeCourierDelivery(rows);
+  const timeline = courierTimeline(rows, { paidAt: invoicePaidAt(invoice) });
+  return {
+    tracking_url: active ? active.tracking_url || null : null,
+    out_for_delivery_at: timeline.stages[1].at,
+    delivered_at: timeline.stages[2].at,
+    delivery_timeline: timeline
+  };
+}
+
 class SubscriptionsDetailRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
@@ -19,6 +43,7 @@ class SubscriptionsDetailRepository {
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.upsShipmentRepository = options.upsShipmentRepository || null;
+    this.courierDeliveryRepository = options.courierDeliveryRepository || null;
     this.productsRepository = options.productsRepository || null;
   }
 
@@ -99,8 +124,20 @@ class SubscriptionsDetailRepository {
             shipments.map((shipment) => [String(shipment.stripe_invoice_id), shipment])
           );
         }
+        // The delivery address decides, as on the admin detail: Brazil goes by courier, the US by UPS.
+        const byCourier = String((row.address && row.address.country) || '').toUpperCase() === 'BR';
+        const courierByInvoice = new Map();
+        if (byCourier && this.courierDeliveryRepository && typeof this.courierDeliveryRepository.listByInvoiceIds === 'function') {
+          for (const courierRow of await this.courierDeliveryRepository.listByInvoiceIds(invoices.map((invoice) => invoice.id))) {
+            const key = String(courierRow.stripe_invoice_id);
+            courierByInvoice.set(key, [...(courierByInvoice.get(key) || []), courierRow]);
+          }
+        }
         extras.billingHistory = invoices.map((invoice) => {
           const shipment = shipmentByInvoice.get(String(invoice.id));
+          const courier = byCourier && this.courierDeliveryRepository
+            ? courierFields(invoice, courierByInvoice.get(String(invoice.id)) || [])
+            : null;
           return {
             order_id: 0,
             invoice_id: invoice.id,
@@ -118,7 +155,8 @@ class SubscriptionsDetailRepository {
             out_for_delivery_at: shipment?.out_for_delivery_at || null,
             delivered_at: shipment?.delivered_at || null,
             shipped_at: shipment?.shipped_at || null,
-            delivery_timeline: deliveryTimeline(shipment)
+            delivery_timeline: deliveryTimeline(shipment),
+            ...(courier ? { tracking_number: null, ...courier } : {})
           };
         });
       } catch (_error) {

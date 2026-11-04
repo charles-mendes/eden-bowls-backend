@@ -89,6 +89,8 @@ const { DeliveryCalendarStripeSyncsRepository } = require('./infrastructure/repo
 const { UpsClient } = require('./infrastructure/shipping/ups-client');
 const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shipment.repository');
 const { UpsShipmentService } = require('./services/ups-shipment.service');
+const { CourierDeliveryRepository } = require('./infrastructure/repositories/courier-delivery.repository');
+const { CourierDeliveryService } = require('./services/courier-delivery.service');
 const { LocalUpsLabelStorage } = require('./infrastructure/storage/local-ups-label-storage');
 const { LocalInvoiceStorage } = require('./infrastructure/storage/local-invoice-storage');
 const { CustomerInvoicesRepository } = require('./infrastructure/repositories/customer-invoices.repository');
@@ -254,6 +256,7 @@ async function bootstrap() {
   });
   const upsLabelStorage = new LocalUpsLabelStorage({ directory: env.UPS_LABEL_DIR });
   const upsShipmentRepository = new UpsShipmentRepository(dataSource);
+  const courierDeliveryRepository = new CourierDeliveryRepository(dataSource);
   const stripeAccounts = createStripeAccountsFromEnv(env, { logger });
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
@@ -553,6 +556,7 @@ async function bootstrap() {
     stripeAccounts,
     stripeBilling,
     upsShipmentRepository,
+    courierDeliveryRepository,
     productsRepository
   });
   const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository, {
@@ -764,6 +768,14 @@ async function bootstrap() {
     transactionalMailer,
     logger
   });
+  const courierDeliveryService = new CourierDeliveryService({
+    repository: courierDeliveryRepository,
+    adminBillingService,
+    ledgerRepository: subscriptionLedgerRepository,
+    auditService: adminAuditService,
+    transactionalMailer,
+    logger
+  });
   const adminCatalogRepository = new AdminCatalogRepository(dataSource, {
     postsTableName: env.WP_POSTS_TABLE_NAME,
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
@@ -908,6 +920,7 @@ async function bootstrap() {
     adminReportsService,
     adminDeliveryCalendarService,
     upsShipmentService,
+    courierDeliveryService,
     customerInvoicesService,
     blingNfeService,
     adminCatalogService,

@@ -184,6 +184,13 @@ function addressBits(row) {
   };
 }
 
+// Who receives the box (delivery-recipient), then the older name keys, then the email, as before.
+// The courier queue reads the same chain, so both screens show the same name.
+function recipientDisplayName(address, email) {
+  const value = jsonColumn(address);
+  return String(value.recipient_name || value.name || value.full_name || value.recipient || email || '');
+}
+
 function presentProductionQueueItem(row, options = {}) {
   const timezone = options.timezone || DEFAULT_TIMEZONE;
   const now = options.now || new Date();
@@ -197,9 +204,7 @@ function presentProductionQueueItem(row, options = {}) {
   // A paid cycle is due on its preparation day; an unpaid one on its charge.
   const daysUntil = civilDaysUntil(row.dueAt || row.currentPeriodEnd || row.current_period_end, timezone, now);
   const address = jsonColumn(row.address);
-  // Who receives the box (delivery-recipient), then the older name keys, then the email, as before.
-  const displayName = address.recipient_name || address.name || address.full_name || address.recipient
-    || row.customerEmail || row.customer_email || '';
+  const displayName = recipientDisplayName(address, row.customerEmail || row.customer_email);
   // The cycle key the admin sends back when it changes the production status.
   const periodEnd = toJsDate(row.cyclePeriodEnd || row.currentPeriodEnd || row.current_period_end);
   const { country, city } = addressBits(row);
@@ -245,6 +250,7 @@ function presentProductionQueueItem(row, options = {}) {
 
 module.exports = {
   DEFAULT_TIMEZONE,
+  recipientDisplayName,
   civilDaysUntil,
   dueBucket,
   dueLabel,

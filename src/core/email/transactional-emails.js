@@ -272,6 +272,95 @@ function buildShippedEmail({
   };
 }
 
+// Brazil courier delivery (courier-delivery): the box left with a courier. The link is optional, because an
+// operator may not have one; there is never a tracking number.
+function buildCourierOutForDeliveryEmail({
+  firstName,
+  petName,
+  trackingUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  const url = String(trackingUrl || '').trim();
+  const subject = pt
+    ? `A tigela da ${pet} saiu para entrega`
+    : `${pet}'s bowl is out for delivery`;
+  const intro = pt
+    ? `${hello} As refeições da ${pet} saíram para entrega e já estão a caminho da sua porta.`
+    : `${hello} ${pet}'s meals are out for delivery and on their way to your door.`;
+  const follow = url
+    ? (pt ? 'Acompanhe o entregador pelo link abaixo.' : 'Follow the courier with the link below.')
+    : (pt ? 'Avisamos de novo assim que a entrega for concluída.' : "We'll let you know again once it's delivered.");
+  const text = [`${intro} ${follow}`, `Pet: ${pet}`, url].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(`${intro} ${follow}`),
+    detailsTableHtml([{ label: 'Pet', value: pet }]),
+    url ? buttonHtml({ href: url, label: pt ? 'Acompanhar entrega' : 'Track delivery' }) : ''
+  ].join('');
+
+  return {
+    id: 'courier-out-for-delivery',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: pt ? 'Sua tigela saiu para entrega.' : 'Your bowl is out for delivery.',
+      kicker: pt ? 'Entrega' : 'Delivery',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
+function buildCourierDeliveredEmail({
+  firstName,
+  petName,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  const url = String(dashboardUrl || '').trim();
+  const subject = pt
+    ? `A tigela da ${pet} foi entregue`
+    : `${pet}'s bowl has been delivered`;
+  const intro = pt
+    ? `${hello} As refeições da ${pet} foram entregues. Guarde tudo no freezer assim que puder.`
+    : `${hello} ${pet}'s meals have been delivered. Put them in the freezer as soon as you can.`;
+  const text = [intro, `Pet: ${pet}`, url].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(intro),
+    detailsTableHtml([{ label: 'Pet', value: pet }]),
+    url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'View my plan' }) : ''
+  ].join('');
+
+  return {
+    id: 'courier-delivered',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: pt ? 'Sua tigela chegou.' : 'Your bowl has arrived.',
+      kicker: pt ? 'Entrega' : 'Delivery',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
 function buildAdminNewSubscriptionEmail({
   customerName,
   customerEmail,
@@ -911,6 +1000,8 @@ module.exports = {
   buildNfeEmail,
   buildAutoRenewOffEmail,
   buildCancelledEmail,
+  buildCourierDeliveredEmail,
+  buildCourierOutForDeliveryEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,
   buildPausedEmail,

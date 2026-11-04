@@ -25,6 +25,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/billing/subscriptions/:id/courier-deliveries"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/billing/subscriptions/:id/courier-deliveries"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/billing/subscriptions/:id/customer-invoices"
   },
   {
@@ -162,6 +170,26 @@
   {
     "method": "GET",
     "path": "/api/v1/admin/catalog/sync/status"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/courier-deliveries/:id"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/courier-deliveries/:id/cancel"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/courier-deliveries/:id/delivered"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/courier-deliveries/:id/failed"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/courier-deliveries/queue"
   },
   {
     "method": "GET",

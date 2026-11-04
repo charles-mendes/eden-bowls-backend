@@ -7,6 +7,7 @@ describe('deliveryTimeline', () => {
   test('a new label is at label created', () => {
     const timeline = deliveryTimeline(label({ tracking_status: 'label_created' }));
     expect(timeline.current).toBe('label_created');
+    expect(timeline.carrier).toBe('ups');
     expect(reached(timeline)).toEqual([['label_created', '2026-05-09 12:00:00']]);
     expect(timeline.warning).toBeNull();
   });

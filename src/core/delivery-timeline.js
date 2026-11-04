@@ -33,6 +33,7 @@ function deliveryTimeline(row) {
   }
 
   return {
+    carrier: 'ups',
     current: STAGES[current].key,
     stages: STAGES.map((stage, index) => ({
       key: stage.key,

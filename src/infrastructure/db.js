@@ -81,6 +81,7 @@ const { AddUpsShipmentTracking1700000000059 } = require('./migrations/1700000000
 const { AddPlanNoticeSettings1700000000060 } = require('./migrations/1700000000060-add-plan-notice-settings');
 const { AddContractStartCharged1700000000061 } = require('./migrations/1700000000061-add-contract-start-charged');
 const { AddUpsShipmentStages1700000000062 } = require('./migrations/1700000000062-add-ups-shipment-stages');
+const { CreateCourierDeliveries1700000000063 } = require('./migrations/1700000000063-create-courier-deliveries');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -187,7 +188,8 @@ function buildDataSourceOptions(env) {
       AddUpsShipmentTracking1700000000059,
       AddPlanNoticeSettings1700000000060,
       AddContractStartCharged1700000000061,
-      AddUpsShipmentStages1700000000062
+      AddUpsShipmentStages1700000000062,
+      CreateCourierDeliveries1700000000063
     ],
     synchronize: false,
     logging: false,

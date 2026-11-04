@@ -95,3 +95,72 @@ describe('SubscriptionsDetailRepository billing history', () => {
     expect(subscription.billing_history[0].delivery_timeline).toBeNull();
   });
 });
+
+describe('SubscriptionsDetailRepository courier deliveries (Brazil)', () => {
+  const paid = { id: 'in_br', billing_reason: 'subscription_cycle', status: 'paid', subtotal: 25900, total: 25900, amount_paid: 25900, created: 1793800000, status_transitions: { paid_at: 1793800100 }, currency: 'brl' };
+  function build(invoices, courierRows, address = { country: 'BR' }) {
+    const listByInvoiceIds = jest.fn(async () => courierRows);
+    const repository = new SubscriptionsDetailRepository({
+      courierDeliveryRepository: { listByInvoiceIds },
+      upsShipmentRepository: { listByInvoiceIds: async () => [] },
+      ledgerRepository: {
+        findByUserIdAndSubscriptionId: async () => ({ stripeSubscriptionId: 'sub_br', stripeAccount: 'br', petsSnapshot: [], planSelection: {}, address })
+      },
+      stripeBilling: { listInvoicesForSubscription: async () => invoices }
+    });
+    return { repository, listByInvoiceIds };
+  }
+  const courierRow = (extra) => ({
+    id: 1, stripe_invoice_id: 'in_br', method: 'uber', cost_minor: 1850, note: 'Portão azul', failure_reason: null, created_by: 99,
+    tracking_url: null, out_for_delivery_at: new Date('2026-11-04T12:00:00Z'), ...extra
+  });
+
+  test('On the road with a link: timeline, link and no tracking number, nothing internal', async () => {
+    const { repository } = build([paid], [courierRow({ status: 'out_for_delivery', tracking_url: 'https://trip.uber.com/abc123' })]);
+    const [charge] = (await repository.getDetail(7, 'sub_br')).subscription.billing_history;
+
+    expect(charge).toMatchObject({
+      tracking_number: null,
+      tracking_url: 'https://trip.uber.com/abc123',
+      out_for_delivery_at: '2026-11-04T12:00:00.000Z',
+      delivered_at: null,
+      delivery_timeline: { carrier: 'courier', current: 'out_for_delivery', warning: null }
+    });
+    expect(charge.delivery_timeline.stages[0]).toEqual({ key: 'preparing', reached: true, at: new Date(1793800100 * 1000).toISOString() });
+    const json = JSON.stringify(charge);
+    for (const hidden of ['uber"', '1850', 'Portão', 'method', 'cost', 'note', 'created_by', 'failure_reason']) {
+      expect(json).not.toContain(hidden);
+    }
+  });
+
+  test('Failed: preparing is current with the failed warning, the reason stays out', async () => {
+    const { repository } = build([paid], [courierRow({ status: 'failed', failure_reason: 'Ninguém em casa', tracking_url: 'https://trip.uber.com/old' })]);
+    const [charge] = (await repository.getDetail(7, 'sub_br')).subscription.billing_history;
+
+    expect(charge.delivery_timeline).toMatchObject({ current: 'preparing', warning: { status: 'failed' } });
+    expect(charge.tracking_url).toBeNull();
+    expect(JSON.stringify(charge)).not.toContain('Ninguém');
+  });
+
+  test('Paid with no delivery: only preparing is reached', async () => {
+    const { repository } = build([paid], []);
+    const [charge] = (await repository.getDetail(7, 'sub_br')).subscription.billing_history;
+
+    expect(charge.delivery_timeline.stages.map((stage) => stage.reached)).toEqual([true, false, false]);
+  });
+
+  test('a skipped R$ 0 cycle and an open invoice have no timeline', async () => {
+    const { repository } = build([{ ...paid, id: 'in_skip', subtotal: 0, total: 0, amount_paid: 0 }, { ...paid, id: 'in_open', status: 'open' }], []);
+    const history = (await repository.getDetail(7, 'sub_br')).subscription.billing_history;
+
+    expect(history.map((charge) => charge.delivery_timeline)).toEqual([null, null]);
+  });
+
+  test('a US address keeps the UPS history and reads no courier row', async () => {
+    const { repository, listByInvoiceIds } = build([{ ...paid, currency: 'usd' }], [], { country: 'US' });
+    const [charge] = (await repository.getDetail(7, 'sub_br')).subscription.billing_history;
+
+    expect(listByInvoiceIds).not.toHaveBeenCalled();
+    expect(charge.delivery_timeline).toBeNull();
+  });
+});

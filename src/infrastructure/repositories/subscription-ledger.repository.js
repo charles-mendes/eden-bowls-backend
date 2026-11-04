@@ -749,6 +749,42 @@ class SubscriptionLedgerRepository {
     return (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean);
   }
 
+  // Paid cycles delivered in Brazil, by address country, for the courier queue (courier-delivery). The Stripe
+  // account does not decide: the delivery address does, as on the subscription detail.
+  async listPaidCourierCycles({ deliveryFloor, limit }) {
+    this.ensureDataSource();
+    const deliveryKey = 'COALESCE(q.delivery_date, DATE(q.cycle_period_end))';
+    const rows = await this.dataSource.query(
+      [
+        `SELECT q.* FROM ${this.queueSourceSql()}`,
+        "WHERE q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL",
+        "AND UPPER(JSON_UNQUOTE(JSON_EXTRACT(q.address, '$.country'))) = 'BR'",
+        `AND ${deliveryKey} >= ?`,
+        `ORDER BY ${deliveryKey} ASC, q.id ASC`,
+        'LIMIT ?'
+      ].join(' '),
+      [deliveryFloor, Number(limit)]
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean);
+  }
+
+  // The paid cycle of each invoice, with no date floor (courier deliveries on the road or failed).
+  async listPaidCyclesByInvoiceIds(invoiceIds = []) {
+    this.ensureDataSource();
+    const ids = [...new Set((invoiceIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+    if (!ids.length) {
+      return [];
+    }
+    const rows = await this.dataSource.query(
+      [
+        `SELECT q.* FROM ${this.queueSourceSql()}`,
+        `WHERE q.payment_state = 'paid' AND q.paid_invoice_id IN (${ids.map(() => '?').join(', ')})`
+      ].join(' '),
+      ids
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean);
+  }
+
   queueJoinSql() {
     return [
       `FROM ${this.queueSourceSql()}`,

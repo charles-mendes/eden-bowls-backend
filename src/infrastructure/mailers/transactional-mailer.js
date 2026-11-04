@@ -14,7 +14,9 @@ const {
   buildRenewalEmail,
   buildRenewalNoticeEmail,
   buildResumedEmail,
-  buildShippedEmail
+  buildShippedEmail,
+  buildCourierDeliveredEmail,
+  buildCourierOutForDeliveryEmail
 } = require('../../core/email/transactional-emails');
 const { buildLifeStageChangeEmail, formatDeadline, packsUrl } = require('../../core/email/life-stage-emails');
 const {
@@ -32,6 +34,8 @@ const TEMPLATES = {
   adminNewSubscription: 'admin_new_subscription',
   paymentFailed: 'payment_failed',
   shipped: 'shipped',
+  courierOutForDelivery: 'courier_out_for_delivery',
+  courierDelivered: 'courier_delivered',
   renewal: 'renewal',
   paused: 'paused',
   resumed: 'resumed',
@@ -431,6 +435,37 @@ function createTransactionalMailer(options = {}) {
     });
   }
 
+  // Brazil courier letters (courier-delivery), claimed once per courier row, so a new attempt after a failure
+  // writes again. They are not in RESEND_TEMPLATES: a failed send is logged and never retried by a job.
+  function courierLetter(template, build, { subscription = {}, delivery = {} }, extra = {}) {
+    const id = String(subscription.stripeSubscriptionId || subscription.providerSubscriptionId || '').trim();
+    const referenceId = String(delivery.id || '').trim();
+    const to = String((subscription.user && subscription.user.email) || subscription.customerEmail || '').trim();
+    if (!id || !referenceId || !to) {
+      return missingContext(template);
+    }
+    const content = build({
+      firstName: firstNameFrom(subscription),
+      petName: petNameFrom(subscription),
+      locale: localeFrom(subscription),
+      assetBaseUrl: emailAssetBaseUrl,
+      ...extra
+    });
+    return sendClaimed({ subscriptionId: id, template, referenceId, to, content });
+  }
+
+  async function notifyCourierOutForDelivery(input = {}) {
+    return courierLetter(TEMPLATES.courierOutForDelivery, buildCourierOutForDeliveryEmail, input, {
+      trackingUrl: (input.delivery && input.delivery.tracking_url) || ''
+    });
+  }
+
+  async function notifyCourierDelivered(input = {}) {
+    return courierLetter(TEMPLATES.courierDelivered, buildCourierDeliveredEmail, input, {
+      dashboardUrl: dashboardPlansUrl(storeAppUrl)
+    });
+  }
+
   function customerTarget({ ledger = {}, subscriptionId, referenceId, fallbackEmail }) {
     return {
       id: String(subscriptionId || ledger.stripeSubscriptionId || '').trim(),
@@ -761,6 +796,8 @@ function createTransactionalMailer(options = {}) {
     notifyAdminNewSubscription,
     notifyPaymentFailed,
     notifyShipped,
+    notifyCourierOutForDelivery,
+    notifyCourierDelivered,
     notifyRenewal,
     notifyRenewalNotice,
     notifyPlanEndingNotice,

@@ -1,0 +1,355 @@
+const { DateTime } = require('luxon');
+const { HttpError } = require('../core/http-error');
+const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
+const { extractSubscriptionIdFromInvoice, parseJsonColumn } = require('../core/stripe-subscription-map');
+const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
+const { parseCourierDetails, parseFailureReason } = require('../core/courier-fields');
+const { recipientDisplayName } = require('../core/production-queue-presenter');
+
+const TIMEZONE = 'America/Sao_Paulo';
+const DISPATCH_FLOOR_DAYS = 30;
+const DELIVERED_WINDOW_DAYS = 7;
+const QUEUE_LIMIT = 200;
+const ACTIVE = new Set(['out_for_delivery', 'delivered']);
+const DISPATCHABLE_SUBSCRIPTION = new Set(['active', 'trialing']);
+
+function finalError() {
+  return new HttpError(409, 'This courier delivery is already closed.', { code: 'courier_delivery_final' });
+}
+
+function invalidField(field, message) {
+  return new HttpError(422, message, { code: 'invalid_courier_field', field });
+}
+
+function addressOf(value) {
+  return parseJsonColumn(value) || {};
+}
+
+function countryOf(address) {
+  return String(address.country || '').trim().toUpperCase();
+}
+
+function toIso(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(String(value).replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(String(value)) ? '' : 'Z'));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function toTime(value) {
+  const iso = toIso(value);
+  return iso ? new Date(iso).getTime() : NaN;
+}
+
+// Records by hand the courier delivery of a paid Brazil cycle (courier-delivery): dispatch, the final
+// statuses, edits, the admin queue, the audit entries and the two letters.
+class CourierDeliveryService {
+  constructor(options = {}) {
+    this.repository = options.repository || null;
+    this.adminBillingService = options.adminBillingService || null;
+    this.ledgerRepository = options.ledgerRepository || null;
+    this.auditService = options.auditService || null;
+    this.transactionalMailer = options.transactionalMailer || null;
+    this.logger = options.logger || { error() {}, warn() {}, info() {} };
+    this.now = options.now || (() => new Date());
+  }
+
+  ensureReady() {
+    if (!this.repository) throw new HttpError(503, 'Courier delivery repository is not available.');
+    if (!this.adminBillingService) throw new HttpError(503, 'Billing service is not available.');
+  }
+
+  present(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      subscription_id: row.subscription_id,
+      stripe_invoice_id: row.stripe_invoice_id,
+      method: row.method,
+      courier_name: row.courier_name,
+      tracking_url: row.tracking_url,
+      cost_minor: row.cost_minor,
+      currency: row.currency,
+      note: row.note,
+      status: row.status,
+      out_for_delivery_at: toIso(row.out_for_delivery_at),
+      delivered_at: toIso(row.delivered_at),
+      failed_at: toIso(row.failed_at),
+      failure_reason: row.failure_reason,
+      canceled_at: toIso(row.canceled_at),
+      created_by: row.created_by,
+      updated_by: row.updated_by,
+      created_at: toIso(row.created_at),
+      updated_at: toIso(row.updated_at)
+    };
+  }
+
+  // The market of a delivery is the market of its subscription, so another market answers 404.
+  async requireDeliveryInScope(id, actor) {
+    this.ensureReady();
+    const row = await this.repository.findById(id);
+    if (!row) throw new HttpError(404, 'Courier delivery not found.');
+    const subscription = await this.adminBillingService.getSubscription(row.subscription_id, actor);
+    return { row, subscription };
+  }
+
+  async listForSubscription(subscriptionId, actor = {}) {
+    this.ensureReady();
+    const subscription = await this.adminBillingService.getSubscription(subscriptionId, actor);
+    const rows = await this.repository.listBySubscriptionId(subscription.id || subscriptionId);
+    return {
+      success: true,
+      data: {
+        recipient_name: recipientDisplayName(subscription.address, subscription.user && subscription.user.email),
+        items: rows.map((row) => this.present(row))
+      }
+    };
+  }
+
+  // Same checks as a UPS purchase, with the delivery address in Brazil in place of the US account.
+  async requireDeliverableInvoice(subscriptionId, subscription, invoiceId, actor) {
+    if (countryOf(addressOf(subscription.address)) !== 'BR') {
+      throw new HttpError(422, 'Courier deliveries are only for subscriptions delivered in Brazil.', { code: 'courier_country_not_supported' });
+    }
+    const invoice = await this.adminBillingService.getSubscriptionInvoice(subscriptionId, invoiceId, actor);
+    if (extractSubscriptionIdFromInvoice(invoice) !== subscription.stripeSubscriptionId) {
+      throw new HttpError(422, 'This invoice does not belong to the subscription.', { code: 'invoice_not_in_subscription' });
+    }
+    if (invoice.status !== 'paid') {
+      throw new HttpError(422, 'Only a paid invoice can be dispatched.', { code: 'invoice_not_paid' });
+    }
+    if (!isChargedDeliveryInvoice(invoice)) {
+      throw new HttpError(422, 'This invoice is not a charged delivery, so there is no box to dispatch.', { code: 'invoice_not_delivery' });
+    }
+    return invoice;
+  }
+
+  async readinessReasons(subscription, invoiceId) {
+    const reasons = [];
+    let cycle = null;
+    if (this.ledgerRepository && typeof this.ledgerRepository.listPaidCyclesByInvoiceIds === 'function') {
+      [cycle = null] = await this.ledgerRepository.listPaidCyclesByInvoiceIds([invoiceId]);
+    }
+    const productionStatus = cycle ? cycle.productionStatus : null;
+    if (productionStatus !== 'ready') {
+      reasons.push({ code: 'production_not_ready', production_status: productionStatus });
+    }
+    if (!DISPATCHABLE_SUBSCRIPTION.has(String(subscription.status || ''))) {
+      reasons.push({ code: 'subscription_not_active', subscription_status: subscription.status || null });
+    }
+    return reasons;
+  }
+
+  async dispatch({ subscriptionId, body = {}, actor = {} }) {
+    this.ensureReady();
+    const invoiceId = String(body.invoice_id || '').trim();
+    if (!invoiceId) {
+      throw new HttpError(400, 'invoice_id is required.', { code: 'invoice_id_required' });
+    }
+    const details = parseCourierDetails(body, { required: true });
+    const subscription = await this.adminBillingService.getSubscription(subscriptionId, actor);
+    await this.requireDeliverableInvoice(subscriptionId, subscription, invoiceId, actor);
+
+    const reasons = await this.readinessReasons(subscription, invoiceId);
+    if (reasons.length && body.confirm_not_ready !== true) {
+      throw new HttpError(409, 'This order is not ready to leave. Confirm to dispatch it anyway.', {
+        code: 'courier_dispatch_needs_confirmation',
+        reasons
+      });
+    }
+
+    const { inserted, row } = await this.repository.insert({
+      ...details,
+      subscriptionId: String(subscription.id || subscriptionId),
+      userId: subscription.user && subscription.user.id ? subscription.user.id : null,
+      stripeAccount: subscription.stripeAccount || null,
+      invoiceId,
+      outForDeliveryAt: this.now(),
+      actorId: actor.userId
+    });
+    if (!inserted) {
+      throw new HttpError(409, 'This invoice already has a courier delivery on the road or delivered.', { code: 'courier_delivery_active' });
+    }
+
+    await this.audit(actor, 'courier_delivery.dispatch', subscription, row, { confirmedNotReady: reasons.length > 0 ? reasons.map((reason) => reason.code) : undefined });
+    await this.notify('notifyCourierOutForDelivery', subscription, row);
+    return { success: true, data: { delivery: this.present(row) } };
+  }
+
+  // Zero rows changed means another request closed it first, or it is gone.
+  async afterTransition(id, affected) {
+    if (affected > 0) return this.repository.findById(id);
+    const current = await this.repository.findById(id);
+    if (!current) throw new HttpError(404, 'Courier delivery not found.');
+    throw finalError();
+  }
+
+  parseDeliveredAt(value, row) {
+    const now = this.now();
+    if (value === undefined || value === null || value === '') return now;
+    const at = new Date(String(value));
+    if (Number.isNaN(at.getTime())) throw invalidField('delivered_at', 'delivered_at must be a date and time.');
+    if (at.getTime() > now.getTime()) throw invalidField('delivered_at', 'The delivery cannot be in the future.');
+    if (at.getTime() < toTime(row.out_for_delivery_at)) {
+      throw invalidField('delivered_at', 'The delivery cannot be before the box left.');
+    }
+    return at;
+  }
+
+  async markDelivered(id, body = {}, actor = {}) {
+    const { row, subscription } = await this.requireDeliveryInScope(id, actor);
+    if (row.status !== 'out_for_delivery') throw finalError();
+    const at = this.parseDeliveredAt(body.delivered_at, row);
+    const saved = await this.afterTransition(row.id, await this.repository.transition(row.id, 'delivered', { at, actorId: actor.userId }));
+    await this.audit(actor, 'courier_delivery.delivered', subscription, saved, { deliveredAt: toIso(at) });
+    await this.notify('notifyCourierDelivered', subscription, saved);
+    return { success: true, data: { delivery: this.present(saved) } };
+  }
+
+  async markFailed(id, body = {}, actor = {}) {
+    const { row, subscription } = await this.requireDeliveryInScope(id, actor);
+    if (row.status !== 'out_for_delivery') throw finalError();
+    const reason = parseFailureReason(body.reason);
+    const saved = await this.afterTransition(row.id, await this.repository.transition(row.id, 'failed', { at: this.now(), reason, actorId: actor.userId }));
+    await this.audit(actor, 'courier_delivery.failed', subscription, saved, { reason });
+    return { success: true, data: { delivery: this.present(saved) } };
+  }
+
+  async cancel(id, actor = {}) {
+    const { row, subscription } = await this.requireDeliveryInScope(id, actor);
+    if (row.status !== 'out_for_delivery') throw finalError();
+    const saved = await this.afterTransition(row.id, await this.repository.transition(row.id, 'canceled', { at: this.now(), actorId: actor.userId }));
+    await this.audit(actor, 'courier_delivery.cancel', subscription, saved);
+    return { success: true, data: { delivery: this.present(saved) } };
+  }
+
+  async updateDetails(id, body = {}, actor = {}) {
+    const { row, subscription } = await this.requireDeliveryInScope(id, actor);
+    if (row.status === 'canceled') throw finalError();
+    const details = parseCourierDetails(body);
+    if (!Object.keys(details).length) {
+      throw new HttpError(422, 'Send at least one detail to change.', { code: 'courier_details_empty' });
+    }
+    const saved = await this.afterTransition(row.id, await this.repository.updateDetails(row.id, details, actor.userId));
+    await this.audit(actor, 'courier_delivery.update', subscription, saved, { fields: Object.keys(details) });
+    return { success: true, data: { delivery: this.present(saved) } };
+  }
+
+  // The four groups of Brazil delivery work. Only "to dispatch" has the 30-day floor; an invoice lands in one
+  // group only. Days are civil days in São Paulo, today counted.
+  async listQueue(actor = {}) {
+    this.ensureReady();
+    const empty = { to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false };
+    let accounts = null;
+    if (shouldEnforceMarketScope(actor)) {
+      const scope = constrainMarketQuery(actor, {});
+      if (!scope.markets.includes('BR')) return { success: true, data: empty };
+      accounts = new Set(scope.stripeAccounts);
+    }
+    if (!this.ledgerRepository || typeof this.ledgerRepository.listPaidCourierCycles !== 'function') {
+      throw new HttpError(503, 'Subscription ledger is not available.');
+    }
+
+    const today = DateTime.fromJSDate(this.now(), { zone: TIMEZONE }).startOf('day');
+    const cycles = await this.ledgerRepository.listPaidCourierCycles({
+      deliveryFloor: today.minus({ days: DISPATCH_FLOOR_DAYS }).toISODate(),
+      limit: QUEUE_LIMIT + 1
+    });
+    const [onTheRoad, failedRows, deliveredRows] = await Promise.all([
+      this.repository.listByStatus('out_for_delivery'),
+      this.repository.listByStatus('failed'),
+      this.repository.listDeliveredSince(today.minus({ days: DELIVERED_WINDOW_DAYS - 1 }).toUTC().toJSDate())
+    ]);
+
+    const cyclePage = cycles.slice(0, QUEUE_LIMIT);
+    const failedInvoices = [...new Set(failedRows.map((row) => row.stripe_invoice_id))];
+    const related = await this.repository.listByInvoiceIds([...cyclePage.map((cycle) => cycle.paidInvoiceId), ...failedInvoices]);
+    const activeInvoices = new Set([...related, ...onTheRoad, ...deliveredRows].filter((row) => ACTIVE.has(row.status)).map((row) => row.stripe_invoice_id));
+    const failedInvoiceSet = new Set([...related, ...failedRows].filter((row) => row.status === 'failed').map((row) => row.stripe_invoice_id));
+
+    const latestFailed = new Map();
+    for (const row of failedRows) {
+      if (activeInvoices.has(row.stripe_invoice_id)) continue;
+      const kept = latestFailed.get(row.stripe_invoice_id);
+      if (!kept || row.id > kept.id) latestFailed.set(row.stripe_invoice_id, row);
+    }
+
+    const deliveries = [...onTheRoad, ...latestFailed.values(), ...deliveredRows];
+    const known = new Map(cyclePage.map((cycle) => [cycle.paidInvoiceId, cycle]));
+    const missing = deliveries.map((row) => row.stripe_invoice_id).filter((invoiceId) => !known.has(invoiceId));
+    if (missing.length) {
+      for (const cycle of await this.ledgerRepository.listPaidCyclesByInvoiceIds(missing)) known.set(cycle.paidInvoiceId, cycle);
+    }
+
+    const inScope = (cycle, row) => {
+      if (!accounts) return true;
+      const account = String((cycle && cycle.stripeAccount) || (row && row.stripe_account) || '').toLowerCase();
+      return accounts.has(account);
+    };
+    const item = (cycle, row) => this.presentQueueItem(cycle, row);
+    const data = { ...empty, truncated: cycles.length > QUEUE_LIMIT };
+    const placed = new Set();
+    const place = (group, cycle, row) => {
+      const invoiceId = row ? row.stripe_invoice_id : cycle.paidInvoiceId;
+      if (placed.has(invoiceId) || !inScope(cycle, row)) return;
+      placed.add(invoiceId);
+      data[group].push(item(cycle, row));
+    };
+
+    onTheRoad.forEach((row) => place('out_for_delivery', known.get(row.stripe_invoice_id), row));
+    deliveredRows.forEach((row) => place('delivered', known.get(row.stripe_invoice_id), row));
+    latestFailed.forEach((row) => place('failed', known.get(row.stripe_invoice_id), row));
+    cyclePage
+      .filter((cycle) => !activeInvoices.has(cycle.paidInvoiceId) && !failedInvoiceSet.has(cycle.paidInvoiceId))
+      .forEach((cycle) => place('to_dispatch', cycle, null));
+    return { success: true, data };
+  }
+
+  presentQueueItem(cycle, row) {
+    const address = addressOf(cycle ? cycle.address : null);
+    return {
+      subscription_id: String((cycle && cycle.id) || (row && row.subscription_id) || ''),
+      stripe_subscription_id: cycle ? cycle.stripeSubscriptionId : null,
+      invoice_id: row ? row.stripe_invoice_id : cycle.paidInvoiceId,
+      recipient_name: recipientDisplayName(address, cycle && cycle.customerEmail) || null,
+      neighborhood: address.neighborhood || null,
+      city: address.city || null,
+      zipcode: address.postal_code || address.zipcode || address.zipCode || null,
+      delivery_date: cycle ? cycle.deliveryDate || null : null,
+      production_status: cycle ? cycle.productionStatus : null,
+      subscription_status: cycle ? cycle.status : null,
+      delivery: row ? this.present(row) : null
+    };
+  }
+
+  async audit(actor, action, subscription, row, extra = {}) {
+    if (!this.auditService || typeof this.auditService.record !== 'function') return;
+    const metadata = {
+      courierDeliveryId: row ? row.id : null,
+      subscriptionId: subscription ? String(subscription.id || '') : null,
+      invoiceId: row ? row.stripe_invoice_id : null,
+      status: row ? row.status : null
+    };
+    for (const [key, value] of Object.entries(extra)) {
+      if (value !== undefined) metadata[key] = value;
+    }
+    await this.auditService.record({
+      actor,
+      action,
+      targetUserId: subscription && subscription.user && subscription.user.id ? subscription.user.id : null,
+      targetEmail: subscription && subscription.user ? subscription.user.email || null : null,
+      metadata
+    });
+  }
+
+  // Sent only after the write won; a send failure is logged and never undoes the status or retries.
+  async notify(method, subscription, row) {
+    if (!this.transactionalMailer || typeof this.transactionalMailer[method] !== 'function') return;
+    try {
+      await this.transactionalMailer[method]({ subscription, delivery: row });
+    } catch (error) {
+      this.logger.error({ err: error && error.message, method, courierDeliveryId: row && row.id }, 'Courier delivery letter failed to send.');
+    }
+  }
+}
+
+module.exports = { CourierDeliveryService };

@@ -5,6 +5,8 @@ const {
   buildAdminNewSubscriptionEmail,
   buildAutoRenewOffEmail,
   buildCancelledEmail,
+  buildCourierDeliveredEmail,
+  buildCourierOutForDeliveryEmail,
   buildNfeEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,
@@ -39,6 +41,7 @@ const SAMPLE = {
   trackingNumber: '1Z999AA10123456784',
   carrier: 'UPS',
   trackingUrl: 'https://www.ups.com/track?tracknum=1Z999AA10123456784',
+  courierTrackingUrl: 'https://trip.uber.com/abc123',
   nextDeliveryLabel: '02 out 2026',
   resumeAtLabel: '16 out 2026',
   endsAtLabel: '30 set 2026',
@@ -108,6 +111,20 @@ function listEmailPreviews(options = {}) {
       label: 'Enviado com rastreio',
       wired: true,
       content: buildShippedEmail({ ...sample, ...shell })
+    },
+    {
+      id: 'courier-out-for-delivery',
+      group: 'P0 · pedido',
+      label: 'Brasil · saiu para entrega',
+      wired: true,
+      content: buildCourierOutForDeliveryEmail({ ...sample, trackingUrl: sample.courierTrackingUrl, ...shell })
+    },
+    {
+      id: 'courier-delivered',
+      group: 'P0 · pedido',
+      label: 'Brasil · entregue',
+      wired: true,
+      content: buildCourierDeliveredEmail({ ...sample, ...shell })
     },
     {
       id: 'admin-new-subscription',
