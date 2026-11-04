@@ -109,6 +109,22 @@ describe('SubscriptionsActionsRepository automatic renewal', () => {
     expect(ledgerRepository.setAutoRenew).toHaveBeenCalledWith('sub_123', true);
   });
 
+  test('reactivating a plan set to cancel resumes it and clears cancel_at_period_end', async () => {
+    const { repository, stripeBilling, ledgerRepository } = build({ status: 'active', autoRenew: false, cancelAtPeriodEnd: true });
+    stripeBilling.resumeSubscription = jest.fn().mockResolvedValue({});
+    await repository.executeAction(7, 'sub_123', { action: 'reactivate' });
+    expect(stripeBilling.resumeSubscription).toHaveBeenCalledWith('sub_123', { clearCancelAtPeriodEnd: true });
+    expect(ledgerRepository.setAutoRenew).toHaveBeenCalledWith('sub_123', true);
+  });
+
+  test('reactivating a paused plan keeps the renewal choice as it is', async () => {
+    const { repository, stripeBilling, ledgerRepository } = build({ status: 'paused', autoRenew: false, cancelAtPeriodEnd: false });
+    stripeBilling.resumeSubscription = jest.fn().mockResolvedValue({});
+    await repository.executeAction(7, 'sub_123', { action: 'reactivate' });
+    expect(stripeBilling.resumeSubscription).toHaveBeenCalledWith('sub_123', { clearCancelAtPeriodEnd: false });
+    expect(ledgerRepository.setAutoRenew).not.toHaveBeenCalled();
+  });
+
   test('without a ledger count it counts paid cycle invoices on Stripe, not prorations', async () => {
     const { repository, stripeBilling } = build({ chargedDeliveries: null }, [
       { status: 'paid', billing_reason: 'subscription_create', amount_paid: 9600 },

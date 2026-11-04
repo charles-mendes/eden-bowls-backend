@@ -811,6 +811,26 @@ describe('extractInvoicePayment', () => {
   });
 });
 
+describe('resumeSubscription', () => {
+  function build() {
+    const update = jest.fn().mockResolvedValue({ id: 'sub_1' });
+    const client = new StripeBillingClient({ client: { subscriptions: { update } } });
+    return { client, update };
+  }
+
+  test('only lifts the pause by default', async () => {
+    const { client, update } = build();
+    await client.resumeSubscription('sub_1');
+    expect(update).toHaveBeenCalledWith('sub_1', { pause_collection: '' });
+  });
+
+  test('also clears a scheduled cancellation when asked', async () => {
+    const { client, update } = build();
+    await client.resumeSubscription('sub_1', { clearCancelAtPeriodEnd: true });
+    expect(update).toHaveBeenCalledWith('sub_1', { pause_collection: '', cancel_at_period_end: false });
+  });
+});
+
 describe('setTrialEnd', () => {
   test('passes the idempotency key as a request option only when given', async () => {
     const update = jest.fn().mockResolvedValue({ id: 'sub_9' });

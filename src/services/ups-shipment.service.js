@@ -5,6 +5,7 @@ const { ledgerStripeAccount } = require('../core/stripe-account');
 const { extractSubscriptionIdFromInvoice } = require('../core/stripe-subscription-map');
 const { parseUpsTracking, upsTrackingUrl } = require('../core/ups-tracking');
 const { deliveryTimeline } = require('../core/delivery-timeline');
+const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
 
 function addressRecipient(address = {}) {
   return String(address.name || address.full_name || address.recipient || '').trim();
@@ -347,6 +348,10 @@ class UpsShipmentService {
     }
     if (invoice.status !== 'paid') {
       throw new HttpError(422, 'Only a paid invoice can buy a UPS label.', { code: 'invoice_not_paid' });
+    }
+    // A skipped cycle is a paid $0 trial invoice with no box. A 100% coupon keeps its subtotal and still ships.
+    if (!isChargedDeliveryInvoice(invoice)) {
+      throw new HttpError(422, 'This invoice is not a charged delivery, so it cannot buy a UPS label.', { code: 'invoice_not_delivery' });
     }
   }
 

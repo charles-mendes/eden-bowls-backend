@@ -32,7 +32,7 @@ function buildService(overrides = {}) {
     ledgerRepository: overrides.ledgerRepository,
     adminBillingService: overrides.adminBillingService || {
       getSubscriptionInvoice: overrides.getSubscriptionInvoice
-        || jest.fn().mockResolvedValue({ status: 'paid', subscription: 'sub_123' }),
+        || jest.fn().mockResolvedValue({ status: 'paid', subscription: 'sub_123', billing_reason: 'subscription_cycle', subtotal: 14450 }),
       getSubscription: jest.fn().mockResolvedValue({
         id: '1',
         stripeSubscriptionId: 'sub_123',
@@ -70,7 +70,9 @@ describe('UpsShipmentService label guards', () => {
 
   test.each([
     ['an unpaid invoice', { status: 'open', subscription: 'sub_123' }, 'invoice_not_paid'],
-    ['an invoice of another subscription', { status: 'paid', subscription: 'sub_other' }, 'invoice_not_in_subscription']
+    ['an invoice of another subscription', { status: 'paid', subscription: 'sub_other' }, 'invoice_not_in_subscription'],
+    ['a paid $0 invoice of a skipped cycle', { status: 'paid', subscription: 'sub_123', billing_reason: 'subscription_cycle', subtotal: 0, amount_paid: 0 }, 'invoice_not_delivery'],
+    ['a paid invoice that is not a delivery cycle', { status: 'paid', subscription: 'sub_123', billing_reason: 'manual', subtotal: 14450, amount_paid: 14450 }, 'invoice_not_delivery']
   ])('refuses %s before buying anything', async (_label, invoice, code) => {
     const { service, repository } = buildService({ getSubscriptionInvoice: jest.fn().mockResolvedValue(invoice) });
 
@@ -95,7 +97,19 @@ describe('UpsShipmentService label guards', () => {
     const { service } = buildService({
       getSubscriptionInvoice: jest.fn().mockResolvedValue({
         status: 'paid',
+        billing_reason: 'subscription_cycle',
+        subtotal: 14450,
         parent: { subscription_details: { subscription: 'sub_123' } }
+      })
+    });
+
+    await expect(create(service)).resolves.toMatchObject({ success: true });
+  });
+
+  test('buys the label of a delivery paid in full by a 100% coupon', async () => {
+    const { service } = buildService({
+      getSubscriptionInvoice: jest.fn().mockResolvedValue({
+        status: 'paid', subscription: 'sub_123', billing_reason: 'subscription_create', subtotal: 14450, amount_paid: 0
       })
     });
 
