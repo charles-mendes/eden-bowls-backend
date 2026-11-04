@@ -97,6 +97,21 @@ describe('recordPaidInvoice', () => {
     expect(repository.insertOrGet).not.toHaveBeenCalled();
   });
 
+  test('the note names the buyer, not the delivery recipient', async () => {
+    const { service, repository } = build({
+      repository: memoryRepository({
+        name: 'Ana Costa',
+        email: 'ana@example.com',
+        taxDocument: CPF,
+        address: { recipient_name: 'João Lima', street: 'Rua A', number: '1', neighborhood: 'Centro', city: 'SP', state: 'SP', zipcode: '01001000' }
+      })
+    });
+    await record(service);
+    const [row] = [...repository.rows.values()];
+    expect(row.customerName).toBe('Ana Costa');
+    expect(JSON.stringify(row.customerAddress)).not.toContain('João Lima');
+  });
+
   test('a repeated webhook keeps one row', async () => {
     const { service, repository } = build();
     const first = await record(service);

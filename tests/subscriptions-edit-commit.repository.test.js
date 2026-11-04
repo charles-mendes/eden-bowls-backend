@@ -489,6 +489,37 @@ describe('SubscriptionsEditCommitRepository', () => {
       }));
     });
 
+    test('a street change without the recipient keeps the stored one', async () => {
+      const storedAddress = { country: 'US', postal_code: '94105', recipient_name: 'João Lima' };
+      const storedHash = buildCurrentHash({
+        items: [{ price: 'price_abc', quantity: 1 }], termMonths: 1, address: storedAddress, shipping: { cost: 12.9 }
+      });
+      const repository = buildRepo({ ledgerRow: { address: storedAddress } });
+      await repository.commit(7, 'sub_123', {
+        ...addressPayload, expected_current_hash: storedHash, address: { ...US_EDIT_ADDRESS, line1: '2 Market St' }, shipping: signedShipping()
+      });
+
+      expect(repository.ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        address: expect.objectContaining({ line1: '2 Market St', recipient_name: 'João Lima' })
+      }));
+    });
+
+    test('a new recipient replaces the stored one', async () => {
+      const storedAddress = { country: 'US', postal_code: '94105', recipient_name: 'João Lima' };
+      const storedHash = buildCurrentHash({
+        items: [{ price: 'price_abc', quantity: 1 }], termMonths: 1, address: storedAddress, shipping: { cost: 12.9 }
+      });
+      const repository = buildRepo({ ledgerRow: { address: storedAddress } });
+      await repository.commit(7, 'sub_123', {
+        ...addressPayload, expected_current_hash: storedHash,
+        address: { ...US_EDIT_ADDRESS, recipient_name: 'Portaria Ed. Sol' }, shipping: signedShipping()
+      });
+
+      expect(repository.ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        address: expect.objectContaining({ recipient_name: 'Portaria Ed. Sol' })
+      }));
+    });
+
     test('a US address with a 2-day transit is refused and nothing is saved', async () => {
       const repository = buildRepo();
       await expect(repository.commit(7, 'sub_123', { ...addressPayload, shipping: signedShipping({ deliveryDays: 2 }) }))

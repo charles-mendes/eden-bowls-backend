@@ -98,7 +98,8 @@ describe('subscription dashboard delivery address', () => {
         neighborhood: 'Consolação',
         city: 'São Paulo',
         state: 'SP',
-        zipcode: '01305-000'
+        zipcode: '01305-000',
+        recipient_name: 'João Lima'
       }
     });
 
@@ -110,7 +111,8 @@ describe('subscription dashboard delivery address', () => {
       neighborhood: 'Consolação',
       city: 'São Paulo',
       state: 'SP',
-      zipcode: '01305-000'
+      zipcode: '01305-000',
+      recipient_name: 'João Lima'
     });
   });
 

@@ -116,6 +116,22 @@ describe('UpsShipmentService label guards', () => {
     await expect(create(service)).resolves.toMatchObject({ success: true });
   });
 
+  test('prints the checkout recipient over the account name', async () => {
+    const { service } = buildService({
+      addressName: '',
+      profileRepository: { findUserById: jest.fn().mockResolvedValue({ displayName: 'Ana Costa' }) }
+    });
+    const subscription = await service.adminBillingService.getSubscription();
+    service.adminBillingService.getSubscription.mockResolvedValue({
+      ...subscription,
+      address: { ...subscription.address, recipient_name: 'João Lima' }
+    });
+
+    await create(service);
+
+    expect(service.upsClient.createShipment.mock.calls[0][0].shipTo.name).toBe('João Lima');
+  });
+
   test('prints the account name when the address has none', async () => {
     const { service } = buildService({
       addressName: '',

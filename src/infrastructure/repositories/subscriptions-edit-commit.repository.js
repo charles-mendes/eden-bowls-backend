@@ -33,6 +33,13 @@ function addressWithTransit(address, shipping) {
   return Number.isFinite(days) ? { ...address, business_days_in_transit: days } : address;
 }
 
+// The edit sends the whole address and replaces the stored one, so an omitted recipient is copied from it.
+function withStoredRecipient(address, storedAddress) {
+  if (!address || address.recipient_name !== undefined) return address;
+  const stored = storedAddress && typeof storedAddress === 'object' ? storedAddress.recipient_name : undefined;
+  return stored ? { ...address, recipient_name: stored } : address;
+}
+
 class SubscriptionsEditCommitRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
@@ -188,7 +195,9 @@ class SubscriptionsEditCommitRepository {
       subscription_term_months: proposedTerm
     };
     const nextPets = buildPetsSnapshot(nextPlanSelection);
-    const savedAddress = payload.address ? addressWithTransit(payload.address, shipping) : row.address;
+    const savedAddress = payload.address
+      ? addressWithTransit(withStoredRecipient(payload.address, row.address), shipping)
+      : row.address;
 
     // Before the term is saved: a failure here leaves the old term, and saving again repeats both steps safely.
     if (termChange && !editPaymentPending) {

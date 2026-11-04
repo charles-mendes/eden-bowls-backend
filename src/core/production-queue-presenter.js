@@ -197,7 +197,8 @@ function presentProductionQueueItem(row, options = {}) {
   // A paid cycle is due on its preparation day; an unpaid one on its charge.
   const daysUntil = civilDaysUntil(row.dueAt || row.currentPeriodEnd || row.current_period_end, timezone, now);
   const address = jsonColumn(row.address);
-  const displayName = address.name || address.full_name || address.recipient
+  // Who receives the box (delivery-recipient), then the older name keys, then the email, as before.
+  const displayName = address.recipient_name || address.name || address.full_name || address.recipient
     || row.customerEmail || row.customer_email || '';
   // The cycle key the admin sends back when it changes the production status.
   const periodEnd = toJsDate(row.cyclePeriodEnd || row.currentPeriodEnd || row.current_period_end);

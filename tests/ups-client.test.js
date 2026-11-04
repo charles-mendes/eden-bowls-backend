@@ -342,3 +342,13 @@ describe('UPS simulation client', () => {
     expect(bodyOf('/rating/').RateRequest.Shipment.Package.PackagingType).toMatchObject({ Code: '02' });
   });
 });
+
+describe('UpsClient ship-to name', () => {
+  test('cuts a long recipient to the 35 characters UPS accepts', () => {
+    const name = 'Maria Aparecida dos Santos Oliveira Albuquerque';
+    expect(name.length).toBeGreaterThan(35);
+    const address = client().buildAddress({ name });
+    expect(address.Name).toBe(name.slice(0, 35));
+    expect(address.AttentionName).toBe(name.slice(0, 35));
+  });
+});

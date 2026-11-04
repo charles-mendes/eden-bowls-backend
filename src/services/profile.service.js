@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { RECIPIENT_NAME_KEY, validateRecipientName } = require('../core/recipient-name');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { normalizeCountry, normalizeZipcode } = require('./onboarding-zipcode.service');
 const { formatStateForDisplay, formatStateForStorage } = require('../core/us-states');
@@ -27,7 +28,8 @@ function emptyDelivery() {
     stateCode: '',
     zipCode: '',
     country: '',
-    deliveryInstructions: ''
+    deliveryInstructions: '',
+    recipientName: ''
   };
 }
 
@@ -170,7 +172,8 @@ function mapDelivery(address, country) {
     stateCode: formatStateForStorage(address.state, country),
     zipCode: String(address.zipcode || address.postal_code || ''),
     country,
-    deliveryInstructions: String(address.delivery_instructions || '')
+    deliveryInstructions: String(address.delivery_instructions || ''),
+    recipientName: String(address[RECIPIENT_NAME_KEY] || '')
   };
 }
 
@@ -368,6 +371,13 @@ class ProfileService {
       }
     }
 
+    // Omitted keeps the stored recipient through the merge; anything sent, an empty string included, must be valid.
+    const rawRecipient = payload.recipientName === undefined ? payload.recipient_name : payload.recipientName;
+    const recipientName = rawRecipient === undefined ? undefined : validateRecipientName(rawRecipient);
+    if (rawRecipient !== undefined && !recipientName) {
+      errors[RECIPIENT_NAME_KEY] = 'Use 2 to 60 characters, with at least one letter and no @.';
+    }
+
     if (Object.keys(errors).length > 0) {
       throw new HttpError(422, 'Required fields are missing.', {
         code: 'validation_error',
@@ -393,6 +403,7 @@ class ProfileService {
       zipcode: zipCode,
       postal_code: zipCode,
       delivery_instructions: String(payload.deliveryInstructions || '').trim(),
+      ...(recipientName === undefined ? {} : { [RECIPIENT_NAME_KEY]: recipientName }),
       ...(number === undefined ? {} : { number }),
       ...(neighborhood === undefined ? {} : { neighborhood })
     };

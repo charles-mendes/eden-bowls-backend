@@ -7,8 +7,9 @@ const { parseUpsTracking, upsTrackingUrl } = require('../core/ups-tracking');
 const { deliveryTimeline } = require('../core/delivery-timeline');
 const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
 
+// The checkout recipient first (delivery-recipient); older subscriptions keep the name keys they may carry.
 function addressRecipient(address = {}) {
-  return String(address.name || address.full_name || address.recipient || '').trim();
+  return String(address.recipient_name || address.name || address.full_name || address.recipient || '').trim();
 }
 
 function normalizeShipTo(address = {}) {
@@ -355,7 +356,7 @@ class UpsShipmentService {
     }
   }
 
-  // The checkout address has no name, so the account name goes on the label.
+  // A subscription from before the recipient field has no name in its address, so the account name goes on the label.
   async resolveRecipientName(subscription) {
     const fromAddress = addressRecipient(subscription.address || {});
     if (fromAddress) {

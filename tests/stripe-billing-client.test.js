@@ -141,6 +141,19 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     }));
   });
 
+  test('the Stripe shipping name stays the account name when the address has a recipient', async () => {
+    const { stripe, client } = buildClient();
+
+    await client.createOnboardingSubscription({
+      ...validInput,
+      address: { ...validInput.address, recipient_name: 'João Lima' }
+    });
+
+    const update = stripe.customers.update.mock.calls[0][1];
+    expect(update.shipping.name).toBe('Jane Doe');
+    expect(JSON.stringify(update)).not.toContain('João Lima');
+  });
+
   test('creates a Shipping product and reuses it for the next checkout', async () => {
     const { stripe, client } = buildClient({ shippingProductId: '' });
     stripe.products.create.mockResolvedValueOnce({ id: 'prod_created' });

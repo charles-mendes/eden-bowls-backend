@@ -1,5 +1,6 @@
 const { HttpError } = require('../core/http-error');
 const { parseCpf, parseFiscalName } = require('../core/tax-document');
+const { RECIPIENT_NAME_KEY, validateRecipientName } = require('../core/recipient-name');
 const {
   canResolvePlanSelection,
   isPricedPlanSelection,
@@ -193,6 +194,13 @@ class OnboardingSubscriptionCheckoutService {
     const context = await this.ensurePersistedPets(userId, pricedContext);
     validateCheckoutState(context);
     const deliveryAddress = context.address || {};
+    // An address saved before the recipient field: the store sends the customer back to the address step.
+    if (!validateRecipientName(deliveryAddress[RECIPIENT_NAME_KEY])) {
+      throw new HttpError(422, 'The recipient name is required.', {
+        code: 'recipient_name_required',
+        field: RECIPIENT_NAME_KEY
+      });
+    }
     const deliveryMarket = resolveMarket({ country: deliveryAddress.country }).country;
     assertVerifiedDeliveryArea(this.shippingQuoteSigner, deliveryMarket, context.shipping || {}, {
       zipcode: deliveryAddress.zipcode

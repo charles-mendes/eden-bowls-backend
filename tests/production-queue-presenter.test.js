@@ -189,3 +189,16 @@ describe('presentProductionQueueItem', () => {
     expect(outOfScope.email).toBe('ana@edenbowls.com');
   });
 });
+
+describe('presentProductionQueueItem recipient', () => {
+  test('shows the delivery recipient first', () => {
+    const item = presentProductionQueueItem(baseRow({ address: { ...baseRow().address, recipient_name: 'João Lima' } }));
+    expect(item.displayName).toBe('João Lima');
+  });
+
+  test('an old subscription without any name keeps the customer email', () => {
+    const { name, ...address } = baseRow().address;
+    const item = presentProductionQueueItem(baseRow({ address }));
+    expect(item.displayName).toBe('ana@edenbowls.com');
+  });
+});

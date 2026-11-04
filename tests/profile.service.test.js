@@ -185,7 +185,8 @@ describe('ProfileService', () => {
       stateCode: '',
       zipCode: '',
       country: '',
-      deliveryInstructions: ''
+      deliveryInstructions: '',
+      recipientName: ''
     });
     expect(emptyProfile.avatarUrl).toBeNull();
     expect(emptyProfile.availableCountryCodes).toEqual(['BR', 'US']);
@@ -290,6 +291,35 @@ describe('ProfileService', () => {
     const patch = repository.mergeAddress.mock.calls[0][1];
     expect(patch.phone).toBeUndefined();
     expect(patch.country).toBeUndefined();
+  });
+
+  test('recipient name: edit stores it, omit keeps it, empty or invalid is refused', async () => {
+    const build = () => createService({
+      repository: {
+        findUserById: jest.fn().mockResolvedValue(createUser({ phoneCountry: 'BR' })),
+        getAddress: jest.fn().mockResolvedValue({ exists: true, address: { country: 'BR', recipient_name: 'João Lima' } }),
+        mergeAddress: jest.fn().mockImplementation(async (_id, patch) => ({ country: 'BR', recipient_name: 'João Lima', ...patch }))
+      }
+    });
+    const base = { address: 'Rua A', city: 'Sao Paulo', state: 'SP', zipCode: '01310-100' };
+
+    const edited = build();
+    const saved = await edited.service.updateDelivery({ userId: 77, payload: { ...base, recipientName: '  Portaria  Ed. Sol ' } });
+    expect(edited.repository.mergeAddress.mock.calls[0][1].recipient_name).toBe('Portaria Ed. Sol');
+    expect(edited.repository.mergeAddress.mock.calls[0][1]).not.toHaveProperty('name');
+    expect(saved.recipientName).toBe('Portaria Ed. Sol');
+
+    const omitted = build();
+    const kept = await omitted.service.updateDelivery({ userId: 77, payload: base });
+    expect(omitted.repository.mergeAddress.mock.calls[0][1]).not.toHaveProperty('recipient_name');
+    expect(kept.recipientName).toBe('João Lima');
+
+    for (const recipientName of ['', 'a@b', '12']) {
+      const refused = build();
+      await expect(refused.service.updateDelivery({ userId: 77, payload: { ...base, recipientName } }))
+        .rejects.toMatchObject({ statusCode: 422, details: { errors: { recipient_name: expect.any(String) } } });
+      expect(refused.repository.mergeAddress).not.toHaveBeenCalled();
+    }
   });
 
   test('uppercases a BR state and rejects a short US ZIP', async () => {
