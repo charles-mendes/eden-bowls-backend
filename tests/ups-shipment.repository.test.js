@@ -15,7 +15,43 @@ describe('UpsShipmentRepository tracking', () => {
     const [sql, params] = query.mock.calls[0];
     expect(sql).not.toContain('`raw_response`');
     expect(sql).toContain("WHEN ? = 'delivered' AND `status` = 'created' THEN 'delivered'");
-    expect(params).toEqual(['delivered', 'Delivered', '2026-05-12 14:46:53', JSON.stringify(payload), 'delivered', 9]);
+    expect(params).toEqual(['delivered', 'Delivered', null, null, '2026-05-12 14:46:53', JSON.stringify(payload), 'delivered', 9]);
+  });
+
+  test('stage dates keep the first scan, so a repeated read changes none', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+
+    await repositoryWith(query).recordTracking(9, {
+      status: 'out_for_delivery',
+      description: 'Loaded on Delivery Vehicle',
+      deliveredAt: null,
+      stages: { in_transit: '2026-05-11 21:00:00', out_for_delivery: '2026-05-12 07:00:00', delivered: null }
+    }, {});
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('`in_transit_at` = COALESCE(`in_transit_at`, ?)');
+    expect(sql).toContain('`out_for_delivery_at` = COALESCE(`out_for_delivery_at`, ?)');
+    expect(sql).toContain('`delivered_at` = COALESCE(`delivered_at`, ?)');
+    expect(params.slice(2, 5)).toEqual(['2026-05-11 21:00:00', '2026-05-12 07:00:00', null]);
+  });
+
+  test('a warning writes no new stage date', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+
+    await repositoryWith(query).recordTracking(9, {
+      status: 'exception', description: 'Delivery attempt failed', deliveredAt: null,
+      stages: { in_transit: null, out_for_delivery: null, delivered: null }
+    }, {});
+
+    expect(query.mock.calls[0][1].slice(0, 5)).toEqual(['exception', 'Delivery attempt failed', null, null, null]);
+  });
+
+  test('a failed read only moves the row to the end of the queue', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+
+    await repositoryWith(query).markTrackingChecked(9);
+
+    expect(query.mock.calls[0][0]).toMatch(/SET `tracking_checked_at` = CURRENT_TIMESTAMP WHERE `id` = \?$/);
   });
 
   test('an answer without a package keeps the last status', async () => {
@@ -23,7 +59,7 @@ describe('UpsShipmentRepository tracking', () => {
 
     await repositoryWith(query).recordTracking(9, null, {});
 
-    expect(query.mock.calls[0][1].slice(0, 3)).toEqual([null, null, null]);
+    expect(query.mock.calls[0][1].slice(0, 5)).toEqual([null, null, null, null, null]);
   });
 
   test('a delivered label still counts as labeled for the invoice', async () => {

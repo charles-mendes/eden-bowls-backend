@@ -448,6 +448,10 @@
     "path": "/api/v1/admin/shipments/:id/void"
   },
   {
+    "method": "GET",
+    "path": "/api/v1/admin/shipments/queue"
+  },
+  {
     "method": "POST",
     "path": "/api/v1/admin/shipping/headquarters/validate"
   },

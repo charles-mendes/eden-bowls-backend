@@ -29,6 +29,7 @@ function buildService(overrides = {}) {
       })
     },
     profileRepository: overrides.profileRepository,
+    ledgerRepository: overrides.ledgerRepository,
     adminBillingService: overrides.adminBillingService || {
       getSubscriptionInvoice: overrides.getSubscriptionInvoice
         || jest.fn().mockResolvedValue({ status: 'paid', subscription: 'sub_123' }),
@@ -74,6 +75,18 @@ describe('UpsShipmentService label guards', () => {
     const { service, repository } = buildService({ getSubscriptionInvoice: jest.fn().mockResolvedValue(invoice) });
 
     await expect(create(service)).rejects.toMatchObject({ statusCode: 422, details: { code } });
+    expect(repository.insertPending).not.toHaveBeenCalled();
+    expect(service.upsClient.createShipment).not.toHaveBeenCalled();
+  });
+
+  test('Military address: a single purchase is refused before UPS', async () => {
+    const { service, repository } = buildService();
+    service.adminBillingService.getSubscription.mockResolvedValue({
+      id: '1', stripeSubscriptionId: 'sub_123', user: { id: '7' },
+      address: { name: 'Ana Costa', line1: 'Unit 2050 Box 4190', city: 'APO', state: 'AP', postal_code: '96278', country: 'US' }
+    });
+
+    await expect(create(service)).rejects.toMatchObject({ statusCode: 422, details: { code: 'military_address_not_supported' } });
     expect(repository.insertPending).not.toHaveBeenCalled();
     expect(service.upsClient.createShipment).not.toHaveBeenCalled();
   });
@@ -129,7 +142,9 @@ describe('UpsShipmentService label issues', () => {
   test.each([
     ['a Brazilian address', { ...address, country: 'BR' }, [{ code: 'country_not_supported', country: 'BR' }]],
     ['a PO Box', { ...address, line1: 'PO Box 12' }, [{ code: 'po_box_not_allowed' }]],
-    ['no zipcode', { ...address, postal_code: '' }, [{ code: 'address_incomplete' }]]
+    ['no zipcode', { ...address, postal_code: '' }, [{ code: 'address_incomplete' }]],
+    ['an APO address', { ...address, city: 'APO', state: 'AE' }, [{ code: 'military_address_not_supported' }]],
+    ['an FPO city', { ...address, city: 'fpo' }, [{ code: 'military_address_not_supported' }]]
   ])('warns about %s', async (_label, subscriptionAddress, expected) => {
     await expect(issuesFor(subscriptionAddress)).resolves.toEqual(expected);
   });
@@ -172,9 +187,9 @@ describe('UpsShipmentService tracking', () => {
 
     const result = await service.refreshTracking(9, {});
 
-    expect(repository.recordTracking).toHaveBeenCalledWith(9, {
+    expect(repository.recordTracking).toHaveBeenCalledWith(9, expect.objectContaining({
       status: 'delivered', description: 'Delivered', deliveredAt: '2026-05-12 14:46:53'
-    }, delivered);
+    }), delivered);
     expect(result.data.shipment).toMatchObject({
       status: 'delivered',
       tracking_status: 'delivered',
@@ -194,7 +209,7 @@ describe('UpsShipmentService tracking', () => {
 });
 
 describe('UpsShipmentService.createForSubscription', () => {
-  test('sends shipped mail after markCreated when reused is false', async () => {
+  test('UPS label created: buying the label sends no shipped letter', async () => {
     const { service, transactionalMailer, repository } = buildService();
 
     const result = await service.createForSubscription({
@@ -204,10 +219,7 @@ describe('UpsShipmentService.createForSubscription', () => {
 
     expect(repository.markCreated).toHaveBeenCalled();
     expect(result.data.reused).toBe(false);
-    expect(transactionalMailer.notifyShipped).toHaveBeenCalledTimes(1);
-    expect(transactionalMailer.notifyShipped).toHaveBeenCalledWith(expect.objectContaining({
-      shipment: expect.objectContaining({ id: 9, tracking_number: '1Z999AA10123456784' })
-    }));
+    expect(transactionalMailer.notifyShipped).not.toHaveBeenCalled();
   });
 
   test('does not send shipped mail when the label is reused', async () => {
@@ -230,21 +242,113 @@ describe('UpsShipmentService.createForSubscription', () => {
     expect(transactionalMailer.notifyShipped).not.toHaveBeenCalled();
   });
 
-  test('keeps the UPS label when shipped mail throws', async () => {
-    const { service, repository } = buildService({
-      transactionalMailer: {
-        notifyShipped: jest.fn().mockRejectedValue(new Error('smtp down'))
-      }
-    });
+});
 
-    await expect(service.createForSubscription({
-      subscriptionId: '1',
-      invoiceId: 'in_1'
-    })).resolves.toMatchObject({
-      success: true,
-      data: { reused: false }
+describe('UpsShipmentService.recordTracking and the shipped letter', () => {
+  const ledger = { id: 1, stripeSubscriptionId: 'sub_123', customerEmail: 'ana@example.com' };
+  const row = (extra = {}) => ({ id: 9, subscription_id: '1', tracking_number: '1Z1', status: 'created', shipped_at: '2026-05-09 12:00:00', ...extra });
+  const scanAnswer = (type, extra = {}) => ({
+    trackResponse: { shipment: [{ package: [{ activity: [{ status: { type, description: type, ...extra }, date: '20260510', time: '180000' }] }] }] }
+  });
+
+  function setup({ stored, notify, ledgerRow = ledger } = {}) {
+    const notifyShipped = notify || jest.fn().mockResolvedValue({ claimed: true });
+    const repository = {
+      recordTracking: jest.fn().mockResolvedValue(stored),
+      markShippedLetterSent: jest.fn().mockResolvedValue(),
+      listDeliveredAwaitingLetter: jest.fn().mockResolvedValue([])
+    };
+    const warn = jest.fn();
+    const { service } = buildService({
+      repository,
+      transactionalMailer: { notifyShipped },
+      ledgerRepository: { findById: jest.fn().mockResolvedValue(ledgerRow) },
+      logger: { warn, error: jest.fn(), info: jest.fn() }
     });
-    expect(repository.markCreated).toHaveBeenCalled();
+    return { service, repository, notifyShipped, warn };
+  }
+
+  test('First read in transit: one letter to the ledger email, then marked sent', async () => {
+    const stored = row({ tracking_status: 'in_transit', in_transit_at: '2026-05-10 18:00:00' });
+    const { service, repository, notifyShipped } = setup({ stored });
+
+    const result = await service.recordTracking(row(), scanAnswer('P'));
+
+    expect(result.mailed).toBe(true);
+    expect(notifyShipped).toHaveBeenCalledWith({ subscription: expect.objectContaining({ user: { email: 'ana@example.com' } }), shipment: stored });
+    expect(repository.markShippedLetterSent).toHaveBeenCalledWith(9);
+  });
+
+  test('First read already delivered: one letter', async () => {
+    const stored = row({ status: 'delivered', tracking_status: 'delivered', delivered_at: '2026-05-12 14:46:53' });
+    const { service, notifyShipped } = setup({ stored });
+
+    await service.recordTracking(row(), scanAnswer('D'));
+
+    expect(notifyShipped).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    ['label created', row({ tracking_status: 'label_created' })],
+    ['an exception before pickup', row({ tracking_status: 'exception' })],
+    ['a voided row', row({ status: 'voided', tracking_status: 'in_transit', in_transit_at: '2026-05-10 18:00:00' })],
+    ['a letter already sent', row({ tracking_status: 'in_transit', in_transit_at: '2026-05-10', shipped_letter_sent_at: '2026-05-09 12:00:00' })]
+  ])('no letter for %s', async (_name, stored) => {
+    const { service, notifyShipped } = setup({ stored });
+
+    await service.recordTracking(row(), scanAnswer('M'));
+
+    expect(notifyShipped).not.toHaveBeenCalled();
+  });
+
+  test('No customer email: the skip is logged with the shipment id and template', async () => {
+    const stored = row({ tracking_status: 'in_transit', in_transit_at: '2026-05-10 18:00:00' });
+    const { service, notifyShipped, warn } = setup({ stored, ledgerRow: { id: 1, customerEmail: null } });
+
+    await service.recordTracking(row(), scanAnswer('P'));
+
+    expect(notifyShipped).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith({ shipmentId: 9, template: 'shipped' }, 'Shipped letter skipped: no customer email.');
+  });
+
+  test('SMTP fails: tracking stays stored and the letter stays due', async () => {
+    const stored = row({ tracking_status: 'in_transit', in_transit_at: '2026-05-10 18:00:00' });
+    const { service, repository } = setup({ stored, notify: jest.fn().mockResolvedValue({ failed: true, claimed: false }) });
+
+    const result = await service.recordTracking(row(), scanAnswer('P'));
+
+    expect(repository.recordTracking).toHaveBeenCalled();
+    expect(result.mailed).toBe(false);
+    expect(repository.markShippedLetterSent).not.toHaveBeenCalled();
+  });
+
+  test('Mailer throws: tracking stays stored', async () => {
+    const stored = row({ tracking_status: 'in_transit', in_transit_at: '2026-05-10 18:00:00' });
+    const { service, repository } = setup({ stored, notify: jest.fn().mockRejectedValue(new Error('smtp down')) });
+
+    await expect(service.recordTracking(row(), scanAnswer('P'))).resolves.toMatchObject({ mailed: false });
+    expect(repository.markShippedLetterSent).not.toHaveBeenCalled();
+  });
+
+  test('Refresh and tick together: the claim taken by the other marks the row and sends nothing', async () => {
+    const stored = row({ tracking_status: 'in_transit', in_transit_at: '2026-05-10 18:00:00' });
+    const { service, repository } = setup({ stored, notify: jest.fn().mockResolvedValue({ skipped: true, reason: 'duplicate' }) });
+
+    const result = await service.recordTracking(row(), scanAnswer('P'));
+
+    expect(result.mailed).toBe(false);
+    expect(repository.markShippedLetterSent).toHaveBeenCalledWith(9);
+  });
+
+  test('delivered rows awaiting a letter are tried without UPS', async () => {
+    const due = row({ status: 'delivered', tracking_status: 'delivered', delivered_at: '2026-05-12 14:46:53' });
+    const { service, repository, notifyShipped } = setup({});
+    repository.listDeliveredAwaitingLetter.mockResolvedValue([due]);
+    service.upsClient.track = jest.fn();
+
+    await expect(service.sendDueShippedLetters(20)).resolves.toBe(1);
+    expect(notifyShipped).toHaveBeenCalledTimes(1);
+    expect(service.upsClient.track).not.toHaveBeenCalled();
   });
 });
 
@@ -409,5 +513,77 @@ describe('UpsShipmentService.voidShipment', () => {
 
     expect(upsClient.voidShipment).toHaveBeenCalledWith('1ZX');
     expect(repository.markVoided).toHaveBeenCalledWith(4);
+  });
+});
+
+describe('UpsShipmentService purchase outcomes for the label queue', () => {
+  const purchase = (service) => service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} });
+
+  // One row per invoice, like uq_ups_shipments_active_invoice.
+  function memoryRepository() {
+    const rows = [];
+    const active = (invoice) => rows.find((row) => row.stripe_invoice_id === invoice && row.status !== 'voided') || null;
+    return {
+      rows,
+      findActiveByInvoiceId: jest.fn(async (invoice) => active(invoice)),
+      insertPending: jest.fn(async ({ invoiceId }) => {
+        if (active(invoiceId)) return null;
+        const row = { id: rows.length + 1, stripe_invoice_id: invoiceId, status: 'pending', ups_shipment_id: null };
+        rows.push(row);
+        return row;
+      }),
+      findByUpsShipmentId: jest.fn(async () => null),
+      markCreated: jest.fn(async (id, values) => Object.assign(rows.find((row) => row.id === id), {
+        status: 'created', ups_shipment_id: values.upsShipmentId, tracking_number: values.trackingNumber
+      })),
+      markUnknown: jest.fn(async (id) => Object.assign(rows.find((row) => row.id === id), { status: 'unknown' })),
+      deletePending: jest.fn()
+    };
+  }
+
+  test('two simultaneous purchases on one invoice: one UPS call and no second row', async () => {
+    const repository = memoryRepository();
+    let release;
+    const createShipment = jest.fn(() => new Promise((resolve) => {
+      release = () => resolve({ upsShipmentId: 'ups_1', trackingNumber: '1Z1', serviceCode: '03', labelFormat: 'GIF' });
+    }));
+    const { service } = buildService({ repository, upsClient: { isConfigured: () => true, createShipment } });
+
+    const first = purchase(service);
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = purchase(service).catch((error) => error);
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+
+    await expect(first).resolves.toMatchObject({ data: { reused: false } });
+    expect(await second).toMatchObject({ statusCode: 409, details: { code: 'ups_shipment_unresolved', shipment_id: 1 } });
+    expect(createShipment).toHaveBeenCalledTimes(1);
+    expect(repository.rows).toHaveLength(1);
+  });
+
+  test('a timeout after UPS may have answered keeps the row unknown, and a later purchase gets 409', async () => {
+    const repository = memoryRepository();
+    const timeout = Object.assign(new Error('timeout'), { details: { code: 'ups_timeout' } });
+    const createShipment = jest.fn().mockRejectedValue(timeout);
+    const { service } = buildService({ repository, upsClient: { isConfigured: () => true, createShipment } });
+
+    await expect(purchase(service)).rejects.toMatchObject({ statusCode: 502, details: { code: 'ups_shipment_unknown', shipment_id: 1 } });
+    await expect(purchase(service)).rejects.toMatchObject({ statusCode: 409, details: { code: 'ups_shipment_unresolved', shipment_id: 1 } });
+
+    expect(repository.rows).toEqual([expect.objectContaining({ id: 1, status: 'unknown' })]);
+    expect(createShipment).toHaveBeenCalledTimes(1);
+  });
+
+  test('markCreated failing after the purchase keeps the row and logs the UPS id', async () => {
+    const repository = memoryRepository();
+    repository.markCreated = jest.fn().mockRejectedValue(Object.assign(new Error('db down'), { code: 'ER_LOCK' }));
+    const error = jest.fn();
+    const { service } = buildService({ repository, logger: { error, warn: jest.fn(), info: jest.fn() } });
+
+    await expect(purchase(service)).rejects.toThrow('db down');
+
+    expect(repository.rows).toEqual([expect.objectContaining({ id: 1, status: 'pending' })]);
+    expect(repository.deletePending).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.objectContaining({ shipmentId: 1, upsShipmentId: 'ups_1' }), 'UPS bought a label that could not be saved.');
   });
 });

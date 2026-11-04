@@ -1,5 +1,6 @@
 const { UpsShipmentRepository } = require('../src/infrastructure/repositories/ups-shipment.repository');
 const { UpsClient } = require('../src/infrastructure/shipping/ups-client');
+const { UpsShipmentService } = require('../src/services/ups-shipment.service');
 const {
   JOB_INTERVALS,
   runUpsTracking,
@@ -109,5 +110,79 @@ describe('UPS tracking job', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  describe('shipped letter on pickup', () => {
+    const inTransit = { trackResponse: { shipment: [{ package: [{ activity: [{ status: { type: 'P', description: 'Pickup Scan' }, date: '20260510', time: '180000' }] }] }] } };
+
+    // An in-memory shipment row, so two ticks see what the first one stored.
+    function world({ status = 'created', notify } = {}) {
+      const state = { id: 9, subscription_id: '1', tracking_number: '1Z1', status, shipped_at: '2026-05-09 12:00:00', shipped_letter_sent_at: null };
+      const repository = {
+        listOpenForTracking: jest.fn(async () => (['delivered', 'voided'].includes(state.status) ? [] : [{ ...state }])),
+        recordTracking: jest.fn(async (_id, summary) => {
+          Object.assign(state, { tracking_status: summary.status, in_transit_at: state.in_transit_at || summary.stages.in_transit });
+          return { ...state };
+        }),
+        markTrackingChecked: jest.fn(),
+        markShippedLetterSent: jest.fn(async () => { state.shipped_letter_sent_at = '2026-05-10 18:30:00'; }),
+        listDeliveredAwaitingLetter: jest.fn(async () => (state.status === 'delivered' && !state.shipped_letter_sent_at ? [{ ...state }] : []))
+      };
+      const notifyShipped = notify || jest.fn().mockResolvedValue({ claimed: true });
+      const service = new UpsShipmentService({
+        repository,
+        transactionalMailer: { notifyShipped },
+        ledgerRepository: { findById: jest.fn().mockResolvedValue({ customerEmail: 'ana@example.com' }) }
+      });
+      const track = jest.fn().mockResolvedValue(inTransit);
+      const info = jest.fn();
+      const tick = () => runUpsTracking({ upsClient: { timeoutMs: 5000, track }, upsShipmentRepository: repository, upsShipmentService: service, logger: { warn: jest.fn(), info } });
+      return { state, tick, track, notifyShipped, info };
+    }
+
+    test('First pickup read: stores the date, sends one letter, and logs the counts', async () => {
+      const { state, tick, notifyShipped, info } = world();
+
+      await expect(tick()).resolves.toEqual({ scanned: 1, updated: 1, failed: 0, mailed: 1 });
+      await tick();
+
+      expect(state.in_transit_at).toBe('2026-05-10 18:00:00');
+      expect(notifyShipped).toHaveBeenCalledTimes(1);
+      expect(info).toHaveBeenCalledWith({ scanned: 1, updated: 1, failed: 0, mailed: 1 }, 'UPS tracking tick.');
+    });
+
+    test('SMTP down at pickup: the next read sends the one letter', async () => {
+      const notify = jest.fn().mockResolvedValueOnce({ failed: true, claimed: false }).mockResolvedValue({ claimed: true });
+      const { state, tick } = world({ notify });
+
+      await expect(tick()).resolves.toMatchObject({ updated: 1, mailed: 0 });
+      expect(state.tracking_status).toBe('in_transit');
+      await expect(tick()).resolves.toMatchObject({ mailed: 1 });
+      await tick();
+
+      expect(notify).toHaveBeenCalledTimes(2);
+    });
+
+    test('SMTP down when the first read is delivered: the next tick sends it without UPS', async () => {
+      const notify = jest.fn().mockResolvedValue({ claimed: true });
+      const { state, tick, track } = world({ status: 'delivered', notify });
+      state.tracking_status = 'delivered';
+      state.delivered_at = '2026-05-12 14:46:53';
+
+      await expect(tick()).resolves.toMatchObject({ scanned: 0, mailed: 1 });
+      await tick();
+
+      expect(track).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test('the letter retry only looks at deliveries from the last 7 days', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    await new UpsShipmentRepository({ isInitialized: true, query }).listDeliveredAwaitingLetter(20);
+
+    const sql = query.mock.calls[0][0];
+    expect(sql).toContain("`status` = 'delivered' AND `shipped_letter_sent_at` IS NULL");
+    expect(sql).toContain('`delivered_at` >= (CURRENT_TIMESTAMP - INTERVAL 7 DAY)');
   });
 });

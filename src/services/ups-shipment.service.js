@@ -1,9 +1,10 @@
 const { HttpError } = require('../core/http-error');
 const { isPoBoxAddress } = require('../core/po-box');
-const { assertStripeAccountMarket, shouldEnforceMarketScope } = require('../core/admin-market-scope');
+const { assertStripeAccountMarket, constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { ledgerStripeAccount } = require('../core/stripe-account');
 const { extractSubscriptionIdFromInvoice } = require('../core/stripe-subscription-map');
 const { parseUpsTracking, upsTrackingUrl } = require('../core/ups-tracking');
+const { deliveryTimeline } = require('../core/delivery-timeline');
 
 function addressRecipient(address = {}) {
   return String(address.name || address.full_name || address.recipient || '').trim();
@@ -43,12 +44,23 @@ function upsRejectedShipment(error) {
   return details.code === 'ups_upstream_error' && status >= 400 && status < 500;
 }
 
+// UPS does not deliver to US military mail: APO, FPO and DPO cities, or the AA, AE and AP states.
+function isMilitaryAddress(shipTo = {}) {
+  const city = String(shipTo.city || '').trim().toUpperCase();
+  const state = String(shipTo.state || '').trim().toUpperCase();
+  return ['APO', 'FPO', 'DPO'].includes(city) || ['AA', 'AE', 'AP'].includes(state);
+}
+
 function unresolvedShipmentError(shipment) {
   return new HttpError(409, 'A UPS shipment for this invoice has no confirmed outcome. Check UPS, then void it before buying another label.', {
     code: 'ups_shipment_unresolved',
     shipment_id: shipment.id
   });
 }
+
+const QUEUE_LIMIT = 100;
+const QUEUE_DELIVERY_DAYS = 30;
+const UNRESOLVED_STATUSES = new Set(['pending', 'unknown']);
 
 class UpsShipmentService {
   constructor(options = {}) {
@@ -61,6 +73,7 @@ class UpsShipmentService {
     this.profileRepository = options.profileRepository || null;
     this.transactionalMailer = options.transactionalMailer || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
+    this.now = options.now || null;
   }
 
   ensureRepository() {
@@ -89,7 +102,10 @@ class UpsShipmentService {
       tracking_status: shipment.tracking_status || null,
       tracking_description: shipment.tracking_description || null,
       tracking_checked_at: shipment.tracking_checked_at || null,
+      in_transit_at: shipment.in_transit_at || null,
+      out_for_delivery_at: shipment.out_for_delivery_at || null,
       delivered_at: shipment.delivered_at || null,
+      timeline: deliveryTimeline(shipment),
       service_code: shipment.service_code,
       label_format: shipment.label_format,
       has_label: Boolean(shipment.label_path),
@@ -140,6 +156,59 @@ class UpsShipmentService {
         label_issues: await this.listLabelIssues(subscription)
       }
     };
+  }
+
+  // One read of US label work (ups-label-queue): ready orders with their blocking reasons, purchases with no
+  // confirmed UPS outcome, and created labels not yet delivered. Brazil never appears.
+  async listLabelQueue(actor = {}) {
+    this.ensureRepository();
+    const empty = { ready: [], unresolved: [], created: [], truncated: false };
+    if (shouldEnforceMarketScope(actor) && !constrainMarketQuery(actor, {}).stripeAccounts.includes('us')) {
+      return { success: true, data: empty };
+    }
+    if (!this.ledgerRepository || typeof this.ledgerRepository.listPaidLabelCycles !== 'function') {
+      throw new HttpError(503, 'Subscription ledger is not available.');
+    }
+
+    const floor = new Date((this.now ? this.now() : new Date()).getTime() - QUEUE_DELIVERY_DAYS * 24 * 60 * 60 * 1000);
+    const cycles = await this.ledgerRepository.listPaidLabelCycles({
+      deliveryFloor: floor.toISOString().slice(0, 10),
+      limit: QUEUE_LIMIT + 1
+    });
+    const page = cycles.slice(0, QUEUE_LIMIT);
+    const shipments = await this.repository.listActiveByInvoiceIds(page.map((cycle) => cycle.paidInvoiceId));
+    const byInvoice = new Map(shipments.map((shipment) => [shipment.stripe_invoice_id, shipment]));
+    const configured = Boolean(this.upsClient && this.upsClient.isConfigured());
+    const data = { ...empty, truncated: cycles.length > QUEUE_LIMIT };
+
+    for (const cycle of page) {
+      const shipment = byInvoice.get(cycle.paidInvoiceId) || null;
+      if (shipment && shipment.status === 'delivered') {
+        continue;
+      }
+      const { shipTo, issues } = await this.inspectLabel(cycle);
+      const item = {
+        subscription_id: String(cycle.id),
+        stripe_subscription_id: cycle.stripeSubscriptionId,
+        invoice_id: cycle.paidInvoiceId,
+        customer_name: shipTo.name || null,
+        city: shipTo.city || null,
+        zipcode: shipTo.zipcode || null,
+        production_status: cycle.productionStatus,
+        subscription_status: cycle.status,
+        delivery_date: cycle.deliveryDate || null,
+        shipment: shipment ? this.present(shipment) : null
+      };
+      if (!shipment) {
+        const codes = issues.map(({ code, country }) => (country ? { code, country } : { code }));
+        data.ready.push({ ...item, issues: configured ? codes : [{ code: 'ups_not_configured' }, ...codes] });
+      } else if (UNRESOLVED_STATUSES.has(shipment.status)) {
+        data.unresolved.push(item);
+      } else {
+        data.created.push(item);
+      }
+    }
+    return { success: true, data };
   }
 
   async listLabelIssues(subscription) {
@@ -266,8 +335,7 @@ class UpsShipmentService {
       throw error;
     }
 
-    await this.notifyShippedMail({ subscription, shipment: saved });
-
+    // The shipped letter waits for the first tracking read that shows the box moving (recordTracking).
     return { success: true, data: { shipment: this.present(saved), reused: false } };
   }
 
@@ -306,6 +374,8 @@ class UpsShipmentService {
       issues.push({ code: 'country_not_supported', message: 'UPS shipments are only available for US addresses.', country: shipTo.country });
     } else if (isPoBoxAddress(shipTo.street, shipTo.street2)) {
       issues.push({ code: 'po_box_not_allowed', message: 'UPS cannot deliver to a P.O. Box. Please use a street address.' });
+    } else if (isMilitaryAddress(shipTo)) {
+      issues.push({ code: 'military_address_not_supported', message: 'UPS does not deliver to APO, FPO or DPO addresses.' });
     } else if (![shipTo.street, shipTo.city, shipTo.state, shipTo.zipcode].every((value) => String(value).trim())) {
       issues.push({ code: 'address_incomplete', message: 'The delivery address is incomplete.' });
     }
@@ -327,20 +397,58 @@ class UpsShipmentService {
     throw unresolvedShipmentError(existing);
   }
 
-  async notifyShippedMail({ subscription, shipment }) {
-    if (!this.transactionalMailer) {
-      return;
+  // Stores one tracking read and sends the shipped letter once the box has left. Used by the tracking job
+  // and by the manual refresh, so both follow the same rules.
+  async recordTracking(shipment, payload) {
+    this.ensureRepository();
+    const updated = await this.repository.recordTracking(shipment.id, parseUpsTracking(payload), payload);
+    const mailed = await this.sendShippedLetterIfDue(updated || shipment);
+    return { shipment: updated, mailed };
+  }
+
+  // A letter that failed stays due: the column is set only after a send, or when the claim was already taken.
+  async sendShippedLetterIfDue(shipment) {
+    if (!shipment || shipment.shipped_letter_sent_at || !this.transactionalMailer) {
+      return false;
+    }
+    const timeline = deliveryTimeline(shipment);
+    if (!timeline || timeline.current === 'label_created') {
+      return false;
+    }
+    const ledger = this.ledgerRepository
+      ? await this.ledgerRepository.findById(shipment.subscription_id).catch(() => null)
+      : null;
+    const email = String((ledger && ledger.customerEmail) || '').trim();
+    if (!email) {
+      this.logger.warn({ shipmentId: shipment.id, template: 'shipped' }, 'Shipped letter skipped: no customer email.');
+      return false;
     }
 
+    let result;
     try {
-      await this.transactionalMailer.notifyShipped({ subscription, shipment });
+      result = await this.transactionalMailer.notifyShipped({ subscription: { ...ledger, user: { email } }, shipment });
     } catch (error) {
-      this.logger.error({
-        shipmentId: shipment && shipment.id,
-        to: subscription && subscription.user && subscription.user.email,
-        code: error && error.code
-      }, 'Transactional email failed.');
+      this.logger.error({ shipmentId: shipment.id, template: 'shipped', code: error && error.code }, 'Transactional email failed.');
+      return false;
     }
+    const sent = Boolean(result && result.claimed && !result.failed);
+    if (sent || (result && result.reason === 'duplicate')) {
+      await this.repository.markShippedLetterSent(shipment.id);
+    }
+    return sent;
+  }
+
+  // Delivered rows leave the tracking poll, so a letter that failed on them is tried here, without UPS.
+  async sendDueShippedLetters(limit = 20) {
+    this.ensureRepository();
+    const rows = await this.repository.listDeliveredAwaitingLetter(limit);
+    let mailed = 0;
+    for (const row of rows) {
+      if (await this.sendShippedLetterIfDue(row)) {
+        mailed += 1;
+      }
+    }
+    return mailed;
   }
 
   async getLabel(shipmentId, actor = {}) {
@@ -395,7 +503,7 @@ class UpsShipmentService {
       throw new HttpError(422, 'Shipment has no tracking number.', { code: 'missing_tracking' });
     }
     const raw = await this.upsClient.track(shipment.tracking_number);
-    const updated = await this.repository.recordTracking(shipment.id, parseUpsTracking(raw), raw);
+    const { shipment: updated } = await this.recordTracking(shipment, raw);
     return { success: true, data: { shipment: this.present(updated) } };
   }
 }

@@ -206,6 +206,15 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.get('/api/v1/admin/shipments/queue', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.upsShipmentService) {
+        throw new HttpError(503, 'UPS shipment service is not available.');
+      }
+      return dependencies.upsShipmentService.listLabelQueue(request.adminIdentity);
+    });
+  });
+
   app.post('/api/v1/admin/shipments/:id/refresh-tracking', requirePermission('shipping.read', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.upsShipmentService) {

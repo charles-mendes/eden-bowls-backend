@@ -44,7 +44,10 @@ class UpsShipmentRepository {
       tracking_status: row.tracking_status || null,
       tracking_description: row.tracking_description || null,
       tracking_checked_at: row.tracking_checked_at || null,
+      in_transit_at: row.in_transit_at || null,
+      out_for_delivery_at: row.out_for_delivery_at || null,
       delivered_at: row.delivered_at || null,
+      shipped_letter_sent_at: row.shipped_letter_sent_at || null,
       shipped_at: row.shipped_at || null,
       raw_response: rawResponse,
       created_at: row.created_at,
@@ -97,6 +100,21 @@ class UpsShipmentRepository {
     const placeholders = ids.map(() => '?').join(', ');
     const rows = await this.dataSource.query(
       `SELECT * FROM \`${this.tableName}\` WHERE \`stripe_invoice_id\` IN (${placeholders}) AND \`status\` IN ('created', 'delivered')`,
+      ids
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row));
+  }
+
+  // Every row that still holds its invoice: pending, unknown, created or delivered.
+  async listActiveByInvoiceIds(invoiceIds = []) {
+    this.ensureDataSource();
+    const ids = (invoiceIds || []).map((id) => String(id || '').trim()).filter(Boolean);
+    if (!ids.length) {
+      return [];
+    }
+    const placeholders = ids.map(() => '?').join(', ');
+    const rows = await this.dataSource.query(
+      `SELECT * FROM \`${this.tableName}\` WHERE \`stripe_invoice_id\` IN (${placeholders}) AND \`status\` <> 'voided'`,
       ids
     );
     return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row));
@@ -184,14 +202,18 @@ class UpsShipmentRepository {
   }
 
   // Only a label in the 'created' state becomes delivered, so a voided row stays voided.
+  // Stage dates keep the first scan: a later read never moves them (delivery-tracking).
   async recordTracking(id, summary, rawResponse = null) {
     this.ensureDataSource();
     const tracking = summary || {};
+    const stages = tracking.stages || {};
     await this.dataSource.query(
       `UPDATE \`${this.tableName}\` SET
         \`tracking_status\` = COALESCE(?, \`tracking_status\`),
         \`tracking_description\` = COALESCE(?, \`tracking_description\`),
-        \`delivered_at\` = COALESCE(?, \`delivered_at\`),
+        \`in_transit_at\` = COALESCE(\`in_transit_at\`, ?),
+        \`out_for_delivery_at\` = COALESCE(\`out_for_delivery_at\`, ?),
+        \`delivered_at\` = COALESCE(\`delivered_at\`, ?),
         \`tracking_response\` = COALESCE(?, \`tracking_response\`),
         \`tracking_checked_at\` = CURRENT_TIMESTAMP,
         \`status\` = CASE WHEN ? = 'delivered' AND \`status\` = 'created' THEN 'delivered' ELSE \`status\` END
@@ -199,7 +221,9 @@ class UpsShipmentRepository {
       [
         tracking.status || null,
         tracking.description || null,
-        tracking.deliveredAt || null,
+        stages.in_transit || null,
+        stages.out_for_delivery || null,
+        tracking.deliveredAt || stages.delivered || null,
         rawResponse == null ? null : JSON.stringify(rawResponse),
         tracking.status || null,
         Number(id)
@@ -215,6 +239,30 @@ class UpsShipmentRepository {
       `UPDATE \`${this.tableName}\` SET \`tracking_checked_at\` = CURRENT_TIMESTAMP WHERE \`id\` = ?`,
       [Number(id)]
     );
+  }
+
+  async markShippedLetterSent(id) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `UPDATE \`${this.tableName}\` SET \`shipped_letter_sent_at\` = COALESCE(\`shipped_letter_sent_at\`, CURRENT_TIMESTAMP) WHERE \`id\` = ?`,
+      [Number(id)]
+    );
+  }
+
+  // delivered_at is the UPS local time, so the 7 days are approximate by a few hours.
+  async listDeliveredAwaitingLetter(limit) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      [
+        `SELECT * FROM \`${this.tableName}\``,
+        "WHERE `status` = 'delivered' AND `shipped_letter_sent_at` IS NULL",
+        'AND `delivered_at` >= (CURRENT_TIMESTAMP - INTERVAL 7 DAY)',
+        'ORDER BY `id` ASC',
+        'LIMIT ?'
+      ].join(' '),
+      [limit]
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row)).filter(Boolean);
   }
 
   async listOpenForTracking(limit) {

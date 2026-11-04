@@ -949,6 +949,7 @@ async function bootstrap() {
       customerInvoicesService,
       blingNfeService,
       upsShipmentRepository,
+      upsShipmentService,
       upsClient,
       refreshTokenRepository: authRefreshTokenRepository,
       eventsRepository: stripeWebhookEventsRepository,

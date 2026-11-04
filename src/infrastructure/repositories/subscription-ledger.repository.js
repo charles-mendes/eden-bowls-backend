@@ -731,6 +731,24 @@ class SubscriptionLedgerRepository {
     ) q`;
   }
 
+  // Paid US cycles for the UPS label queue (ups-label-queue): every paid cycle, whatever its production
+  // status, delivered on or after deliveryFloor. Without a delivery date the period end stands in.
+  async listPaidLabelCycles({ deliveryFloor, limit }) {
+    this.ensureDataSource();
+    const deliveryKey = 'COALESCE(q.delivery_date, DATE(q.cycle_period_end))';
+    const rows = await this.dataSource.query(
+      [
+        `SELECT q.* FROM ${this.queueSourceSql()}`,
+        "WHERE q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL AND q.stripe_account = 'us'",
+        `AND ${deliveryKey} >= ?`,
+        `ORDER BY ${deliveryKey} ASC, q.id ASC`,
+        'LIMIT ?'
+      ].join(' '),
+      [deliveryFloor, Number(limit)]
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean);
+  }
+
   queueJoinSql() {
     return [
       `FROM ${this.queueSourceSql()}`,

@@ -105,19 +105,20 @@ async function runLedgerReconcile(deps) {
 async function runUpsTracking(deps) {
   const timeoutMs = upsTrackTimeoutMs(deps.upsClient && deps.upsClient.timeoutMs);
   const rows = await deps.upsShipmentRepository.listOpenForTracking(UPS_TRACK_BATCH);
+  const service = deps.upsShipmentService || null;
   let updated = 0;
   let failed = 0;
   let scanned = 0;
+  let mailed = 0;
 
   for (const row of rows) {
     if (!row.tracking_number || row.status === 'delivered' || row.status === 'voided') {
       continue;
     }
     scanned += 1;
+    let payload;
     try {
-      const payload = await deps.upsClient.track(row.tracking_number, { timeoutMs });
-      await deps.upsShipmentRepository.recordTracking(row.id, parseUpsTracking(payload), payload);
-      updated += 1;
+      payload = await deps.upsClient.track(row.tracking_number, { timeoutMs });
     } catch (error) {
       failed += 1;
       await deps.upsShipmentRepository.markTrackingChecked(row.id).catch(() => {});
@@ -128,10 +129,37 @@ async function runUpsTracking(deps) {
           status: error && error.details && error.details.status
         }, 'UPS tracking refresh failed.');
       }
+      continue;
+    }
+    try {
+      if (service) {
+        // The service stores the read first; a failed letter never undoes it.
+        const result = await service.recordTracking(row, payload);
+        mailed += result.mailed ? 1 : 0;
+      } else {
+        await deps.upsShipmentRepository.recordTracking(row.id, parseUpsTracking(payload), payload);
+      }
+      updated += 1;
+    } catch (error) {
+      failed += 1;
+      if (deps.logger) {
+        deps.logger.warn({ shipmentId: row.id, code: error && error.code }, 'UPS tracking could not be stored.');
+      }
     }
   }
 
-  return { scanned, updated, failed };
+  if (service) {
+    mailed += await service.sendDueShippedLetters(UPS_TRACK_BATCH).catch((error) => {
+      if (deps.logger) {
+        deps.logger.warn({ code: error && error.code }, 'Shipped letter retry failed.');
+      }
+      return 0;
+    });
+  }
+  if (deps.logger && typeof deps.logger.info === 'function') {
+    deps.logger.info({ scanned, updated, failed, mailed }, 'UPS tracking tick.');
+  }
+  return { scanned, updated, failed, mailed };
 }
 
 async function runRefreshCleanup(deps, now = new Date()) {

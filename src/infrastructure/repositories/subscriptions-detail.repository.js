@@ -1,3 +1,4 @@
+const { deliveryTimeline } = require('../../core/delivery-timeline');
 const { upsTrackingUrl } = require('../../core/ups-tracking');
 const { toIsoDate } = require('../../core/stripe-subscription-map');
 const { mapLedgerToDashboardDetail } = require('../../core/subscription-dashboard');
@@ -111,8 +112,13 @@ class SubscriptionsDetailRepository {
             tracking_number: shipment?.tracking_number || null,
             tracking_url: upsTrackingUrl(shipment?.tracking_number),
             tracking_status: shipment?.tracking_status || null,
+            tracking_description: shipment?.tracking_description || null,
+            label_created_at: shipment?.shipped_at || null,
+            in_transit_at: shipment?.in_transit_at || null,
+            out_for_delivery_at: shipment?.out_for_delivery_at || null,
             delivered_at: shipment?.delivered_at || null,
-            shipped_at: shipment?.shipped_at || null
+            shipped_at: shipment?.shipped_at || null,
+            delivery_timeline: deliveryTimeline(shipment)
           };
         });
       } catch (_error) {
