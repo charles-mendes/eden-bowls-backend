@@ -27,6 +27,16 @@ function canReadFiscalData(actor) {
   return Array.isArray(actor.permissions) && actor.permissions.includes('users.delivery.write');
 }
 
+// Why the operator corrected a copy of the customer's data. Optional; kept only in the audit event.
+function parseCorrectionReason(value) {
+  if (value === undefined || value === null) return null;
+  const reason = String(value).trim();
+  if (reason.length < 3 || reason.length > 255) {
+    throw new HttpError(422, 'The reason must have 3 to 255 characters.', { code: 'invalid_reason', field: 'reason' });
+  }
+  return reason;
+}
+
 class AdminUsersService {
   constructor(options = {}) {
     this.usersRepository = options.usersRepository;
@@ -349,12 +359,19 @@ class AdminUsersService {
       throw new HttpError(503, 'Profile service is not available.');
     }
 
+    const { reason: rawReason, ...address } = payload || {};
+    const reason = parseCorrectionReason(rawReason);
     const user = await this.requireExistingUser(userId);
     this.assertCustomerInScope(actor, user);
     const delivery = await this.profileService.updateDelivery({
       userId,
-      payload,
+      payload: address,
       skipAccountCheck: true
+    });
+    // This copy is the account's; the subscription address that labels and couriers read stays as it is.
+    await this.audit('users.delivery.update', actor, user, {
+      fields: Object.keys(address).sort(),
+      ...(reason ? { reason } : {})
     });
 
     return {

@@ -148,4 +148,27 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     expect(pages.length).toBeGreaterThan(1);
     expect(demand.map(key)).toEqual(pages.map(key));
   });
+
+  test('search matches the name the queue shows, whatever address key holds it', async () => {
+    await dataSource.query(
+      `INSERT INTO \`${ledgerTable}\`
+        (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end, cancel_at_period_end, address)
+       VALUES
+        (8, 'x1@example.com', 'sub_recipient', 'cus_5', 'br', 'active', '2026-08-22 08:00:00', '2026-09-22 08:00:00', 0, '{"country":"BR","recipient_name":"Carla Souza"}'),
+        (8, 'x2@example.com', 'sub_full_name', 'cus_6', 'br', 'active', '2026-08-22 08:00:00', '2026-09-22 08:00:00', 0, '{"country":"BR","full_name":"Bruno Lima"}')`
+    );
+    const window = {
+      startOfToday: '2026-09-20 03:00:00',
+      windowEndExclusive: '2026-09-27 03:00:00',
+      overdueFloor: '2026-09-13 03:00:00',
+      includeOverdue: true,
+      offset: 0,
+      perPage: 20
+    };
+
+    const bySurname = await repository.listQueue({ ...window, q: 'souza' });
+    expect(bySurname.items.map((item) => item.stripeSubscriptionId)).toEqual(['sub_recipient']);
+    const byLegacyKey = await repository.listQueue({ ...window, q: 'BRUNO' });
+    expect(byLegacyKey.items.map((item) => item.stripeSubscriptionId)).toEqual(['sub_full_name']);
+  });
 });

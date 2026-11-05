@@ -208,3 +208,28 @@ describe('deleting a note', () => {
     expect(methods.filter((name) => /delete|remove|destroy/i.test(name))).toEqual([]);
   });
 });
+
+describe('NF-e customer correction reason', () => {
+  const body = { name: 'Ana Correta', email: 'ana@example.com', document: '529.982.247-25', address: { street: 'Rua B', number: '2', neighborhood: 'Centro', city: 'SP', state: 'sp', zipcode: '01001-000' } };
+
+  test('keeps a trimmed reason and refuses one outside 3 to 255 characters', () => {
+    expect(parseNfeCustomerInput({ ...body, reason: '  CPF digitado errado  ' }).reason).toBe('CPF digitado errado');
+    expect(parseNfeCustomerInput(body).reason).toBeUndefined();
+    for (const reason of ['x', 'a'.repeat(256)]) {
+      expect(() => parseNfeCustomerInput({ ...body, reason })).toThrow(expect.objectContaining({ statusCode: 422, details: { code: 'invalid_nfe_customer' } }));
+    }
+  });
+
+  test('records the reason in the audit event and nowhere in the note', async () => {
+    const { service, repository, auditService } = build([row()]);
+    await service.updateCustomer(1, { ...input, reason: 'CPF digitado errado no checkout' }, { id: 3 });
+    expect(auditService.record.mock.calls[0][0].metadata).toMatchObject({ reason: 'CPF digitado errado no checkout' });
+    expect(JSON.stringify(repository.rows.get(1))).not.toContain('CPF digitado errado');
+  });
+
+  test('without a reason the audit event has none', async () => {
+    const { service, auditService } = build([row()]);
+    await service.updateCustomer(1, input, { id: 3 });
+    expect(auditService.record.mock.calls[0][0].metadata).not.toHaveProperty('reason');
+  });
+});

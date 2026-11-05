@@ -37,6 +37,8 @@ function jsonOrNull(value) {
   return JSON.stringify(value);
 }
 
+const QUEUE_NAME_KEYS = ['recipient_name', 'name', 'full_name', 'recipient'];
+
 class SubscriptionLedgerRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
@@ -841,8 +843,11 @@ class SubscriptionLedgerRepository {
 
     if (q) {
       const needle = `%${String(q).trim()}%`;
-      where.push('(q.customer_email LIKE ? OR q.stripe_subscription_id LIKE ? OR q.stripe_customer_id LIKE ? OR CAST(q.user_id AS CHAR) LIKE ?)');
-      params.push(needle, needle, needle, needle);
+      // The name the queue shows comes from these address keys, in this order (production-queue-presenter).
+      // JSON strings compare as binary, so both sides are lowered to match case-insensitively.
+      const nameKeys = QUEUE_NAME_KEYS.map((key) => `LOWER(JSON_UNQUOTE(JSON_EXTRACT(q.address, '$.${key}'))) LIKE LOWER(?)`);
+      where.push(`(q.customer_email LIKE ? OR q.stripe_subscription_id LIKE ? OR q.stripe_customer_id LIKE ? OR CAST(q.user_id AS CHAR) LIKE ? OR ${nameKeys.join(' OR ')})`);
+      params.push(needle, needle, needle, needle, ...QUEUE_NAME_KEYS.map(() => needle));
     }
 
     return {

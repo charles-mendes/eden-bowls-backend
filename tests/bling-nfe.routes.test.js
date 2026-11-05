@@ -90,3 +90,50 @@ describe('Bling OAuth callback', () => {
     expect(response.headers.location).toBe('https://admin/operations/nfe?bling=failed');
   });
 });
+
+describe('admin NF-e list status filter', () => {
+  const { BlingNfeRepository } = require('../src/infrastructure/repositories/bling-nfe.repository');
+
+  function realService() {
+    const repository = { list: jest.fn(async () => ({ items: [], total: 0 })) };
+    return { repository, service: new BlingNfeService({ repository }) };
+  }
+
+  test('passes several statuses to the repository', async () => {
+    const { repository, service } = realService();
+    const response = await request(appFor('operator', service))
+      .get('/api/v1/admin/nfe?status=blocked_missing_document,rejected,error')
+      .set('Authorization', bearer());
+    expect(response.status).toBe(200);
+    expect(repository.list).toHaveBeenCalledWith(expect.objectContaining({
+      status: ['blocked_missing_document', 'rejected', 'error'],
+      stripeAccount: 'br'
+    }));
+  });
+
+  test('keeps one status as a single value', async () => {
+    const { repository, service } = realService();
+    const response = await request(appFor('operator', service)).get('/api/v1/admin/nfe?status=error').set('Authorization', bearer());
+    expect(response.status).toBe(200);
+    expect(repository.list).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }));
+  });
+
+  test.each(['rejected,xyz', 'error,rejected,pending,submitted'])('refuses status=%s', async (status) => {
+    const { repository, service } = realService();
+    const response = await request(appFor('operator', service)).get(`/api/v1/admin/nfe?status=${status}`).set('Authorization', bearer());
+    expect(response.status).toBe(422);
+    expect(response.body.details.code).toBe('invalid_status');
+    expect(repository.list).not.toHaveBeenCalled();
+  });
+
+  test('repository filters a list with IN and one status with =', async () => {
+    const dataSource = { query: jest.fn(async (sql) => (sql.includes('COUNT(*)') ? [{ total: 0 }] : [])) };
+    const repository = new BlingNfeRepository(dataSource);
+    await repository.list({ status: ['rejected', 'error'], stripeAccount: 'br' });
+    expect(dataSource.query.mock.calls[0][0]).toContain('`status` IN (?, ?)');
+    expect(dataSource.query.mock.calls[0][1]).toEqual(['rejected', 'error', 'br']);
+    dataSource.query.mockClear();
+    await repository.list({ status: 'error' });
+    expect(dataSource.query.mock.calls[0][0]).toContain('`status` = ?');
+  });
+});

@@ -4,7 +4,17 @@ const { parseNutritionSimulateInput } = require('../validators/admin-nutrition-s
 const { parseRolesAssignmentInput } = require('../validators/admin-users-roles.validator');
 const { parseHeadquartersValidateInput, parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
 const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = require('../validators/admin-coupons.validator');
-const { constrainMarketQuery, shouldEnforceMarketScope } = require('../../core/admin-market-scope');
+const { constrainMarketQuery, effectiveMarkets, shouldEnforceMarketScope } = require('../../core/admin-market-scope');
+
+// The markets the route scope applies to this caller. Staff without a market while the flag is on get none.
+function effectiveMarketsOrNone(identity) {
+  try {
+    return effectiveMarkets(identity);
+  } catch (error) {
+    if (error && error.details && error.details.code === 'market_required') return [];
+    throw error;
+  }
+}
 const { parsePageQuery } = require('../validators/admin-pagination');
 const { parseNfeCustomerInput, parseNfeListQuery } = require('../validators/admin-nfe.validator');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
@@ -85,7 +95,10 @@ function registerAdminRoutes(app, dependencies = {}) {
   }
 
   app.get('/api/v1/admin/me', requirePermission(undefined, { market: 'none' }), async (request, response, next) => {
-    await handle(response, next, async () => request.adminIdentity);
+    await handle(response, next, async () => ({
+      ...request.adminIdentity,
+      effectiveMarkets: effectiveMarketsOrNone(request.adminIdentity)
+    }));
   });
 
   app.post('/api/v1/admin/me/password', requirePermission(undefined, { market: 'none' }), async (request, response, next) => {

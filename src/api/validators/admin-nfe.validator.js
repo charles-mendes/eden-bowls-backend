@@ -3,7 +3,8 @@ const { HttpError } = require('../../core/http-error');
 const { parseCpf, parseFiscalName } = require('../../core/tax-document');
 
 const querySchema = z.object({
-  status: z.string().trim().max(32).optional(),
+  // One status, or up to three separated by commas ("Precisam de ação").
+  status: z.string().trim().max(120).optional(),
   from: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal('')),
   to: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal('')),
   search: z.string().trim().max(120).optional()
@@ -18,8 +19,12 @@ function parseNfeListQuery(query = {}) {
   const { status, from, to, search } = parsed.data;
   const end = to ? new Date(`${to}T00:00:00Z`) : null;
   if (end) end.setUTCDate(end.getUTCDate() + 1);
+  const statuses = String(status || '').split(',').map((value) => value.trim()).filter(Boolean);
+  if (statuses.length > 3) {
+    throw new HttpError(422, 'Invalid status.', { code: 'invalid_status' });
+  }
   return {
-    status: status || undefined,
+    status: statuses.length > 1 ? statuses : (statuses[0] || undefined),
     from: from ? new Date(`${from}T00:00:00Z`) : undefined,
     to: end || undefined,
     search: search || undefined
@@ -36,6 +41,8 @@ const customerSchema = z.object({
   }),
   email: z.string().trim().email().max(255),
   document: required(32),
+  // Why the operator corrected this note; kept only in the audit event.
+  reason: z.string().trim().min(3).max(255).optional(),
   address: z.object({
     street: required(255),
     number: required(32),

@@ -159,6 +159,25 @@ describe('SubscriptionLedgerRepository', () => {
     expect(sql).not.toContain('payment_method_last4');
   });
 
+  test('queue search also matches the address name keys the queue shows', async () => {
+    const query = jest.fn().mockResolvedValueOnce([{ total: 0 }]).mockResolvedValueOnce([]);
+    await new SubscriptionLedgerRepository({ isInitialized: true, query }).listQueue({
+      startOfToday: '2026-09-20 03:00:00',
+      windowEndExclusive: '2026-09-27 03:00:00',
+      overdueFloor: '2026-09-13 03:00:00',
+      includeOverdue: true,
+      q: 'Souza',
+      offset: 0,
+      perPage: 20
+    });
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('q.customer_email LIKE ?');
+    for (const key of ['recipient_name', 'name', 'full_name', 'recipient']) {
+      expect(sql).toContain(`LOWER(JSON_UNQUOTE(JSON_EXTRACT(q.address, '$.${key}'))) LIKE LOWER(?)`);
+    }
+    expect(params.filter((value) => value === '%Souza%')).toHaveLength(8);
+  });
+
   test('narrows the queue to one civil-day due bucket', async () => {
     const bounds = {
       startOfToday: '2026-09-20 03:00:00',

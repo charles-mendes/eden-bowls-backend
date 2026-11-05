@@ -240,7 +240,10 @@ class BlingNfeRepository {
   async list({ status, from, to, search, stripeAccount, offset = 0, perPage = 20 } = {}) {
     const where = [];
     const params = [];
-    if (status) {
+    if (Array.isArray(status) && status.length) {
+      where.push(`\`status\` IN (${status.map(() => '?').join(', ')})`);
+      params.push(...status);
+    } else if (status) {
       where.push('`status` = ?');
       params.push(status);
     }

@@ -703,7 +703,8 @@ class BlingNfeService {
 
   async list(filters = {}, pagination = {}, actor = {}) {
     this.ensureReady();
-    if (filters.status && !NFE_STATUSES.includes(filters.status)) {
+    const statuses = Array.isArray(filters.status) ? filters.status : (filters.status ? [filters.status] : []);
+    if (statuses.some((status) => !NFE_STATUSES.includes(status))) {
       throw new HttpError(422, 'Invalid status.', { code: 'invalid_status' });
     }
     if (shouldEnforceMarketScope(actor)) {
@@ -785,7 +786,7 @@ class BlingNfeService {
         action: 'nfe.customer.update',
         targetUserId: row.userId,
         targetEmail: null,
-        metadata: { nfeId: row.id, documentChanged }
+        metadata: { nfeId: row.id, documentChanged, ...(input.reason ? { reason: input.reason } : {}) }
       });
     }
     return { success: true, data: presentDetail(await this.repository.findById(row.id)) };
