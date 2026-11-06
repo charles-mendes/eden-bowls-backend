@@ -237,6 +237,18 @@ class BlingNfeRepository {
     return Number(result && result.affectedRows) === 1;
   }
 
+  // { status: count } for the given statuses, for Today. Statuses with no note are 0.
+  async countByStatuses(statuses = []) {
+    const counts = Object.fromEntries(statuses.map((status) => [status, 0]));
+    if (!statuses.length) return counts;
+    const rows = await this.dataSource.query(
+      `SELECT \`status\`, COUNT(*) AS total FROM \`${TABLE}\` WHERE \`status\` IN (${statuses.map(() => '?').join(', ')}) GROUP BY \`status\``,
+      statuses
+    );
+    for (const row of Array.isArray(rows) ? rows : []) counts[row.status] = Number(row.total) || 0;
+    return counts;
+  }
+
   async list({ status, from, to, search, stripeAccount, offset = 0, perPage = 20 } = {}) {
     const where = [];
     const params = [];

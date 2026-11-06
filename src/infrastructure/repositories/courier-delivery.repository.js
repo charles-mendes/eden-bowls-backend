@@ -62,6 +62,7 @@ class CourierDeliveryRepository {
       delivered_at: row.delivered_at || null,
       failed_at: row.failed_at || null,
       failure_reason: row.failure_reason || null,
+      failure_kind: row.failure_kind || null,
       canceled_at: row.canceled_at || null,
       created_by: row.created_by == null ? null : Number(row.created_by),
       updated_by: row.updated_by == null ? null : Number(row.updated_by),
@@ -128,6 +129,36 @@ class CourierDeliveryRepository {
     return this.select('`status` = ? ORDER BY `out_for_delivery_at` ASC, `id` ASC', [String(status)]);
   }
 
+  accountFilter(stripeAccounts, alias = '') {
+    if (!Array.isArray(stripeAccounts)) return { sql: '', params: [] };
+    if (!stripeAccounts.length) return { sql: ' AND 1=0', params: [] };
+    return { sql: ` AND ${alias}\`stripe_account\` IN (${stripeAccounts.map(() => '?').join(', ')})`, params: stripeAccounts };
+  }
+
+  // Deliveries still on the road that left before `before`, for Today.
+  async countOnTheRoadSince(before, stripeAccounts = null) {
+    this.ensureDataSource();
+    const filter = this.accountFilter(stripeAccounts);
+    const rows = await this.dataSource.query(
+      `SELECT COUNT(*) AS total FROM \`${this.tableName}\` WHERE \`status\` = 'out_for_delivery' AND \`out_for_delivery_at\` < ?${filter.sql}`,
+      [before, ...filter.params]
+    );
+    return Number((rowsOf(rows)[0] || {}).total || 0);
+  }
+
+  // Invoices in "Falhas": a failed attempt and no delivery on the road or delivered after it.
+  async countOpenFailures(stripeAccounts = null) {
+    this.ensureDataSource();
+    const filter = this.accountFilter(stripeAccounts, 'f.');
+    const rows = await this.dataSource.query(
+      `SELECT COUNT(DISTINCT f.\`stripe_invoice_id\`) AS total FROM \`${this.tableName}\` f
+       WHERE f.\`status\` = 'failed'${filter.sql}
+         AND NOT EXISTS (SELECT 1 FROM \`${this.tableName}\` a WHERE a.\`stripe_invoice_id\` = f.\`stripe_invoice_id\` AND a.\`status\` IN ('out_for_delivery', 'delivered'))`,
+      filter.params
+    );
+    return Number((rowsOf(rows)[0] || {}).total || 0);
+  }
+
   async listDeliveredSince(since) {
     return this.select("`status` = 'delivered' AND `delivered_at` >= ? ORDER BY `delivered_at` DESC, `id` DESC", [since]);
   }
@@ -141,8 +172,8 @@ class CourierDeliveryRepository {
     const sets = ['`status` = ?', `\`${dateColumn}\` = ?`, '`updated_by` = ?'];
     const params = [toStatus, fields.at || new Date(), fields.actorId == null ? null : Number(fields.actorId)];
     if (toStatus === 'failed') {
-      sets.push('`failure_reason` = ?');
-      params.push(fields.reason || null);
+      sets.push('`failure_reason` = ?', '`failure_kind` = ?');
+      params.push(fields.reason || null, fields.kind || null);
     }
     params.push(Number(id));
     const result = await this.dataSource.query(

@@ -19,6 +19,7 @@ const { parsePageQuery } = require('../validators/admin-pagination');
 const { parseNfeCustomerInput, parseNfeListQuery } = require('../validators/admin-nfe.validator');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
 const { parseCourierBody, parseCourierDeliveryId } = require('../validators/admin-courier.validator');
+const { parseContactInput } = require('../validators/admin-contacts.validator');
 const {
   parseProductionQueueQuery,
   parseProductionQueuePatch
@@ -189,6 +190,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       return dependencies.upsShipmentService.createForSubscription({
         subscriptionId: request.params.id,
         invoiceId: request.body && request.body.invoice_id,
+        confirmNotReady: Boolean(request.body && request.body.confirm_not_ready === true),
         actor: request.adminIdentity
       });
     });
@@ -248,6 +250,32 @@ function registerAdminRoutes(app, dependencies = {}) {
 
   app.get('/api/v1/admin/courier-deliveries/queue', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => courierService().listQueue(request.adminIdentity));
+  });
+
+  // Contacts made with the customer outside the system (customer-contacts).
+  function contactsService() {
+    if (!dependencies.customerContactsService) {
+      throw new HttpError(503, 'Customer contacts are not available.');
+    }
+    return dependencies.customerContactsService;
+  }
+
+  app.get('/api/v1/admin/billing/subscriptions/:id/contacts', requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => contactsService().list(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/billing/subscriptions/:id/contacts', requirePermission('customers.contact.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => contactsService().create(request.params.id, parseContactInput(request.body), request.adminIdentity));
+  });
+
+  // Paid cycles of a subscription with their shipping state (subscription-paid-cycles); no Stripe call.
+  app.get('/api/v1/admin/billing/subscriptions/:id/paid-cycles', requirePermission('shipping.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.subscriptionPaidCyclesService) {
+        throw new HttpError(503, 'Paid cycles service is not available.');
+      }
+      return dependencies.subscriptionPaidCyclesService.list(request.params.id, request.adminIdentity);
+    });
   });
 
   app.get('/api/v1/admin/billing/subscriptions/:id/courier-deliveries', requirePermission('shipping.read', { market: 'record' }), async (request, response, next) => {

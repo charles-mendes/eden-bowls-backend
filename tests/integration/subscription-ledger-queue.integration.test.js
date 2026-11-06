@@ -10,6 +10,7 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
   const cycleTable = `it_${suffix}_subscription_production_cycles`;
   const usersTable = `it_${suffix}_wp_users`;
   const usermetaTable = `it_${suffix}_usermeta`;
+  const courierTable = `it_${suffix}_courier_deliveries`;
 
   const dataSource = new DataSource({
     type: 'mysql',
@@ -77,7 +78,7 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
       preparation_day date NULL,
       delivery_date date NULL,
       PRIMARY KEY (id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
     repository = new SubscriptionLedgerRepository(dataSource, {
       tableName: ledgerTable,
@@ -89,6 +90,7 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
   afterAll(async () => {
     if (dataSource.isInitialized) {
       await dataSource.query(`DROP TABLE IF EXISTS \`${cycleTable}\``);
+      await dataSource.query(`DROP TABLE IF EXISTS \`${courierTable}\``);
       await dataSource.query(`DROP TABLE IF EXISTS \`${ledgerTable}\``);
       await dataSource.query(`DROP TABLE IF EXISTS \`${usersTable}\``);
       await dataSource.query(`DROP TABLE IF EXISTS \`${usermetaTable}\``);
@@ -170,5 +172,63 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     expect(bySurname.items.map((item) => item.stripeSubscriptionId)).toEqual(['sub_recipient']);
     const byLegacyKey = await repository.listQueue({ ...window, q: 'BRUNO' });
     expect(byLegacyKey.items.map((item) => item.stripeSubscriptionId)).toEqual(['sub_full_name']);
+  });
+
+  test('lists the paid cycles of one subscription, a cycle without delivery date in its place', async () => {
+    const [ledger] = await dataSource.query(
+      `INSERT INTO \`${ledgerTable}\` (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end)
+       VALUES (7, 'ana@edenbowls.com', 'sub_cycles', 'cus_c', 'us', 'active', '2026-09-01 08:00:00', '2026-10-01 08:00:00')`
+    ).then((result) => [result]);
+    const subscriptionId = ledger.insertId;
+    await dataSource.query(
+      `INSERT INTO \`${cycleTable}\` (subscription_id, period_end, status, paid_at, paid_invoice_id, preparation_day, delivery_date) VALUES
+        (?, '2026-07-01 08:00:00', 'ready', '2026-06-01 08:00:00', 'in_jul', '2026-06-28', '2026-07-01'),
+        (?, '2026-08-01 08:00:00', 'ready', '2026-07-01 08:00:00', 'in_aug', NULL, NULL),
+        (?, '2026-09-01 08:00:00', 'in_production', '2026-08-01 08:00:00', 'in_sep', '2026-08-29', '2026-09-01'),
+        (?, '2026-10-01 08:00:00', 'to_prepare', NULL, NULL, NULL, NULL)`,
+      [subscriptionId, subscriptionId, subscriptionId, subscriptionId]
+    );
+
+    const cycles = await repository.listPaidCyclesBySubscription(subscriptionId, 2);
+    expect(cycles.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_sep', 'in_aug']);
+
+    const all = await repository.listPaidCyclesBySubscription(subscriptionId);
+    expect(all.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_sep', 'in_aug', 'in_jul']);
+  });
+
+  test('counts Brazil cycles to dispatch by the courier queue rule', async () => {
+    await dataSource.query(`CREATE TABLE \`${courierTable}\` (
+      id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      stripe_invoice_id varchar(191) NOT NULL,
+      status varchar(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    const result = await dataSource.query(
+      `INSERT INTO \`${ledgerTable}\` (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end, address)
+       VALUES (7, 'ana@edenbowls.com', 'sub_br_count', 'cus_br', 'br', 'active', '2026-10-01 08:00:00', '2026-11-01 08:00:00', '{"country":"BR"}')`
+    );
+    const id = result.insertId;
+    const cycle = (invoice, delivery) => [id, `${delivery} 08:00:00`, 'ready', `${delivery} 07:00:00`, invoice, delivery];
+    const values = [
+      cycle('in_wait', '2026-11-05'),
+      cycle('in_road', '2026-11-05'),
+      cycle('in_failed', '2026-11-04'),
+      cycle('in_canceled', '2026-11-03'),
+      cycle('in_old', '2026-09-01')
+    ];
+    for (const value of values) {
+      await dataSource.query(
+        `INSERT INTO \`${cycleTable}\` (subscription_id, period_end, status, paid_at, paid_invoice_id, delivery_date) VALUES (?, ?, ?, ?, ?, ?)`,
+        value
+      );
+    }
+    await dataSource.query(
+      `INSERT INTO \`${courierTable}\` (stripe_invoice_id, status) VALUES ('in_road', 'out_for_delivery'), ('in_failed', 'failed'), ('in_canceled', 'canceled')`
+    );
+
+    const count = (stripeAccounts) => repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2026-10-05', courierTableName: courierTable, stripeAccounts });
+    await expect(count(null)).resolves.toBe(2);
+    await expect(count(['br'])).resolves.toBe(2);
+    await expect(count(['us'])).resolves.toBe(0);
+    await expect(count([])).resolves.toBe(0);
   });
 });

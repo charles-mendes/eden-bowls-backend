@@ -91,6 +91,9 @@ const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shi
 const { UpsShipmentService } = require('./services/ups-shipment.service');
 const { CourierDeliveryRepository } = require('./infrastructure/repositories/courier-delivery.repository');
 const { CourierDeliveryService } = require('./services/courier-delivery.service');
+const { SubscriptionPaidCyclesService } = require('./services/subscription-paid-cycles.service');
+const { CustomerContactsService } = require('./services/customer-contacts.service');
+const { CustomerContactsRepository } = require('./infrastructure/repositories/customer-contacts.repository');
 const { LocalUpsLabelStorage } = require('./infrastructure/storage/local-ups-label-storage');
 const { LocalInvoiceStorage } = require('./infrastructure/storage/local-invoice-storage');
 const { CustomerInvoicesRepository } = require('./infrastructure/repositories/customer-invoices.repository');
@@ -257,6 +260,7 @@ async function bootstrap() {
   const upsLabelStorage = new LocalUpsLabelStorage({ directory: env.UPS_LABEL_DIR });
   const upsShipmentRepository = new UpsShipmentRepository(dataSource);
   const courierDeliveryRepository = new CourierDeliveryRepository(dataSource);
+  const customerContactsRepository = new CustomerContactsRepository(dataSource);
   const stripeAccounts = createStripeAccountsFromEnv(env, { logger });
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
@@ -630,6 +634,7 @@ async function bootstrap() {
   });
   const profileService = new ProfileService(profileRepository, {
     authService,
+    customerContactsRepository,
     ledgerRepository: subscriptionLedgerRepository,
     refreshTokenRepository: authRefreshTokenRepository,
     stripeAccounts,
@@ -654,6 +659,7 @@ async function bootstrap() {
   });
   const privacyService = new PrivacyService({
     repository: privacyRepository,
+    customerContactsRepository,
     legalDocuments: legalDocumentsService,
     profileService,
     profileRepository,
@@ -766,12 +772,25 @@ async function bootstrap() {
     ledgerRepository: subscriptionLedgerRepository,
     profileRepository,
     transactionalMailer,
+    auditService: adminAuditService,
     logger
+  });
+  const customerContactsService = new CustomerContactsService({
+    repository: customerContactsRepository,
+    adminBillingService,
+    auditService: adminAuditService
+  });
+  const subscriptionPaidCyclesService = new SubscriptionPaidCyclesService({
+    adminBillingService,
+    ledgerRepository: subscriptionLedgerRepository,
+    upsShipmentRepository,
+    courierDeliveryRepository
   });
   const courierDeliveryService = new CourierDeliveryService({
     repository: courierDeliveryRepository,
     adminBillingService,
     ledgerRepository: subscriptionLedgerRepository,
+    profileRepository,
     auditService: adminAuditService,
     transactionalMailer,
     logger
@@ -834,6 +853,12 @@ async function bootstrap() {
   const adminTodayService = new AdminTodayService({
     ledgerRepository: subscriptionLedgerRepository,
     upsShipmentRepository,
+    courierDeliveryService,
+    courierDeliveryRepository,
+    blingNfeRepository,
+    blingNfeService,
+    customerContactsRepository,
+    profileRepository,
     calendar: deliveryCalendar
   });
   const adminUsersService = new AdminUsersService({
@@ -921,6 +946,8 @@ async function bootstrap() {
     adminDeliveryCalendarService,
     upsShipmentService,
     courierDeliveryService,
+    subscriptionPaidCyclesService,
+    customerContactsService,
     customerInvoicesService,
     blingNfeService,
     adminCatalogService,

@@ -589,4 +589,14 @@ describe('ProfileService', () => {
     });
     expect(authService.assertCriticalOperationAllowed).not.toHaveBeenCalled();
   });
+
+  test('deleting the account deletes the contacts operators recorded with the customer', async () => {
+    const customerContactsRepository = { deleteByUser: jest.fn().mockResolvedValue(undefined) };
+    const { service, repository } = createService({ options: { customerContactsRepository } });
+
+    await expect(service.deleteAccount({ userId: 77 })).resolves.toEqual({ deleted: true });
+
+    expect(customerContactsRepository.deleteByUser).toHaveBeenCalledWith(77);
+    expect(repository.deleteUserAndMeta).toHaveBeenCalledWith(77);
+  });
 });

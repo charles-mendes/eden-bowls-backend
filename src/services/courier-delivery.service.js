@@ -3,15 +3,17 @@ const { HttpError } = require('../core/http-error');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { extractSubscriptionIdFromInvoice, parseJsonColumn } = require('../core/stripe-subscription-map');
 const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
-const { parseCourierDetails, parseFailureReason } = require('../core/courier-fields');
-const { recipientDisplayName } = require('../core/production-queue-presenter');
+const { invoiceReadinessReasons } = require('../core/dispatch-readiness');
+const { parseCourierDetails, parseFailureKind, parseFailureReason } = require('../core/courier-fields');
+const { presentProductionQueueItem, recipientDisplayName } = require('../core/production-queue-presenter');
 
 const TIMEZONE = 'America/Sao_Paulo';
 const DISPATCH_FLOOR_DAYS = 30;
 const DELIVERED_WINDOW_DAYS = 7;
 const QUEUE_LIMIT = 200;
+// Today warns about a delivery still on the road this long after it left.
+const LONG_ON_THE_ROAD_HOURS = 24;
 const ACTIVE = new Set(['out_for_delivery', 'delivered']);
-const DISPATCHABLE_SUBSCRIPTION = new Set(['active', 'trialing']);
 
 function finalError() {
   return new HttpError(409, 'This courier delivery is already closed.', { code: 'courier_delivery_final' });
@@ -47,6 +49,7 @@ class CourierDeliveryService {
     this.repository = options.repository || null;
     this.adminBillingService = options.adminBillingService || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.profileRepository = options.profileRepository || null;
     this.auditService = options.auditService || null;
     this.transactionalMailer = options.transactionalMailer || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
@@ -75,6 +78,7 @@ class CourierDeliveryService {
       delivered_at: toIso(row.delivered_at),
       failed_at: toIso(row.failed_at),
       failure_reason: row.failure_reason,
+      failure_kind: row.failure_kind || null,
       canceled_at: toIso(row.canceled_at),
       created_by: row.created_by,
       updated_by: row.updated_by,
@@ -124,19 +128,7 @@ class CourierDeliveryService {
   }
 
   async readinessReasons(subscription, invoiceId) {
-    const reasons = [];
-    let cycle = null;
-    if (this.ledgerRepository && typeof this.ledgerRepository.listPaidCyclesByInvoiceIds === 'function') {
-      [cycle = null] = await this.ledgerRepository.listPaidCyclesByInvoiceIds([invoiceId]);
-    }
-    const productionStatus = cycle ? cycle.productionStatus : null;
-    if (productionStatus !== 'ready') {
-      reasons.push({ code: 'production_not_ready', production_status: productionStatus });
-    }
-    if (!DISPATCHABLE_SUBSCRIPTION.has(String(subscription.status || ''))) {
-      reasons.push({ code: 'subscription_not_active', subscription_status: subscription.status || null });
-    }
-    return reasons;
+    return invoiceReadinessReasons(this.ledgerRepository, subscription, invoiceId);
   }
 
   async dispatch({ subscriptionId, body = {}, actor = {} }) {
@@ -209,8 +201,9 @@ class CourierDeliveryService {
     const { row, subscription } = await this.requireDeliveryInScope(id, actor);
     if (row.status !== 'out_for_delivery') throw finalError();
     const reason = parseFailureReason(body.reason);
-    const saved = await this.afterTransition(row.id, await this.repository.transition(row.id, 'failed', { at: this.now(), reason, actorId: actor.userId }));
-    await this.audit(actor, 'courier_delivery.failed', subscription, saved, { reason });
+    const kind = parseFailureKind(body.failure_kind);
+    const saved = await this.afterTransition(row.id, await this.repository.transition(row.id, 'failed', { at: this.now(), reason, kind, actorId: actor.userId }));
+    await this.audit(actor, 'courier_delivery.failed', subscription, saved, { reason, failureKind: kind || undefined });
     return { success: true, data: { delivery: this.present(saved) } };
   }
 
@@ -285,7 +278,8 @@ class CourierDeliveryService {
       const account = String((cycle && cycle.stripeAccount) || (row && row.stripe_account) || '').toLowerCase();
       return accounts.has(account);
     };
-    const item = (cycle, row) => this.presentQueueItem(cycle, row);
+    const contacts = await this.deliveryContacts([...known.values()]);
+    const item = (cycle, row) => this.presentQueueItem(cycle, row, contacts);
     const data = { ...empty, truncated: cycles.length > QUEUE_LIMIT };
     const placed = new Set();
     const place = (group, cycle, row) => {
@@ -304,8 +298,50 @@ class CourierDeliveryService {
     return { success: true, data };
   }
 
-  presentQueueItem(cycle, row) {
+  // Phone and instructions are read for every row at once; without the profile repository they stay empty.
+  async deliveryContacts(cycles) {
+    if (!this.profileRepository || typeof this.profileRepository.listDeliveryContacts !== 'function') return new Map();
+    const userIds = cycles.map((cycle) => cycle && cycle.userId).filter(Boolean);
+    return userIds.length ? this.profileRepository.listDeliveryContacts(userIds) : new Map();
+  }
+
+  // The queue's groups as counts for Today, by the same rules and without the 200-row cut.
+  async countQueue(actor = {}) {
+    const zero = { toDispatch: 0, onTheRoadLong: 0, failed: 0 };
+    let accounts = null;
+    if (shouldEnforceMarketScope(actor)) {
+      const scope = constrainMarketQuery(actor, {});
+      if (!scope.markets.includes('BR')) return zero;
+      accounts = scope.stripeAccounts;
+    }
+    if (!this.repository || !this.ledgerRepository || typeof this.ledgerRepository.countPaidCourierCyclesToDispatch !== 'function') {
+      return zero;
+    }
+    const now = this.now();
+    const today = DateTime.fromJSDate(now, { zone: TIMEZONE }).startOf('day');
+    const [toDispatch, onTheRoadLong, failed] = await Promise.all([
+      this.ledgerRepository.countPaidCourierCyclesToDispatch({
+        deliveryFloor: today.minus({ days: DISPATCH_FLOOR_DAYS }).toISODate(),
+        courierTableName: this.repository.tableName || 'courier_deliveries',
+        stripeAccounts: accounts
+      }),
+      this.repository.countOnTheRoadSince(new Date(now.getTime() - LONG_ON_THE_ROAD_HOURS * 3600 * 1000), accounts),
+      this.repository.countOpenFailures(accounts)
+    ]);
+    return { toDispatch, onTheRoadLong, failed };
+  }
+
+  presentQueueItem(cycle, row, contacts = new Map()) {
     const address = addressOf(cycle ? cycle.address : null);
+    const contact = (cycle && contacts.get(String(cycle.userId))) || {};
+    const lineItems = cycle ? presentProductionQueueItem(cycle).lineItems : [];
+    const value = (...keys) => {
+      for (const key of keys) {
+        const text = String(address[key] == null ? '' : address[key]).trim();
+        if (text) return text;
+      }
+      return null;
+    };
     return {
       subscription_id: String((cycle && cycle.id) || (row && row.subscription_id) || ''),
       stripe_subscription_id: cycle ? cycle.stripeSubscriptionId : null,
@@ -314,6 +350,21 @@ class CourierDeliveryService {
       neighborhood: address.neighborhood || null,
       city: address.city || null,
       zipcode: address.postal_code || address.zipcode || address.zipCode || null,
+      // The subscription address, the one the box goes to, laid out for the courier app.
+      address: {
+        street: value('street', 'address_line1', 'line1', 'address'),
+        number: value('number'),
+        complement: value('complement', 'address_line2', 'line2'),
+        neighborhood: value('neighborhood'),
+        city: value('city'),
+        state: value('state'),
+        zipcode: value('postal_code', 'zipcode', 'zipCode')
+      },
+      phone: contact.phone || null,
+      // A copy kept in the customer's profile, not in the subscription address.
+      delivery_instructions: contact.deliveryInstructions || null,
+      delivery_instructions_source: 'profile',
+      items: lineItems.map((line) => ({ flavor: line.flavor, quantity: line.quantity, pack_size: line.packSize || null })),
       delivery_date: cycle ? cycle.deliveryDate || null : null,
       production_status: cycle ? cycle.productionStatus : null,
       subscription_status: cycle ? cycle.status : null,

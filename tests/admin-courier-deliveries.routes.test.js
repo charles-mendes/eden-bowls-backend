@@ -96,6 +96,13 @@ describe('admin courier delivery routes', () => {
     expect(repository.transition).not.toHaveBeenCalled();
   });
 
+  test('passes the failure kind through the route', async () => {
+    const { app, repository } = appFor(brOperator, { row: onTheRoad });
+    const response = await auth(request(app).post('/api/v1/admin/courier-deliveries/1/failed')).send({ reason: 'Portaria', failure_kind: 'address_unusable' });
+    expect(response.status).toBe(200);
+    expect(repository.transition.mock.calls[0][2]).toMatchObject({ reason: 'Portaria', kind: 'address_unusable' });
+  });
+
   test('marks delivered, failed and cancels through the routes', async () => {
     const { app, repository } = appFor(brOperator, { row: onTheRoad });
     expect((await auth(request(app).post('/api/v1/admin/courier-deliveries/1/delivered')).send({})).status).toBe(200);

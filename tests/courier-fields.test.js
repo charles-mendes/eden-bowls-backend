@@ -1,6 +1,7 @@
 const {
   parseCost,
   parseCourierDetails,
+  parseFailureKind,
   parseFailureReason,
   parseMethod,
   parseNote,
@@ -70,6 +71,14 @@ describe('the other fields', () => {
   test('a failure needs a reason', () => {
     expect(field(() => parseFailureReason('  '))).toEqual({ status: 422, field: 'reason' });
     expect(parseFailureReason(' Ninguém em casa ')).toBe('Ninguém em casa');
+  });
+
+  test('a failure kind is optional and closed', () => {
+    expect(parseFailureKind(undefined)).toBeNull();
+    expect(parseFailureKind('')).toBeNull();
+    expect(parseFailureKind(' address_unusable ')).toBe('address_unusable');
+    expect(parseFailureKind('customer_absent')).toBe('customer_absent');
+    expect(field(() => parseFailureKind('lost'))).toEqual({ status: 422, field: 'failure_kind' });
   });
 
   test('details keep only the fields sent', () => {

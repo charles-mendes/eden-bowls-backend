@@ -770,6 +770,50 @@ class SubscriptionLedgerRepository {
     return (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean);
   }
 
+  // How many paid Brazil cycles wait in "A despachar" (courier-delivery): the queue's rule, counted without its
+  // 200-row cut. An invoice with a delivery on the road, delivered or failed is not waiting.
+  async countPaidCourierCyclesToDispatch({ deliveryFloor, courierTableName = 'courier_deliveries', stripeAccounts = null }) {
+    this.ensureDataSource();
+    const deliveryKey = 'COALESCE(q.delivery_date, DATE(q.cycle_period_end))';
+    const where = [
+      "q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL",
+      "UPPER(JSON_UNQUOTE(JSON_EXTRACT(q.address, '$.country'))) = 'BR'",
+      `${deliveryKey} >= ?`,
+      // courier_deliveries was created with the server collation; the ledger tables use utf8mb4_unicode_ci.
+      `NOT EXISTS (SELECT 1 FROM \`${courierTableName}\` cd WHERE cd.stripe_invoice_id COLLATE utf8mb4_unicode_ci = q.paid_invoice_id COLLATE utf8mb4_unicode_ci AND cd.status IN ('out_for_delivery', 'delivered', 'failed'))`
+    ];
+    const params = [deliveryFloor];
+    if (Array.isArray(stripeAccounts)) {
+      if (!stripeAccounts.length) return 0;
+      where.push(`q.stripe_account IN (${stripeAccounts.map(() => '?').join(', ')})`);
+      params.push(...stripeAccounts);
+    }
+    const rows = await this.dataSource.query(`SELECT COUNT(*) AS total FROM ${this.queueSourceSql()} WHERE ${where.join(' AND ')}`, params);
+    return Number((Array.isArray(rows) && rows[0] && rows[0].total) || 0);
+  }
+
+  // The paid cycles of one subscription, newest delivery first, for shipping from the subscription detail.
+  // An invoice with no production cycle (an old or zero-value one) is not a cycle, so it never shows here.
+  async listPaidCyclesBySubscription(subscriptionId, limit = 24) {
+    this.ensureDataSource();
+    const id = Number(subscriptionId);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return [];
+    }
+    // COALESCE keeps a cycle with no delivery date in its place: in MySQL, NULL sorts first under DESC.
+    const deliveryKey = 'COALESCE(q.delivery_date, DATE(q.cycle_period_end))';
+    const rows = await this.dataSource.query(
+      [
+        `SELECT q.* FROM ${this.queueSourceSql()}`,
+        "WHERE q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL AND q.id = ?",
+        `ORDER BY ${deliveryKey} DESC, q.cycle_period_end DESC`,
+        'LIMIT ?'
+      ].join(' '),
+      [id, Number(limit)]
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean);
+  }
+
   // The paid cycle of each invoice, with no date floor (courier deliveries on the road or failed).
   async listPaidCyclesByInvoiceIds(invoiceIds = []) {
     this.ensureDataSource();

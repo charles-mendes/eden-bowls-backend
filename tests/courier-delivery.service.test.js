@@ -59,7 +59,10 @@ function memoryRepository(seed = []) {
       if (!row) return 0;
       row.status = status;
       row[{ delivered: 'delivered_at', failed: 'failed_at', canceled: 'canceled_at' }[status]] = fields.at;
-      if (status === 'failed') row.failure_reason = fields.reason;
+      if (status === 'failed') {
+        row.failure_reason = fields.reason;
+        row.failure_kind = fields.kind;
+      }
       return 1;
     },
     async updateDetails(id, details) {
@@ -84,7 +87,7 @@ const brSubscription = (extra = {}) => ({
 
 const paidInvoice = (extra = {}) => ({ id: 'in_1', status: 'paid', subscription: 'sub_br_1', billing_reason: 'subscription_cycle', subtotal: 25900, ...extra });
 
-function setup({ subscription = brSubscription(), invoice = paidInvoice(), productionStatus = 'ready', seed = [], cycles = [], mailer } = {}) {
+function setup({ subscription = brSubscription(), invoice = paidInvoice(), productionStatus = 'ready', seed = [], cycles = [], mailer, profileRepository } = {}) {
   const repository = memoryRepository(seed);
   const auditService = { record: jest.fn() };
   const transactionalMailer = mailer || { notifyCourierOutForDelivery: jest.fn(), notifyCourierDelivered: jest.fn() };
@@ -101,7 +104,7 @@ function setup({ subscription = brSubscription(), invoice = paidInvoice(), produ
     listPaidCourierCycles: jest.fn(async ({ deliveryFloor }) => cycles.filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor))
   };
   const logger = { error: jest.fn(), warn() {}, info() {} };
-  const service = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, auditService, transactionalMailer, logger, now: () => NOW });
+  const service = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, profileRepository, auditService, transactionalMailer, logger, now: () => NOW });
   return { service, repository, auditService, transactionalMailer, adminBillingService, ledgerRepository, logger };
 }
 
@@ -247,6 +250,27 @@ describe('Status moves only forward', () => {
     expect(repository.rows[0].status).toBe('out_for_delivery');
   });
 
+  test('Failure with a kind keeps the kind, the reason and audits the kind', async () => {
+    const { service, repository, auditService } = setup({ seed: onTheRoad() });
+    const result = await service.markFailed(1, { reason: 'Portaria não aceita entrega', failure_kind: 'address_unusable' }, actor);
+    expect(result.data.delivery).toMatchObject({ status: 'failed', failure_reason: 'Portaria não aceita entrega', failure_kind: 'address_unusable' });
+    expect(repository.rows[0].failure_kind).toBe('address_unusable');
+    expect(auditService.record.mock.calls[0][0].metadata).toMatchObject({ failureKind: 'address_unusable' });
+  });
+
+  test('Failure with an unknown kind returns 422 and stays on the road', async () => {
+    const { service, repository } = setup({ seed: onTheRoad() });
+    expect(await code(service.markFailed(1, { reason: 'x', failure_kind: 'lost' }, actor))).toMatchObject({ status: 422, details: { field: 'failure_kind' } });
+    expect(repository.rows[0].status).toBe('out_for_delivery');
+  });
+
+  test('Failure without a kind still works', async () => {
+    const { service, auditService } = setup({ seed: onTheRoad() });
+    const result = await service.markFailed(1, { reason: 'Ninguém em casa' }, actor);
+    expect(result.data.delivery).toMatchObject({ status: 'failed', failure_kind: null });
+    expect(auditService.record.mock.calls[0][0].metadata).not.toHaveProperty('failureKind');
+  });
+
   test('Change after delivered returns courier_delivery_final', async () => {
     const { service } = setup({ seed: [{ ...onTheRoad()[0], status: 'delivered', delivered_at: NOW }] });
     expect(await code(service.markFailed(1, { reason: 'x' }, actor))).toMatchObject({ status: 409, code: 'courier_delivery_final' });
@@ -357,6 +381,33 @@ describe('The queue lists Brazil delivery work in four groups', () => {
   });
   const delivery = (id, invoice, status, extra = {}) => ({ id, subscription_id: '42', stripe_invoice_id: invoice, status, stripe_account: 'br', out_for_delivery_at: NOW, ...extra });
   const invoices = (group) => group.map((item) => item.invoice_id);
+
+  test('A row carries the full subscription address, the phone, the profile instructions and the items', async () => {
+    const profileRepository = { listDeliveryContacts: jest.fn(async () => new Map([['10', { phone: '+55 11 98888-7777', deliveryInstructions: 'Interfone 12' }]])) };
+    const { service } = setup({
+      profileRepository,
+      cycles: [cycle('in_new', '2026-11-05', {
+        userId: '10',
+        address: { country: 'BR', street: 'Rua Harmonia', number: '45', complement: 'Ap 3', neighborhood: 'Vila Madalena', city: 'São Paulo', state: 'SP', postal_code: '05435-000', recipient_name: 'João Lima' },
+        planSelection: { catalog_pricing: { line_items: [{ flavor: 'frango', flavor_label: 'Frango', quantity: 4, pack_size_label: '300 g', pack_size_grams: 300 }] } }
+      })]
+    });
+    const { data } = await service.listQueue(actor);
+    expect(profileRepository.listDeliveryContacts).toHaveBeenCalledWith(['10']);
+    expect(data.to_dispatch[0]).toMatchObject({
+      address: { street: 'Rua Harmonia', number: '45', complement: 'Ap 3', neighborhood: 'Vila Madalena', city: 'São Paulo', state: 'SP', zipcode: '05435-000' },
+      phone: '+55 11 98888-7777',
+      delivery_instructions: 'Interfone 12',
+      delivery_instructions_source: 'profile'
+    });
+    expect(data.to_dispatch[0].items).toEqual([{ flavor: 'Frango', quantity: 4, pack_size: expect.any(String) }]);
+  });
+
+  test('A row without phone or instructions carries null', async () => {
+    const { service } = setup({ profileRepository: { listDeliveryContacts: jest.fn(async () => new Map()) }, cycles: [cycle('in_new', '2026-11-05', { userId: '10' })] });
+    const { data } = await service.listQueue(actor);
+    expect(data.to_dispatch[0]).toMatchObject({ phone: null, delivery_instructions: null, address: { street: null, number: null, city: 'São Paulo' } });
+  });
 
   test('Paid cycle waiting, old paid cycle, recipient and address fields', async () => {
     const { service, ledgerRepository } = setup({ cycles: [cycle('in_new', '2026-11-05'), cycle('in_30', '2026-10-05'), cycle('in_31', '2026-10-04')] });
@@ -507,5 +558,26 @@ describe('courier letters from the service', () => {
     expect(repository.rows[0].status).toBe('out_for_delivery');
     expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ method: 'notifyCourierOutForDelivery', courierDeliveryId: 1 }), expect.any(String));
     expect(mailer.notifyCourierOutForDelivery).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Today counts of the courier queue', () => {
+  test('counts by the queue rules with the 30-day floor and the 24-hour trip', async () => {
+    const { service, ledgerRepository, repository } = setup();
+    ledgerRepository.countPaidCourierCyclesToDispatch = jest.fn().mockResolvedValue(230);
+    repository.tableName = 'courier_deliveries';
+    repository.countOnTheRoadSince = jest.fn().mockResolvedValue(2);
+    repository.countOpenFailures = jest.fn().mockResolvedValue(1);
+
+    await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 230, onTheRoadLong: 2, failed: 1 });
+    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', courierTableName: 'courier_deliveries', stripeAccounts: ['br', 'us'] });
+    expect(repository.countOnTheRoadSince.mock.calls[0][0]).toEqual(new Date(NOW.getTime() - 24 * 3600 * 1000));
+  });
+
+  test('a US-only operator counts nothing', async () => {
+    const { service, ledgerRepository } = setup();
+    ledgerRepository.countPaidCourierCyclesToDispatch = jest.fn();
+    await expect(service.countQueue({ roles: ['operator'], markets: ['US'], permissions: [] })).resolves.toEqual({ toDispatch: 0, onTheRoadLong: 0, failed: 0 });
+    expect(ledgerRepository.countPaidCourierCyclesToDispatch).not.toHaveBeenCalled();
   });
 });

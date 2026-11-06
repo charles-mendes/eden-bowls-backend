@@ -58,6 +58,7 @@ class PrivacyService {
     this.profileService = options.profileService || null;
     this.profileRepository = options.profileRepository || null;
     this.quotesRepository = options.quotesRepository || null;
+    this.customerContactsRepository = options.customerContactsRepository || null;
     this.customerStore = options.customerStore || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.mailer = options.mailer || null;
@@ -234,6 +235,10 @@ class PrivacyService {
     const subscriptions = this.repository && typeof this.repository.listSubscriptionSummary === 'function'
       ? await this.repository.listSubscriptionSummary(userId)
       : [];
+    // The operator's e-mail stays out: the package is about the customer.
+    const contacts = this.customerContactsRepository && typeof this.customerContactsRepository.listByUser === 'function'
+      ? await this.customerContactsRepository.listByUser(userId)
+      : [];
 
     return {
       exportedAt: this.now().toISOString(),
@@ -261,7 +266,15 @@ class PrivacyService {
         neutered: Boolean(pet.neutered)
       })),
       consents,
-      subscriptions
+      subscriptions,
+      customerContacts: contacts.map((contact) => ({
+        subscriptionId: contact.subscription_id,
+        channel: 'whatsapp',
+        reason: contact.reason,
+        outcome: contact.outcome,
+        note: contact.note,
+        createdAt: contact.created_at instanceof Date ? contact.created_at.toISOString() : contact.created_at
+      }))
     };
   }
 

@@ -36,11 +36,11 @@ describe('CourierDeliveryRepository', () => {
     const at = new Date('2026-11-04T15:00:00Z');
     const query = jest.fn().mockResolvedValue({ affectedRows: 0 });
 
-    const affected = await repositoryWith(query).transition(7, 'failed', { at, reason: 'Ninguém em casa', actorId: 9 });
+    const affected = await repositoryWith(query).transition(7, 'failed', { at, reason: 'Ninguém em casa', kind: 'customer_absent', actorId: 9 });
 
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toBe("UPDATE `courier_deliveries` SET `status` = ?, `failed_at` = ?, `updated_by` = ?, `failure_reason` = ? WHERE `id` = ? AND `status` = 'out_for_delivery'");
-    expect(params).toEqual(['failed', at, 9, 'Ninguém em casa', 7]);
+    expect(sql).toBe("UPDATE `courier_deliveries` SET `status` = ?, `failed_at` = ?, `updated_by` = ?, `failure_reason` = ?, `failure_kind` = ? WHERE `id` = ? AND `status` = 'out_for_delivery'");
+    expect(params).toEqual(['failed', at, 9, 'Ninguém em casa', 'customer_absent', 7]);
     expect(affected).toBe(0);
   });
 

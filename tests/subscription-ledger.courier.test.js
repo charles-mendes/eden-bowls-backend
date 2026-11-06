@@ -31,4 +31,19 @@ describe('SubscriptionLedgerRepository courier queries', () => {
     expect(sql).not.toContain('>= ?');
     expect(params).toEqual(['in_1', 'in_2']);
   });
+
+  test('listPaidCyclesBySubscription lists one subscription, newest delivery first, with null dates in place', async () => {
+    const query = jest.fn().mockResolvedValue([paidRow]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+
+    await expect(repository.listPaidCyclesBySubscription('abc')).resolves.toEqual([]);
+    expect(query).not.toHaveBeenCalled();
+    const rows = await repository.listPaidCyclesBySubscription('42');
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL AND q.id = ?");
+    expect(sql).toContain('ORDER BY COALESCE(q.delivery_date, DATE(q.cycle_period_end)) DESC');
+    expect(params).toEqual([42, 24]);
+    expect(rows[0]).toMatchObject({ paidInvoiceId: 'in_1' });
+  });
 });

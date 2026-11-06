@@ -97,6 +97,40 @@ class ProfileRepository {
     };
   }
 
+  // The account phone and the profile delivery instructions of several users at once, for the courier queue.
+  async listDeliveryContacts(userIds = []) {
+    this.ensureDataSource();
+    const ids = [...new Set((userIds || []).map((id) => Number(id)).filter((id) => Number.isSafeInteger(id) && id > 0))];
+    const contacts = new Map();
+    if (!ids.length) return contacts;
+    const placeholders = ids.map(() => '?').join(', ');
+    const [phones, states] = await Promise.all([
+      this.dataSource.query(
+        `SELECT \`user_id\`, \`meta_value\` FROM \`${this.tableNames.usermeta}\` WHERE \`meta_key\` = 'billing_phone' AND \`user_id\` IN (${placeholders})`,
+        ids
+      ),
+      this.dataSource.query(
+        `SELECT \`user_id\`, \`address\` FROM \`${this.tableNames.userState}\` WHERE \`user_id\` IN (${placeholders})`,
+        ids
+      )
+    ]);
+    const entry = (userId) => {
+      const key = String(userId);
+      if (!contacts.has(key)) contacts.set(key, { phone: null, deliveryInstructions: null });
+      return contacts.get(key);
+    };
+    for (const row of Array.isArray(phones) ? phones : []) {
+      const phone = String(row.meta_value || '').trim();
+      if (phone) entry(row.user_id).phone = phone;
+    }
+    for (const row of Array.isArray(states) ? states : []) {
+      const address = parseJsonColumn(row.address) || {};
+      const instructions = String(address.delivery_instructions || '').trim();
+      if (instructions) entry(row.user_id).deliveryInstructions = instructions;
+    }
+    return contacts;
+  }
+
   async mergeAddress(userId, patch = {}, options = {}) {
     this.ensureDataSource();
     const current = await this.getAddress(userId);

@@ -193,6 +193,7 @@ class ProfileService {
     this.authService = options.authService || null;
     this.ledgerRepository = options.ledgerRepository || null;
     this.refreshTokenRepository = options.refreshTokenRepository || null;
+    this.customerContactsRepository = options.customerContactsRepository || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.avatarStorage = options.avatarStorage || null;
@@ -596,6 +597,11 @@ class ProfileService {
 
     await this.cancelLeftoverSubscriptions(user.id);
     await this.anonymizeAccountArtifacts(user.id);
+    // Contacts operators recorded with this customer go with the account (customer-contacts), from the store
+    // and from a privacy request alike: both end here.
+    if (this.customerContactsRepository && typeof this.customerContactsRepository.deleteByUser === 'function') {
+      await this.customerContactsRepository.deleteByUser(user.id);
+    }
     const now = toSqlDateTime(this.nowProvider());
 
     if (this.refreshTokenRepository && typeof this.refreshTokenRepository.revokeAllForUser === 'function') {

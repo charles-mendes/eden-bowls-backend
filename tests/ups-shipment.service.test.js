@@ -29,13 +29,19 @@ function buildService(overrides = {}) {
       })
     },
     profileRepository: overrides.profileRepository,
-    ledgerRepository: overrides.ledgerRepository,
+    // A ready cycle unless the test says otherwise: the purchase asks for confirmation otherwise.
+    ledgerRepository: overrides.ledgerRepository || {
+      listPaidCyclesByInvoiceIds: jest.fn().mockResolvedValue([{ paidInvoiceId: 'in_1', productionStatus: overrides.productionStatus || 'ready' }]),
+      findById: jest.fn().mockResolvedValue(null)
+    },
+    auditService: overrides.auditService,
     adminBillingService: overrides.adminBillingService || {
       getSubscriptionInvoice: overrides.getSubscriptionInvoice
         || jest.fn().mockResolvedValue({ status: 'paid', subscription: 'sub_123', billing_reason: 'subscription_cycle', subtotal: 14450 }),
       getSubscription: jest.fn().mockResolvedValue({
         id: '1',
         stripeSubscriptionId: 'sub_123',
+        status: overrides.subscriptionStatus || 'active',
         address: {
           ...(overrides.addressName === undefined ? { name: 'Ana Costa' } : { name: overrides.addressName }),
           line1: '1 Main St',
@@ -272,6 +278,66 @@ describe('UpsShipmentService.createForSubscription', () => {
     expect(transactionalMailer.notifyShipped).not.toHaveBeenCalled();
   });
 
+  test('an order still in production needs confirmation and buys nothing', async () => {
+    const { service, repository } = buildService({ productionStatus: 'in_production' });
+
+    await expect(service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} })).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: 'ups_label_needs_confirmation', reasons: [{ code: 'production_not_ready', production_status: 'in_production' }] }
+    });
+    expect(repository.insertPending).not.toHaveBeenCalled();
+    expect(service.upsClient.createShipment).not.toHaveBeenCalled();
+  });
+
+  test('a subscription not active needs confirmation', async () => {
+    const { service } = buildService({ subscriptionStatus: 'past_due' });
+
+    await expect(service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} })).rejects.toMatchObject({
+      details: { code: 'ups_label_needs_confirmation', reasons: [{ code: 'subscription_not_active', subscription_status: 'past_due' }] }
+    });
+  });
+
+  test('a confirmed purchase buys the label and audits the confirmed reasons', async () => {
+    const auditService = { record: jest.fn().mockResolvedValue() };
+    const { service, repository } = buildService({ productionStatus: 'in_production', auditService });
+
+    const result = await service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: { userId: 3 }, confirmNotReady: true });
+
+    expect(result.data.reused).toBe(false);
+    expect(repository.markCreated).toHaveBeenCalled();
+    expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'ups_shipment.create',
+      actor: { userId: 3 },
+      targetUserId: '7',
+      metadata: { shipmentId: 9, subscriptionId: '1', invoiceId: 'in_1', confirmedNotReady: ['production_not_ready'] }
+    }));
+  });
+
+  test('a ready order buys without confirmation and audits no reason', async () => {
+    const auditService = { record: jest.fn().mockResolvedValue() };
+    const { service } = buildService({ auditService });
+
+    await service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} });
+
+    expect(auditService.record.mock.calls[0][0].metadata).not.toHaveProperty('confirmedNotReady');
+  });
+
+  test('an invoice that already has a label is reused without confirmation', async () => {
+    const { service } = buildService({
+      productionStatus: 'in_production',
+      repository: { findActiveByInvoiceId: jest.fn().mockResolvedValue({ id: 4, status: 'created', tracking_number: '1ZOLD' }) }
+    });
+
+    const result = await service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} });
+
+    expect(result.data.reused).toBe(true);
+  });
+
+  test('an incomplete address answers 422 before asking to confirm', async () => {
+    const { service } = buildService({ productionStatus: 'in_production', addressName: '' });
+
+    await expect(service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} })).rejects.toMatchObject({ statusCode: 422 });
+  });
 });
 
 describe('UpsShipmentService.recordTracking and the shipped letter', () => {

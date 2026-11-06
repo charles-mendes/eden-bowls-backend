@@ -25,6 +25,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/billing/subscriptions/:id/contacts"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/billing/subscriptions/:id/contacts"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/billing/subscriptions/:id/courier-deliveries"
   },
   {
@@ -42,6 +50,10 @@
   {
     "method": "GET",
     "path": "/api/v1/admin/billing/subscriptions/:id/nfe"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/billing/subscriptions/:id/paid-cycles"
   },
   {
     "method": "GET",

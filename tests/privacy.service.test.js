@@ -316,4 +316,22 @@ describe('PrivacyService customer note', () => {
       .rejects.toMatchObject({ statusCode: 404 });
     expect(repository.updateRequest).not.toHaveBeenCalled();
   });
+
+  test('the export carries the recorded contacts with the note and without the operator', async () => {
+    const customerContactsRepository = {
+      listByUser: jest.fn().mockResolvedValue([{
+        subscription_id: '42', reason: 'payment_failed', outcome: 'no_answer', note: 'Mandei mensagem',
+        actor_email: 'ops@edenbowls.com', created_at: new Date('2026-11-04T14:05:00Z')
+      }])
+    };
+    const { service } = createService({ options: { customerContactsRepository } });
+
+    const pack = await service.buildExportPackage(77);
+
+    expect(customerContactsRepository.listByUser).toHaveBeenCalledWith(77);
+    expect(pack.customerContacts).toEqual([{
+      subscriptionId: '42', channel: 'whatsapp', reason: 'payment_failed', outcome: 'no_answer', note: 'Mandei mensagem', createdAt: '2026-11-04T14:05:00.000Z'
+    }]);
+    expect(JSON.stringify(pack)).not.toContain('ops@edenbowls.com');
+  });
 });

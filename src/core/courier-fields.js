@@ -3,6 +3,8 @@ const { HttpError } = require('./http-error');
 // Field rules for a courier delivery (courier-delivery). Each parser returns undefined for an omitted field,
 // null for an empty one, and throws 422 with the field name otherwise.
 const COURIER_METHODS = ['uber', 'motoboy', 'own_driver', 'other'];
+// address_unusable feeds the invalid-address notice of a later batch (PM-24).
+const FAILURE_KINDS = ['address_unusable', 'customer_absent', 'other'];
 const TRACKING_URL_MAX = 500;
 const COURIER_NAME_MAX = 120;
 const NOTE_MAX = 500;
@@ -76,6 +78,16 @@ function parseFailureReason(value) {
   return reason;
 }
 
+// Optional: undefined or empty means no kind, as for failures recorded before it existed.
+function parseFailureKind(value) {
+  if (value === undefined || value === null || text(value) === '') return null;
+  const kind = text(value);
+  if (!FAILURE_KINDS.includes(kind)) {
+    throw invalid('failure_kind', `failure_kind must be one of ${FAILURE_KINDS.join(', ')}.`);
+  }
+  return kind;
+}
+
 // Every editable detail at once. `required` makes the method mandatory (dispatch).
 function parseCourierDetails(body = {}, { required = false } = {}) {
   const details = {
@@ -90,9 +102,11 @@ function parseCourierDetails(body = {}, { required = false } = {}) {
 
 module.exports = {
   COURIER_METHODS,
+  FAILURE_KINDS,
   parseCost,
   parseCourierDetails,
   parseCourierName,
+  parseFailureKind,
   parseFailureReason,
   parseMethod,
   parseNote,

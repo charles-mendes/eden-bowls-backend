@@ -1,7 +1,7 @@
 const { HttpError } = require('../../core/http-error');
 
 // Shape checks only; the field rules live in core/courier-fields.js so dispatch and edit share them.
-const TEXT_FIELDS = ['invoice_id', 'method', 'courier_name', 'tracking_url', 'note', 'reason', 'delivered_at'];
+const TEXT_FIELDS = ['invoice_id', 'method', 'courier_name', 'tracking_url', 'note', 'reason', 'failure_kind', 'delivered_at'];
 
 function parseCourierDeliveryId(value) {
   const id = Number(value);

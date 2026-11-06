@@ -105,6 +105,13 @@ class UpsShipmentRepository {
     return (Array.isArray(rows) ? rows : []).map((row) => this.mapRow(row));
   }
 
+  // Purchases UPS never confirmed (pending or unknown), for Today.
+  async countUnresolved() {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(`SELECT COUNT(*) AS total FROM \`${this.tableName}\` WHERE \`status\` IN ('pending', 'unknown')`);
+    return Number((Array.isArray(rows) && rows[0] && rows[0].total) || 0);
+  }
+
   // Every row that still holds its invoice: pending, unknown, created or delivered.
   async listActiveByInvoiceIds(invoiceIds = []) {
     this.ensureDataSource();

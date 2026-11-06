@@ -6,6 +6,7 @@ const { extractSubscriptionIdFromInvoice } = require('../core/stripe-subscriptio
 const { parseUpsTracking, upsTrackingUrl } = require('../core/ups-tracking');
 const { deliveryTimeline } = require('../core/delivery-timeline');
 const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
+const { invoiceReadinessReasons } = require('../core/dispatch-readiness');
 
 // The checkout recipient first (delivery-recipient); older subscriptions keep the name keys they may carry.
 function addressRecipient(address = {}) {
@@ -74,6 +75,7 @@ class UpsShipmentService {
     this.ledgerRepository = options.ledgerRepository || null;
     this.profileRepository = options.profileRepository || null;
     this.transactionalMailer = options.transactionalMailer || null;
+    this.auditService = options.auditService || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.now = options.now || null;
   }
@@ -222,7 +224,7 @@ class UpsShipmentService {
     ];
   }
 
-  async createForSubscription({ subscriptionId, invoiceId, actor }) {
+  async createForSubscription({ subscriptionId, invoiceId, actor, confirmNotReady = false }) {
     this.ensureRepository();
     this.ensureUps();
 
@@ -246,6 +248,15 @@ class UpsShipmentService {
     if (issues.length) {
       const [issue] = issues;
       throw new HttpError(422, issue.message, { code: issue.code });
+    }
+
+    // After the address checks, so the operator is never asked to confirm a purchase that would be refused.
+    const reasons = await invoiceReadinessReasons(this.ledgerRepository, subscription, invoice);
+    if (reasons.length && confirmNotReady !== true) {
+      throw new HttpError(409, 'This order is not ready to leave. Confirm to buy the label anyway.', {
+        code: 'ups_label_needs_confirmation',
+        reasons
+      });
     }
 
     const quoted = Number(subscription.shipping?.cost || subscription.shipping?.total || settings.cost || 0);
@@ -337,8 +348,31 @@ class UpsShipmentService {
       throw error;
     }
 
+    await this.auditPurchase(actor, subscription, saved, invoice, reasons);
     // The shipped letter waits for the first tracking read that shows the box moving (recordTracking).
     return { success: true, data: { shipment: this.present(saved), reused: false } };
+  }
+
+  // A failed audit write is logged: the label is already bought and paid.
+  async auditPurchase(actor, subscription, row, invoiceId, reasons) {
+    if (!this.auditService || typeof this.auditService.record !== 'function') return;
+    const metadata = {
+      shipmentId: row ? row.id : null,
+      subscriptionId: subscription ? String(subscription.id || '') : null,
+      invoiceId
+    };
+    if (reasons.length) metadata.confirmedNotReady = reasons.map((reason) => reason.code);
+    try {
+      await this.auditService.record({
+        actor: actor || {},
+        action: 'ups_shipment.create',
+        targetUserId: subscription && subscription.user ? subscription.user.id || null : null,
+        targetEmail: subscription && subscription.user ? subscription.user.email || null : null,
+        metadata
+      });
+    } catch (error) {
+      this.logger.error({ shipmentId: metadata.shipmentId, code: error && error.code }, 'UPS label purchase could not be audited.');
+    }
   }
 
   // A label costs money: only a paid invoice of this subscription can buy one.
