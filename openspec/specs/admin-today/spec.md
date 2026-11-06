@@ -40,6 +40,8 @@ The response MUST carry a `fulfillment` block, counted by its own queries and no
 
 The block MUST also carry `addressIssues`, with `BR` and `US` entries of `open` (address problems open for subscriptions of that market's Stripe account) and `stale` (those open for 72 hours or more, the point from which the panel shows "Sem correção há N dias"), and `marketExceptions`, with `BR` and `US` entries of the number of subscriptions in market exception for the actor, by the rule of the market exceptions list but without its 200-item limit, by the market of their Stripe account (`br` → `BR`, `us` → `US`).
 
+The block MUST also carry `courierAwaitingNfe`: when the courier fiscal lock is on, the number of Brazil cycles to dispatch (by the same rule as the courier count) whose invoice has no NF-e `authorized` for its Stripe account, no note counted as not authorized; when the lock is off, `null`. It MUST be 0 for an actor who does not see Brazil. It is part of the to-dispatch count, which MUST NOT change, and MUST NOT count failed deliveries.
+
 #### Scenario: Brazil operator
 
 - **WHEN** a Brazil operator opens Today with two cycles to dispatch and one rejected NF-e
@@ -84,6 +86,21 @@ The block MUST also carry `addressIssues`, with `BR` and `US` entries of `open` 
 
 - **WHEN** a Brazil operator opens Today with one US problem and one market exception on a `us` account
 - **THEN** `addressIssues.US` is `{ open: 0, stale: 0 }` and `marketExceptions` is `{ BR: 0, US: 0 }`
+
+#### Scenario: Orders waiting for the NF-e
+
+- **WHEN** the lock is on and three cycles are to dispatch, one with an authorized NF-e, one with a rejected NF-e and one with no NF-e
+- **THEN** `courierAwaitingNfe` is 2
+
+#### Scenario: Lock off
+
+- **WHEN** the lock is off
+- **THEN** `courierAwaitingNfe` is null
+
+#### Scenario: Waiting for NF-e outside the scope
+
+- **WHEN** the lock is on and a US operator opens Today
+- **THEN** `courierAwaitingNfe` is 0
 
 ### Requirement: Refused payments show the last contact and the phone
 
