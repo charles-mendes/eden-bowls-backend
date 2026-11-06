@@ -1,5 +1,6 @@
 const { HttpError } = require('../core/http-error');
 const { AUTH_ERROR } = require('../api/contracts/auth-errors');
+const { parseCpf, parseFiscalName } = require('../core/tax-document');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { generateTemporaryPassword } = require('../core/temporary-password');
@@ -21,6 +22,20 @@ const {
   isMustChangePassword,
   isSoftDeleted
 } = require('../core/staff-invite');
+
+function canReadFiscalData(actor) {
+  return Array.isArray(actor.permissions) && actor.permissions.includes('users.delivery.write');
+}
+
+// Why the operator corrected a copy of the customer's data. Optional; kept only in the audit event.
+function parseCorrectionReason(value) {
+  if (value === undefined || value === null) return null;
+  const reason = String(value).trim();
+  if (reason.length < 3 || reason.length > 255) {
+    throw new HttpError(422, 'The reason must have 3 to 255 characters.', { code: 'invalid_reason', field: 'reason' });
+  }
+  return reason;
+}
 
 class AdminUsersService {
   constructor(options = {}) {
@@ -81,6 +96,8 @@ class AdminUsersService {
       status: user.status,
       createdAt: user.createdAt,
       profile: user.profile,
+      // The delivery address wins: the market meta is empty for most accounts.
+      country: user.addressCountry || user.profileMarket || null,
       ...this.presentRoles(user),
       ...this.presentInvite(user)
     };
@@ -220,6 +237,8 @@ class AdminUsersService {
         phone: (profile && profile.phone) || (user.profile && user.profile.phone) || null
       },
       delivery: (profile && profile.delivery) || null,
+      // The CPF goes only to who can edit it, not to every role that reads customers.
+      ...(canReadFiscalData(actor) ? { fiscal: await this.usersRepository.findFiscalData(user.id) } : {}),
       subscriptions,
       ...this.presentRoles(user),
       ...this.presentInvite(user)
@@ -340,18 +359,42 @@ class AdminUsersService {
       throw new HttpError(503, 'Profile service is not available.');
     }
 
+    const { reason: rawReason, ...address } = payload || {};
+    const reason = parseCorrectionReason(rawReason);
     const user = await this.requireExistingUser(userId);
     this.assertCustomerInScope(actor, user);
     const delivery = await this.profileService.updateDelivery({
       userId,
-      payload,
+      payload: address,
       skipAccountCheck: true
+    });
+    // This copy is the account's; the subscription address that labels and couriers read stays as it is.
+    await this.audit('users.delivery.update', actor, user, {
+      fields: Object.keys(address).sort(),
+      ...(reason ? { reason } : {})
     });
 
     return {
       success: true,
       data: delivery
     };
+  }
+
+  // The next note and the next retry read these. An authorized note keeps what it was issued with.
+  async updateFiscal(userId, payload = {}, actor = {}) {
+    const user = await this.requireExistingUser(userId);
+    this.assertCustomerInScope(actor, user);
+    const fullName = parseFiscalName(payload.fullName);
+    if (!fullName) {
+      throw new HttpError(422, 'Enter the full name.', { code: 'invalid_fiscal_name', field: 'fullName' });
+    }
+    const cpf = parseCpf(payload.cpf);
+    if (!cpf) {
+      throw new HttpError(422, 'Invalid CPF.', { code: 'invalid_tax_document', field: 'cpf' });
+    }
+    await this.usersRepository.saveFiscalData(user.id, { fullName, cpf });
+    await this.audit('users.fiscal.update', actor, user, {});
+    return { success: true, data: { fullName, cpf } };
   }
 
   async updateStatus(userId, nextStatus, actor = {}) {

@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { parseRecipientNameInput } = require('../core/recipient-name');
 
 function normalizeCountry(country) {
   const value = String(country || '').trim().toUpperCase();
@@ -71,7 +72,14 @@ class OnboardingZipcodeService {
       throw new HttpError(422, 'State and city are required.', { code: 'invalid_location' });
     }
 
+    // This call replaces the whole saved address, so a missing recipient would erase it: required here.
+    const recipientName = parseRecipientNameInput(
+      payload.recipient_name === undefined ? payload.recipientName : payload.recipient_name,
+      { required: true }
+    );
+
     const normalizedPayload = {
+      recipient_name: recipientName,
       zipcode,
       postal_code: zipcode,
       country,

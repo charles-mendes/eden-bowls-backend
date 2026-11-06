@@ -1,3 +1,4 @@
+const { shipmentMarket } = require('../core/shipment-market');
 const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { ledgerStripeAccount, parseStripeAccountInput } = require('../core/stripe-account');
@@ -19,6 +20,7 @@ function dashboardUrl(secretKey, path) {
 
 function presentSubscription(item, secretKey, actor = {}) {
   const stripeAccount = String(item.stripeAccount || 'us').toLowerCase() || 'us';
+  const market = shipmentMarket({ stripeAccount, address: item.address });
   return {
     id: String(item.id),
     providerSubscriptionId: item.stripeSubscriptionId,
@@ -47,6 +49,9 @@ function presentSubscription(item, secretKey, actor = {}) {
       id: String(item.userId || ''),
       email: item.customerEmail || ''
     },
+    // shipment-market: the market that ships this subscription's boxes, or none when account and address disagree.
+    shipment_market: market.market,
+    market_exception: market.exception,
     term: {
       marketCountry: item.address && item.address.country ? String(item.address.country).toUpperCase() : '',
       months: item.subscriptionTermMonths || 0
@@ -58,6 +63,7 @@ function presentSubscription(item, secretKey, actor = {}) {
 class AdminBillingService {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository;
+    this.addressIssueService = options.addressIssueService || null;
     this.webhookEventsRepository = options.webhookEventsRepository;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
@@ -112,7 +118,9 @@ class AdminBillingService {
     });
   }
 
-  async getSubscription(id, actor = {}) {
+  // `detail` is the panel's subscription page, which also shows the address problem (delivery-address-issues);
+  // the courier and the label read the subscription without it.
+  async getSubscription(id, actor = {}, { detail = false } = {}) {
     const item = await this.ledgerRepository.findById(id);
     if (!item) {
       throw new HttpError(404, 'Subscription not found.');
@@ -121,7 +129,11 @@ class AdminBillingService {
       assertStripeAccountMarket(actor, ledgerStripeAccount(item));
     }
 
-    return presentSubscription(item, this.secretFor(item), actor);
+    const subscription = presentSubscription(item, this.secretFor(item), actor);
+    if (detail && this.addressIssueService) {
+      subscription.address_issue = await this.addressIssueService.latestFor(item.id);
+    }
+    return subscription;
   }
 
   async metrics(actor = {}) {
@@ -184,6 +196,25 @@ class AdminBillingService {
   async backfillLinks() {
     const result = await this.ledgerRepository.backfillUserLinks(this.profileRepository);
     return { success: true, data: result };
+  }
+
+  async getSubscriptionInvoice(id, invoiceId, actor = {}) {
+    const item = await this.ledgerRepository.findById(id);
+    if (!item) {
+      throw new HttpError(404, 'Subscription not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertStripeAccountMarket(actor, ledgerStripeAccount(item));
+    }
+
+    try {
+      return await this.billingFor(item).ensureClient().invoices.retrieve(invoiceId);
+    } catch (error) {
+      if (error && error.code === 'resource_missing') {
+        throw new HttpError(404, 'Invoice not found.', { code: 'invoice_not_found' });
+      }
+      throw new HttpError(502, 'Unable to read the invoice from Stripe.', { code: 'invoice_unavailable' });
+    }
   }
 
   async syncInvoices(id, actor = {}) {

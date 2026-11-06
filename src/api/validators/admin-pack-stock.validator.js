@@ -26,6 +26,12 @@ const adjustmentSchema = z.object({
   note: noteSchema
 });
 
+const countSchema = z.object({
+  ...itemKeySchema,
+  countedQuantity: z.coerce.number().int().min(0).max(MAX_QUANTITY),
+  note: noteSchema
+});
+
 const minimumSchema = z.object({
   ...itemKeySchema,
   minLevel: z.coerce.number().int().min(0).max(MAX_QUANTITY).nullable()
@@ -83,6 +89,11 @@ function parseStockAdjustment(body) {
   return { ...data, note: data.note || null };
 }
 
+function parseStockCount(body) {
+  const data = parse(countSchema, body);
+  return { ...data, note: data.note || null };
+}
+
 function parseStockMinimum(body) {
   return parse(minimumSchema, body);
 }
@@ -91,6 +102,7 @@ module.exports = {
   ADJUSTMENT_REASONS,
   MOVEMENT_TYPES,
   parseStockAdjustment,
+  parseStockCount,
   parseStockMinimum,
   parseStockMovementsQuery,
   parseStockOverviewQuery,

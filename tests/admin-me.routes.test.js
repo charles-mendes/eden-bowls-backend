@@ -104,12 +104,38 @@ describe('admin me and nutrition routes', () => {
       expect(response.status).toBe(200);
       expect(response.body.email).toBe('op@edenbowls.com');
       expect(response.body.markets).toEqual([]);
+      expect(response.body.effectiveMarkets).toEqual([]);
     } finally {
       if (previous == null) {
         delete process.env.ADMIN_ENFORCE_STAFF_MARKET;
       } else {
         process.env.ADMIN_ENFORCE_STAFF_MARKET = previous;
       }
+    }
+  });
+
+  test('reports effective markets for admin, assigned and unassigned staff', async () => {
+    const previous = process.env.ADMIN_ENFORCE_STAFF_MARKET;
+    delete process.env.ADMIN_ENFORCE_STAFF_MARKET;
+    const meFor = async (identity) => {
+      const app = adminApp({ adminIdentityService: { requireOperational: jest.fn().mockResolvedValue(identity) } });
+      return request(app).get('/api/v1/admin/me').set('Authorization', `Bearer ${tokenFor()}`);
+    };
+
+    try {
+      const admin = await meFor({ userId: '7', roles: ['admin'], markets: ['BR', 'US'], permissions: ROLE_PERMISSIONS.admin });
+      expect(admin.body.effectiveMarkets).toEqual(['BR', 'US']);
+
+      const assigned = await meFor({ userId: '8', roles: ['operator'], markets: ['BR'], permissions: ROLE_PERMISSIONS.operator });
+      expect(assigned.body.markets).toEqual(['BR']);
+      expect(assigned.body.effectiveMarkets).toEqual(['BR']);
+
+      const unassigned = await meFor({ userId: '9', roles: ['operator'], markets: [], permissions: ROLE_PERMISSIONS.operator });
+      expect(unassigned.status).toBe(200);
+      expect(unassigned.body.markets).toEqual([]);
+      expect(unassigned.body.effectiveMarkets).toEqual(['BR', 'US']);
+    } finally {
+      if (previous != null) process.env.ADMIN_ENFORCE_STAFF_MARKET = previous;
     }
   });
 

@@ -16,7 +16,7 @@ const IDENTITIES = {
 };
 
 function setup(identity) {
-  const stored = { BR: { lifeStageChangeEnabled: true, announcementBatchSize: 50, announcementDailyCap: 300, updatedAt: null } };
+  const stored = { BR: { lifeStageChangeEnabled: true, announcementBatchSize: 50, announcementDailyCap: 300, renewalNoticeEnabled: true, planEndingNoticeEnabled: true, planNoticeDays: 7, updatedAt: null } };
   const repository = {
     forMarket: jest.fn(async (market) => ({ ...stored[market] })),
     save: jest.fn(async (market, settings) => { stored[market] = { ...settings, updatedAt: '2026-10-27T12:00:00.000Z' }; })
@@ -32,7 +32,16 @@ function setup(identity) {
 }
 
 const auth = (call) => call.set('Authorization', `Bearer ${tokenFor()}`);
-const body = (changes = {}) => ({ market: 'BR', life_stage_change_enabled: true, announcement_batch_size: 50, announcement_daily_cap: 300, ...changes });
+const body = (changes = {}) => ({
+  market: 'BR',
+  life_stage_change_enabled: true,
+  announcement_batch_size: 50,
+  announcement_daily_cap: 300,
+  renewal_notice_enabled: true,
+  plan_ending_notice_enabled: true,
+  plan_notice_days: 7,
+  ...changes
+});
 
 describe('admin automated email settings routes', () => {
   test('Cap lower than batch', async () => {
@@ -44,6 +53,32 @@ describe('admin automated email settings routes', () => {
     expect(response.body.details).toEqual({ code: 'automated_email_settings_invalid', fields: ['announcement_daily_cap'] });
     expect(repository.save).not.toHaveBeenCalled();
     expect(stored.BR).toMatchObject({ announcementBatchSize: 50, announcementDailyCap: 300 });
+  });
+
+  test('Window out of range', async () => {
+    const { app, repository } = setup(IDENTITIES.operator);
+    const response = await auth(request(app).put('/api/v1/admin/settings/automated-emails')).send(body({ plan_notice_days: 31 }));
+    expect(response.status).toBe(422);
+    expect(response.body.details.fields).toEqual(['plan_notice_days']);
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  test('Save without the new fields', async () => {
+    const { app, repository } = setup(IDENTITIES.operator);
+    const response = await auth(request(app).put('/api/v1/admin/settings/automated-emails'))
+      .send({ market: 'BR', life_stage_change_enabled: true, announcement_batch_size: 50, announcement_daily_cap: 300 });
+    expect(response.status).toBe(422);
+    expect(response.body.details.fields).toEqual(['renewal_notice_enabled', 'plan_ending_notice_enabled', 'plan_notice_days']);
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  test('saves one notice paused, recorded with the rest of the settings', async () => {
+    const { app, stored, auditRepository } = setup(IDENTITIES.operator);
+    const response = await auth(request(app).put('/api/v1/admin/settings/automated-emails')).send(body({ renewal_notice_enabled: false, plan_notice_days: 10 }));
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ renewal_notice_enabled: false, plan_ending_notice_enabled: true, plan_notice_days: 10 });
+    expect(stored.BR).toMatchObject({ renewalNoticeEnabled: false, planEndingNoticeEnabled: true, planNoticeDays: 10 });
+    expect(auditRepository.createIn.mock.calls[0][1].metadata.after).toMatchObject({ renewalNoticeEnabled: false, planNoticeDays: 10 });
   });
 
   test('refuses values outside the limits and a switch that is not a boolean', async () => {
@@ -65,8 +100,8 @@ describe('admin automated email settings routes', () => {
       action: 'settings.email.update',
       metadata: {
         market: 'BR',
-        before: { lifeStageChangeEnabled: true, announcementBatchSize: 50, announcementDailyCap: 300 },
-        after: { lifeStageChangeEnabled: false, announcementBatchSize: 50, announcementDailyCap: 300 }
+        before: { lifeStageChangeEnabled: true, announcementBatchSize: 50, announcementDailyCap: 300, renewalNoticeEnabled: true, planEndingNoticeEnabled: true, planNoticeDays: 7 },
+        after: { lifeStageChangeEnabled: false, announcementBatchSize: 50, announcementDailyCap: 300, renewalNoticeEnabled: true, planEndingNoticeEnabled: true, planNoticeDays: 7 }
       }
     }));
   });

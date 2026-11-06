@@ -41,7 +41,8 @@ const DEFAULT_SETTINGS = {
       city: '',
       state: '',
       zipcode: '',
-      country: 'US'
+      country: 'US',
+      phone: ''
     },
     package: {
       weight_lb: 10,
@@ -117,7 +118,9 @@ function mergeShipFrom(base = {}, overlay = {}) {
     city: overlay.city == null ? (base.city || '') : String(overlay.city),
     state: overlay.state == null ? (base.state || '') : String(overlay.state),
     zipcode: overlay.zipcode == null ? (base.zipcode || '') : String(overlay.zipcode),
-    country: String(overlay.country || base.country || 'US').toUpperCase() || 'US'
+    country: String(overlay.country || base.country || 'US').toUpperCase() || 'US',
+    // UPS asks for a phone at the pickup address (ups-pickup); a label without it still buys.
+    phone: overlay.phone == null ? (base.phone || '') : String(overlay.phone).trim()
   };
 }
 
@@ -285,7 +288,8 @@ function usFromRow(row) {
       city: row.ship_from_city || '',
       state: row.ship_from_state || '',
       zipcode: row.ship_from_zipcode || '',
-      country: String(row.ship_from_country || 'US').toUpperCase()
+      country: String(row.ship_from_country || 'US').toUpperCase(),
+      phone: row.ship_from_phone || ''
     },
     package: {
       weight_lb: toNumber(row.package_weight_lb, DEFAULT_SETTINGS.us.package.weight_lb),
@@ -352,7 +356,8 @@ function usToParams(us) {
     us.package?.width_in ?? 12,
     us.package?.height_in ?? 12,
     JSON.stringify(parseServiceCodes(us.allowed_service_codes, ['03'])),
-    toNumber(us.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days)
+    toNumber(us.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days),
+    String(us.ship_from?.phone || '').slice(0, 32)
   ];
 }
 

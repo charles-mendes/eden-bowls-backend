@@ -36,6 +36,63 @@ function build({ repository = stockRepository(), sizes = ['frango|300', 'carne|5
 }
 
 describe('AdminPackStockService', () => {
+  it('adds the catalog names and sizes of the market to the overview', async () => {
+    const catalog = [{ flavorKey: 'beef', packSizeGrams: 300, label: 'Carne' }];
+    const { service } = build();
+    service.catalogRepository.listRecipeCatalog = jest.fn().mockResolvedValue(catalog);
+
+    const result = await service.overview({ market: 'BR' }, { markets: ['BR'] });
+
+    expect(service.catalogRepository.listRecipeCatalog).toHaveBeenCalledWith('BR');
+    expect(result.catalog).toEqual(catalog);
+  });
+
+  it('lists a published product with zero stock', async () => {
+    const { service } = build();
+    service.catalogRepository.listRecipeCatalog = jest.fn().mockResolvedValue([
+      { flavorKey: 'beef', packSizeGrams: 300, label: 'Carne', published: true }
+    ]);
+
+    const result = await service.overview({ market: 'BR' }, { markets: ['BR'] });
+
+    expect(result.items).toEqual([expect.objectContaining({ flavorKey: 'beef', packSizeGrams: 300, onHand: 0 })]);
+  });
+
+  it('records a count under the item lock and audits it', async () => {
+    const repository = stockRepository({ applyCount: jest.fn().mockResolvedValue({ onHand: 120 }) });
+    const { service, auditService } = build({ repository });
+
+    const item = await service.recordCount({ market: 'BR', flavorKey: 'frango', packSizeGrams: 300, countedQuantity: 120 }, operatorBr);
+
+    expect(item.onHand).toBe(120);
+    expect(repository.applyCount).toHaveBeenCalledWith(
+      repository.manager,
+      { market: 'BR', flavorKey: 'frango', packSizeGrams: 300 },
+      120,
+      { type: 'adjustment', reason: 'count', note: null, actorUserId: 7 }
+    );
+    expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'stock.count' }));
+  });
+
+  it('refuses a count outside the staff market', async () => {
+    const repository = stockRepository({ applyCount: jest.fn() });
+    const { service } = build({ repository });
+
+    await expect(service.recordCount({ market: 'US', flavorKey: 'frango', packSizeGrams: 300, countedQuantity: 1 }, operatorBr))
+      .rejects.toMatchObject({ statusCode: 403, details: { code: 'market_forbidden' } });
+    expect(repository.applyCount).not.toHaveBeenCalled();
+  });
+
+  it('keeps the overview working when the catalog fails', async () => {
+    const { service } = build();
+    service.catalogRepository.listRecipeCatalog = jest.fn().mockRejectedValue(new Error('down'));
+
+    const result = await service.overview({ market: 'BR' }, { markets: ['BR'] });
+
+    expect(result.catalog).toEqual([]);
+    expect(result.items).toBeDefined();
+  });
+
   test('Known recipe and size', async () => {
     const { service, repository } = build();
 

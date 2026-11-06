@@ -75,7 +75,8 @@ function sumDemand(cycles = []) {
 }
 
 // Every stored item and every item with demand, with what is free and what still has to be produced.
-function buildOverview({ stockItems = [], cycles = [] }) {
+// Published catalog entries without a stored item show with zero stock, so a new product reaches the screen.
+function buildOverview({ stockItems = [], cycles = [], catalog = [] }) {
   const { demand, unsized } = sumDemand(cycles);
   const rows = new Map();
   for (const item of stockItems) {
@@ -88,6 +89,12 @@ function buildOverview({ stockItems = [], cycles = [] }) {
   }
   for (const [key, entry] of demand) {
     if (!rows.has(key)) {
+      rows.set(key, { flavorKey: entry.flavorKey, packSizeGrams: entry.packSizeGrams, onHand: 0, minLevel: null });
+    }
+  }
+  for (const entry of catalog) {
+    const key = stockKey(entry.flavorKey, entry.packSizeGrams);
+    if (entry.published && !rows.has(key)) {
       rows.set(key, { flavorKey: entry.flavorKey, packSizeGrams: entry.packSizeGrams, onHand: 0, minLevel: null });
     }
   }
@@ -118,10 +125,11 @@ function dueTime(cycle) {
 }
 
 // Allots on-hand to the committing cycles in due order (then subscription id). A cycle is short when any of
-// its packs is not fully allotted, and unknown when it has a line without a size.
-function allocateCoverage({ stockItems = [], cycles = [] }) {
+// its packs is not fully allotted, and unknown when it has a line without a size. Each short pack is reported with
+// `missing`, the packs the stock left over did not cover.
+function allocateCoverageDetail({ stockItems = [], cycles = [] }) {
   const remaining = new Map(stockItems.map((item) => [stockKey(item.flavorKey, item.packSizeGrams), Number(item.onHand) || 0]));
-  const coverage = new Map();
+  const detail = new Map();
   const ordered = cycles
     .filter(commits)
     .slice()
@@ -129,23 +137,30 @@ function allocateCoverage({ stockItems = [], cycles = [] }) {
 
   for (const cycle of ordered) {
     const { packs, unsized } = cyclePacks(cycle);
-    let short = false;
+    const shortages = [];
     for (const pack of packs) {
       const key = stockKey(pack.flavorKey, pack.packSizeGrams);
-      const left = (remaining.get(key) || 0) - pack.quantity;
-      remaining.set(key, left);
-      if (left < 0) {
-        short = true;
+      const before = remaining.get(key) || 0;
+      remaining.set(key, before - pack.quantity);
+      const covered = Math.max(0, Math.min(pack.quantity, before));
+      if (covered < pack.quantity) {
+        shortages.push({ flavorKey: pack.flavorKey, packSizeGrams: pack.packSizeGrams, missing: pack.quantity - covered });
       }
     }
-    coverage.set(cycle.key, unsized.length ? 'unknown' : (short ? 'short' : 'covered'));
+    const coverage = unsized.length ? 'unknown' : (shortages.length ? 'short' : 'covered');
+    detail.set(cycle.key, { coverage, shortages: coverage === 'short' ? shortages : [] });
   }
-  return coverage;
+  return detail;
+}
+
+function allocateCoverage(input) {
+  return new Map([...allocateCoverageDetail(input)].map(([key, value]) => [key, value.coverage]));
 }
 
 module.exports = {
   COMMITTING_STATUSES,
   allocateCoverage,
+  allocateCoverageDetail,
   buildOverview,
   cyclePacks,
   stockKey,

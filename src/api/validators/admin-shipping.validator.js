@@ -45,7 +45,8 @@ const shippingSettingsSchema = z.object({
       city: z.string().optional(),
       state: z.string().optional(),
       zipcode: z.string().optional(),
-      country: z.string().optional()
+      country: z.string().optional(),
+      phone: z.string().max(32).optional()
     }).optional(),
     package: z.object({
       weight_lb: optionalNumber,

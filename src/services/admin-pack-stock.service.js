@@ -5,7 +5,7 @@ const { constrainMarketQuery, marketFromStripeAccount } = require('../core/admin
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { flavorKeyFromLabel } = require('../core/flavors');
 const { DEFAULT_TIMEZONE, presentProductionQueueItem } = require('../core/production-queue-presenter');
-const { allocateCoverage, buildOverview, cyclePacks } = require('../core/pack-stock');
+const { allocateCoverageDetail, buildOverview, cyclePacks } = require('../core/pack-stock');
 const { measureStockComputation } = require('../core/stock-metrics');
 
 function emptyStock() {
@@ -95,18 +95,32 @@ class AdminPackStockService {
   async overview(query = {}, actor = {}) {
     const market = this.resolveMarket(actor, query.market);
     const windowDays = query.windowDays || 7;
-    const { overview } = await measureStockComputation('overview', async () => {
-      const [stockItems, cycles] = await Promise.all([
+    const { overview, catalog } = await measureStockComputation('overview', async () => {
+      const [stockItems, cycles, catalogEntries] = await Promise.all([
         this.stockRepository.listItems(market),
-        this.loadCycles({ markets: [market], windowDays })
+        this.loadCycles({ markets: [market], windowDays }),
+        this.loadCatalog(market)
       ]);
-      return { overview: buildOverview({ stockItems, cycles }), rowCount: cycles.length };
+      return { overview: buildOverview({ stockItems, cycles, catalog: catalogEntries }), catalog: catalogEntries, rowCount: cycles.length };
     });
     this.warnUnsized(overview.unsizedLines);
-    return { market, windowDays, ...overview };
+    return { market, windowDays, ...overview, catalog };
   }
 
-  // Coverage of every committing cycle in the queue window, per market, or null without stock storage.
+  // Names and sizes are extra information: without them the screen still lists by recipe key.
+  async loadCatalog(market) {
+    if (!this.catalogRepository || typeof this.catalogRepository.listRecipeCatalog !== 'function') {
+      return [];
+    }
+    try {
+      return await this.catalogRepository.listRecipeCatalog(market);
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  // Coverage of every committing cycle in the queue window, per market, as `{ coverage, shortages }`, or null
+  // without stock storage.
   async queueCoverage({ markets, windowDays, timezone }) {
     if (!(await this.isAvailable())) {
       return null;
@@ -119,7 +133,7 @@ class AdminPackStockService {
       const coverage = new Map();
       markets.forEach((market, index) => {
         const marketCycles = cycles.filter((cycle) => cycle.market === market);
-        for (const [key, value] of allocateCoverage({ stockItems: stockByMarket[index], cycles: marketCycles })) {
+        for (const [key, value] of allocateCoverageDetail({ stockItems: stockByMarket[index], cycles: marketCycles })) {
           coverage.set(key, value);
         }
       });
@@ -183,6 +197,19 @@ class AdminPackStockService {
       reason: body.reason,
       note: body.note || null
     }, 'stock.adjustment');
+  }
+
+  // The counted total replaces on-hand through an adjustment, computed under the item lock.
+  async recordCount(body, actor = {}) {
+    const key = await this.resolveItemKey(body, actor);
+    const item = await this.stockRepository.transaction((manager) => this.stockRepository.applyCount(manager, key, body.countedQuantity, {
+      type: 'adjustment',
+      reason: 'count',
+      note: body.note || null,
+      actorUserId: actorUserId(actor)
+    }));
+    await this.audit(actor, 'stock.count', { ...key, countedQuantity: body.countedQuantity, note: body.note || null });
+    return item;
   }
 
   async setMinimum(body, actor = {}) {

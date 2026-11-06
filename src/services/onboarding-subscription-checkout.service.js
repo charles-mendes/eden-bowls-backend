@@ -1,4 +1,7 @@
+const { missingAddressFields } = require('../core/delivery-address-check');
 const { HttpError } = require('../core/http-error');
+const { parseCpf, parseFiscalName } = require('../core/tax-document');
+const { RECIPIENT_NAME_KEY, validateRecipientName } = require('../core/recipient-name');
 const {
   canResolvePlanSelection,
   isPricedPlanSelection,
@@ -125,15 +128,43 @@ class OnboardingSubscriptionCheckoutService {
     this.shippingQuoteSigner = options.shippingQuoteSigner || null;
     this.lifeStageService = options.lifeStageService || null;
     this.petsRepository = options.petsRepository || null;
+    // Bound after construction in index.js, like AuthService (legal-documents).
+    this.privacyService = options.privacyService || null;
   }
 
-  async checkout({ userId, payload = {} }) {
+  // The checkout consent (legal-documents): recorded before the subscription is created or reused, or no charge.
+  async recordLegalConsent({ userId, market, payload, requestContext }) {
+    if (!this.privacyService || typeof this.privacyService.recordCheckoutConsents !== 'function') {
+      throw new HttpError(503, 'The consent trail is not available.', { code: 'legal_consent_unavailable' });
+    }
+    const consent = payload.legal_consent || {};
+    try {
+      await this.privacyService.recordCheckoutConsents({
+        userId,
+        market,
+        privacyVersion: consent.privacy_version,
+        termsVersion: consent.terms_version,
+        ipHash: requestContext.ipHash,
+        userAgent: requestContext.userAgent
+      });
+    } catch (error) {
+      throw new HttpError(503, 'The checkout consent could not be recorded.', { code: 'legal_consent_unavailable' });
+    }
+  }
+
+  async checkout({ userId, payload = {}, requestContext = {} }) {
     if (!this.repository) {
       throw new HttpError(503, 'Onboarding subscription checkout repository is not available.');
     }
 
     if (!userId) {
       throw new HttpError(401, 'Authentication is required.', { code: 'unauthorized' });
+    }
+
+    if (!payload.legal_consent || payload.legal_consent.accepted !== true) {
+      throw new HttpError(422, 'Accepting the Terms of Service and Privacy Policy is required.', {
+        code: 'legal_consent_required'
+      });
     }
 
     if (!this.authService) {
@@ -164,7 +195,20 @@ class OnboardingSubscriptionCheckoutService {
     const context = await this.ensurePersistedPets(userId, pricedContext);
     validateCheckoutState(context);
     const deliveryAddress = context.address || {};
+    // An address saved before the recipient field: the store sends the customer back to the address step.
+    if (!validateRecipientName(deliveryAddress[RECIPIENT_NAME_KEY])) {
+      throw new HttpError(422, 'The recipient name is required.', {
+        code: 'recipient_name_required',
+        field: RECIPIENT_NAME_KEY
+      });
+    }
     const deliveryMarket = resolveMarket({ country: deliveryAddress.country }).country;
+    // The fields the box needs to leave (subscription-contract), checked before Stripe: the store asks for them,
+    // and the API refuses a saved address without them.
+    const missingFields = missingAddressFields(deliveryAddress, deliveryMarket);
+    if (missingFields.length) {
+      throw new HttpError(422, 'The delivery address is incomplete.', { code: 'address_incomplete', fields: missingFields });
+    }
     assertVerifiedDeliveryArea(this.shippingQuoteSigner, deliveryMarket, context.shipping || {}, {
       zipcode: deliveryAddress.zipcode
     });
@@ -201,6 +245,16 @@ class OnboardingSubscriptionCheckoutService {
     const nextPlanSelection = catalogPricing
       ? { ...planSelection, catalog_pricing: catalogPricing }
       : planSelection;
+
+    // The NF-e needs both on every charge: a BR checkout does not go on without a valid CPF and the civil name.
+    const taxDocument = stripeAccount === 'br' ? parseCpf(payload.tax_document) : null;
+    if (stripeAccount === 'br' && !taxDocument) {
+      throw new HttpError(422, 'A valid CPF is required.', { code: 'tax_document_required' });
+    }
+    const fiscalName = stripeAccount === 'br' ? parseFiscalName(payload.fiscal_name) : null;
+    if (stripeAccount === 'br' && !fiscalName) {
+      throw new HttpError(422, 'The full name is required.', { code: 'fiscal_name_required' });
+    }
 
     const billing = payload.billing || {};
     const user = this.repository.getUserEmail
@@ -255,11 +309,20 @@ class OnboardingSubscriptionCheckoutService {
 
     const releaseLock = this.lockStore.acquire(userId, fingerprint);
     try {
+      await this.recordLegalConsent({ userId, market: deliveryMarket, payload, requestContext });
+      if (taxDocument && this.repository.saveTaxDocument) {
+        await this.repository.saveTaxDocument(userId, taxDocument);
+      }
+      if (fiscalName && this.repository.saveFiscalName) {
+        await this.repository.saveFiscalName(userId, fiscalName);
+      }
       const freshContext = this.repository.getCheckoutContext
         ? await this.repository.getCheckoutContext(userId)
         : context;
       const storedReference = freshContext.checkoutReference || {};
-      const fingerprintMatches = fingerprintsMatch(storedReference.checkout_context_fingerprint, fingerprint);
+      const storedSubscriptionEnded = await this.isStoredSubscriptionEnded(storedReference);
+      const fingerprintMatches = !storedSubscriptionEnded
+        && fingerprintsMatch(storedReference.checkout_context_fingerprint, fingerprint);
       const attemptId = resolveAttemptId({
         payloadAttemptId: payload.attempt_id,
         storedAttemptId: storedReference.attempt_id,
@@ -270,7 +333,8 @@ class OnboardingSubscriptionCheckoutService {
 
       const reuse = evaluateCheckoutReuse(storedReference, fingerprint, {
         currentPetIds,
-        subscribedPetIds
+        subscribedPetIds,
+        storedSubscriptionEnded
       });
       if (reuse.reuse) {
         const reusedCheckout = await this.buildReusedCheckout({
@@ -564,6 +628,17 @@ class OnboardingSubscriptionCheckoutService {
       reused: true,
       stripeAccount: stripeAccount || storedReference.stripe_account
     });
+  }
+
+  // A subscription missing from the ledger is not treated as ended: a retry right after payment must still reuse it.
+  async isStoredSubscriptionEnded(storedReference = {}) {
+    const subscriptionId = String(storedReference.stripe_subscription_id || '').trim();
+    if (!subscriptionId || !this.ledgerRepository
+      || typeof this.ledgerRepository.findByStripeSubscriptionId !== 'function') {
+      return false;
+    }
+    const row = await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
+    return Boolean(row) && row.status === 'canceled';
   }
 
   async collectSubscribedPetIds(userId, storedReference = {}) {

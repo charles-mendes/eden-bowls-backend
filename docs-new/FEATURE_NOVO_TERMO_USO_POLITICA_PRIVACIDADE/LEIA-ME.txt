@@ -1,0 +1,21 @@
+EDEN BOWLS · POLÍTICA DE PRIVACIDADE E TERMOS DE USO (versão final, 22/10/2026)
+
+São 4 textos prontos para colocar no site, em HTML simples (só o conteúdo, sem estilo),
+para colar dentro do layout das páginas do site:
+
+  pt/politica-de-privacidade.html   -> site do Brasil (edenbowls.com.br), página "Política de Privacidade"
+  pt/termos-de-uso.html             -> site do Brasil, página "Termos de Uso"
+  en/privacy-policy.html            -> site dos EUA (edenbowls.com), página "Privacy Policy"
+  en/terms-of-service.html          -> site dos EUA, página "Terms of Service"
+
+O que o site precisa ter junto com esses textos:
+1. Links para as duas páginas no rodapé de todas as páginas do site e no checkout.
+2. No checkout, a caixa de confirmação "Li e aceito os Termos de Uso e a Política de Privacidade"
+   (EN: "I have read and agree to the Terms of Service and Privacy Policy"), obrigatória para concluir a compra.
+3. Aviso de cookies com opção de aceitar ou recusar os cookies de estatística (Google Analytics),
+   e o link "Preferências de cookies" / "Cookie preferences" no rodapé para mudar a escolha.
+   O Google Analytics só deve carregar depois do aceite.
+4. No site dos EUA, respeitar o sinal Global Privacy Control do navegador (o texto diz que respeitamos).
+
+Os títulos usam <h1> e <h2>. A tabela da Política em português usa <table> e precisa de um estilo
+simples de tabela no CSS do site.

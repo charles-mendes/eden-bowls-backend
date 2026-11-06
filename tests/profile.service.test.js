@@ -185,7 +185,8 @@ describe('ProfileService', () => {
       stateCode: '',
       zipCode: '',
       country: '',
-      deliveryInstructions: ''
+      deliveryInstructions: '',
+      recipientName: ''
     });
     expect(emptyProfile.avatarUrl).toBeNull();
     expect(emptyProfile.availableCountryCodes).toEqual(['BR', 'US']);
@@ -292,6 +293,35 @@ describe('ProfileService', () => {
     expect(patch.country).toBeUndefined();
   });
 
+  test('recipient name: edit stores it, omit keeps it, empty or invalid is refused', async () => {
+    const build = () => createService({
+      repository: {
+        findUserById: jest.fn().mockResolvedValue(createUser({ phoneCountry: 'BR' })),
+        getAddress: jest.fn().mockResolvedValue({ exists: true, address: { country: 'BR', recipient_name: 'João Lima' } }),
+        mergeAddress: jest.fn().mockImplementation(async (_id, patch) => ({ country: 'BR', recipient_name: 'João Lima', ...patch }))
+      }
+    });
+    const base = { address: 'Rua A', city: 'Sao Paulo', state: 'SP', zipCode: '01310-100' };
+
+    const edited = build();
+    const saved = await edited.service.updateDelivery({ userId: 77, payload: { ...base, recipientName: '  Portaria  Ed. Sol ' } });
+    expect(edited.repository.mergeAddress.mock.calls[0][1].recipient_name).toBe('Portaria Ed. Sol');
+    expect(edited.repository.mergeAddress.mock.calls[0][1]).not.toHaveProperty('name');
+    expect(saved.recipientName).toBe('Portaria Ed. Sol');
+
+    const omitted = build();
+    const kept = await omitted.service.updateDelivery({ userId: 77, payload: base });
+    expect(omitted.repository.mergeAddress.mock.calls[0][1]).not.toHaveProperty('recipient_name');
+    expect(kept.recipientName).toBe('João Lima');
+
+    for (const recipientName of ['', 'a@b', '12']) {
+      const refused = build();
+      await expect(refused.service.updateDelivery({ userId: 77, payload: { ...base, recipientName } }))
+        .rejects.toMatchObject({ statusCode: 422, details: { errors: { recipient_name: expect.any(String) } } });
+      expect(refused.repository.mergeAddress).not.toHaveBeenCalled();
+    }
+  });
+
   test('uppercases a BR state and rejects a short US ZIP', async () => {
     const br = createService({
       repository: {
@@ -311,7 +341,25 @@ describe('ProfileService', () => {
       payload: { address: 'Rua A', city: 'Sao Paulo', state: 'sp', zipCode: '01310-100' }
     });
     expect(saved.state).toBe('SP');
-    expect(br.repository.mergeAddress.mock.calls[0][1].state).toBe('SP');
+    const brPatch = br.repository.mergeAddress.mock.calls[0][1];
+    expect(brPatch.state).toBe('SP');
+    // The profile screen does not send them, so the merge keeps the stored values.
+    expect(brPatch).not.toHaveProperty('number');
+    expect(brPatch).not.toHaveProperty('neighborhood');
+
+    await br.service.updateDelivery({
+      userId: 77,
+      payload: { address: 'Rua A', number: '10', neighborhood: 'Centro', city: 'Sao Paulo', state: 'SP', zipCode: '01310-100' }
+    });
+    expect(br.repository.mergeAddress.mock.calls[1][1]).toMatchObject({ number: '10', neighborhood: 'Centro' });
+
+    await expect(br.service.updateDelivery({
+      userId: 77,
+      payload: { address: 'Rua A', number: ' ', neighborhood: '', city: 'Sao Paulo', state: 'Sao Paulo', zipCode: '01310-100' }
+    })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { errors: { number: expect.any(String), neighborhood: expect.any(String), state: expect.any(String) } }
+    });
 
     const us = createService();
     await expect(us.service.updateDelivery({
@@ -540,5 +588,24 @@ describe('ProfileService', () => {
       details: { code: 'unauthorized' }
     });
     expect(authService.assertCriticalOperationAllowed).not.toHaveBeenCalled();
+  });
+
+  test('deleting the account deletes the contacts operators recorded with the customer', async () => {
+    const customerContactsRepository = { deleteByUser: jest.fn().mockResolvedValue(undefined) };
+    const { service, repository } = createService({ options: { customerContactsRepository } });
+
+    await expect(service.deleteAccount({ userId: 77 })).resolves.toEqual({ deleted: true });
+
+    expect(customerContactsRepository.deleteByUser).toHaveBeenCalledWith(77);
+    expect(repository.deleteUserAndMeta).toHaveBeenCalledWith(77);
+  });
+
+  test('deleting the account deletes its address problems', async () => {
+    const deliveryAddressIssuesRepository = { deleteByUser: jest.fn().mockResolvedValue(undefined) };
+    const { service } = createService({ options: { deliveryAddressIssuesRepository } });
+
+    await expect(service.deleteAccount({ userId: 77 })).resolves.toEqual({ deleted: true });
+
+    expect(deliveryAddressIssuesRepository.deleteByUser).toHaveBeenCalledWith(77);
   });
 });

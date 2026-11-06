@@ -123,6 +123,12 @@ function buildStripeSubscriptionEntitySchema(tableName = 'stripe_subscriptions')
         unsigned: true,
         nullable: true
       },
+      contractStartCharged: {
+        name: 'contract_start_charged',
+        type: 'int',
+        unsigned: true,
+        default: 0
+      },
       lastChargedInvoiceId: {
         name: 'last_charged_invoice_id',
         type: String,

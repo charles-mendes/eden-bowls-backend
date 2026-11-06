@@ -1,6 +1,7 @@
 const { toMysqlDateTime } = require('../../core/stripe-subscription-map');
 const { canonicalFlavorKey } = require('../../core/flavors');
 const { parseWeightToGrams } = require('../../core/plan-catalog-pricing');
+const { NCM_META_KEY, ORIGIN_META_KEY } = require('../../core/nfe');
 
 const TABLE = 'customer_invoices';
 const SEQUENCES = 'customer_invoice_sequences';
@@ -8,6 +9,7 @@ const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
 const BASE_BACKOFF_MS = 5 * 60 * 1000;
 const FLAVOR_META = ['_flavor_slug', 'attribute_pa_flavor', 'attribute_flavor', 'attribute_sabor'];
 const WEIGHT_META = ['attribute_pa_weight', 'attribute_weight', 'attribute_gram', 'attribute_peso'];
+const TAX_META = [NCM_META_KEY, ORIGIN_META_KEY];
 
 function isoOrNull(value) {
   if (value == null) return null;
@@ -208,7 +210,7 @@ class CustomerInvoicesRepository {
     return rows.map(mapRow);
   }
 
-  // Stripe price id → catalog variation `{ flavorKey, grams }`, read from the price ids the catalog sync stored.
+  // Stripe price id → catalog variation `{ variationId, flavorKey, grams, ncm, origin }`, read from the price ids the catalog sync stored.
   async findVariantsByPriceIds(priceIds) {
     const ids = [...new Set((priceIds || []).filter((id) => String(id || '').startsWith('price_')))];
     const result = new Map();
@@ -231,8 +233,8 @@ class CustomerInvoicesRepository {
     if (postIds.length === 0) return result;
     const metaRows = await this.dataSource.query(
       `SELECT post_id, meta_key, meta_value FROM ${this.postmetaTableName}
-        WHERE post_id IN (${postIds.map(() => '?').join(', ')}) AND meta_key IN (${[...FLAVOR_META, ...WEIGHT_META].map(() => '?').join(', ')})`,
-      [...postIds, ...FLAVOR_META, ...WEIGHT_META]
+        WHERE post_id IN (${postIds.map(() => '?').join(', ')}) AND meta_key IN (${[...FLAVOR_META, ...WEIGHT_META, ...TAX_META].map(() => '?').join(', ')})`,
+      [...postIds, ...FLAVOR_META, ...WEIGHT_META, ...TAX_META]
     );
     const metaByPost = new Map();
     for (const row of metaRows) {
@@ -245,6 +247,9 @@ class CustomerInvoicesRepository {
       const flavorKey = canonicalFlavorKey(firstMeta(meta, FLAVOR_META));
       if (!flavorKey) continue;
       result.set(priceId, {
+        variationId: postId,
+        ncm: meta[NCM_META_KEY] || null,
+        origin: Number(meta[ORIGIN_META_KEY]) || 0,
         flavorKey,
         label: firstMeta(meta, FLAVOR_META.filter((key) => key !== '_flavor_slug')) || '',
         grams: parseWeightToGrams(firstMeta(meta, WEIGHT_META))

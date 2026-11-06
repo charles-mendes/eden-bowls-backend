@@ -75,6 +75,18 @@ const { CreateAutomatedEmailSettings1700000000053 } = require('./migrations/1700
 const { CreatePackStock1700000000054 } = require('./migrations/1700000000054-create-pack-stock');
 const { AddSubscriptionLifecycleDates1700000000055 } = require('./migrations/1700000000055-add-subscription-lifecycle-dates');
 const { BackfillOnboardingUserStateMarket1700000000056 } = require('./migrations/1700000000056-backfill-onboarding-user-state-market');
+const { CreateBlingNfe1700000000057 } = require('./migrations/1700000000057-create-bling-nfe');
+const { AddBlingNfeEmail1700000000058 } = require('./migrations/1700000000058-add-bling-nfe-email');
+const { AddUpsShipmentTracking1700000000059 } = require('./migrations/1700000000059-add-ups-shipment-tracking');
+const { AddPlanNoticeSettings1700000000060 } = require('./migrations/1700000000060-add-plan-notice-settings');
+const { AddContractStartCharged1700000000061 } = require('./migrations/1700000000061-add-contract-start-charged');
+const { AddUpsShipmentStages1700000000062 } = require('./migrations/1700000000062-add-ups-shipment-stages');
+const { CreateCourierDeliveries1700000000063 } = require('./migrations/1700000000063-create-courier-deliveries');
+const { AddCourierFailureKind1700000000064 } = require('./migrations/1700000000064-add-courier-failure-kind');
+const { CreateCustomerContacts1700000000065 } = require('./migrations/1700000000065-create-customer-contacts');
+const { CreateDeliveryAddressIssues1700000000066 } = require('./migrations/1700000000066-create-delivery-address-issues');
+const { AddNfeMissingFields1700000000067 } = require('./migrations/1700000000067-add-nfe-missing-fields');
+const { CreateUpsPickups1700000000068 } = require('./migrations/1700000000068-create-ups-pickups');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -175,7 +187,19 @@ function buildDataSourceOptions(env) {
       CreateAutomatedEmailSettings1700000000053,
       CreatePackStock1700000000054,
       AddSubscriptionLifecycleDates1700000000055,
-      BackfillOnboardingUserStateMarket1700000000056
+      BackfillOnboardingUserStateMarket1700000000056,
+      CreateBlingNfe1700000000057,
+      AddBlingNfeEmail1700000000058,
+      AddUpsShipmentTracking1700000000059,
+      AddPlanNoticeSettings1700000000060,
+      AddContractStartCharged1700000000061,
+      AddUpsShipmentStages1700000000062,
+      CreateCourierDeliveries1700000000063,
+      AddCourierFailureKind1700000000064,
+      CreateCustomerContacts1700000000065,
+      CreateDeliveryAddressIssues1700000000066,
+      AddNfeMissingFields1700000000067,
+      CreateUpsPickups1700000000068
     ],
     synchronize: false,
     logging: false,

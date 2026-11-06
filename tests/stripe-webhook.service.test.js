@@ -254,6 +254,40 @@ describe('StripeWebhookService', () => {
     }));
   });
 
+  test.each([
+    ['invoice.paid', { id: 'in_1', customer: 'cus_1', subscription: 'sub_123' }],
+    ['customer.subscription.updated', {
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      items: { data: [{ price: { id: 'price_abc' }, quantity: 1 }] },
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    }]
+  ])('%s keeps the Stripe account the checkout recorded', async (type, object) => {
+    const { service, stripeBilling, ledgerRepository } = buildService();
+    stripeBilling.constructEvent.mockReturnValue({ id: 'evt_account', type, data: { object } });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      items: { data: [{ price: { id: 'price_abc' }, quantity: 1 }] },
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_123',
+      stripeAccount: 'br'
+    });
+
+    await service.handle({ account: 'us', rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(ledgerRepository.upsert).toHaveBeenCalled();
+    for (const [row] of ledgerRepository.upsert.mock.calls) {
+      expect(row.stripeAccount).toBe('br');
+    }
+  });
+
   describe('Eden Bowls invoice PDF', () => {
     const row = { id: 1, invoiceNumber: 'EB-2026-000418', emailStatus: 'pending', emailTo: 'ana@example.com' };
     const attachment = { invoiceNumber: 'EB-2026-000418', filename: 'EB-2026-000418.pdf', content: Buffer.from('%PDF') };
@@ -830,6 +864,36 @@ describe('StripeWebhookService', () => {
     expect(transactionalMailer.notifyAdminNewSubscription).not.toHaveBeenCalled();
   });
 
+  test('Edit waiting for payment: the new contract starts when the invoice is paid', async () => {
+    const { service, stripeBilling, ledgerRepository } = buildService({});
+    ledgerRepository.startContract = jest.fn();
+    stripeBilling.setCancelAtPeriodEnd = jest.fn().mockResolvedValue({});
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_term',
+      type: 'invoice.paid',
+      data: { object: { id: 'in_plan', subscription: 'sub_123', customer: 'cus_1', billing_reason: 'subscription_update' } }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      autoRenew: false,
+      cancelAtPeriodEnd: true,
+      editPaymentPending: true,
+      editPending: { invoice_id: 'in_plan', term_months: 3, term_changed: true }
+    });
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(ledgerRepository.startContract).toHaveBeenCalledWith('sub_123');
+    expect(stripeBilling.setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_123', false);
+  });
+
   test('does not mail when payment_intent.payment_failed updates checkout', async () => {
     const transactionalMailer = {
       notifyPaymentFailed: jest.fn()
@@ -1389,6 +1453,17 @@ describe('StripeWebhookService charged deliveries', () => {
 
     expect(ledger.repository.incrementChargedDeliveries).not.toHaveBeenCalled();
     expect(ledger.current().chargedDeliveries).toBe(1);
+  });
+
+  test('Renewal off after a term change: the plan ends at the last delivery of the new contract', async () => {
+    const ledger = ledgerWith({ chargedDeliveries: 3, contractStartCharged: 1, subscriptionTermMonths: 3, autoRenew: false, lastChargedInvoiceId: 'in_3' });
+    const stripeBilling = billingStub();
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository });
+
+    await deliver(service, stripeBilling, { id: 'in_4', billing_reason: 'subscription_cycle', subtotal: 3200, amount_paid: 3200 });
+
+    expect(ledger.current().chargedDeliveries).toBe(4);
+    expect(stripeBilling.setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_123', true);
   });
 
   test('the $0 invoice paid by a skip keeps the ledger trialing and sends no letter', async () => {

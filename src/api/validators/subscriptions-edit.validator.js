@@ -1,5 +1,6 @@
 const { z } = require('zod');
 const { HttpError } = require('../../core/http-error');
+const { parseRecipientNameInput } = require('../../core/recipient-name');
 
 const editPetSchema = z.object({
   pet_id: z.string().trim().max(64).optional(),
@@ -21,7 +22,8 @@ const editAddressSchema = z.object({
   city: z.string().trim().max(120).optional(),
   neighborhood: z.string().trim().max(120).optional(),
   complement: z.string().trim().max(120).optional(),
-  number: z.string().trim().max(32).optional()
+  number: z.string().trim().max(32).optional(),
+  recipient_name: z.string().optional()
 }).passthrough();
 
 const editShippingSchema = z.object({
@@ -42,7 +44,10 @@ const subscriptionsEditPayloadSchema = z.object({
   payment_method_id: z.string().trim().max(128).optional(),
   // Present when the customer adjusts packs for one delivery: no proration, nothing charged now.
   delivery_id: z.string().trim().min(1).max(64).optional(),
-  expected_current_hash: z.string().trim().max(128).optional()
+  expected_current_hash: z.string().trim().max(128).optional(),
+  // Brazil only (subscription-contract): checked against the account by the edit, with the checkout rules.
+  tax_document: z.string().trim().max(32).optional(),
+  fiscal_name: z.string().trim().max(200).optional()
 });
 
 function wrapZod(parse) {
@@ -66,12 +71,18 @@ function wrapZod(parse) {
   }
 }
 
+// Absent stays absent, so the commit keeps the stored recipient; anything sent must pass the rule (delivery-recipient).
+function withRecipientName(parsed) {
+  if (!parsed.address || parsed.address.recipient_name === undefined) return parsed;
+  return { ...parsed, address: { ...parsed.address, recipient_name: parseRecipientNameInput(parsed.address.recipient_name) } };
+}
+
 function parseSubscriptionsEditPreviewInput(payload = {}) {
-  return wrapZod(() => subscriptionsEditPayloadSchema.parse(payload || {}));
+  return withRecipientName(wrapZod(() => subscriptionsEditPayloadSchema.parse(payload || {})));
 }
 
 function parseSubscriptionsEditCommitInput(payload = {}) {
-  const parsed = wrapZod(() => subscriptionsEditPayloadSchema.parse(payload || {}));
+  const parsed = withRecipientName(wrapZod(() => subscriptionsEditPayloadSchema.parse(payload || {})));
   const hash = String(parsed.expected_current_hash || '').trim();
   if (!hash) {
     throw new HttpError(422, 'expected_current_hash is required.', {

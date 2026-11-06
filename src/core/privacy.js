@@ -9,7 +9,8 @@ const CONSENT_TYPES = [
   'share_opt_out'
 ];
 
-const CONSENT_SOURCES = ['otp_verify', 'banner', 'preferences', 'gpc', 'do_not_sell'];
+// `checkout` is written only by the checkout itself (legal-documents); the public cookie route does not accept it.
+const CONSENT_SOURCES = ['otp_verify', 'checkout', 'banner', 'preferences', 'gpc', 'do_not_sell'];
 
 const REQUEST_TYPES = ['access', 'deletion', 'correction', 'portability', 'opt_out_share'];
 const REQUEST_STATUSES = ['open', 'in_progress', 'completed', 'rejected'];

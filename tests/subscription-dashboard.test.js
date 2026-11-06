@@ -98,7 +98,8 @@ describe('subscription dashboard delivery address', () => {
         neighborhood: 'Consolação',
         city: 'São Paulo',
         state: 'SP',
-        zipcode: '01305-000'
+        zipcode: '01305-000',
+        recipient_name: 'João Lima'
       }
     });
 
@@ -110,7 +111,8 @@ describe('subscription dashboard delivery address', () => {
       neighborhood: 'Consolação',
       city: 'São Paulo',
       state: 'SP',
-      zipcode: '01305-000'
+      zipcode: '01305-000',
+      recipient_name: 'João Lima'
     });
   });
 
@@ -127,5 +129,25 @@ describe('subscription dashboard delivery address', () => {
       state: 'CA',
       zipcode: '94105'
     });
+  });
+});
+
+describe('subscription detail: fiscal data and market mismatch', () => {
+  test('a Brazil customer with a CPF and no fiscal name sees what is missing, with only the last 4 digits', () => {
+    const detail = mapLedgerToDashboardDetail(
+      { ...ledgerRow('br', ['beef']), address: { country: 'BR' } },
+      { fiscal: { taxDocument: '529.982.247-25', fiscalName: null } }
+    );
+    expect(detail.fiscal).toEqual({ tax_document_last4: '4725', fiscal_name: null, missing: ['fiscal_name'] });
+    expect(detail.market_mismatch).toBe(false);
+  });
+
+  test('a stored address of another market is a mismatch; an empty country is not', () => {
+    expect(mapLedgerToDashboardDetail({ ...ledgerRow('us', ['turkey']), address: { country: 'BR' } }).market_mismatch).toBe(true);
+    expect(mapLedgerToDashboardDetail({ ...ledgerRow('us', ['turkey']), address: {} }).market_mismatch).toBe(false);
+  });
+
+  test('a US detail has no fiscal block', () => {
+    expect(mapLedgerToDashboardDetail(ledgerRow('us', ['turkey']))).not.toHaveProperty('fiscal');
   });
 });

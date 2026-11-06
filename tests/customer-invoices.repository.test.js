@@ -71,6 +71,8 @@ describe('CustomerInvoicesRepository', () => {
         .mockResolvedValueOnce([
           { post_id: 301, meta_key: 'attribute_pa_flavor', meta_value: 'Bovino' },
           { post_id: 301, meta_key: 'attribute_pa_weight', meta_value: '300g' },
+          { post_id: 301, meta_key: '_eden_ncm', meta_value: '23091000' },
+          { post_id: 301, meta_key: '_eden_origin', meta_value: '2' },
           { post_id: 302, meta_key: '_flavor_slug', meta_value: 'fish' },
           { post_id: 302, meta_key: 'attribute_pa_weight', meta_value: '500g' }
         ])
@@ -79,8 +81,8 @@ describe('CustomerInvoicesRepository', () => {
 
     const variants = await repository.findVariantsByPriceIds(['price_beef', 'price_fish', 'not_a_price']);
 
-    expect(variants.get('price_beef')).toEqual({ flavorKey: 'beef', label: 'Bovino', grams: 300 });
-    expect(variants.get('price_fish')).toEqual({ flavorKey: 'fish', label: '', grams: 500 });
+    expect(variants.get('price_beef')).toEqual({ variationId: 301, ncm: '23091000', origin: 2, flavorKey: 'beef', label: 'Bovino', grams: 300 });
+    expect(variants.get('price_fish')).toEqual({ variationId: 302, ncm: null, origin: 0, flavorKey: 'fish', label: '', grams: 500 });
   });
 
   test('a new recipe keeps its key from the slug and its full catalog name', async () => {
@@ -94,7 +96,7 @@ describe('CustomerInvoicesRepository', () => {
         ])
     };
     const variants = await new CustomerInvoicesRepository(dataSource).findVariantsByPriceIds(['price_senior_beef']);
-    expect(variants.get('price_senior_beef')).toEqual({ flavorKey: 'senior-beef', label: 'Receita de Carne para Cães Sênior', grams: 300 });
+    expect(variants.get('price_senior_beef')).toEqual({ variationId: 401, ncm: null, origin: 0, flavorKey: 'senior-beef', label: 'Receita de Carne para Cães Sênior', grams: 300 });
   });
 
   test('email retries back off from five minutes up to six hours', () => {

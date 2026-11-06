@@ -61,6 +61,20 @@ describe('admin shipping and coupon routes', () => {
     expect(adminShippingService.saveSettings).toHaveBeenCalled();
   });
 
+  test('passes the US ship-from phone through', async () => {
+    const adminShippingService = {
+      saveSettings: jest.fn().mockReturnValue({ success: true, data: { settings: {} } })
+    };
+    const app = adminApp({ adminShippingService });
+    const response = await request(app)
+      .put('/api/v1/admin/shipping/settings')
+      .set('Authorization', `Bearer ${tokenFor()}`)
+      .send({ us: { ship_from: { phone: '305 555 0100' } } });
+
+    expect(response.status).toBe(200);
+    expect(adminShippingService.saveSettings.mock.calls[0][0].us.ship_from.phone).toBe('305 555 0100');
+  });
+
   test('returns first-purchase promo health', async () => {
     const stripeCouponService = {
       mappingHealth: jest.fn().mockResolvedValue({

@@ -152,6 +152,11 @@ describe('SubscriptionDeliveriesRepository', () => {
     expect(stripe.billing.listPaidInvoicesForSubscription).not.toHaveBeenCalled();
   });
 
+  test('Three months to six: the deliveries before the change do not count', () => {
+    const mapped = mapDeliverySubscription(ledgerRow({ subscriptionTermMonths: 6, chargedDeliveries: 3, contractStartCharged: 3 }), { paidDeliveries: 3 });
+    expect(mapped.chargedCount).toBe(0);
+  });
+
   test('the saved renewal preference wins over cancel_at_period_end', () => {
     const mapped = mapDeliverySubscription(ledgerRow({ autoRenew: false, cancelAtPeriodEnd: false }), { paidDeliveries: 4 });
     expect(mapped.autoRenew).toBe(false);

@@ -10,8 +10,10 @@ const {
   extractCardFromPaymentMethod
 } = require('../core/stripe-subscription-map');
 const {
+  contractPaid,
   isChargedDeliveryInvoice,
-  lastContractedDeliveryCharged
+  lastContractedDeliveryCharged,
+  startNewContract
 } = require('../core/contract-deliveries');
 
 const WEBHOOK_EVENT_TIMEOUT_MS = 30 * 1000;
@@ -38,12 +40,14 @@ class StripeWebhookService {
     this.webhookSecret = options.webhookSecret || '';
     this.eventsRepository = options.eventsRepository || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.addressIssueService = options.addressIssueService || null;
     this.customerStore = options.customerStore || null;
     this.shippingProductId = options.shippingProductId || '';
     this.transactionalMailer = options.transactionalMailer || null;
     this.pendingDeliveryChanges = options.pendingDeliveryChanges || null;
     this.paidCycles = options.paidCycles || null;
     this.customerInvoices = options.customerInvoices || null;
+    this.blingNfe = options.blingNfe || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.withTimeout = options.withTimeout || withTimeout;
   }
@@ -375,11 +379,22 @@ class StripeWebhookService {
       && existing.editPending.invoice_id
       && existing.editPending.invoice_id === invoice.id;
 
+    // Before the promotion below clears the pending edit, so a retried event still does it.
+    if (promotedPending && existing.editPending.term_changed) {
+      await startNewContract({
+        ledgerRepository: this.ledgerRepository,
+        billing: runtime.stripeBilling || this.stripeBilling,
+        row: existing,
+        subscriptionId
+      });
+    }
+
     await this.ledgerRepository.upsert({
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(invoice.customer || (subscription && subscription.customer) || existing && existing.stripeCustomerId || ''),
-      stripeAccount: runtime.account || (existing && existing.stripeAccount) || 'us',
+      // The checkout chose the account from the address. The endpoint that delivered the event does not change it.
+      stripeAccount: (existing && existing.stripeAccount) || runtime.account || 'us',
       // A skip or a postponement pays a $0 invoice while the charge waits in trial.
       status: subscription && subscription.status === 'trialing' ? 'trialing' : 'active',
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
@@ -402,6 +417,8 @@ class StripeWebhookService {
       stripe_subscription_id: subscriptionId,
       stripe_invoice_id: invoice.id || undefined
     });
+
+    const nfeFailure = await this.recordNfe({ invoice, runtime, userId: context.userId, subscriptionId });
 
     // One delivery estimate for this payment: the confirmation email and the production cycle use the same one.
     const delivery = await this.estimateDelivery(invoice, subscriptionId);
@@ -426,6 +443,26 @@ class StripeWebhookService {
     });
 
     await this.finishCustomerInvoice(invoice, runtime, issued, letter);
+
+    // Only the row failed to save: the steps above went on, and the event comes back to write it.
+    if (nfeFailure) {
+      throw nfeFailure;
+    }
+  }
+
+  // Writes the NF-e row of a paid BR invoice. Nothing here calls Bling; the bling_nfe job does, so Bling being slow
+  // or down never touches this event.
+  async recordNfe({ invoice, runtime, userId, subscriptionId }) {
+    if (!this.blingNfe) {
+      return null;
+    }
+    try {
+      await this.blingNfe.recordPaidInvoice({ invoice, account: runtime.account, userId, subscriptionId });
+      return null;
+    } catch (error) {
+      this.logger.error({ invoiceId: invoice && invoice.id, code: error && error.code }, 'NF-e row could not be saved.');
+      return error;
+    }
   }
 
   // Issues the Eden Bowls invoice PDF of a paid invoice above zero without emailing it. A failure here does not stop
@@ -507,6 +544,10 @@ class StripeWebhookService {
     if (this.paidCycles) {
       await this.paidCycles.recordPaid({ ledgerRow: row, subscription, invoice, estimate: delivery });
     }
+    // delivery-address-issues: a paid cycle whose address its market cannot ship. Only logs its own errors.
+    if (this.addressIssueService && row) {
+      await this.addressIssueService.report({ subscription: row, source: 'payment_check' });
+    }
     if (this.pendingDeliveryChanges) {
       await this.pendingDeliveryChanges.applyAfterCharge({ subscriptionId, subscription, billing });
     }
@@ -521,7 +562,7 @@ class StripeWebhookService {
     }
     const plan = row.planSelection || {};
     const term = Number(row.subscriptionTermMonths || plan.subscription_term_months || 1) || 1;
-    if (!lastContractedDeliveryCharged(row.chargedDeliveries, term)) {
+    if (!lastContractedDeliveryCharged(contractPaid(row.chargedDeliveries, row), term)) {
       return;
     }
     if (!billing || typeof billing.setCancelAtPeriodEnd !== 'function') {
@@ -738,7 +779,7 @@ class StripeWebhookService {
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(subscription.customer || (context.ledger && context.ledger.stripeCustomerId) || ''),
-      stripeAccount: runtime.account || (context.ledger && context.ledger.stripeAccount) || 'us',
+      stripeAccount: (context.ledger && context.ledger.stripeAccount) || runtime.account || 'us',
       status: mapStripeStatus(subscription),
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
       currentPeriodStart: period.start,

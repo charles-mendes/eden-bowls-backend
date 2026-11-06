@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { RECIPIENT_NAME_KEY, validateRecipientName } = require('../core/recipient-name');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { normalizeCountry, normalizeZipcode } = require('./onboarding-zipcode.service');
 const { formatStateForDisplay, formatStateForStorage } = require('../core/us-states');
@@ -27,7 +28,8 @@ function emptyDelivery() {
     stateCode: '',
     zipCode: '',
     country: '',
-    deliveryInstructions: ''
+    deliveryInstructions: '',
+    recipientName: ''
   };
 }
 
@@ -170,7 +172,8 @@ function mapDelivery(address, country) {
     stateCode: formatStateForStorage(address.state, country),
     zipCode: String(address.zipcode || address.postal_code || ''),
     country,
-    deliveryInstructions: String(address.delivery_instructions || '')
+    deliveryInstructions: String(address.delivery_instructions || ''),
+    recipientName: String(address[RECIPIENT_NAME_KEY] || '')
   };
 }
 
@@ -190,6 +193,8 @@ class ProfileService {
     this.authService = options.authService || null;
     this.ledgerRepository = options.ledgerRepository || null;
     this.refreshTokenRepository = options.refreshTokenRepository || null;
+    this.customerContactsRepository = options.customerContactsRepository || null;
+    this.deliveryAddressIssuesRepository = options.deliveryAddressIssuesRepository || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.avatarStorage = options.avatarStorage || null;
@@ -353,6 +358,28 @@ class ProfileService {
       errors.zipCode = 'This field is required.';
     }
 
+    // Only the admin panel sends these: the customer profile screen does not edit them, and the merge keeps them.
+    const number = payload.number === undefined ? undefined : String(payload.number).trim();
+    const neighborhood = payload.neighborhood === undefined ? undefined : String(payload.neighborhood).trim();
+    if (country === 'BR' && number !== undefined) {
+      if (!number) {
+        errors.number = 'This field is required.';
+      }
+      if (!neighborhood) {
+        errors.neighborhood = 'This field is required.';
+      }
+      if (stateForStorage && !/^[A-Z]{2}$/.test(stateForStorage)) {
+        errors.state = 'Use the two-letter state code.';
+      }
+    }
+
+    // Omitted keeps the stored recipient through the merge; anything sent, an empty string included, must be valid.
+    const rawRecipient = payload.recipientName === undefined ? payload.recipient_name : payload.recipientName;
+    const recipientName = rawRecipient === undefined ? undefined : validateRecipientName(rawRecipient);
+    if (rawRecipient !== undefined && !recipientName) {
+      errors[RECIPIENT_NAME_KEY] = 'Use 2 to 60 characters, with at least one letter and no @.';
+    }
+
     if (Object.keys(errors).length > 0) {
       throw new HttpError(422, 'Required fields are missing.', {
         code: 'validation_error',
@@ -377,7 +404,10 @@ class ProfileService {
       state: stateForStorage,
       zipcode: zipCode,
       postal_code: zipCode,
-      delivery_instructions: String(payload.deliveryInstructions || '').trim()
+      delivery_instructions: String(payload.deliveryInstructions || '').trim(),
+      ...(recipientName === undefined ? {} : { [RECIPIENT_NAME_KEY]: recipientName }),
+      ...(number === undefined ? {} : { number }),
+      ...(neighborhood === undefined ? {} : { neighborhood })
     };
 
     if (!addressRecord.exists) {
@@ -568,6 +598,15 @@ class ProfileService {
 
     await this.cancelLeftoverSubscriptions(user.id);
     await this.anonymizeAccountArtifacts(user.id);
+    // Contacts operators recorded with this customer go with the account (customer-contacts), from the store
+    // and from a privacy request alike: both end here.
+    if (this.customerContactsRepository && typeof this.customerContactsRepository.deleteByUser === 'function') {
+      await this.customerContactsRepository.deleteByUser(user.id);
+    }
+    // Address problems go with the account too (delivery-address-issues).
+    if (this.deliveryAddressIssuesRepository && typeof this.deliveryAddressIssuesRepository.deleteByUser === 'function') {
+      await this.deliveryAddressIssuesRepository.deleteByUser(user.id);
+    }
     const now = toSqlDateTime(this.nowProvider());
 
     if (this.refreshTokenRepository && typeof this.refreshTokenRepository.revokeAllForUser === 'function') {
