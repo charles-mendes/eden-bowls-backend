@@ -104,7 +104,8 @@ const rawEnvSchema = z.object({
   BLING_CLIENT_SECRET: z.string().optional(),
   BLING_REDIRECT_URI: z.string().optional(),
   BLING_NATUREZA_OPERACAO_ID: z.string().optional(),
-  BLING_NFE_EMAIL_ENABLED: z.string().optional()
+  BLING_NFE_EMAIL_ENABLED: z.string().optional(),
+  COURIER_REQUIRE_AUTHORIZED_NFE: z.string().optional()
 });
 
 function firstNonEmpty(...values) {
@@ -384,7 +385,11 @@ function parseEnv(source = process.env) {
     BLING_CLIENT_SECRET: firstNonEmpty(rawEnv.BLING_CLIENT_SECRET),
     BLING_REDIRECT_URI: firstNonEmpty(rawEnv.BLING_REDIRECT_URI),
     BLING_NATUREZA_OPERACAO_ID: firstNonEmpty(rawEnv.BLING_NATUREZA_OPERACAO_ID),
-    BLING_NFE_EMAIL_ENABLED: toBoolean(rawEnv.BLING_NFE_EMAIL_ENABLED, true)
+    BLING_NFE_EMAIL_ENABLED: toBoolean(rawEnv.BLING_NFE_EMAIL_ENABLED, true),
+    // courier-delivery (PM-25): a Brazil box leaves by courier only with an authorized NF-e. Off without a value,
+    // whatever NODE_ENV is: QA runs with NODE_ENV=production and must not lock itself. Production turns it on
+    // (docs/production-go-live.md).
+    COURIER_REQUIRE_AUTHORIZED_NFE: toBoolean(rawEnv.COURIER_REQUIRE_AUTHORIZED_NFE, false)
   };
 
   assertShippingQuoteSecret(rawEnv, resolved);

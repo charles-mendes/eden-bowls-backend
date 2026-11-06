@@ -834,7 +834,8 @@ class SubscriptionLedgerRepository {
 
   // How many paid Brazil cycles wait in "A despachar" (courier-delivery): the queue's rule, counted without its
   // 200-row cut. An invoice with a delivery on the road, delivered or failed is not waiting.
-  async countPaidCourierCyclesToDispatch({ deliveryFloor, deliveryCeiling = null, courierTableName = 'courier_deliveries', stripeAccounts = null }) {
+  // With nfeTableName (PM-25), only the cycles whose invoice has no authorized NF-e in the same Stripe account.
+  async countPaidCourierCyclesToDispatch({ deliveryFloor, deliveryCeiling = null, courierTableName = 'courier_deliveries', stripeAccounts = null, nfeTableName = null }) {
     this.ensureDataSource();
     const range = this.deliveryRangeSql({ deliveryFloor, deliveryCeiling });
     const where = [
@@ -843,6 +844,9 @@ class SubscriptionLedgerRepository {
       ...range.where,
       this.courierOpenSql(courierTableName)
     ];
+    if (nfeTableName) {
+      where.push(`NOT EXISTS (SELECT 1 FROM \`${nfeTableName}\` n WHERE n.stripe_account COLLATE utf8mb4_unicode_ci = q.stripe_account COLLATE utf8mb4_unicode_ci AND n.stripe_invoice_id COLLATE utf8mb4_unicode_ci = q.paid_invoice_id COLLATE utf8mb4_unicode_ci AND n.status = 'authorized')`);
+    }
     const params = [...range.params];
     if (Array.isArray(stripeAccounts)) {
       if (!stripeAccounts.length) return 0;

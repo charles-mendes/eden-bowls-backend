@@ -126,6 +126,19 @@ class BlingNfeRepository {
     return mapRow(rows && rows[0]);
   }
 
+  // courier-delivery (PM-25): the notes of many invoices in one read, by the unique (account, invoice) pair.
+  async listByStripeInvoices(pairs = []) {
+    const list = pairs.filter((pair) => pair && pair.stripeAccount && pair.stripeInvoiceId);
+    if (!list.length) return [];
+    const marks = list.map(() => '(?, ?)').join(', ');
+    const params = list.flatMap((pair) => [pair.stripeAccount, pair.stripeInvoiceId]);
+    const rows = await this.dataSource.query(
+      `SELECT * FROM \`${TABLE}\` WHERE (\`stripe_account\`, \`stripe_invoice_id\`) IN (${marks})`,
+      params
+    );
+    return rows.map(mapRow);
+  }
+
   async findByBlingNfeIds(ids) {
     if (!ids.length) return new Map();
     const marks = ids.map(() => '?').join(', ');

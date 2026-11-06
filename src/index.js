@@ -815,6 +815,8 @@ async function bootstrap() {
   });
   const courierDeliveryService = new CourierDeliveryService({
     repository: courierDeliveryRepository,
+    nfeRepository: blingNfeRepository,
+    requireAuthorizedNfe: env.COURIER_REQUIRE_AUTHORIZED_NFE,
     adminBillingService,
     ledgerRepository: subscriptionLedgerRepository,
     profileRepository,

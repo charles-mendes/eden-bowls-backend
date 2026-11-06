@@ -87,7 +87,12 @@ const brSubscription = (extra = {}) => ({
 
 const paidInvoice = (extra = {}) => ({ id: 'in_1', status: 'paid', subscription: 'sub_br_1', billing_reason: 'subscription_cycle', subtotal: 25900, ...extra });
 
-function setup({ subscription = brSubscription(), invoice = paidInvoice(), productionStatus = 'ready', seed = [], cycles = [], mailer, profileRepository, issues = new Map() } = {}) {
+function setup({ subscription = brSubscription(), invoice = paidInvoice(), productionStatus = 'ready', seed = [], cycles = [], mailer, profileRepository, issues = new Map(), notes = null, nfeRequired = false } = {}) {
+  // PM-25: the NF-e of each invoice, by account and invoice id, as the unique index keeps them.
+  const nfeRepository = notes ? {
+    findByStripeInvoice: jest.fn(async (account, invoiceId) => notes.find((note) => note.stripeAccount === account && note.stripeInvoiceId === invoiceId) || null),
+    listByStripeInvoices: jest.fn(async (pairs) => notes.filter((note) => pairs.some((pair) => pair.stripeAccount === note.stripeAccount && pair.stripeInvoiceId === note.stripeInvoiceId)))
+  } : null;
   const addressIssueService = { report: jest.fn(async () => null), latestForSubscriptions: jest.fn(async () => issues) };
   const repository = memoryRepository(seed);
   const auditService = { record: jest.fn() };
@@ -109,8 +114,8 @@ function setup({ subscription = brSubscription(), invoice = paidInvoice(), produ
       .filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor && (!deliveryCeiling || (cycle.deliveryDate || '') <= deliveryCeiling)).length)
   };
   const logger = { error: jest.fn(), warn() {}, info() {} };
-  const service = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, profileRepository, auditService, transactionalMailer, addressIssueService, logger, now: () => NOW });
-  return { service, repository, auditService, transactionalMailer, adminBillingService, ledgerRepository, logger, addressIssueService };
+  const service = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, profileRepository, auditService, transactionalMailer, addressIssueService, nfeRepository, requireAuthorizedNfe: nfeRequired, logger, now: () => NOW });
+  return { service, repository, auditService, transactionalMailer, adminBillingService, ledgerRepository, logger, addressIssueService, nfeRepository };
 }
 
 const actor = { userId: 99, email: 'ops@edenbowls.com' };
@@ -251,6 +256,69 @@ describe('Dispatching an order that is not ready needs confirmation', () => {
     await service.dispatch({ subscriptionId: '42', body: dispatchBody({ confirm_not_ready: true }), actor });
     expect(repository.rows[0].status).toBe('out_for_delivery');
     expect(auditService.record.mock.calls[0][0].metadata.confirmedNotReady).toEqual(['production_not_ready']);
+  });
+});
+
+// admin-flow-fixes-4 (PM-25): with the fiscal lock on, a box leaves only with an authorized NF-e.
+describe('Dispatch needs an authorized NF-e when the fiscal lock is on', () => {
+  const note = (status, extra = {}) => ({ id: 9, status, stripeAccount: 'br', stripeInvoiceId: 'in_1', nfeNumber: status === 'authorized' ? '123' : null, ...extra });
+
+  test('an authorized note lets the box leave', async () => {
+    const { service, repository } = setup({ nfeRequired: true, notes: [note('authorized')] });
+    await service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor });
+    expect(repository.rows).toHaveLength(1);
+  });
+
+  test.each(['pending', 'submitted', 'blocked_missing_document', 'rejected', 'error', 'canceled'])('a %s note is refused and nothing is stored or audited', async (status) => {
+    const { service, repository, auditService, transactionalMailer } = setup({ nfeRequired: true, notes: [note(status)] });
+    const result = await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }));
+    expect(result).toMatchObject({ status: 422, code: 'courier_nfe_not_authorized', details: { nfe_status: status, nfe_id: 9 } });
+    expect(repository.rows).toHaveLength(0);
+    expect(auditService.record).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyCourierOutForDelivery).not.toHaveBeenCalled();
+  });
+
+  test('no note recorded is refused with a null status', async () => {
+    const { service } = setup({ nfeRequired: true, notes: [] });
+    const result = await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }));
+    expect(result).toMatchObject({ status: 422, code: 'courier_nfe_not_authorized', details: { nfe_status: null, nfe_id: null } });
+  });
+
+  test('a note of the same invoice in another account does not count', async () => {
+    const { service } = setup({ nfeRequired: true, notes: [note('authorized', { stripeAccount: 'us' })] });
+    const result = await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }));
+    expect(result).toMatchObject({ code: 'courier_nfe_not_authorized', details: { nfe_status: null } });
+  });
+
+  test('confirm_not_ready does not release it, and it comes before the readiness question', async () => {
+    const { service, repository } = setup({ nfeRequired: true, notes: [note('rejected')], productionStatus: 'in_production' });
+    expect(await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }))).toMatchObject({ status: 422, code: 'courier_nfe_not_authorized' });
+    expect(await code(service.dispatch({ subscriptionId: '42', body: dispatchBody({ confirm_not_ready: true }), actor }))).toMatchObject({ status: 422, code: 'courier_nfe_not_authorized' });
+    expect(repository.rows).toHaveLength(0);
+  });
+
+  test('dispatching again after a failure is locked too', async () => {
+    const failed = { id: 1, subscription_id: '42', stripe_invoice_id: 'in_1', status: 'failed', failed_at: NOW };
+    const { service } = setup({ nfeRequired: true, notes: [note('canceled')], seed: [failed] });
+    expect(await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }))).toMatchObject({ code: 'courier_nfe_not_authorized', details: { nfe_status: 'canceled' } });
+  });
+
+  test('the address lock still answers first', async () => {
+    const { service } = setup({ nfeRequired: true, notes: [], subscription: brSubscription({ address: { ...brSubscription().address, neighborhood: '' } }) });
+    expect(await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }))).toMatchObject({ code: 'courier_address_incomplete' });
+  });
+
+  test('with the lock off the note is not read', async () => {
+    const { service, repository, nfeRepository } = setup({ nfeRequired: false, notes: [] });
+    await service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor });
+    expect(repository.rows).toHaveLength(1);
+    expect(nfeRepository.findByStripeInvoice).not.toHaveBeenCalled();
+  });
+
+  test('with the lock on and no NF-e repository the API answers 503', async () => {
+    const { service, repository } = setup({ nfeRequired: true });
+    expect(await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }))).toMatchObject({ status: 503 });
+    expect(repository.rows).toHaveLength(0);
   });
 });
 
@@ -607,6 +675,36 @@ describe('The queue lists Brazil delivery work in four groups', () => {
     expect(data.to_dispatch.map((item) => item.recipient_name)).toEqual(['Ana Costa', 'ana@example.com']);
   });
 
+  // admin-flow-fixes-4 (PM-25): rows whose box can still leave carry the invoice's NF-e.
+  test('to-dispatch and failed rows carry the NF-e of their account, read at once; on the road carries none', async () => {
+    const notes = [
+      { id: 3, status: 'authorized', stripeAccount: 'br', stripeInvoiceId: 'in_ok', nfeNumber: '123' },
+      { id: 4, status: 'authorized', stripeAccount: 'us', stripeInvoiceId: 'in_none', nfeNumber: '999' },
+      { id: 5, status: 'canceled', stripeAccount: 'br', stripeInvoiceId: 'in_failed', nfeNumber: null },
+      { id: 6, status: 'authorized', stripeAccount: 'br', stripeInvoiceId: 'in_road', nfeNumber: '7' }
+    ];
+    const { service, nfeRepository } = setup({
+      nfeRequired: true,
+      notes,
+      cycles: [cycle('in_ok', '2026-11-04'), cycle('in_none', '2026-11-04'), cycle('in_failed', '2026-11-03'), cycle('in_road', '2026-11-03')],
+      seed: [delivery(1, 'in_failed', 'failed', { failed_at: NOW }), delivery(2, 'in_road', 'out_for_delivery')]
+    });
+    const { data } = await service.listQueue(actor);
+    const byInvoice = (group) => Object.fromEntries(group.map((item) => [item.invoice_id, item.nfe]));
+    expect(byInvoice(data.to_dispatch)).toEqual({ in_ok: { id: 3, status: 'authorized', number: '123' }, in_none: null });
+    expect(byInvoice(data.failed)).toEqual({ in_failed: { id: 5, status: 'canceled', number: null } });
+    expect(data.out_for_delivery[0]).not.toHaveProperty('nfe');
+    expect(data.nfe_required).toBe(true);
+    expect(nfeRepository.listByStripeInvoices).toHaveBeenCalledTimes(1);
+  });
+
+  test('the queue reports the lock off and still shows the note', async () => {
+    const { service } = setup({ notes: [{ id: 3, status: 'rejected', stripeAccount: 'br', stripeInvoiceId: 'in_1', nfeNumber: null }], cycles: [cycle('in_1', '2026-11-04')] });
+    const { data } = await service.listQueue(actor);
+    expect(data.nfe_required).toBe(false);
+    expect(data.to_dispatch[0].nfe).toEqual({ id: 3, status: 'rejected', number: null });
+  });
+
   test('Staff limited to the US gets an empty queue without reading the ledger', async () => {
     const { service, ledgerRepository } = setup({ cycles: [cycle('in_new', '2026-11-05')] });
     const { data } = await service.listQueue({ userId: 5, roles: ['operations'], markets: ['US'] });
@@ -683,15 +781,31 @@ describe('Today counts of the courier queue', () => {
     repository.countOnTheRoadSince = jest.fn().mockResolvedValue(2);
     repository.countOpenFailures = jest.fn().mockResolvedValue(1);
 
-    await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 230, onTheRoadLong: 2, failed: 1 });
+    await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 230, onTheRoadLong: 2, failed: 1, awaitingNfe: null });
     expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', courierTableName: 'courier_deliveries', stripeAccounts: ['br', 'us'] });
     expect(repository.countOnTheRoadSince.mock.calls[0][0]).toEqual(new Date(NOW.getTime() - 24 * 3600 * 1000));
+  });
+
+  // admin-flow-fixes-4 (PM-25): the cycles to dispatch without an authorized NF-e.
+  test('with the lock on it counts the cycles waiting for the NF-e by the same rule', async () => {
+    const { service, ledgerRepository, repository } = setup({ nfeRequired: true, notes: [] });
+    ledgerRepository.countPaidCourierCyclesToDispatch = jest.fn(async (query) => (query.nfeTableName ? 2 : 3));
+    repository.countOnTheRoadSince = jest.fn().mockResolvedValue(0);
+    repository.countOpenFailures = jest.fn().mockResolvedValue(0);
+
+    await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 3, onTheRoadLong: 0, failed: 0, awaitingNfe: 2 });
+    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith(expect.objectContaining({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', nfeTableName: 'bling_nfe' }));
+  });
+
+  test('with the lock on a US-only operator counts 0 waiting', async () => {
+    const { service } = setup({ nfeRequired: true, notes: [] });
+    await expect(service.countQueue({ roles: ['operator'], markets: ['US'], permissions: [] })).resolves.toMatchObject({ awaitingNfe: 0 });
   });
 
   test('a US-only operator counts nothing', async () => {
     const { service, ledgerRepository } = setup();
     ledgerRepository.countPaidCourierCyclesToDispatch = jest.fn();
-    await expect(service.countQueue({ roles: ['operator'], markets: ['US'], permissions: [] })).resolves.toEqual({ toDispatch: 0, onTheRoadLong: 0, failed: 0 });
+    await expect(service.countQueue({ roles: ['operator'], markets: ['US'], permissions: [] })).resolves.toEqual({ toDispatch: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: null });
     expect(ledgerRepository.countPaidCourierCyclesToDispatch).not.toHaveBeenCalled();
   });
 });

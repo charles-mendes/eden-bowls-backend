@@ -64,12 +64,17 @@ function toTime(value) {
 
 // Records by hand the courier delivery of a paid Brazil cycle (courier-delivery): dispatch, the final
 // statuses, edits, the admin queue, the audit entries and the two letters.
+const NFE_AUTHORIZED = 'authorized';
+
 class CourierDeliveryService {
   constructor(options = {}) {
     this.repository = options.repository || null;
     this.adminBillingService = options.adminBillingService || null;
     this.addressIssueService = options.addressIssueService || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    // PM-25: with the fiscal lock on, a box leaves only with an authorized NF-e (COURIER_REQUIRE_AUTHORIZED_NFE).
+    this.nfeRepository = options.nfeRepository || null;
+    this.nfeRequired = options.requireAuthorizedNfe === true;
     this.profileRepository = options.profileRepository || null;
     this.auditService = options.auditService || null;
     this.transactionalMailer = options.transactionalMailer || null;
@@ -152,6 +157,21 @@ class CourierDeliveryService {
     return invoice;
   }
 
+  // A lock, not a warning: no field of the request releases it, `confirm_not_ready` included.
+  async requireAuthorizedNfe(subscription, invoiceId) {
+    if (!this.nfeRequired) return;
+    if (!this.nfeRepository || typeof this.nfeRepository.findByStripeInvoice !== 'function') {
+      throw new HttpError(503, 'NF-e repository is not available.');
+    }
+    const note = await this.nfeRepository.findByStripeInvoice(subscription.stripeAccount, invoiceId);
+    if (note && note.status === NFE_AUTHORIZED) return;
+    throw new HttpError(422, 'The box only leaves with an authorized NF-e.', {
+      code: 'courier_nfe_not_authorized',
+      nfe_status: note ? note.status : null,
+      nfe_id: note ? note.id : null
+    });
+  }
+
   async readinessReasons(subscription, invoiceId) {
     return invoiceReadinessReasons(this.ledgerRepository, subscription, invoiceId);
   }
@@ -172,6 +192,8 @@ class CourierDeliveryService {
       await this.reportAddressIssue(subscription, 'courier_check');
       throw new HttpError(422, 'The delivery address is incomplete, so the box cannot leave.', { code: 'courier_address_incomplete', issues });
     }
+
+    await this.requireAuthorizedNfe(subscription, invoiceId);
 
     const reasons = await this.readinessReasons(subscription, invoiceId);
     if (reasons.length && body.confirm_not_ready !== true) {
@@ -276,7 +298,7 @@ class CourierDeliveryService {
     this.ensureReady();
     const range = resolveDeliveryRange(query, { now: this.now(), zone: TIMEZONE });
     const presentRange = { from: range.from, to: range.to, default: range.default };
-    const empty = { to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false, range: presentRange, later: 0, next_from: null };
+    const empty = { to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false, range: presentRange, later: 0, next_from: null, nfe_required: this.nfeRequired };
     let accounts = null;
     if (shouldEnforceMarketScope(actor)) {
       const scope = constrainMarketQuery(actor, {});
@@ -357,6 +379,7 @@ class CourierDeliveryService {
       .filter((cycle) => !activeInvoices.has(cycle.paidInvoiceId) && !failedInvoiceSet.has(cycle.paidInvoiceId))
       .forEach((cycle) => place('to_dispatch', cycle, null));
     await this.attachAddressIssues([...data.to_dispatch, ...data.failed]);
+    await this.attachNfe([...data.to_dispatch, ...data.failed], known);
     return { success: true, data };
   }
 
@@ -369,6 +392,23 @@ class CourierDeliveryService {
     }
   }
 
+  // PM-25: the rows whose box can still leave carry the NF-e of their invoice, in the cycle's Stripe account, read
+  // for the page at once. Without the repository they carry nothing.
+  async attachNfe(items, cycles) {
+    if (!this.nfeRepository || typeof this.nfeRepository.listByStripeInvoices !== 'function' || items.length === 0) return;
+    const accountOf = (item) => {
+      const cycle = cycles.get(item.invoice_id);
+      return String((cycle && cycle.stripeAccount) || item.stripe_account || '').toLowerCase();
+    };
+    const pairs = items.map((item) => ({ stripeAccount: accountOf(item), stripeInvoiceId: item.invoice_id }));
+    const notes = new Map((await this.nfeRepository.listByStripeInvoices(pairs))
+      .map((note) => [`${String(note.stripeAccount).toLowerCase()}|${note.stripeInvoiceId}`, note]));
+    for (const item of items) {
+      const note = notes.get(`${accountOf(item)}|${item.invoice_id}`);
+      item.nfe = note ? { id: note.id, status: note.status, number: note.nfeNumber || null } : null;
+    }
+  }
+
   // Phone and instructions are read for every row at once; without the profile repository they stay empty.
   async deliveryContacts(cycles) {
     if (!this.profileRepository || typeof this.profileRepository.listDeliveryContacts !== 'function') return new Map();
@@ -378,7 +418,7 @@ class CourierDeliveryService {
 
   // The queue's groups as counts for Today, by the same rules and without the 200-row cut.
   async countQueue(actor = {}) {
-    const zero = { toDispatch: 0, onTheRoadLong: 0, failed: 0 };
+    const zero = { toDispatch: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: this.nfeRequired ? 0 : null };
     let accounts = null;
     if (shouldEnforceMarketScope(actor)) {
       const scope = constrainMarketQuery(actor, {});
@@ -390,18 +430,23 @@ class CourierDeliveryService {
     }
     const now = this.now();
     const today = DateTime.fromJSDate(now, { zone: TIMEZONE }).startOf('day');
-    const [toDispatch, onTheRoadLong, failed] = await Promise.all([
-      // The queue's default range, so the count matches the list Today opens.
-      this.ledgerRepository.countPaidCourierCyclesToDispatch({
-        deliveryFloor: today.minus({ days: DISPATCH_FLOOR_DAYS }).toISODate(),
-        deliveryCeiling: today.plus({ days: 1 }).toISODate(),
-        courierTableName: this.repository.tableName || 'courier_deliveries',
-        stripeAccounts: accounts
-      }),
+    // The queue's default range, so the count matches the list Today opens.
+    const toDispatchQuery = {
+      deliveryFloor: today.minus({ days: DISPATCH_FLOOR_DAYS }).toISODate(),
+      deliveryCeiling: today.plus({ days: 1 }).toISODate(),
+      courierTableName: this.repository.tableName || 'courier_deliveries',
+      stripeAccounts: accounts
+    };
+    const [toDispatch, onTheRoadLong, failed, awaitingNfe] = await Promise.all([
+      this.ledgerRepository.countPaidCourierCyclesToDispatch(toDispatchQuery),
       this.repository.countOnTheRoadSince(new Date(now.getTime() - LONG_ON_THE_ROAD_HOURS * 3600 * 1000), accounts),
-      this.repository.countOpenFailures(accounts)
+      this.repository.countOpenFailures(accounts),
+      // PM-25: the same cycles, without an authorized NF-e. Null while the lock is off.
+      this.nfeRequired
+        ? this.ledgerRepository.countPaidCourierCyclesToDispatch({ ...toDispatchQuery, nfeTableName: 'bling_nfe' })
+        : Promise.resolve(null)
     ]);
-    return { toDispatch, onTheRoadLong, failed };
+    return { toDispatch, onTheRoadLong, failed, awaitingNfe };
   }
 
   presentQueueItem(cycle, row, contacts = new Map()) {

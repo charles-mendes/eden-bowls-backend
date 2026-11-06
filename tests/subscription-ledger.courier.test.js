@@ -40,6 +40,18 @@ describe('SubscriptionLedgerRepository courier queries', () => {
     expect(query.mock.calls[1][1]).toEqual(['2026-11-08']);
   });
 
+  // admin-flow-fixes-4 (PM-25): the cycles to dispatch whose invoice has no authorized NF-e.
+  test('countPaidCourierCyclesToDispatch with nfeTableName keeps the cycles without an authorized NF-e', async () => {
+    const query = jest.fn().mockResolvedValue([{ total: 2 }]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+
+    await expect(repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2026-10-07', deliveryCeiling: '2026-11-07', nfeTableName: 'bling_nfe' })).resolves.toBe(2);
+    expect(query.mock.calls[0][0]).toContain("NOT EXISTS (SELECT 1 FROM `bling_nfe` n WHERE n.stripe_account COLLATE utf8mb4_unicode_ci = q.stripe_account COLLATE utf8mb4_unicode_ci AND n.stripe_invoice_id COLLATE utf8mb4_unicode_ci = q.paid_invoice_id COLLATE utf8mb4_unicode_ci AND n.status = 'authorized')");
+    expect(query.mock.calls[0][1]).toEqual(['2026-10-07', '2026-11-07']);
+    await repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2026-10-07' });
+    expect(query.mock.calls[1][0]).not.toContain('bling_nfe');
+  });
+
   test('listPaidCyclesByInvoiceIds has no floor and skips an empty list', async () => {
     const query = jest.fn().mockResolvedValue([paidRow]);
     const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });

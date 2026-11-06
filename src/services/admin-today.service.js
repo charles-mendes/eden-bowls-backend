@@ -136,7 +136,7 @@ class AdminTodayService {
     const us = markets.includes('US');
     const courier = brazil && this.courierDeliveryService
       ? this.courierDeliveryService.countQueue(actor)
-      : { toDispatch: 0, onTheRoadLong: 0, failed: 0 };
+      : { toDispatch: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: this.courierDeliveryService && this.courierDeliveryService.nfeRequired ? 0 : null };
     const nfe = brazil && this.blingNfeRepository
       ? this.blingNfeRepository.countByStatuses(NFE_ACTION_STATUSES)
       : Object.fromEntries(NFE_ACTION_STATUSES.map((status) => [status, 0]));
@@ -150,6 +150,8 @@ class AdminTodayService {
       courierToDispatch: courierCounts.toDispatch,
       courierOnTheRoadLong: courierCounts.onTheRoadLong,
       courierFailed: courierCounts.failed,
+      // PM-25: part of courierToDispatch, waiting for an authorized NF-e; null while the fiscal lock is off.
+      courierAwaitingNfe: courierCounts.awaitingNfe === undefined ? null : courierCounts.awaitingNfe,
       nfeMissingDocument: nfeCounts.blocked_missing_document,
       nfeRejected: nfeCounts.rejected,
       nfeError: nfeCounts.error,

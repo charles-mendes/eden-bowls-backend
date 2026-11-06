@@ -10,7 +10,7 @@ const token = () => issueJwtToken({ data: { user: { id: 7 } } }, { ...jwt, ttlSe
 const brSubscription = { id: '42', stripeSubscriptionId: 'sub_br_1', stripeAccount: 'br', status: 'active', address: { country: 'BR', street: 'Rua A', number: '10', neighborhood: 'Centro', city: 'São Paulo', state: 'SP', zipcode: '01001000', recipient_name: 'João Lima' }, user: { id: '9', email: 'ana@example.com' } };
 const paidInvoice = { id: 'in_1', status: 'paid', subscription: 'sub_br_1', billing_reason: 'subscription_cycle', subtotal: 25900 };
 
-function appFor(identity, { productionStatus = 'ready', row = null } = {}) {
+function appFor(identity, { productionStatus = 'ready', row = null, nfeRequired = false, notes = [] } = {}) {
   const repository = {
     insert: jest.fn(async (payload) => ({ inserted: true, row: { id: 1, subscription_id: payload.subscriptionId, stripe_invoice_id: payload.invoiceId, method: payload.method, status: 'out_for_delivery', out_for_delivery_at: new Date() } })),
     findById: jest.fn(async () => row),
@@ -32,7 +32,11 @@ function appFor(identity, { productionStatus = 'ready', row = null } = {}) {
     listPaidCourierCycles: jest.fn(async () => []),
     listPaidCyclesByInvoiceIds: jest.fn(async (ids) => ids.map((paidInvoiceId) => ({ id: 42, paidInvoiceId, productionStatus, status: 'active' })))
   };
-  const courierDeliveryService = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository });
+  const nfeRepository = {
+    findByStripeInvoice: jest.fn(async (account, invoiceId) => notes.find((note) => note.stripeAccount === account && note.stripeInvoiceId === invoiceId) || null),
+    listByStripeInvoices: jest.fn(async () => notes)
+  };
+  const courierDeliveryService = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, nfeRepository, requireAuthorizedNfe: nfeRequired });
   const app = createApp({
     corsOrigins: ['http://localhost:5174'],
     jwt,
@@ -66,6 +70,18 @@ describe('admin courier delivery routes', () => {
     expect(response.status).toBe(409);
     expect(JSON.stringify(response.body)).toContain('courier_dispatch_needs_confirmation');
     expect(JSON.stringify(response.body)).toContain('production_not_ready');
+    expect(repository.insert).not.toHaveBeenCalled();
+  });
+
+  // admin-flow-fixes-4 (PM-25): the fiscal lock's code and details reach the response.
+  test('the fiscal lock answers 422 courier_nfe_not_authorized with the note', async () => {
+    const { app, repository } = appFor(brOperator, { nfeRequired: true, notes: [{ id: 9, status: 'rejected', stripeAccount: 'br', stripeInvoiceId: 'in_1' }] });
+    const response = await auth(request(app).post('/api/v1/admin/billing/subscriptions/42/courier-deliveries'))
+      .send({ invoice_id: 'in_1', method: 'uber', confirm_not_ready: true });
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body)).toContain('courier_nfe_not_authorized');
+    expect(JSON.stringify(response.body)).toContain('"nfe_status":"rejected"');
+    expect(JSON.stringify(response.body)).toContain('"nfe_id":9');
     expect(repository.insert).not.toHaveBeenCalled();
   });
 

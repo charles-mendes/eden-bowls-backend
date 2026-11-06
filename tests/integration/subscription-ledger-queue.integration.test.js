@@ -11,6 +11,7 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
   const usersTable = `it_${suffix}_wp_users`;
   const usermetaTable = `it_${suffix}_usermeta`;
   const courierTable = `it_${suffix}_courier_deliveries`;
+  const nfeTable = `it_${suffix}_bling_nfe`;
 
   const dataSource = new DataSource({
     type: 'mysql',
@@ -91,6 +92,7 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     if (dataSource.isInitialized) {
       await dataSource.query(`DROP TABLE IF EXISTS \`${cycleTable}\``);
       await dataSource.query(`DROP TABLE IF EXISTS \`${courierTable}\``);
+      await dataSource.query(`DROP TABLE IF EXISTS \`${nfeTable}\``);
       await dataSource.query(`DROP TABLE IF EXISTS \`${ledgerTable}\``);
       await dataSource.query(`DROP TABLE IF EXISTS \`${usersTable}\``);
       await dataSource.query(`DROP TABLE IF EXISTS \`${usermetaTable}\``);
@@ -371,5 +373,38 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     } finally {
       await dataSource.query(`DROP TABLE IF EXISTS \`${upsTable}\``);
     }
+  });
+
+  // admin-flow-fixes-4 (PM-25): Today's cycles to dispatch without an authorized NF-e, across collations.
+  test('counts the cycles to dispatch waiting for an authorized NF-e in the same account', async () => {
+    await dataSource.query(`CREATE TABLE IF NOT EXISTS \`${courierTable}\` (
+      id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      stripe_invoice_id varchar(191) NOT NULL,
+      status varchar(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    await dataSource.query(`CREATE TABLE \`${nfeTable}\` (
+      id int unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      status varchar(32) NOT NULL,
+      stripe_account varchar(8) NOT NULL,
+      stripe_invoice_id varchar(64) NOT NULL,
+      UNIQUE KEY uniq_stripe (stripe_account, stripe_invoice_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    const result = await dataSource.query(
+      `INSERT INTO \`${ledgerTable}\` (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end, address)
+       VALUES (7, 'ana@edenbowls.com', 'sub_br_nfe', 'cus_br_nfe', 'br', 'active', '2027-03-01 08:00:00', '2027-04-01 08:00:00', '{"country":"BR"}')`
+    );
+    for (const invoice of ['in_nfe_ok', 'in_nfe_rejected', 'in_nfe_none', 'in_nfe_other_account']) {
+      await dataSource.query(
+        `INSERT INTO \`${cycleTable}\` (subscription_id, period_end, status, paid_at, paid_invoice_id, delivery_date) VALUES (?, ?, ?, ?, ?, ?)`,
+        [result.insertId, '2027-03-10 08:00:00', 'ready', '2027-03-10 07:00:00', invoice, '2027-03-10']
+      );
+    }
+    await dataSource.query(
+      `INSERT INTO \`${nfeTable}\` (status, stripe_account, stripe_invoice_id) VALUES ('authorized', 'br', 'in_nfe_ok'), ('rejected', 'br', 'in_nfe_rejected'), ('authorized', 'us', 'in_nfe_other_account')`
+    );
+
+    const range = { deliveryFloor: '2027-03-01', deliveryCeiling: '2027-03-31', courierTableName: courierTable };
+    await expect(repository.countPaidCourierCyclesToDispatch(range)).resolves.toBe(4);
+    await expect(repository.countPaidCourierCyclesToDispatch({ ...range, nfeTableName: nfeTable })).resolves.toBe(3);
   });
 });

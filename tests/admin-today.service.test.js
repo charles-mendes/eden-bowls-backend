@@ -163,7 +163,7 @@ describe('AdminTodayService', () => {
 
     expect(result.data.truncated).toBe(true);
     expect(result.data.fulfillment).toEqual({
-      courierToDispatch: 230, courierOnTheRoadLong: 2, courierFailed: 1,
+      courierToDispatch: 230, courierOnTheRoadLong: 2, courierFailed: 1, courierAwaitingNfe: null,
       nfeMissingDocument: 0, nfeRejected: 1, nfeError: 3,
       upsUnresolved: 4, blingConnected: true,
       addressIssues: { BR: { open: 0, stale: 0 }, US: { open: 0, stale: 0 } },
@@ -222,6 +222,22 @@ describe('AdminTodayService', () => {
     expect(courierDeliveryService.countQueue).toHaveBeenCalledWith(brOperator);
     expect(upsShipmentRepository.countUnresolved).not.toHaveBeenCalled();
     expect(result.data.fulfillment).toMatchObject({ courierToDispatch: 2, nfeRejected: 1, upsUnresolved: 0, blingConnected: null });
+  });
+
+  // admin-flow-fixes-4 (PM-25): part of "a despachar", waiting for an authorized NF-e.
+  test('reports the orders waiting for the NF-e, and null while the lock is off', async () => {
+    const on = await service({ rows: [], courierCounts: { toDispatch: 3, onTheRoadLong: 0, failed: 0, awaitingNfe: 2 } }).service.overview({}, adminActor);
+    expect(on.data.fulfillment).toMatchObject({ courierToDispatch: 3, courierAwaitingNfe: 2 });
+
+    const off = await service({ rows: [], courierCounts: { toDispatch: 3, onTheRoadLong: 0, failed: 0, awaitingNfe: null } }).service.overview({}, adminActor);
+    expect(off.data.fulfillment.courierAwaitingNfe).toBeNull();
+  });
+
+  test('with the lock on, the US on screen counts 0 waiting for the NF-e', async () => {
+    const { service: today, courierDeliveryService } = service({ rows: [] });
+    courierDeliveryService.nfeRequired = true;
+    const result = await today.overview({ account: 'us' }, adminActor);
+    expect(result.data.fulfillment.courierAwaitingNfe).toBe(0);
   });
 
   test('the US on screen counts no Brazil work', async () => {
