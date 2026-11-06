@@ -40,4 +40,4 @@ Rode só os testes relacionados (`npx jest --runTestsByPath …` ou `--findRelat
 
 ## 5. Fechamento
 
-- [ ] 5.1 `npx jest --changedSince=HEAD`, `docs/api-routes.json` commitado com as quatro rotas, e uma chamada de coleta de teste no CIE do QA (pedir e cancelar), com o resultado anotado no PR.
+- [x] 5.1 `npx jest --changedSince=HEAD`, `docs/api-routes.json` commitado com as quatro rotas, e uma chamada de coleta de teste no CIE do QA (pedir e cancelar), com o resultado anotado no PR.

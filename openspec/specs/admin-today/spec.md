@@ -42,6 +42,8 @@ The block MUST also carry `addressIssues`, with `BR` and `US` entries of `open` 
 
 The block MUST also carry `courierAwaitingNfe`: when the courier fiscal lock is on, the number of Brazil cycles to dispatch (by the same rule as the courier count) whose invoice has no NF-e `authorized` for its Stripe account, no note counted as not authorized; when the lock is off, `null`. It MUST be 0 for an actor who does not see Brazil. It is part of the to-dispatch count, which MUST NOT change, and MUST NOT count failed deliveries.
 
+The block MUST also carry `upsLabelsWithoutPickup`: the US labels `created`, with no `requested` or `unknown` pickup and no tracking scan yet, by the rule of the label queue's pickup section. It MUST be 0 for an actor who does not see the US.
+
 #### Scenario: Brazil operator
 
 - **WHEN** a Brazil operator opens Today with two cycles to dispatch and one rejected NF-e
@@ -101,6 +103,21 @@ The block MUST also carry `courierAwaitingNfe`: when the courier fiscal lock is 
 
 - **WHEN** the lock is on and a US operator opens Today
 - **THEN** `courierAwaitingNfe` is 0
+
+#### Scenario: Labels waiting for a pickup
+
+- **WHEN** three US labels are created today, two of them in a requested pickup
+- **THEN** `upsLabelsWithoutPickup` is 1
+
+#### Scenario: Box already scanned
+
+- **WHEN** a created label without a pickup already has a UPS scan
+- **THEN** it is not counted
+
+#### Scenario: Labels without pickup outside the scope
+
+- **WHEN** a Brazil operator opens Today with a US label without pickup
+- **THEN** `upsLabelsWithoutPickup` is 0
 
 ### Requirement: Refused payments show the last contact and the phone
 
