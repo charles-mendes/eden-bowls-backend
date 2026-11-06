@@ -36,7 +36,9 @@ For a paid Brazil cycle (by delivery address, as the courier queue), each item M
 
 ### Requirement: Today counts shipping and invoice work on its own
 
-The response MUST carry a `fulfillment` block, counted by its own queries and not limited by the 200 items of the list, within the actor's market scope. Each count MUST follow the rule of the screen it links to, not the size of an already cut list: Brazil cycles to dispatch (the courier "A despachar" rule: paid Brazil cycle delivered within the last 30 days, with no active delivery and no open failure), deliveries on the road for more than 24 hours since they left, failed deliveries with no new dispatch (the latest delivery of the invoice is failed, as in "Falhas"), NF-e `blocked_missing_document`, `rejected` and `error`, and US shipments `pending` or `unknown`. It MUST carry `blingConnected` only for an actor with `bling.connect`, and `null` otherwise. Counts for a market outside the actor's scope MUST be 0.
+The response MUST carry a `fulfillment` block, counted by its own queries and not limited by the 200 items of the list, within the actor's market scope. Each count MUST follow the rule of the screen it links to, not the size of an already cut list: Brazil cycles to dispatch (the courier "A despachar" rule in its default range: paid Brazil cycle delivered from 30 days ago to tomorrow, with no active delivery and no open failure), deliveries on the road for more than 24 hours since they left, failed deliveries with no new dispatch (the latest delivery of the invoice is failed, as in "Falhas"), NF-e `blocked_missing_document`, `rejected` and `error`, and US shipments `pending` or `unknown`. It MUST carry `blingConnected` only for an actor with `bling.connect`, and `null` otherwise. Counts for a market outside the actor's scope MUST be 0.
+
+The block MUST also carry `addressIssues`, with `BR` and `US` entries of `open` (address problems open for subscriptions of that market's Stripe account) and `stale` (those open for 72 hours or more, the point from which the panel shows "Sem correção há N dias"), and `marketExceptions`, with `BR` and `US` entries of the number of subscriptions in market exception for the actor, by the rule of the market exceptions list but without its 200-item limit, by the market of their Stripe account (`br` → `BR`, `us` → `US`).
 
 #### Scenario: Brazil operator
 
@@ -48,6 +50,11 @@ The response MUST carry a `fulfillment` block, counted by its own queries and no
 - **WHEN** 250 cycles are due and 230 Brazil cycles are ready to dispatch
 - **THEN** the list is truncated at 200 and `fulfillment` still reports 230 to dispatch
 
+#### Scenario: Cycle to dispatch later
+
+- **WHEN** a paid Brazil cycle with no delivery has a delivery date in three days
+- **THEN** it is not counted to dispatch, as the courier queue does not list it in its default range
+
 #### Scenario: Box sent again after a failure
 
 - **WHEN** an invoice has a failed delivery and a later one on the road
@@ -57,6 +64,26 @@ The response MUST carry a `fulfillment` block, counted by its own queries and no
 
 - **WHEN** an admin opens Today while Bling is disconnected
 - **THEN** `blingConnected` is false; for an operator it is null
+
+#### Scenario: Address problems by market
+
+- **WHEN** an admin opens Today with two open Brazil address problems, one of them opened 3 days ago, and one open US problem opened today
+- **THEN** `addressIssues.BR` is `{ open: 2, stale: 1 }` and `addressIssues.US` is `{ open: 1, stale: 0 }`
+
+#### Scenario: Not yet stale
+
+- **WHEN** a problem was opened 2 days and 20 hours ago
+- **THEN** it counts as `open` and not as `stale`
+
+#### Scenario: Closed problems are not counted
+
+- **WHEN** a problem was closed by the customer yesterday
+- **THEN** it is not counted in `addressIssues`
+
+#### Scenario: Scoped operator
+
+- **WHEN** a Brazil operator opens Today with one US problem and one market exception on a `us` account
+- **THEN** `addressIssues.US` is `{ open: 0, stale: 0 }` and `marketExceptions` is `{ BR: 0, US: 0 }`
 
 ### Requirement: Refused payments show the last contact and the phone
 
