@@ -31,6 +31,13 @@ function marketOf(item) {
 
 // One read of what has to happen today: the production cycles due by tomorrow, the US labels still missing,
 // and the closed days that change the plan.
+// delivery-address-issues: a problem is stale for Today from the same 72 hours the panel uses.
+const STALE_ISSUE_HOURS = 72;
+
+function accountOf(market) {
+  return market === 'BR' ? 'br' : 'us';
+}
+
 class AdminTodayService {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository;
@@ -41,6 +48,7 @@ class AdminTodayService {
     this.blingNfeService = options.blingNfeService || null;
     this.customerContactsRepository = options.customerContactsRepository || null;
     this.profileRepository = options.profileRepository || null;
+    this.deliveryAddressIssuesRepository = options.deliveryAddressIssuesRepository || null;
     this.calendar = options.calendar || null;
     this.now = options.now || (() => new Date());
   }
@@ -135,7 +143,9 @@ class AdminTodayService {
     const ups = us && this.upsShipmentRepository && typeof this.upsShipmentRepository.countUnresolved === 'function'
       ? this.upsShipmentRepository.countUnresolved()
       : 0;
-    const [courierCounts, nfeCounts, upsUnresolved, blingConnected] = await Promise.all([courier, nfe, ups, this.blingState(actor)]);
+    const [courierCounts, nfeCounts, upsUnresolved, blingConnected, addressIssues, marketExceptions] = await Promise.all([
+      courier, nfe, ups, this.blingState(actor), this.addressIssueCounts(markets), this.marketExceptionCounts(markets)
+    ]);
     return {
       courierToDispatch: courierCounts.toDispatch,
       courierOnTheRoadLong: courierCounts.onTheRoadLong,
@@ -144,8 +154,36 @@ class AdminTodayService {
       nfeRejected: nfeCounts.rejected,
       nfeError: nfeCounts.error,
       upsUnresolved,
-      blingConnected
+      blingConnected,
+      addressIssues,
+      marketExceptions
     };
+  }
+
+  // Open address problems per market of the Stripe account, and the ones open for 72 hours or more: the point
+  // from which the panel shows "Sem correção há N dias". A market not counted is 0.
+  async addressIssueCounts(markets) {
+    const counts = { BR: { open: 0, stale: 0 }, US: { open: 0, stale: 0 } };
+    const repository = this.deliveryAddressIssuesRepository;
+    if (!markets.length || !repository || typeof repository.countOpenByAccount !== 'function') return counts;
+    const byAccount = await repository.countOpenByAccount({
+      staleBefore: new Date(this.now().getTime() - STALE_ISSUE_HOURS * 3600 * 1000),
+      stripeAccounts: markets.map(accountOf)
+    });
+    for (const market of markets) {
+      const found = byAccount.get(accountOf(market));
+      if (found) counts[market] = { open: found.open, stale: found.stale };
+    }
+    return counts;
+  }
+
+  // Subscriptions in market exception per market of the Stripe account, without the list's 200 cut.
+  async marketExceptionCounts(markets) {
+    const counts = { BR: 0, US: 0 };
+    if (!markets.length || !this.ledgerRepository || typeof this.ledgerRepository.countMarketExceptions !== 'function') return counts;
+    const byAccount = await this.ledgerRepository.countMarketExceptions({ stripeAccounts: markets.map(accountOf) });
+    for (const market of markets) counts[market] = byAccount.get(accountOf(market)) || 0;
+    return counts;
   }
 
   // Only who can connect Bling hears about it; null where Bling is not configured (no NF-e in that environment).

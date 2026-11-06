@@ -20,8 +20,11 @@ function row(overrides = {}) {
   };
 }
 
-function service({ rows, total = rows.length, shipments = [], closed = [], courierRows = [], courierCounts = { toDispatch: 0, onTheRoadLong: 0, failed: 0 }, nfeCounts = {}, upsUnresolved = 0, bling = { configured: true, connected: true }, contacts = new Map(), people = new Map() }) {
-  const ledgerRepository = { listQueue: jest.fn().mockResolvedValue({ total, items: rows }) };
+function service({ rows, total = rows.length, shipments = [], closed = [], courierRows = [], courierCounts = { toDispatch: 0, onTheRoadLong: 0, failed: 0 }, nfeCounts = {}, upsUnresolved = 0, bling = { configured: true, connected: true }, contacts = new Map(), people = new Map(), issueCounts = new Map(), exceptionCounts = new Map(), withIssues = true }) {
+  const ledgerRepository = { listQueue: jest.fn().mockResolvedValue({ total, items: rows }), countMarketExceptions: jest.fn(async ({ stripeAccounts }) => new Map([...exceptionCounts].filter(([account]) => stripeAccounts.includes(account)))) };
+  const deliveryAddressIssuesRepository = withIssues
+    ? { countOpenByAccount: jest.fn(async ({ stripeAccounts }) => new Map([...issueCounts].filter(([account]) => stripeAccounts.includes(account)))) }
+    : null;
   const upsShipmentRepository = { listActiveByInvoiceIds: jest.fn().mockResolvedValue(shipments), countUnresolved: jest.fn().mockResolvedValue(upsUnresolved) };
   const calendar = { listActive: jest.fn().mockResolvedValue(closed) };
   const courierDeliveryService = { countQueue: jest.fn().mockResolvedValue(courierCounts) };
@@ -38,9 +41,10 @@ function service({ rows, total = rows.length, shipments = [], closed = [], couri
     blingNfeRepository,
     customerContactsRepository,
     profileRepository,
+    deliveryAddressIssuesRepository,
     service: new AdminTodayService({
       ledgerRepository, upsShipmentRepository, calendar, courierDeliveryService, courierDeliveryRepository,
-      blingNfeRepository, blingNfeService, customerContactsRepository, profileRepository, now: () => NOW
+      blingNfeRepository, blingNfeService, customerContactsRepository, profileRepository, deliveryAddressIssuesRepository, now: () => NOW
     })
   };
 }
@@ -161,8 +165,48 @@ describe('AdminTodayService', () => {
     expect(result.data.fulfillment).toEqual({
       courierToDispatch: 230, courierOnTheRoadLong: 2, courierFailed: 1,
       nfeMissingDocument: 0, nfeRejected: 1, nfeError: 3,
-      upsUnresolved: 4, blingConnected: true
+      upsUnresolved: 4, blingConnected: true,
+      addressIssues: { BR: { open: 0, stale: 0 }, US: { open: 0, stale: 0 } },
+      marketExceptions: { BR: 0, US: 0 }
     });
+  });
+
+  // admin-flow-fixes-5 (PM-26): address problems and market exceptions per market.
+  test('counts open address problems per market, stale from 72 hours', async () => {
+    const { service: today, deliveryAddressIssuesRepository } = service({
+      rows: [],
+      issueCounts: new Map([['br', { open: 2, stale: 1 }], ['us', { open: 1, stale: 0 }]]),
+      exceptionCounts: new Map([['us', 230], ['br', 1]])
+    });
+
+    const result = await today.overview({}, adminActor);
+
+    expect(result.data.fulfillment.addressIssues).toEqual({ BR: { open: 2, stale: 1 }, US: { open: 1, stale: 0 } });
+    expect(result.data.fulfillment.marketExceptions).toEqual({ BR: 1, US: 230 });
+    expect(deliveryAddressIssuesRepository.countOpenByAccount).toHaveBeenCalledWith({
+      staleBefore: new Date(NOW.getTime() - 72 * 3600 * 1000),
+      stripeAccounts: ['br', 'us']
+    });
+  });
+
+  test('a Brazil operator gets no US address problem nor exception', async () => {
+    const { service: today, ledgerRepository } = service({
+      rows: [],
+      issueCounts: new Map([['br', { open: 1, stale: 0 }], ['us', { open: 4, stale: 2 }]]),
+      exceptionCounts: new Map([['us', 1]])
+    });
+
+    const result = await today.overview({}, brOperator);
+
+    expect(result.data.fulfillment.addressIssues).toEqual({ BR: { open: 1, stale: 0 }, US: { open: 0, stale: 0 } });
+    expect(result.data.fulfillment.marketExceptions).toEqual({ BR: 0, US: 0 });
+    expect(ledgerRepository.countMarketExceptions).toHaveBeenCalledWith({ stripeAccounts: ['br'] });
+  });
+
+  test('without the address problems repository the counts are 0', async () => {
+    const result = await service({ rows: [], withIssues: false }).service.overview({}, adminActor);
+
+    expect(result.data.fulfillment.addressIssues).toEqual({ BR: { open: 0, stale: 0 }, US: { open: 0, stale: 0 } });
   });
 
   test('a Brazil operator gets no US counts and no Bling state', async () => {

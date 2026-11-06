@@ -433,6 +433,10 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/production/queue/:id/block-preview"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/reports/acquisition"
   },
   {

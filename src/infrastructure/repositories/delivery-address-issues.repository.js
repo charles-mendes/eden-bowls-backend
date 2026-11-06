@@ -117,6 +117,28 @@ class DeliveryAddressIssuesRepository {
     return latest;
   }
 
+  // Open problems per Stripe account (admin-today), and how many were opened on or before `staleBefore`.
+  // `stripeAccounts` null means every account; an empty list means none.
+  async countOpenByAccount({ staleBefore, stripeAccounts = null }) {
+    const counts = new Map();
+    if (Array.isArray(stripeAccounts) && stripeAccounts.length === 0) return counts;
+    const where = ['`open_key` IS NOT NULL'];
+    const params = [toMysqlDateTime(staleBefore)];
+    if (Array.isArray(stripeAccounts)) {
+      where.push(`\`stripe_account\` IN (${stripeAccounts.map(() => '?').join(', ')})`);
+      params.push(...stripeAccounts);
+    }
+    const rows = await this.dataSource.query(
+      `SELECT \`stripe_account\` AS account, COUNT(*) AS open_count, SUM(\`opened_at\` <= ?) AS stale_count
+       FROM \`${TABLE}\` WHERE ${where.join(' AND ')} GROUP BY \`stripe_account\``,
+      params
+    );
+    for (const row of Array.isArray(rows) ? rows : []) {
+      counts.set(String(row.account || '').toLowerCase(), { open: Number(row.open_count || 0), stale: Number(row.stale_count || 0) });
+    }
+    return counts;
+  }
+
   async listByUser(userId) {
     const rows = await this.dataSource.query(
       `SELECT * FROM \`${TABLE}\` WHERE \`user_id\` = ? ORDER BY \`id\``,

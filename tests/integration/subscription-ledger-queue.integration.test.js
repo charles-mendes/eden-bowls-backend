@@ -257,11 +257,76 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
       );
     }
 
-    const courier = await repository.listPaidCourierCycles({ deliveryFloor: '2027-01-01', limit: 50 });
-    const labels = await repository.listPaidLabelCycles({ deliveryFloor: '2027-01-01', limit: 50 });
-    expect(courier.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_br_br']);
-    expect(labels.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_us_us']);
-    await expect(repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2027-01-01', courierTableName: courierTable })).resolves.toBe(1);
+    const upsTable = `it_${suffix}_ups_market`;
+    await dataSource.query(`CREATE TABLE \`${upsTable}\` (
+      id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      stripe_invoice_id varchar(191) NOT NULL,
+      status varchar(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    try {
+      const courier = await repository.listPaidCourierCycles({ deliveryFloor: '2027-01-01', limit: 50, courierTableName: courierTable });
+      const labels = await repository.listPaidLabelCycles({ deliveryFloor: '2027-01-01', limit: 50, upsTableName: upsTable });
+      expect(courier.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_br_br']);
+      expect(labels.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_us_us']);
+      await expect(repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2027-01-01', courierTableName: courierTable })).resolves.toBe(1);
+    } finally {
+      await dataSource.query(`DROP TABLE IF EXISTS \`${upsTable}\``);
+    }
+  });
+
+  // admin-flow-fixes-5: the limit counts only what has not left, and a label at work escapes the range.
+  test('shipping queues read the range and keep the limit for orders still waiting', async () => {
+    const upsTable = `it_${suffix}_ups_range`;
+    await dataSource.query(`CREATE TABLE IF NOT EXISTS \`${courierTable}\` (
+      id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      stripe_invoice_id varchar(191) NOT NULL,
+      status varchar(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    await dataSource.query(`CREATE TABLE \`${upsTable}\` (
+      id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      stripe_invoice_id varchar(191) NOT NULL,
+      status varchar(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    try {
+      const subscription = async (sub, account, country) => (await dataSource.query(
+        `INSERT INTO \`${ledgerTable}\` (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end, address)
+         VALUES (7, 'ana@edenbowls.com', ?, 'cus_r', ?, 'active', '2027-02-01 08:00:00', '2027-03-01 08:00:00', ?)`,
+        [sub, account, JSON.stringify({ country })]
+      )).insertId;
+      const cycle = (id, invoice, delivery) => dataSource.query(
+        `INSERT INTO \`${cycleTable}\` (subscription_id, period_end, status, paid_at, paid_invoice_id, delivery_date) VALUES (?, ?, 'ready', ?, ?, ?)`,
+        [id, `${delivery} 08:00:00`, `${delivery} 07:00:00`, invoice, delivery]
+      );
+      const br = await subscription('sub_range_br', 'br', 'BR');
+      await cycle(br, 'in_r_sent1', '2027-02-02');
+      await cycle(br, 'in_r_sent2', '2027-02-03');
+      await cycle(br, 'in_r_wait1', '2027-02-04');
+      await cycle(br, 'in_r_wait2', '2027-02-05');
+      await cycle(br, 'in_r_later', '2027-02-20');
+      await dataSource.query(`INSERT INTO \`${courierTable}\` (stripe_invoice_id, status) VALUES ('in_r_sent1', 'delivered'), ('in_r_sent2', 'out_for_delivery')`);
+
+      // Two boxes already left: with a limit of 2 the two still waiting both fit.
+      const courier = await repository.listPaidCourierCycles({ deliveryFloor: '2027-02-01', deliveryCeiling: '2027-02-10', limit: 2, courierTableName: courierTable });
+      expect(courier.map((row) => row.paidInvoiceId)).toEqual(['in_r_wait1', 'in_r_wait2']);
+      await expect(repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2027-02-11', courierTableName: courierTable })).resolves.toBe(1);
+
+      const us = await subscription('sub_range_us', 'us', 'US');
+      await cycle(us, 'in_u_ready1', '2027-02-04');
+      await cycle(us, 'in_u_ready2', '2027-02-05');
+      await cycle(us, 'in_u_created', '2027-02-15');
+      await cycle(us, 'in_u_voided', '2027-02-06');
+      await cycle(us, 'in_u_delivered', '2027-02-04');
+      await cycle(us, 'in_u_later', '2027-02-25');
+      await dataSource.query(`INSERT INTO \`${upsTable}\` (stripe_invoice_id, status) VALUES ('in_u_created', 'created'), ('in_u_voided', 'voided'), ('in_u_delivered', 'delivered')`);
+
+      const ready = await repository.listPaidLabelCycles({ deliveryFloor: '2027-02-01', deliveryCeiling: '2027-02-10', limit: 2, upsTableName: upsTable });
+      expect(ready.map((row) => row.paidInvoiceId)).toEqual(['in_u_ready1', 'in_u_ready2']);
+      const active = await repository.listLabelCyclesWithActiveShipment({ deliveryFloor: '2027-02-01', upsTableName: upsTable });
+      expect(active.map((row) => row.paidInvoiceId)).toEqual(['in_u_created']);
+      await expect(repository.countPaidLabelCyclesWithoutShipment({ deliveryFloor: '2027-02-11', upsTableName: upsTable })).resolves.toBe(1);
+    } finally {
+      await dataSource.query(`DROP TABLE IF EXISTS \`${upsTable}\``);
+    }
   });
 
   test('lists the subscriptions that ship from no market, with their open paid cycles', async () => {
@@ -297,6 +362,12 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
       ]);
       const usOnly = await repository.listMarketExceptions({ deliveryFloor: '2027-01-15', stripeAccounts: ['us'], courierTableName: courierTable, upsTableName: upsTable });
       expect(usOnly.filter((row) => row.stripeSubscriptionId.startsWith('sub_exc_')).map((row) => row.stripeSubscriptionId)).toEqual(['sub_exc_us_br']);
+      // admin-today: the same rule, counted per account without the list's limit.
+      const counts = await repository.countMarketExceptions();
+      expect(counts.get('us')).toBeGreaterThanOrEqual(1);
+      expect(counts.get('br')).toBeGreaterThanOrEqual(1);
+      expect([...(await repository.countMarketExceptions({ stripeAccounts: ['us'] })).keys()]).toEqual(['us']);
+      expect((await repository.countMarketExceptions({ stripeAccounts: [] })).size).toBe(0);
     } finally {
       await dataSource.query(`DROP TABLE IF EXISTS \`${upsTable}\``);
     }

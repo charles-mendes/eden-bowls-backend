@@ -585,14 +585,11 @@ class CustomerDeliveriesService {
     };
   }
 
-  async onProductionStatus({ subscription, toStatus, fromStatus, alreadyCharged }) {
-    if (toStatus !== 'blocked' && !(fromStatus === 'blocked' && toStatus === 'to_prepare')) {
-      return { stripeUpdate: null, refund: false, invoice: false };
-    }
+  // What a block, or a return from one, does to the cycle's charge, without touching Stripe.
+  async planFor({ subscription, toStatus, fromStatus, alreadyCharged }) {
     const rows = await this.rowsFor(subscription.market);
     const timeZone = timeZoneFor(subscription.market);
     const followingChargeAt = addMonths(subscription.chargeAt, 1, timeZone);
-    const client = this.stripeAccounts ? this.stripeAccounts.get(subscription.market) : null;
     const plan = planBlockTrialEnd({
       market: subscription.market,
       rows,
@@ -608,6 +605,27 @@ class CustomerDeliveriesService {
       const original = projectOne(subscription.market, subscription.chargeAt, rows, Number(subscription.transitDays) || 0);
       plan.originalPreparationDay = original ? original.preparationDay : null;
     }
+    return plan;
+  }
+
+  // production-block-preview: where blocking would move the charge. Same rule as the block, nothing written.
+  async previewBlock({ subscription, alreadyCharged }) {
+    const plan = await this.planFor({ subscription, toStatus: 'blocked', fromStatus: 'to_prepare', alreadyCharged });
+    const trialEnd = plan && plan.stripeUpdate ? Number(plan.stripeUpdate.trial_end) : NaN;
+    const moves = Number.isFinite(trialEnd) && trialEnd > 0;
+    return {
+      charged: Boolean(alreadyCharged),
+      chargeMovesTo: moves ? new Date(trialEnd * 1000).toISOString() : null,
+      preparationDay: moves ? (plan.preparationDay || null) : null
+    };
+  }
+
+  async onProductionStatus({ subscription, toStatus, fromStatus, alreadyCharged }) {
+    if (toStatus !== 'blocked' && !(fromStatus === 'blocked' && toStatus === 'to_prepare')) {
+      return { stripeUpdate: null, refund: false, invoice: false };
+    }
+    const plan = await this.planFor({ subscription, toStatus, fromStatus, alreadyCharged });
+    const client = this.stripeAccounts ? this.stripeAccounts.get(subscription.market) : null;
     if (plan.stripeUpdate && client && typeof client.setTrialEnd === 'function') {
       const updated = await client.setTrialEnd({
         subscriptionId: subscription.stripeSubscriptionId,

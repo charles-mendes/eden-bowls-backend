@@ -102,7 +102,11 @@ function setup({ subscription = brSubscription(), invoice = paidInvoice(), produ
       if (fromCycles.length || cycles.length) return fromCycles;
       return ids.map((paidInvoiceId) => ({ id: 42, paidInvoiceId, productionStatus, status: 'active' }));
     }),
-    listPaidCourierCycles: jest.fn(async ({ deliveryFloor }) => cycles.filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor))
+    listPaidCourierCycles: jest.fn(async ({ deliveryFloor, deliveryCeiling, limit }) => cycles
+      .filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor && (!deliveryCeiling || (cycle.deliveryDate || '') <= deliveryCeiling))
+      .slice(0, limit || undefined)),
+    countPaidCourierCyclesToDispatch: jest.fn(async ({ deliveryFloor, deliveryCeiling }) => cycles
+      .filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor && (!deliveryCeiling || (cycle.deliveryDate || '') <= deliveryCeiling)).length)
   };
   const logger = { error: jest.fn(), warn() {}, info() {} };
   const service = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, profileRepository, auditService, transactionalMailer, addressIssueService, logger, now: () => NOW });
@@ -424,6 +428,50 @@ describe('The queue lists Brazil delivery work in four groups', () => {
   const delivery = (id, invoice, status, extra = {}) => ({ id, subscription_id: '42', stripe_invoice_id: invoice, status, stripe_account: 'br', out_for_delivery_at: NOW, ...extra });
   const invoices = (group) => group.map((item) => item.invoice_id);
 
+  // admin-flow-fixes-5 (PM-29): "A despachar" by delivery range.
+  test('the default range runs from the 30-day floor to tomorrow and counts what comes later', async () => {
+    const { service, ledgerRepository } = setup({ cycles: [cycle('in_today', '2026-11-04'), cycle('in_tomorrow', '2026-11-05'), cycle('in_later', '2026-11-07')] });
+    const { data } = await service.listQueue(actor);
+    expect(invoices(data.to_dispatch)).toEqual(['in_today', 'in_tomorrow']);
+    expect(data.range).toEqual({ from: '2026-10-05', to: '2026-11-05', default: true });
+    expect(data.later).toBe(1);
+    expect(data.next_from).toBeNull();
+    expect(ledgerRepository.listPaidCourierCycles).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', limit: 201, courierTableName: 'courier_deliveries' });
+    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-11-06', courierTableName: 'courier_deliveries', stripeAccounts: null });
+  });
+
+  test('a range that reaches the later cycle lists it', async () => {
+    const { service } = setup({ cycles: [cycle('in_tomorrow', '2026-11-05'), cycle('in_later', '2026-11-07')] });
+    const { data } = await service.listQueue(actor, { from: '2026-11-04', to: '2026-11-09' });
+    expect(invoices(data.to_dispatch)).toEqual(['in_tomorrow', 'in_later']);
+    expect(data.range).toEqual({ from: '2026-11-04', to: '2026-11-09', default: false });
+    expect(data.later).toBe(0);
+  });
+
+  test('a range before the floor is refused', async () => {
+    const { service } = setup();
+    await expect(code(service.listQueue(actor, { from: '2026-09-25' }))).resolves.toMatchObject({ status: 400, code: 'invalid_delivery_range' });
+  });
+
+  test('a cut list says where the next range starts', async () => {
+    const many = Array.from({ length: 201 }, (_, index) => cycle(`in_${String(index).padStart(3, '0')}`, index < 200 ? '2026-11-03' : '2026-11-05', { id: 1000 + index }));
+    const { service } = setup({ cycles: many });
+    const { data } = await service.listQueue(actor);
+    expect(data.to_dispatch).toHaveLength(200);
+    expect(data.truncated).toBe(true);
+    expect(data.next_from).toBe('2026-11-05');
+  });
+
+  test('a delivery on the road for a cycle after the range still shows under out for delivery', async () => {
+    const { service } = setup({
+      cycles: [cycle('in_road', '2026-11-08')],
+      seed: [delivery(1, 'in_road', 'out_for_delivery')]
+    });
+    const { data } = await service.listQueue(actor);
+    expect(invoices(data.out_for_delivery)).toEqual(['in_road']);
+    expect(data.to_dispatch).toEqual([]);
+  });
+
   test('A row carries the full subscription address, the phone, the profile instructions and the items', async () => {
     const profileRepository = { listDeliveryContacts: jest.fn(async () => new Map([['10', { phone: '+55 11 98888-7777', deliveryInstructions: 'Interfone 12' }]])) };
     const { service } = setup({
@@ -562,7 +610,7 @@ describe('The queue lists Brazil delivery work in four groups', () => {
   test('Staff limited to the US gets an empty queue without reading the ledger', async () => {
     const { service, ledgerRepository } = setup({ cycles: [cycle('in_new', '2026-11-05')] });
     const { data } = await service.listQueue({ userId: 5, roles: ['operations'], markets: ['US'] });
-    expect(data).toEqual({ to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false });
+    expect(data).toMatchObject({ to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false, later: 0, next_from: null });
     expect(ledgerRepository.listPaidCourierCycles).not.toHaveBeenCalled();
   });
 });
@@ -636,7 +684,7 @@ describe('Today counts of the courier queue', () => {
     repository.countOpenFailures = jest.fn().mockResolvedValue(1);
 
     await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 230, onTheRoadLong: 2, failed: 1 });
-    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', courierTableName: 'courier_deliveries', stripeAccounts: ['br', 'us'] });
+    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', courierTableName: 'courier_deliveries', stripeAccounts: ['br', 'us'] });
     expect(repository.countOnTheRoadSince.mock.calls[0][0]).toEqual(new Date(NOW.getTime() - 24 * 3600 * 1000));
   });
 

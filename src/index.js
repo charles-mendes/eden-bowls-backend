@@ -887,6 +887,7 @@ async function bootstrap() {
     blingNfeService,
     customerContactsRepository,
     profileRepository,
+    deliveryAddressIssuesRepository,
     calendar: deliveryCalendar
   });
   const adminUsersService = new AdminUsersService({

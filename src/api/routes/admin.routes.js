@@ -51,6 +51,12 @@ const { registerAdminLifeStageSettingsRoutes } = require('./admin-life-stage-set
 const { registerAdminCompanySettingsRoutes } = require('./admin-company-settings.routes');
 const { registerAdminLegalRoutes } = require('./legal.routes');
 
+// The delivery range of a shipping queue (`from`, `to`); the service validates it.
+function deliveryRangeQuery(query = {}) {
+  const pick = (value) => (typeof value === 'string' && value ? value : undefined);
+  return { from: pick(query.from), to: pick(query.to) };
+}
+
 function couponAccountFor(request) {
   const query = { ...(request.query || {}), ...(request.body || {}) };
   if (shouldEnforceMarketScope(request.adminIdentity)) {
@@ -227,7 +233,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.upsShipmentService) {
         throw new HttpError(503, 'UPS shipment service is not available.');
       }
-      return dependencies.upsShipmentService.listLabelQueue(request.adminIdentity);
+      return dependencies.upsShipmentService.listLabelQueue(request.adminIdentity, deliveryRangeQuery(request.query));
     });
   });
 
@@ -249,7 +255,7 @@ function registerAdminRoutes(app, dependencies = {}) {
   }
 
   app.get('/api/v1/admin/courier-deliveries/queue', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => courierService().listQueue(request.adminIdentity));
+    await handle(response, next, async () => courierService().listQueue(request.adminIdentity, deliveryRangeQuery(request.query)));
   });
 
   // Subscriptions whose account and address country fit no shipping market (shipment-market).
@@ -618,6 +624,20 @@ function registerAdminRoutes(app, dependencies = {}) {
         account: typeof query.account === 'string' && query.account ? query.account : undefined,
         market: typeof query.market === 'string' && query.market ? query.market : undefined
       }, request.adminIdentity);
+    });
+  });
+
+  // production-block-preview: where blocking a cycle would move its charge, read before the operator confirms.
+  app.get('/api/v1/admin/production/queue/:id/block-preview', requirePermission('production.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminProductionService) {
+        throw new HttpError(503, 'Production service is not available.');
+      }
+      const periodEnd = request.query && typeof request.query.periodEnd === 'string' ? request.query.periodEnd : '';
+      if (!periodEnd || Number.isNaN(new Date(periodEnd).getTime())) {
+        throw new HttpError(400, 'periodEnd is required.', { code: 'period_end_required' });
+      }
+      return dependencies.adminProductionService.previewBlock(request.params.id, periodEnd, request.adminIdentity);
     });
   });
 

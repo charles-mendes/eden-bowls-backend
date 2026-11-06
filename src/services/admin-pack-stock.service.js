@@ -5,7 +5,7 @@ const { constrainMarketQuery, marketFromStripeAccount } = require('../core/admin
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { flavorKeyFromLabel } = require('../core/flavors');
 const { DEFAULT_TIMEZONE, presentProductionQueueItem } = require('../core/production-queue-presenter');
-const { allocateCoverage, buildOverview, cyclePacks } = require('../core/pack-stock');
+const { allocateCoverageDetail, buildOverview, cyclePacks } = require('../core/pack-stock');
 const { measureStockComputation } = require('../core/stock-metrics');
 
 function emptyStock() {
@@ -119,7 +119,8 @@ class AdminPackStockService {
     }
   }
 
-  // Coverage of every committing cycle in the queue window, per market, or null without stock storage.
+  // Coverage of every committing cycle in the queue window, per market, as `{ coverage, shortages }`, or null
+  // without stock storage.
   async queueCoverage({ markets, windowDays, timezone }) {
     if (!(await this.isAvailable())) {
       return null;
@@ -132,7 +133,7 @@ class AdminPackStockService {
       const coverage = new Map();
       markets.forEach((market, index) => {
         const marketCycles = cycles.filter((cycle) => cycle.market === market);
-        for (const [key, value] of allocateCoverage({ stockItems: stockByMarket[index], cycles: marketCycles })) {
+        for (const [key, value] of allocateCoverageDetail({ stockItems: stockByMarket[index], cycles: marketCycles })) {
           coverage.set(key, value);
         }
       });

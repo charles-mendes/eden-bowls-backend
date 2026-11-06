@@ -8,6 +8,7 @@ const { parseCourierDetails, parseFailureKind, parseFailureReason } = require('.
 const { presentProductionQueueItem, recipientDisplayName } = require('../core/production-queue-presenter');
 const { shipmentMarket } = require('../core/shipment-market');
 const { brazilAddressIssues } = require('../core/delivery-address-check');
+const { resolveDeliveryRange, dayAfter } = require('../core/delivery-range');
 
 const TIMEZONE = 'America/Sao_Paulo';
 const DISPATCH_FLOOR_DAYS = 30;
@@ -18,6 +19,14 @@ const LONG_ON_THE_ROAD_HOURS = 24;
 const ACTIVE = new Set(['out_for_delivery', 'delivered']);
 
 // Rows under to dispatch (no delivery) and failed can be dispatched; the others already left.
+// The date a queue cycle is sorted and filtered by, as the ledger query does: the delivery date, or the period end.
+function cycleDeliveryKey(cycle) {
+  if (!cycle) return null;
+  if (cycle.deliveryDate) return cycle.deliveryDate;
+  const end = cycle.cyclePeriodEnd ? new Date(cycle.cyclePeriodEnd) : null;
+  return end && !Number.isNaN(end.getTime()) ? end.toISOString().slice(0, 10) : null;
+}
+
 function groupCanDispatch(row) {
   return !row || row.status === 'failed';
 }
@@ -260,11 +269,14 @@ class CourierDeliveryService {
     return { success: true, data: { delivery: this.present(saved) } };
   }
 
-  // The four groups of Brazil delivery work. Only "to dispatch" has the 30-day floor; an invoice lands in one
-  // group only. Days are civil days in São Paulo, today counted.
-  async listQueue(actor = {}) {
+  // The four groups of Brazil delivery work. Only "to dispatch" is read by the delivery range (from the 30-day
+  // floor to tomorrow by default); an invoice lands in one group only. Days are civil days in São Paulo, today
+  // counted. The 200-row limit counts only cycles still to dispatch.
+  async listQueue(actor = {}, query = {}) {
     this.ensureReady();
-    const empty = { to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false };
+    const range = resolveDeliveryRange(query, { now: this.now(), zone: TIMEZONE });
+    const presentRange = { from: range.from, to: range.to, default: range.default };
+    const empty = { to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false, range: presentRange, later: 0, next_from: null };
     let accounts = null;
     if (shouldEnforceMarketScope(actor)) {
       const scope = constrainMarketQuery(actor, {});
@@ -276,10 +288,20 @@ class CourierDeliveryService {
     }
 
     const today = DateTime.fromJSDate(this.now(), { zone: TIMEZONE }).startOf('day');
+    const courierTableName = this.repository.tableName || 'courier_deliveries';
     const cycles = await this.ledgerRepository.listPaidCourierCycles({
-      deliveryFloor: today.minus({ days: DISPATCH_FLOOR_DAYS }).toISODate(),
-      limit: QUEUE_LIMIT + 1
+      deliveryFloor: range.from,
+      deliveryCeiling: range.to,
+      limit: QUEUE_LIMIT + 1,
+      courierTableName
     });
+    const later = typeof this.ledgerRepository.countPaidCourierCyclesToDispatch === 'function'
+      ? this.ledgerRepository.countPaidCourierCyclesToDispatch({
+        deliveryFloor: dayAfter(range.to, TIMEZONE),
+        courierTableName,
+        stripeAccounts: accounts ? [...accounts] : null
+      })
+      : Promise.resolve(0);
     const [onTheRoad, failedRows, deliveredRows] = await Promise.all([
       this.repository.listByStatus('out_for_delivery'),
       this.repository.listByStatus('failed'),
@@ -313,7 +335,13 @@ class CourierDeliveryService {
     };
     const contacts = await this.deliveryContacts([...known.values()]);
     const item = (cycle, row) => this.presentQueueItem(cycle, row, contacts);
-    const data = { ...empty, truncated: cycles.length > QUEUE_LIMIT };
+    const truncated = cycles.length > QUEUE_LIMIT;
+    const data = {
+      ...empty,
+      truncated,
+      later: await later,
+      next_from: truncated ? cycleDeliveryKey(cycles[QUEUE_LIMIT]) : null
+    };
     const placed = new Set();
     const place = (group, cycle, row) => {
       const invoiceId = row ? row.stripe_invoice_id : cycle.paidInvoiceId;
@@ -363,8 +391,10 @@ class CourierDeliveryService {
     const now = this.now();
     const today = DateTime.fromJSDate(now, { zone: TIMEZONE }).startOf('day');
     const [toDispatch, onTheRoadLong, failed] = await Promise.all([
+      // The queue's default range, so the count matches the list Today opens.
       this.ledgerRepository.countPaidCourierCyclesToDispatch({
         deliveryFloor: today.minus({ days: DISPATCH_FLOOR_DAYS }).toISODate(),
+        deliveryCeiling: today.plus({ days: 1 }).toISODate(),
         courierTableName: this.repository.tableName || 'courier_deliveries',
         stripeAccounts: accounts
       }),

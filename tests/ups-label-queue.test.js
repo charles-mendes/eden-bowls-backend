@@ -8,17 +8,19 @@ const cycle = (id, invoice, extra = {}) => ({
   deliveryDate: '2026-11-05', address, userId: 7, ...extra
 });
 
-function queueService({ cycles, shipments = [], configured = true, addressIssueService }) {
+function queueService({ cycles, atWork = [], later = 0, shipments = [], configured = true, addressIssueService }) {
   const listPaidLabelCycles = jest.fn().mockResolvedValue(cycles);
+  const listLabelCyclesWithActiveShipment = jest.fn().mockResolvedValue(atWork);
+  const countPaidLabelCyclesWithoutShipment = jest.fn().mockResolvedValue(later);
   const service = new UpsShipmentService({
     repository: { listActiveByInvoiceIds: jest.fn().mockResolvedValue(shipments) },
-    ledgerRepository: { listPaidLabelCycles },
+    ledgerRepository: { listPaidLabelCycles, listLabelCyclesWithActiveShipment, countPaidLabelCyclesWithoutShipment },
     upsClient: { isConfigured: () => configured },
     shippingService: { settings: { us: { ship_from: { zipcode: '33101' } } } },
     addressIssueService,
     now: () => new Date('2026-11-03T12:00:00Z')
   });
-  return { service, listPaidLabelCycles };
+  return { service, listPaidLabelCycles, listLabelCyclesWithActiveShipment, countPaidLabelCyclesWithoutShipment };
 }
 
 describe('paid cycle read for the label queue', () => {
@@ -32,6 +34,33 @@ describe('paid cycle read for the label queue', () => {
     expect(sql).toContain('COALESCE(q.delivery_date, DATE(q.cycle_period_end)) >= ?');
     expect(sql).not.toContain('production_status =');
     expect(params).toEqual(['2026-10-04', 101]);
+  });
+
+  test('ready cycles have no label that is not voided and stop at the ceiling', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    await new SubscriptionLedgerRepository({ isInitialized: true, query }).listPaidLabelCycles({ deliveryFloor: '2026-10-07', deliveryCeiling: '2026-11-07', limit: 101 });
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("NOT EXISTS (SELECT 1 FROM `ups_shipments` us WHERE us.stripe_invoice_id COLLATE utf8mb4_unicode_ci = q.paid_invoice_id COLLATE utf8mb4_unicode_ci AND us.status <> 'voided')");
+    expect(params).toEqual(['2026-10-07', '2026-11-07', 101]);
+  });
+
+  test('cycles with a label at work have no ceiling and no limit', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    await new SubscriptionLedgerRepository({ isInitialized: true, query }).listLabelCyclesWithActiveShipment({ deliveryFloor: '2026-10-07' });
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("us.status IN ('pending', 'unknown', 'created')");
+    expect(sql).not.toContain('LIMIT');
+    expect(sql).not.toContain('<= ?');
+    expect(params).toEqual(['2026-10-07']);
+  });
+
+  test('counts the cycles waiting for a label after a date', async () => {
+    const query = jest.fn().mockResolvedValue([{ total: 4 }]);
+    await expect(new SubscriptionLedgerRepository({ isInitialized: true, query }).countPaidLabelCyclesWithoutShipment({ deliveryFloor: '2026-11-08' })).resolves.toBe(4);
+    expect(query.mock.calls[0][0]).toContain("us.status <> 'voided'");
+    expect(query.mock.calls[0][1]).toEqual(['2026-11-08']);
   });
 
   test('active shipments include pending and unknown rows, never voided ones', async () => {
@@ -63,7 +92,7 @@ describe('UpsShipmentService.listLabelQueue', () => {
 
     const { data } = await service.listLabelQueue({});
 
-    expect(listPaidLabelCycles).toHaveBeenCalledWith({ deliveryFloor: '2026-10-04', limit: 101 });
+    expect(listPaidLabelCycles).toHaveBeenCalledWith({ deliveryFloor: '2026-10-04', deliveryCeiling: '2026-11-04', limit: 101, upsTableName: 'ups_shipments' });
     expect(data.ready.map((item) => item.invoice_id)).toEqual(['in_ready', 'in_old_voided']);
     expect(data.ready[0]).toMatchObject({
       customer_name: 'Ana Costa', city: 'Miami', zipcode: '33101', production_status: 'ready',
@@ -117,5 +146,48 @@ describe('UpsShipmentService.listLabelQueue', () => {
 
     expect(data.ready).toHaveLength(100);
     expect(data.truncated).toBe(true);
+    expect(data.next_from).toBe('2026-11-05');
+  });
+
+  // admin-flow-fixes-5 (PM-29): ready orders by delivery range, in New York.
+  test('the default range ends tomorrow in New York and counts what comes later', async () => {
+    const { service, listLabelCyclesWithActiveShipment, countPaidLabelCyclesWithoutShipment } = queueService({ cycles: [cycle(1, 'in_ready', { deliveryDate: '2026-11-04' })], later: 2 });
+
+    const { data } = await service.listLabelQueue({});
+
+    expect(data.range).toEqual({ from: '2026-10-04', to: '2026-11-04', default: true });
+    expect(data.later).toBe(2);
+    expect(data.next_from).toBeNull();
+    expect(listLabelCyclesWithActiveShipment).toHaveBeenCalledWith({ deliveryFloor: '2026-10-04', upsTableName: 'ups_shipments' });
+    expect(countPaidLabelCyclesWithoutShipment).toHaveBeenCalledWith({ deliveryFloor: '2026-11-05', upsTableName: 'ups_shipments' });
+  });
+
+  test('a created label after the range shows next to a full ready list', async () => {
+    const ready = Array.from({ length: 101 }, (_, index) => cycle(index + 1, `in_${index}`, { deliveryDate: '2026-11-04' }));
+    const { service } = queueService({
+      cycles: ready,
+      atWork: [cycle(500, 'in_created', { deliveryDate: '2026-11-08' })],
+      shipments: [{ id: 14, stripe_invoice_id: 'in_created', status: 'created', ups_shipment_id: 'ups_14' }]
+    });
+
+    const { data } = await service.listLabelQueue({});
+
+    expect(data.ready).toHaveLength(100);
+    expect(data.created.map((item) => item.invoice_id)).toEqual(['in_created']);
+  });
+
+  test('the range from the query reaches the ledger', async () => {
+    const { service, listPaidLabelCycles } = queueService({ cycles: [] });
+
+    const { data } = await service.listLabelQueue({}, { from: '2026-11-03', to: '2026-11-09' });
+
+    expect(data.range).toEqual({ from: '2026-11-03', to: '2026-11-09', default: false });
+    expect(listPaidLabelCycles.mock.calls[0][0]).toMatchObject({ deliveryFloor: '2026-11-03', deliveryCeiling: '2026-11-09' });
+  });
+
+  test('a range of more than 31 days is refused', async () => {
+    const { service } = queueService({ cycles: [] });
+
+    await expect(service.listLabelQueue({}, { from: '2026-10-05', to: '2026-11-30' })).rejects.toMatchObject({ statusCode: 400, details: { code: 'invalid_delivery_range' } });
   });
 });

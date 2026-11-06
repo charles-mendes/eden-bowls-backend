@@ -17,6 +17,29 @@ describe('SubscriptionLedgerRepository courier queries', () => {
     expect(rows[0]).toMatchObject({ paidInvoiceId: 'in_1', productionStatus: 'ready', deliveryDate: '2026-11-05' });
   });
 
+  test('listPaidCourierCycles keeps only cycles to dispatch, so boxes that left take no place in the limit', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+
+    await repository.listPaidCourierCycles({ deliveryFloor: '2026-10-07', deliveryCeiling: '2026-11-07', limit: 201, courierTableName: 'courier_deliveries' });
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("NOT EXISTS (SELECT 1 FROM `courier_deliveries` cd WHERE cd.stripe_invoice_id COLLATE utf8mb4_unicode_ci = q.paid_invoice_id COLLATE utf8mb4_unicode_ci AND cd.status IN ('out_for_delivery', 'delivered', 'failed'))");
+    expect(sql).toContain('COALESCE(q.delivery_date, DATE(q.cycle_period_end)) <= ?');
+    expect(params).toEqual(['2026-10-07', '2026-11-07', 201]);
+  });
+
+  test('countPaidCourierCyclesToDispatch takes the ceiling when given', async () => {
+    const query = jest.fn().mockResolvedValue([{ total: 3 }]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+
+    await expect(repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2026-10-07', deliveryCeiling: '2026-11-07', stripeAccounts: ['br'] })).resolves.toBe(3);
+    expect(query.mock.calls[0][1]).toEqual(['2026-10-07', '2026-11-07', 'br']);
+    await repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2026-11-08' });
+    expect(query.mock.calls[1][0]).not.toContain('<= ?');
+    expect(query.mock.calls[1][1]).toEqual(['2026-11-08']);
+  });
+
   test('listPaidCyclesByInvoiceIds has no floor and skips an empty list', async () => {
     const query = jest.fn().mockResolvedValue([paidRow]);
     const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });

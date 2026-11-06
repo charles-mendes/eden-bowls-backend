@@ -100,6 +100,24 @@ describeIntegration('delivery_address_issues (MySQL)', () => {
     expect(await repository.listByUser(8)).toHaveLength(1);
   });
 
+  // admin-today (admin-flow-fixes-5): open problems per account, stale from 72 hours.
+  test('countOpenByAccount counts open problems per account and the stale ones', async () => {
+    await repository.deleteByUser(7);
+    await repository.deleteByUser(8);
+    const now = new Date('2026-11-06T12:00:00Z');
+    const hoursAgo = (hours) => new Date(now.getTime() - hours * 3600 * 1000);
+    await repository.insertOpen(issue({ subscriptionId: 21, stripeSubscriptionId: 'sub_21', now: hoursAgo(80) }));
+    await repository.insertOpen(issue({ subscriptionId: 22, stripeSubscriptionId: 'sub_22', now: hoursAgo(68) }));
+    await repository.insertOpen(issue({ subscriptionId: 23, stripeSubscriptionId: 'sub_23', stripeAccount: 'us', now: hoursAgo(1) }));
+    const { issue: closed } = await repository.insertOpen(issue({ subscriptionId: 24, stripeSubscriptionId: 'sub_24', now: hoursAgo(100) }));
+    await repository.close(closed.id, { resolvedBy: 'customer', now });
+
+    const counts = await repository.countOpenByAccount({ staleBefore: hoursAgo(72) });
+    expect(Object.fromEntries(counts)).toEqual({ br: { open: 2, stale: 1 }, us: { open: 1, stale: 0 } });
+    expect(Object.fromEntries(await repository.countOpenByAccount({ staleBefore: hoursAgo(72), stripeAccounts: ['us'] }))).toEqual({ us: { open: 1, stale: 0 } });
+    expect((await repository.countOpenByAccount({ staleBefore: hoursAgo(72), stripeAccounts: [] })).size).toBe(0);
+  });
+
   test('down drops the table', async () => {
     await new CreateDeliveryAddressIssues1700000000066().down(runner);
     const [row] = await dataSource.query(

@@ -48,13 +48,27 @@ describe('GET /api/v1/admin/shipments/queue', () => {
     expect(response.body.data.unresolved[0]).toMatchObject({ invoice_id: 'in_unknown', shipment: { id: 30, status: 'unknown' } });
   });
 
+  test('the queue reads the delivery range and refuses an invalid one', async () => {
+    const { app, listPaidLabelCycles } = appFor(admin, { cycles: [] });
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+
+    const ok = await request(app).get(`/api/v1/admin/shipments/queue?from=${today}&to=${today}`).set('Authorization', `Bearer ${token()}`);
+    expect(ok.status).toBe(200);
+    expect(ok.body.data.range).toEqual({ from: today, to: today, default: false });
+    expect(listPaidLabelCycles.mock.calls[0][0]).toMatchObject({ deliveryFloor: today, deliveryCeiling: today });
+
+    const bad = await request(app).get('/api/v1/admin/shipments/queue?to=not-a-date').set('Authorization', `Bearer ${token()}`);
+    expect(bad.status).toBe(400);
+    expect(JSON.stringify(bad.body)).toContain('invalid_delivery_range');
+  });
+
   test('Staff limited to Brazil: lists nothing and reads no cycle', async () => {
     const { app, listPaidLabelCycles } = appFor({ roles: ['operator'], markets: ['BR'], permissions: ROLE_PERMISSIONS.operator }, { cycles: [cycle(1, 'in_ready')] });
 
     const response = await get(app);
 
     expect(response.status).toBe(200);
-    expect(response.body.data).toEqual({ ready: [], unresolved: [], created: [], truncated: false });
+    expect(response.body.data).toMatchObject({ ready: [], unresolved: [], created: [], truncated: false, later: 0, next_from: null });
     expect(listPaidLabelCycles).not.toHaveBeenCalled();
   });
 

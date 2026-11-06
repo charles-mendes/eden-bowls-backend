@@ -81,11 +81,27 @@ describe('admin courier delivery routes', () => {
     expect((await auth(request(app).get('/api/v1/admin/courier-deliveries/queue'))).status).toBe(200);
   });
 
+  test('the queue reads the delivery range from the query', async () => {
+    const { app, ledgerRepository } = appFor(brOperator);
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    const response = await auth(request(app).get(`/api/v1/admin/courier-deliveries/queue?from=${today}&to=${today}`));
+    expect(response.status).toBe(200);
+    expect(response.body.data.range).toEqual({ from: today, to: today, default: false });
+    expect(ledgerRepository.listPaidCourierCycles.mock.calls[0][0]).toMatchObject({ deliveryFloor: today, deliveryCeiling: today });
+  });
+
+  test('an invalid range answers 400 invalid_delivery_range', async () => {
+    const { app } = appFor(brOperator);
+    const response = await auth(request(app).get('/api/v1/admin/courier-deliveries/queue?from=2020-01-01'));
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(response.body)).toContain('invalid_delivery_range');
+  });
+
   test('Staff limited to the US: the queue is empty', async () => {
     const { app, ledgerRepository } = appFor(usOperator);
     const response = await auth(request(app).get('/api/v1/admin/courier-deliveries/queue'));
     expect(response.status).toBe(200);
-    expect(response.body.data).toEqual({ to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false });
+    expect(response.body.data).toMatchObject({ to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false, later: 0, next_from: null });
     expect(ledgerRepository.listPaidCourierCycles).not.toHaveBeenCalled();
   });
 

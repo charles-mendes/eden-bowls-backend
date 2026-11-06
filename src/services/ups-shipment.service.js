@@ -8,6 +8,7 @@ const { parseUpsTracking, upsTrackingUrl } = require('../core/ups-tracking');
 const { deliveryTimeline } = require('../core/delivery-timeline');
 const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
 const { invoiceReadinessReasons } = require('../core/dispatch-readiness');
+const { resolveDeliveryRange, dayAfter } = require('../core/delivery-range');
 
 // The checkout recipient first (delivery-recipient); older subscriptions keep the name keys they may carry.
 function addressRecipient(address = {}) {
@@ -62,10 +63,19 @@ function unresolvedShipmentError(shipment) {
 }
 
 const QUEUE_LIMIT = 100;
-const QUEUE_DELIVERY_DAYS = 30;
+// Today and the delivery range of the label queue are civil days in New York.
+const QUEUE_TIMEZONE = 'America/New_York';
 const UNRESOLVED_STATUSES = new Set(['pending', 'unknown']);
 
 const CUSTOMER_LABEL_CODES = new Set(['po_box_not_allowed', 'military_address_not_supported', 'address_incomplete', 'recipient_name_missing']);
+
+// The date a label queue cycle is sorted and filtered by, as the ledger query does.
+function labelDeliveryKey(cycle) {
+  if (!cycle) return null;
+  if (cycle.deliveryDate) return cycle.deliveryDate;
+  const end = cycle.cyclePeriodEnd ? new Date(cycle.cyclePeriodEnd) : null;
+  return end && !Number.isNaN(end.getTime()) ? end.toISOString().slice(0, 10) : null;
+}
 
 class UpsShipmentService {
   constructor(options = {}) {
@@ -166,10 +176,14 @@ class UpsShipmentService {
   }
 
   // One read of US label work (ups-label-queue): ready orders with their blocking reasons, purchases with no
-  // confirmed UPS outcome, and created labels not yet delivered. Brazil never appears.
-  async listLabelQueue(actor = {}) {
+  // confirmed UPS outcome, and created labels not yet delivered. Brazil never appears. The delivery range (from
+  // the 30-day floor to tomorrow by default) and the 100-row limit apply to ready orders only; a label at work
+  // shows whatever its delivery date after the floor.
+  async listLabelQueue(actor = {}, query = {}) {
     this.ensureRepository();
-    const empty = { ready: [], unresolved: [], created: [], truncated: false };
+    const range = resolveDeliveryRange(query, { now: this.now ? this.now() : new Date(), zone: QUEUE_TIMEZONE });
+    const presentRange = { from: range.from, to: range.to, default: range.default };
+    const empty = { ready: [], unresolved: [], created: [], truncated: false, range: presentRange, later: 0, next_from: null };
     if (shouldEnforceMarketScope(actor) && !constrainMarketQuery(actor, {}).stripeAccounts.includes('us')) {
       return { success: true, data: empty };
     }
@@ -177,16 +191,34 @@ class UpsShipmentService {
       throw new HttpError(503, 'Subscription ledger is not available.');
     }
 
-    const floor = new Date((this.now ? this.now() : new Date()).getTime() - QUEUE_DELIVERY_DAYS * 24 * 60 * 60 * 1000);
-    const cycles = await this.ledgerRepository.listPaidLabelCycles({
-      deliveryFloor: floor.toISOString().slice(0, 10),
-      limit: QUEUE_LIMIT + 1
-    });
-    const page = cycles.slice(0, QUEUE_LIMIT);
+    const upsTableName = this.repository.tableName || 'ups_shipments';
+    const [cycles, atWork, later] = await Promise.all([
+      this.ledgerRepository.listPaidLabelCycles({
+        deliveryFloor: range.from,
+        deliveryCeiling: range.to,
+        limit: QUEUE_LIMIT + 1,
+        upsTableName
+      }),
+      typeof this.ledgerRepository.listLabelCyclesWithActiveShipment === 'function'
+        ? this.ledgerRepository.listLabelCyclesWithActiveShipment({ deliveryFloor: range.floor, upsTableName })
+        : [],
+      typeof this.ledgerRepository.countPaidLabelCyclesWithoutShipment === 'function'
+        ? this.ledgerRepository.countPaidLabelCyclesWithoutShipment({ deliveryFloor: dayAfter(range.to, QUEUE_TIMEZONE), upsTableName })
+        : 0
+    ]);
+    const truncated = cycles.length > QUEUE_LIMIT;
+    const readyPage = cycles.slice(0, QUEUE_LIMIT);
+    const seen = new Set(readyPage.map((cycle) => cycle.paidInvoiceId));
+    const page = [...readyPage, ...atWork.filter((cycle) => !seen.has(cycle.paidInvoiceId))];
     const shipments = await this.repository.listActiveByInvoiceIds(page.map((cycle) => cycle.paidInvoiceId));
     const byInvoice = new Map(shipments.map((shipment) => [shipment.stripe_invoice_id, shipment]));
     const configured = Boolean(this.upsClient && this.upsClient.isConfigured());
-    const data = { ...empty, truncated: cycles.length > QUEUE_LIMIT };
+    const data = {
+      ...empty,
+      truncated,
+      later,
+      next_from: truncated ? labelDeliveryKey(cycles[QUEUE_LIMIT]) : null
+    };
 
     for (const cycle of page) {
       const shipment = byInvoice.get(cycle.paidInvoiceId) || null;
