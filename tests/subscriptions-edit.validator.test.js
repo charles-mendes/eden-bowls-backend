@@ -26,4 +26,9 @@ describe('subscriptions edit address recipient', () => {
     expect(() => parseSubscriptionsEditPreviewInput(payload)).toThrow(expected);
     expect(() => parseSubscriptionsEditCommitInput(payload)).toThrow(expected);
   });
+
+  test('keeps the CPF and the fiscal name for the edit to check', () => {
+    const parsed = parseSubscriptionsEditPreviewInput({ ...base, tax_document: ' 529.982.247-25 ', fiscal_name: 'Maria Souza' });
+    expect(parsed).toMatchObject({ tax_document: '529.982.247-25', fiscal_name: 'Maria Souza' });
+  });
 });

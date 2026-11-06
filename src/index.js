@@ -91,6 +91,9 @@ const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shi
 const { UpsShipmentService } = require('./services/ups-shipment.service');
 const { CourierDeliveryRepository } = require('./infrastructure/repositories/courier-delivery.repository');
 const { CourierDeliveryService } = require('./services/courier-delivery.service');
+const { MarketExceptionsService } = require('./services/market-exceptions.service');
+const { DeliveryAddressIssueService } = require('./services/delivery-address-issue.service');
+const { DeliveryAddressIssuesRepository } = require('./infrastructure/repositories/delivery-address-issues.repository');
 const { SubscriptionPaidCyclesService } = require('./services/subscription-paid-cycles.service');
 const { CustomerContactsService } = require('./services/customer-contacts.service');
 const { CustomerContactsRepository } = require('./infrastructure/repositories/customer-contacts.repository');
@@ -261,6 +264,7 @@ async function bootstrap() {
   const upsShipmentRepository = new UpsShipmentRepository(dataSource);
   const courierDeliveryRepository = new CourierDeliveryRepository(dataSource);
   const customerContactsRepository = new CustomerContactsRepository(dataSource);
+  const deliveryAddressIssuesRepository = new DeliveryAddressIssuesRepository(dataSource);
   const stripeAccounts = createStripeAccountsFromEnv(env, { logger });
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
@@ -493,7 +497,16 @@ async function bootstrap() {
     redirectUri: env.BLING_REDIRECT_URI,
     connection: new BlingConnectionRepository(dataSource, { clientSecret: env.BLING_CLIENT_SECRET })
   });
+  // delivery-address-issues: opened by the payment, the NF-e, the courier and the label; closed by the store's save.
+  const addressIssueService = new DeliveryAddressIssueService({
+    repository: deliveryAddressIssuesRepository,
+    fiscalRepository: onboardingSubscriptionCheckoutRepository,
+    ledgerRepository: subscriptionLedgerRepository,
+    mailer: transactionalMailer,
+    logger
+  });
   const blingNfeService = new BlingNfeService({
+    addressIssueService,
     repository: blingNfeRepository,
     client: blingClient,
     emailService: new BlingNfeEmailService({
@@ -513,6 +526,7 @@ async function bootstrap() {
     logger
   });
   const stripeWebhookService = new StripeWebhookService({
+    addressIssueService,
     stripeAccounts,
     stripeBilling,
     customerInvoices: customerInvoicesService,
@@ -561,7 +575,8 @@ async function bootstrap() {
     stripeBilling,
     upsShipmentRepository,
     courierDeliveryRepository,
-    productsRepository
+    productsRepository,
+    fiscalRepository: onboardingSubscriptionCheckoutRepository
   });
   const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository, {
     lifeStageService,
@@ -588,6 +603,9 @@ async function bootstrap() {
     resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection),
     shippingQuoteSigner,
     transactionalMailer,
+    fiscalRepository: onboardingSubscriptionCheckoutRepository,
+    blingNfeService,
+    addressIssueService,
     logger
   });
   // A cycle enters the production queue when its invoice is paid.
@@ -633,6 +651,7 @@ async function bootstrap() {
     publicBaseUrl: avatarPublicBaseUrl
   });
   const profileService = new ProfileService(profileRepository, {
+    deliveryAddressIssuesRepository,
     authService,
     customerContactsRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -658,6 +677,7 @@ async function bootstrap() {
     dataSource
   });
   const privacyService = new PrivacyService({
+    deliveryAddressIssuesRepository,
     repository: privacyRepository,
     customerContactsRepository,
     legalDocuments: legalDocumentsService,
@@ -757,6 +777,7 @@ async function bootstrap() {
   });
   const adminBillingService = new AdminBillingService({
     ledgerRepository: subscriptionLedgerRepository,
+    addressIssueService,
     webhookEventsRepository: stripeWebhookEventsRepository,
     stripeAccounts,
     stripeBilling,
@@ -773,6 +794,7 @@ async function bootstrap() {
     profileRepository,
     transactionalMailer,
     auditService: adminAuditService,
+    addressIssueService,
     logger
   });
   const customerContactsService = new CustomerContactsService({
@@ -786,6 +808,11 @@ async function bootstrap() {
     upsShipmentRepository,
     courierDeliveryRepository
   });
+  const marketExceptionsService = new MarketExceptionsService({
+    ledgerRepository: subscriptionLedgerRepository,
+    courierTableName: courierDeliveryRepository.tableName,
+    upsTableName: upsShipmentRepository.tableName
+  });
   const courierDeliveryService = new CourierDeliveryService({
     repository: courierDeliveryRepository,
     adminBillingService,
@@ -793,6 +820,7 @@ async function bootstrap() {
     profileRepository,
     auditService: adminAuditService,
     transactionalMailer,
+    addressIssueService,
     logger
   });
   const adminCatalogRepository = new AdminCatalogRepository(dataSource, {
@@ -946,6 +974,7 @@ async function bootstrap() {
     adminDeliveryCalendarService,
     upsShipmentService,
     courierDeliveryService,
+    marketExceptionsService,
     subscriptionPaidCyclesService,
     customerContactsService,
     customerInvoicesService,

@@ -7,7 +7,8 @@ const {
   diffSubscriptionItems,
   mapProrationFromInvoice,
   resolveProposedPlan,
-  withLedgerMarket
+  assertLedgerMarket,
+  parseEditFiscal
 } = require('../../core/subscription-edit-plan');
 const { isChargedDeliveryInvoice, startNewContract } = require('../../core/contract-deliveries');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
@@ -49,7 +50,28 @@ class SubscriptionsEditCommitRepository {
     this.resolveSubscriptionItems = options.resolveSubscriptionItems || null;
     this.shippingQuoteSigner = options.shippingQuoteSigner || null;
     this.transactionalMailer = options.transactionalMailer || null;
+    this.fiscalRepository = options.fiscalRepository || null;
+    this.blingNfeService = options.blingNfeService || null;
+    this.addressIssueService = options.addressIssueService || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
+  }
+
+  // After Stripe and the ledger took the edit: the CPF and the fiscal name are the account's, for every subscription.
+  async saveFiscal(userId, fiscal = {}) {
+    if (!fiscal.taxDocument && !fiscal.fiscalName) return;
+    if (!this.fiscalRepository) {
+      throw new HttpError(503, 'Fiscal data cannot be saved.');
+    }
+    if (fiscal.taxDocument) await this.fiscalRepository.saveTaxDocument(userId, fiscal.taxDocument);
+    if (fiscal.fiscalName) await this.fiscalRepository.saveFiscalName(userId, fiscal.fiscalName);
+    // The edit is saved: a note that cannot be unblocked now waits for the next save, so its error does not surface.
+    if (this.blingNfeService) {
+      try {
+        await this.blingNfeService.refreshBlockedForUser(userId);
+      } catch (error) {
+        this.logger.warn({ userId, message: error && error.message }, 'Blocked NF-e notes were not read again.');
+      }
+    }
   }
 
   // With `defer`, validates the save (hash, plan, prices) and returns it without touching Stripe or the ledger.
@@ -65,10 +87,11 @@ class SubscriptionsEditCommitRepository {
     // A pack save applies from the editable delivery forward: the next monthly invoice carries it, nothing is charged now.
     const packMode = Boolean(requestPayload.delivery_id);
     if (packMode) assertPackOnlyChange(requestPayload, row);
-    const payload = withLedgerMarket(
+    const payload = assertLedgerMarket(
       packMode ? withStoredPets(requestPayload, row.planSelection) : requestPayload,
-      ledgerStripeAccount(row)
+      row
     );
+    const fiscal = parseEditFiscal(payload, row);
     const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
 
     const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
@@ -247,6 +270,13 @@ class SubscriptionsEditCommitRepository {
         proposedTerm,
         proposed
       });
+    }
+
+    await this.saveFiscal(userId, fiscal);
+    // delivery-address-issues: every open problem of the account is checked again, the fiscal data being the
+    // account's; a saved address also clears the courier's refusal of the old one. Only logs its own errors.
+    if (this.addressIssueService) {
+      await this.addressIssueService.recheckForUser(userId, { addressSavedFor: payload.address ? [subscriptionId] : [] });
     }
 
     return {

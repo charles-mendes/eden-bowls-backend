@@ -210,6 +210,17 @@ class BlingClient {
     return body && body.data;
   }
 
+  async getContact(id) {
+    const body = await this.request('GET', `/contatos/${id}`);
+    return body && body.data;
+  }
+
+  // Bling replaces the whole contact on PUT, so the body is the same complete payload createContact sends.
+  async updateContact(id, payload) {
+    const body = await this.request('PUT', `/contatos/${id}`, { body: payload });
+    return body && body.data;
+  }
+
   async findProductByCode(code) {
     const body = await this.request('GET', '/produtos', { query: { 'codigos[]': [code] } });
     const products = body && Array.isArray(body.data) ? body.data : [];

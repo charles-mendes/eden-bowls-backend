@@ -1,3 +1,4 @@
+const { shipmentMarket } = require('../core/shipment-market');
 const { DateTime } = require('luxon');
 const { HttpError } = require('../core/http-error');
 const { assertStripeAccountMarket, shouldEnforceMarketScope } = require('../core/admin-market-scope');
@@ -15,7 +16,7 @@ const {
   protocolFromXml,
   situacaoLabel
 } = require('../core/nfe');
-const { digitsOf, parseTaxDocument } = require('../core/tax-document');
+const { digitsOf, parseFiscalName, parseTaxDocument } = require('../core/tax-document');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { BlingNotConnectedError } = require('../infrastructure/bling/bling-client');
 
@@ -167,6 +168,8 @@ function presentDetail(row) {
     bling_nfe_id: row.blingNfeId,
     protocol: row.protocol,
     customer_address: row.customerAddress,
+    // What keeps a blocked note from leaving: `tax_document`, `fiscal_name` (nfe-admin). Empty for older rows.
+    missing_fields: Array.isArray(row.missingFields) ? row.missingFields : [],
     request_payload: row.requestPayload,
     response_payload: row.responsePayload,
     danfe_url: row.danfeUrl,
@@ -191,6 +194,7 @@ class BlingNfeService {
     this.billingFor = options.billingFor || null;
     this.variants = options.variants || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.addressIssueService = options.addressIssueService || null;
     this.naturezaOperacaoId = Number(options.naturezaOperacaoId) || 0;
     this.adminAppUrl = options.adminAppUrl || '';
     this.auditService = options.auditService || null;
@@ -209,16 +213,29 @@ class BlingNfeService {
     }
   }
 
-  // What the note will carry for this customer. Without a valid CPF or CNPJ the note is blocked before any Bling call.
-  async customerSnapshot(userId, invoice) {
-    const customer = await this.repository.findCustomer(userId);
+  // What the note will carry for this customer (nfe-admin): the fiscal name, never the account display name, and the
+  // delivery address of the note's subscription. `missingFields` lists what keeps the note blocked before any Bling call.
+  async customerSnapshot(userId, invoice, stripeSubscriptionId) {
+    const customer = await this.repository.findCustomer(userId, stripeSubscriptionId);
     const document = parseTaxDocument(customer && customer.taxDocument);
+    const name = parseFiscalName(customer && customer.name);
+    const missingFields = [];
+    if (!document) missingFields.push('tax_document');
+    if (!name) missingFields.push('fiscal_name');
     return {
-      customerName: (customer && customer.name) || (invoice && invoice.customer_name) || null,
+      customerName: name || null,
       customerEmail: (customer && customer.email) || (invoice && invoice.customer_email) || null,
       customerDocument: document ? document.digits : null,
-      customerAddress: normalizedAddress(customer && customer.address)
+      customerAddress: normalizedAddress(customer && customer.address),
+      missingFields
     };
+  }
+
+  async findLedger(stripeSubscriptionId) {
+    if (!stripeSubscriptionId || !this.ledgerRepository || typeof this.ledgerRepository.findByStripeSubscriptionId !== 'function') {
+      return null;
+    }
+    return this.ledgerRepository.findByStripeSubscriptionId(stripeSubscriptionId);
   }
 
   // Called from invoice.paid after the eden_env filter and the user lookup. A repeated event finds the same row.
@@ -230,9 +247,15 @@ class BlingNfeService {
     if (existing) {
       return existing;
     }
-    const snapshot = await this.customerSnapshot(userId, invoice);
-    const blocked = !snapshot.customerDocument;
-    return this.repository.insertOrGet({
+    // A subscription that ships from no market gets no note (shipment-market): it waits in the exceptions list.
+    const ledger = await this.findLedger(subscriptionId);
+    if (ledger && shipmentMarket({ stripeAccount: ledger.stripeAccount, address: ledger.address }).exception) {
+      this.logger.warn({ invoiceId: invoice.id, subscriptionId, code: 'shipment_market_exception' }, 'NF-e not recorded: the subscription ships from no market.');
+      return null;
+    }
+    const snapshot = await this.customerSnapshot(userId, invoice, subscriptionId);
+    const blocked = snapshot.missingFields.length > 0;
+    const row = await this.repository.insertOrGet({
       ...snapshot,
       status: blocked ? NFE_STATUS.BLOCKED_MISSING_DOCUMENT : NFE_STATUS.PENDING,
       userId,
@@ -243,6 +266,14 @@ class BlingNfeService {
       currency: String(invoice.currency || 'brl').toLowerCase(),
       nextAttemptAt: blocked ? null : this.now()
     });
+    if (blocked) await this.reportAddressIssue(ledger);
+    return row;
+  }
+
+  // delivery-address-issues: a blocked note tells the customer, with the address codes of the same moment.
+  async reportAddressIssue(ledger) {
+    if (!this.addressIssueService || !ledger) return;
+    await this.addressIssueService.report({ subscription: ledger, source: 'nfe_check' });
   }
 
   // The only caller of Bling for notes: one job under one lock, so a note and the rotating refresh token are never
@@ -436,19 +467,37 @@ class BlingNfeService {
     };
   }
 
+  // The contact of the document, created once and then kept equal to the note (nfe-admin): a customer who moved or
+  // fixed the fiscal name gets the contact updated before the order is created.
   async ensureContact(row, document) {
-    if (row.blingContactId) return row.blingContactId;
-    const found = await this.client.findContactByDocument(document.digits);
-    let contactId = found && found.id;
+    let contactId = row.blingContactId;
+    if (!contactId) {
+      const found = await this.client.findContactByDocument(document.digits);
+      contactId = found && found.id;
+    }
     if (!contactId) {
       const payload = this.contactPayload(row, document);
       const created = await this.client.createContact(payload);
       contactId = created && created.id;
       await this.savePayloads(row, 'contact', payload, created);
+    } else {
+      await this.alignContact(row, document, contactId);
     }
-    row.blingContactId = contactId;
-    await this.repository.update(row.id, { blingContactId: contactId });
+    if (row.blingContactId !== contactId) {
+      row.blingContactId = contactId;
+      await this.repository.update(row.id, { blingContactId: contactId });
+    }
     return contactId;
+  }
+
+  async alignContact(row, document, contactId) {
+    const current = await this.client.getContact(contactId);
+    if (!current) return;
+    const wanted = wantedContact(row);
+    if (!contactDiffers(current, { nome: wanted.nome, endereco: { geral: wanted.endereco } })) return;
+    const payload = this.contactPayload(row, document);
+    const updated = await this.client.updateContact(contactId, payload);
+    await this.savePayloads(row, 'contact_update', payload, updated);
   }
 
   async ensureProduct(item) {
@@ -616,14 +665,15 @@ class BlingNfeService {
     return { emailStatus: NFE_EMAIL_STATUS.PENDING, emailNextAttemptAt: now };
   }
 
-  // The operator's correction reaches Bling here, inside the job, because only the job may use the rotating token.
+  // A note already in Bling takes the row's customer while it can still be edited: the customer's new address, or the
+  // operator's correction, which is then the row itself. Only the job may use the rotating token, so it runs here.
   // Bling answers PUT with the whole note in mind: what comes from GET goes back, minus what it computes itself.
+  // Returns the note as read, for send to reuse.
   async applyCustomerEdit(row, nfeId) {
-    if (!customerEdited(row)) return;
     const current = await this.client.getNfe(nfeId);
-    if (!EDITABLE_SITUACOES.has(Number(current.situacao))) return;
+    if (!current || !current.contato || !EDITABLE_SITUACOES.has(Number(current.situacao))) return current;
     const wanted = wantedContact(row);
-    if (!contactDiffers(current.contato, wanted)) return;
+    if (!contactDiffers(current.contato, wanted)) return current;
     const { id, situacao, chaveAcesso, xml, linkDanfe, linkPDF, ...editable } = current;
     const payload = {
       ...editable,
@@ -640,10 +690,11 @@ class BlingNfeService {
     };
     const updated = await this.client.updateNfe(nfeId, payload);
     await this.savePayloads(row, 'edit', { contato: payload.contato }, updated);
+    return { ...current, contato: payload.contato };
   }
 
-  async send(row, nfeId) {
-    const current = await this.client.getNfe(nfeId);
+  async send(row, nfeId, known = null) {
+    const current = known || await this.client.getNfe(nfeId);
     const situacao = Number(current && current.situacao);
     const alreadyGone = IN_FLIGHT_SITUACOES.has(situacao)
       || nfeStatusFromSituacao(situacao) === NFE_STATUS.AUTHORIZED;
@@ -667,17 +718,47 @@ class BlingNfeService {
     return this.applyNfe(row, await this.client.getNfe(nfeId));
   }
 
+  // The note's copy of the customer follows the subscription and the account until Bling has the note authorized
+  // (nfe-admin). An operator's "Corrigir dados" is the copy, so a corrected note is not read again. Returns what is
+  // still missing.
+  async refreshCustomer(row) {
+    if (customerEdited(row)) return [];
+    const snapshot = await this.customerSnapshot(row.userId, null, row.stripeSubscriptionId);
+    const patch = { ...snapshot, customerEmail: snapshot.customerEmail || row.customerEmail };
+    await this.repository.update(row.id, patch);
+    Object.assign(row, patch);
+    return snapshot.missingFields;
+  }
+
+  // After the customer saved a CPF or a fiscal name: every blocked note of the account reads it again and goes back
+  // to the job when nothing is missing anymore.
+  async refreshBlockedForUser(userId) {
+    if (!this.repository || typeof this.repository.listBlockedForUser !== 'function') return { requeued: 0 };
+    let requeued = 0;
+    for (const row of await this.repository.listBlockedForUser(userId)) {
+      if (customerEdited(row)) continue;
+      const missing = await this.refreshCustomer(row);
+      if (missing.length === 0 && await this.repository.requeue(row.id, { now: this.now() })) {
+        await this.repository.update(row.id, { lastError: null });
+        requeued += 1;
+      }
+    }
+    return { requeued };
+  }
+
   async emit(row) {
+    const missing = await this.refreshCustomer(row);
     const document = parseTaxDocument(row.customerDocument);
-    if (!document) {
+    if (!document || missing.length > 0) {
       await this.repository.update(row.id, { status: NFE_STATUS.BLOCKED_MISSING_DOCUMENT, nextAttemptAt: null });
+      await this.reportAddressIssue(await this.findLedger(row.stripeSubscriptionId));
       return NFE_STATUS.BLOCKED_MISSING_DOCUMENT;
     }
     const contactId = await this.ensureContact(row, document);
     const orderId = await this.ensureOrder(row, contactId);
     const nfeId = await this.ensureNfe(row, orderId);
-    await this.applyCustomerEdit(row, nfeId);
-    return this.send(row, nfeId);
+    const current = await this.applyCustomerEdit(row, nfeId);
+    return this.send(row, nfeId, current);
   }
 
   async poll(row) {
@@ -715,26 +796,25 @@ class BlingNfeService {
   }
 
   async detail(id, actor = {}) {
-    return { success: true, data: presentDetail(await this.requireRow(id, actor)) };
+    const row = await this.requireRow(id, actor);
+    const data = presentDetail(row);
+    // delivery-address-issues: what the customer was told about the subscription of this note.
+    if (this.addressIssueService) {
+      const ledger = await this.findLedger(row.stripeSubscriptionId);
+      data.address_issue = ledger ? await this.addressIssueService.latestFor(ledger.id) : null;
+    }
+    return { success: true, data };
   }
 
-  // Back to pending for the job. A note that has no Bling contact yet takes the customer's current data, which is
-  // how a blocked note picks up the document saved after it was recorded.
+  // Back to pending for the job. A note not corrected by an operator takes the customer's current data first, which
+  // is how a blocked note picks up the document saved after it was recorded.
   async retry(id, actor = {}) {
     const row = await this.requireRow(id, actor);
     if (!NFE_RETRYABLE_STATUSES.includes(row.status) || isImported(row)) {
       throw new HttpError(409, 'This NF-e cannot be retried in its current status.', { code: 'nfe_not_retryable' });
     }
-    if (!row.blingContactId && !customerEdited(row)) {
-      const snapshot = await this.customerSnapshot(row.userId, null);
-      await this.repository.update(row.id, {
-        ...snapshot,
-        customerName: snapshot.customerName || row.customerName,
-        customerEmail: snapshot.customerEmail || row.customerEmail
-      });
-      if (!snapshot.customerDocument) {
-        return { success: true, data: presentDetail(await this.repository.findById(row.id)) };
-      }
+    if ((await this.refreshCustomer(row)).length > 0) {
+      return { success: true, data: presentDetail(await this.repository.findById(row.id)) };
     }
     if (!(await this.repository.requeue(row.id, { now: this.now() }))) {
       throw new HttpError(409, 'This NF-e cannot be retried in its current status.', { code: 'nfe_not_retryable' });

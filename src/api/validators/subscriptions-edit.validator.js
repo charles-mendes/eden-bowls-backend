@@ -44,7 +44,10 @@ const subscriptionsEditPayloadSchema = z.object({
   payment_method_id: z.string().trim().max(128).optional(),
   // Present when the customer adjusts packs for one delivery: no proration, nothing charged now.
   delivery_id: z.string().trim().min(1).max(64).optional(),
-  expected_current_hash: z.string().trim().max(128).optional()
+  expected_current_hash: z.string().trim().max(128).optional(),
+  // Brazil only (subscription-contract): checked against the account by the edit, with the checkout rules.
+  tax_document: z.string().trim().max(32).optional(),
+  fiscal_name: z.string().trim().max(200).optional()
 });
 
 function wrapZod(parse) {

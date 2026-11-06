@@ -28,4 +28,4 @@ The UPS label queue MUST include a paid cycle only when its subscription's shipp
 #### Scenario: US account with a Brazil address
 
 - **WHEN** a subscription with account `us` and address country `BR` has a paid cycle
-- **THEN** the label queue does not list it
+- **THEN** the label queue does not list it, and it appears only in the market exceptions list

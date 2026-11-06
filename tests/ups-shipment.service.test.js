@@ -42,7 +42,8 @@ function buildService(overrides = {}) {
         id: '1',
         stripeSubscriptionId: 'sub_123',
         status: overrides.subscriptionStatus || 'active',
-        address: {
+        ...(overrides.stripeAccount ? { stripeAccount: overrides.stripeAccount } : {}),
+        address: overrides.address || {
           ...(overrides.addressName === undefined ? { name: 'Ana Costa' } : { name: overrides.addressName }),
           line1: '1 Main St',
           city: 'Miami',
@@ -65,6 +66,7 @@ function buildService(overrides = {}) {
     },
     labelStorage: overrides.labelStorage,
     logger: overrides.logger,
+    addressIssueService: overrides.addressIssueService,
     transactionalMailer
   });
 
@@ -163,16 +165,29 @@ describe('UpsShipmentService label guards', () => {
 describe('UpsShipmentService label issues', () => {
   const address = { line1: '1 Main St', city: 'Miami', state: 'FL', postal_code: '33101', country: 'US', name: 'Ana Costa' };
 
-  async function issuesFor(subscriptionAddress, overrides = {}) {
+  async function issuesFor(subscriptionAddress, overrides = {}, stripeAccount) {
     const { service, repository } = buildService(overrides);
     repository.listBySubscriptionId = jest.fn().mockResolvedValue([]);
-    service.adminBillingService.getSubscription.mockResolvedValue({ id: '1', address: subscriptionAddress, user: { id: '7' } });
+    service.adminBillingService.getSubscription.mockResolvedValue({ id: '1', address: subscriptionAddress, user: { id: '7' }, ...(stripeAccount ? { stripeAccount } : {}) });
     const result = await service.listForSubscription('1', {});
     return result.data.label_issues;
   }
 
   test('a complete US order has none', async () => {
     await expect(issuesFor(address)).resolves.toEqual([]);
+  });
+
+  test.each([
+    ['a US account delivered in Brazil', 'us', { ...address, country: 'BR' }],
+    ['a US account with no country', 'us', { ...address, country: '' }],
+    ['a Brazil account delivered in the US', 'br', address]
+  ])('names %s a market exception, first', async (_label, account, subscriptionAddress) => {
+    const issues = await issuesFor(subscriptionAddress, {}, account);
+    expect(issues[0]).toEqual({ code: 'shipment_market_exception' });
+  });
+
+  test('a US account delivered in the US has none', async () => {
+    await expect(issuesFor(address, {}, 'us')).resolves.toEqual([]);
   });
 
   test.each([
@@ -331,6 +346,21 @@ describe('UpsShipmentService.createForSubscription', () => {
     const result = await service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} });
 
     expect(result.data.reused).toBe(true);
+  });
+
+  test('a refusal the customer can fix reports ups_check; a market exception reports nothing', async () => {
+    const usAddress = { name: 'Ana Costa', line1: 'PO Box 12', city: 'Miami', state: 'FL', postal_code: '33101', country: 'US' };
+    const addressIssueService = { report: jest.fn() };
+    const { service } = buildService({ address: usAddress, stripeAccount: 'us', addressIssueService });
+    await expect(service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} }))
+      .rejects.toMatchObject({ statusCode: 422, details: { code: 'po_box_not_allowed' } });
+    expect(addressIssueService.report).toHaveBeenCalledWith({ subscription: expect.objectContaining({ stripeSubscriptionId: 'sub_123' }), source: 'ups_check' });
+
+    const crossed = { report: jest.fn() };
+    const other = buildService({ address: { ...usAddress, country: 'BR' }, stripeAccount: 'us', addressIssueService: crossed });
+    await expect(other.service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} }))
+      .rejects.toMatchObject({ details: { code: 'shipment_market_exception' } });
+    expect(crossed.report).not.toHaveBeenCalled();
   });
 
   test('an incomplete address answers 422 before asking to confirm', async () => {

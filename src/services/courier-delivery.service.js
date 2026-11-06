@@ -6,6 +6,8 @@ const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
 const { invoiceReadinessReasons } = require('../core/dispatch-readiness');
 const { parseCourierDetails, parseFailureKind, parseFailureReason } = require('../core/courier-fields');
 const { presentProductionQueueItem, recipientDisplayName } = require('../core/production-queue-presenter');
+const { shipmentMarket } = require('../core/shipment-market');
+const { brazilAddressIssues } = require('../core/delivery-address-check');
 
 const TIMEZONE = 'America/Sao_Paulo';
 const DISPATCH_FLOOR_DAYS = 30;
@@ -15,8 +17,17 @@ const QUEUE_LIMIT = 200;
 const LONG_ON_THE_ROAD_HOURS = 24;
 const ACTIVE = new Set(['out_for_delivery', 'delivered']);
 
+// Rows under to dispatch (no delivery) and failed can be dispatched; the others already left.
+function groupCanDispatch(row) {
+  return !row || row.status === 'failed';
+}
+
 function finalError() {
   return new HttpError(409, 'This courier delivery is already closed.', { code: 'courier_delivery_final' });
+}
+
+function marketExceptionError() {
+  return new HttpError(422, 'The Stripe account and the address country of this subscription do not match, so it ships from no market.', { code: 'shipment_market_exception' });
 }
 
 function invalidField(field, message) {
@@ -48,6 +59,7 @@ class CourierDeliveryService {
   constructor(options = {}) {
     this.repository = options.repository || null;
     this.adminBillingService = options.adminBillingService || null;
+    this.addressIssueService = options.addressIssueService || null;
     this.ledgerRepository = options.ledgerRepository || null;
     this.profileRepository = options.profileRepository || null;
     this.auditService = options.auditService || null;
@@ -109,10 +121,14 @@ class CourierDeliveryService {
     };
   }
 
-  // Same checks as a UPS purchase, with the delivery address in Brazil in place of the US account.
+  // Same checks as a UPS purchase, for the Brazil shipping market: account `br` and address in Brazil.
   async requireDeliverableInvoice(subscriptionId, subscription, invoiceId, actor) {
-    if (countryOf(addressOf(subscription.address)) !== 'BR') {
+    const { market } = shipmentMarket({ stripeAccount: subscription.stripeAccount, address: subscription.address });
+    if (market === 'US') {
       throw new HttpError(422, 'Courier deliveries are only for subscriptions delivered in Brazil.', { code: 'courier_country_not_supported' });
+    }
+    if (market !== 'BR') {
+      throw marketExceptionError();
     }
     const invoice = await this.adminBillingService.getSubscriptionInvoice(subscriptionId, invoiceId, actor);
     if (extractSubscriptionIdFromInvoice(invoice) !== subscription.stripeSubscriptionId) {
@@ -141,6 +157,13 @@ class CourierDeliveryService {
     const subscription = await this.adminBillingService.getSubscription(subscriptionId, actor);
     await this.requireDeliverableInvoice(subscriptionId, subscription, invoiceId, actor);
 
+    // A lock, not a warning: no confirmation sends a box to an address the courier cannot use.
+    const issues = brazilAddressIssues(subscription.address);
+    if (issues.length) {
+      await this.reportAddressIssue(subscription, 'courier_check');
+      throw new HttpError(422, 'The delivery address is incomplete, so the box cannot leave.', { code: 'courier_address_incomplete', issues });
+    }
+
     const reasons = await this.readinessReasons(subscription, invoiceId);
     if (reasons.length && body.confirm_not_ready !== true) {
       throw new HttpError(409, 'This order is not ready to leave. Confirm to dispatch it anyway.', {
@@ -165,6 +188,12 @@ class CourierDeliveryService {
     await this.audit(actor, 'courier_delivery.dispatch', subscription, row, { confirmedNotReady: reasons.length > 0 ? reasons.map((reason) => reason.code) : undefined });
     await this.notify('notifyCourierOutForDelivery', subscription, row);
     return { success: true, data: { delivery: this.present(row) } };
+  }
+
+  // delivery-address-issues: a side effect that only logs its own errors.
+  async reportAddressIssue(subscription, source, extra = []) {
+    if (!this.addressIssueService) return;
+    await this.addressIssueService.report({ subscription, source, extra });
   }
 
   // Zero rows changed means another request closed it first, or it is gone.
@@ -204,6 +233,10 @@ class CourierDeliveryService {
     const kind = parseFailureKind(body.failure_kind);
     const saved = await this.afterTransition(row.id, await this.repository.transition(row.id, 'failed', { at: this.now(), reason, kind, actorId: actor.userId }));
     await this.audit(actor, 'courier_delivery.failed', subscription, saved, { reason, failureKind: kind || undefined });
+    // The operator's text stays in the panel; the customer only learns the address could not be used.
+    if (kind === 'address_unusable') {
+      await this.reportAddressIssue(subscription, 'courier_failed', ['courier_address_unusable']);
+    }
     return { success: true, data: { delivery: this.present(saved) } };
   }
 
@@ -295,7 +328,17 @@ class CourierDeliveryService {
     cyclePage
       .filter((cycle) => !activeInvoices.has(cycle.paidInvoiceId) && !failedInvoiceSet.has(cycle.paidInvoiceId))
       .forEach((cycle) => place('to_dispatch', cycle, null));
+    await this.attachAddressIssues([...data.to_dispatch, ...data.failed]);
     return { success: true, data };
+  }
+
+  // delivery-address-issues: the rows a problem can still hold back carry it, read for the page at once.
+  async attachAddressIssues(items) {
+    if (!this.addressIssueService || items.length === 0) return;
+    const latest = await this.addressIssueService.latestForSubscriptions(items.map((item) => Number(item.subscription_id)));
+    for (const item of items) {
+      item.address_issue = latest.get(Number(item.subscription_id)) || null;
+    }
   }
 
   // Phone and instructions are read for every row at once; without the profile repository they stay empty.
@@ -368,7 +411,9 @@ class CourierDeliveryService {
       delivery_date: cycle ? cycle.deliveryDate || null : null,
       production_status: cycle ? cycle.productionStatus : null,
       subscription_status: cycle ? cycle.status : null,
-      delivery: row ? this.present(row) : null
+      delivery: row ? this.present(row) : null,
+      // What the dispatch check would refuse, for the rows that can still be dispatched.
+      ...(groupCanDispatch(row) ? { issues: cycle ? brazilAddressIssues(cycle.address) : [] } : {})
     };
   }
 

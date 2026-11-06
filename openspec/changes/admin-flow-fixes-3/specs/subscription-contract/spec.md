@@ -2,7 +2,7 @@
 
 ### Requirement: Checkout and edit need a complete address
 
-Checkout and a subscription edit that sends an address MUST be refused with HTTP 422 and code `address_incomplete`, listing the missing fields, when the address lacks the street, city, state or postal code. A Brazil address MUST also need the number and neighborhood.
+Starting a subscription at checkout and a subscription edit that sends an address MUST be refused with HTTP 422 and code `address_incomplete`, listing the missing fields, when the address lacks the street, city, state or postal code. A Brazil address MUST also need the number and neighborhood. Each field MUST accept the aliases already stored (`street`, `line1`, `address_line1`; `zipcode`, `postal_code`).
 
 #### Scenario: Brazil edit without a neighborhood
 
@@ -13,6 +13,16 @@ Checkout and a subscription edit that sends an address MUST be refused with HTTP
 
 - **WHEN** a checkout for the US has no street in its address
 - **THEN** the API returns 422 `address_incomplete` and Stripe is not called
+
+#### Scenario: Address stored with aliases
+
+- **WHEN** an edit sends `line1` and `postal_code` instead of `street` and `zipcode`
+- **THEN** the address counts as complete
+
+#### Scenario: Onboarding session check unchanged
+
+- **WHEN** the onboarding session is checked before payment with only country, CEP, state and city
+- **THEN** it still passes `session_incomplete` as today, and only the checkout start refuses the incomplete address
 
 ### Requirement: An edit never changes the country
 

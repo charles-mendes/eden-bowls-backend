@@ -6,6 +6,7 @@ const {
   buildAutoRenewOffEmail,
   buildCancelledEmail,
   buildCourierDeliveredEmail,
+  buildDeliveryAddressIssueEmail,
   buildCourierOutForDeliveryEmail,
   buildNfeEmail,
   buildOrderConfirmedEmail,
@@ -125,6 +126,18 @@ function listEmailPreviews(options = {}) {
       label: 'Brasil · entregue',
       wired: true,
       content: buildCourierDeliveredEmail({ ...sample, ...shell })
+    },
+    {
+      id: 'delivery-address-issue',
+      group: 'P0 · pedido',
+      label: 'Entrega · dado faltando',
+      wired: true,
+      content: buildDeliveryAddressIssueEmail({
+        ...sample,
+        codes: ['address_neighborhood_missing', 'fiscal_name_missing'],
+        editUrl: 'https://edenbowls.com.br/dashboard/plans/sub_123/edit?step=address',
+        ...shell
+      })
     },
     {
       id: 'admin-new-subscription',

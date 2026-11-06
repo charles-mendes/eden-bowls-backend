@@ -6,7 +6,7 @@ Tracks, per subscription, a delivery address or fiscal data that stops a box or 
 
 ### Requirement: An address problem opens only on an event
 
-An address problem MUST open only on one of these events: a paid cycle whose address fails its market's check (`payment_check`), a courier dispatch refused for the address (`courier_check`), a label purchase refused by an address check (`ups_check`), a courier failure recorded with `failure_kind: address_unusable` (`courier_failed`), or an NF-e blocked for a missing CPF or fiscal name (`nfe_check`). Reading a queue or a detail MUST NOT open one.
+An address problem MUST open only on one of these events: a paid cycle whose address fails its market's check (`payment_check`), a courier dispatch refused for the address (`courier_check`), a label purchase refused by an address check (`ups_check`), a courier failure recorded with `failure_kind: address_unusable` (`courier_failed`), or an NF-e blocked for a missing CPF or fiscal name (`nfe_check`). Reading a queue or a detail MUST NOT open one. A market exception MUST NOT open one on any event.
 
 #### Scenario: Dispatch refused
 
@@ -22,6 +22,20 @@ An address problem MUST open only on one of these events: a paid cycle whose add
 
 - **WHEN** a courier failure is recorded with `failure_kind: customer_absent`
 - **THEN** no address problem opens
+
+#### Scenario: Crossed dispatch
+
+- **WHEN** a dispatch is refused with `shipment_market_exception`
+- **THEN** no address problem opens and no email is sent
+
+### Requirement: Every event reports everything still wrong
+
+Each event MUST report the full set of codes true at that moment: the address codes of the subscription's shipping market and, in Brazil, `tax_document_missing` and `fiscal_name_missing`. A courier failure with `address_unusable` MUST add `courier_address_unusable` to that set.
+
+#### Scenario: One payment, two checks
+
+- **WHEN** a Brazil cycle is paid with no neighborhood and no fiscal name, and both the NF-e and the payment checks run
+- **THEN** one problem opens with `address_neighborhood_missing` and `fiscal_name_missing`, and one email is sent
 
 ### Requirement: One open problem per subscription and one email per problem
 
@@ -48,7 +62,7 @@ The email MUST be in pt-BR for account `br` and en-US for account `us`, MUST lis
 
 ### Requirement: Saving data that passes closes the problem
 
-When the customer saves a subscription address, or a CPF and fiscal name, and that subscription's data now passes every check of its problem, the problem MUST close with `resolved_by: customer`. A save that still fails MUST keep it open.
+When the customer saves a subscription address, or a CPF and fiscal name, every open problem of that account MUST be checked again, because the fiscal data belongs to the account. A problem with nothing left MUST close with `resolved_by: customer`. A problem with codes left MUST stay open with only those codes, and MUST NOT send an email. Saving a new address MUST clear `courier_address_unusable`.
 
 #### Scenario: Customer fixes the address
 
@@ -57,8 +71,13 @@ When the customer saves a subscription address, or a CPF and fiscal name, and th
 
 #### Scenario: Save still incomplete
 
-- **WHEN** a problem lists a missing CPF and the customer saves only an address change
-- **THEN** the problem stays open
+- **WHEN** a problem lists a missing number and a missing CPF, and the customer saves only the number
+- **THEN** the problem stays open with only the CPF code and no email is sent
+
+#### Scenario: Fiscal name saved on another subscription
+
+- **WHEN** a customer with two Brazil subscriptions, each with a problem for the missing fiscal name, saves the fiscal name in one of them
+- **THEN** both problems close
 
 ### Requirement: The panel shows the problem and the email state
 
@@ -77,6 +96,15 @@ The privacy export MUST include the account's address problems, with codes, sour
 
 - **WHEN** a customer with one resolved problem asks for the export
 - **THEN** the export lists the problem with its codes and dates
+
+### Requirement: The email always goes out once
+
+The email MUST NOT depend on the automated email settings. A send failure MUST be logged, MUST leave the problem without `email_sent_at`, and MUST NOT be retried by a job.
+
+#### Scenario: SMTP down
+
+- **WHEN** the SMTP server refuses the email of a new problem
+- **THEN** the problem stays open without `email_sent_at` and no job sends it later
 
 ### Requirement: Existing blocks open no problem at deploy
 

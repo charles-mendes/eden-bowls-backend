@@ -297,6 +297,10 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/market-exceptions"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/markets/conflicts"
   },
   {

@@ -1,3 +1,4 @@
+const { missingAddressFields } = require('../core/delivery-address-check');
 const { HttpError } = require('../core/http-error');
 const { parseCpf, parseFiscalName } = require('../core/tax-document');
 const { RECIPIENT_NAME_KEY, validateRecipientName } = require('../core/recipient-name');
@@ -202,6 +203,12 @@ class OnboardingSubscriptionCheckoutService {
       });
     }
     const deliveryMarket = resolveMarket({ country: deliveryAddress.country }).country;
+    // The fields the box needs to leave (subscription-contract), checked before Stripe: the store asks for them,
+    // and the API refuses a saved address without them.
+    const missingFields = missingAddressFields(deliveryAddress, deliveryMarket);
+    if (missingFields.length) {
+      throw new HttpError(422, 'The delivery address is incomplete.', { code: 'address_incomplete', fields: missingFields });
+    }
     assertVerifiedDeliveryArea(this.shippingQuoteSigner, deliveryMarket, context.shipping || {}, {
       zipcode: deliveryAddress.zipcode
     });

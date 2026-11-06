@@ -334,4 +334,23 @@ describe('PrivacyService customer note', () => {
     }]);
     expect(JSON.stringify(pack)).not.toContain('ops@edenbowls.com');
   });
+
+  test('the export lists the address problems with their codes and dates', async () => {
+    const deliveryAddressIssuesRepository = {
+      listByUser: jest.fn().mockResolvedValue([{
+        id: 3, subscriptionId: 5, stripeSubscriptionId: 'sub_5', userId: 77, codes: ['address_number_missing'], source: 'courier_check',
+        open: false, openedAt: new Date('2026-11-03T12:00:00Z'), emailSentAt: new Date('2026-11-03T12:00:05Z'),
+        resolvedAt: new Date('2026-11-04T09:00:00Z'), resolvedBy: 'customer'
+      }])
+    };
+    const { service } = createService({ options: { deliveryAddressIssuesRepository } });
+
+    const pack = await service.buildExportPackage(77);
+
+    expect(deliveryAddressIssuesRepository.listByUser).toHaveBeenCalledWith(77);
+    expect(pack.addressIssues).toEqual([{
+      subscriptionId: 'sub_5', codes: ['address_number_missing'], source: 'courier_check',
+      openedAt: '2026-11-03T12:00:00.000Z', emailSentAt: '2026-11-03T12:00:05.000Z', resolvedAt: '2026-11-04T09:00:00.000Z', resolvedBy: 'customer'
+    }]);
+  });
 });

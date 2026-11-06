@@ -9,10 +9,9 @@ const COUNTRY_NAMES = {
   'pt-BR': { US: 'Estados Unidos', BR: 'Brasil' }
 };
 
-function invoiceLocale(stripeAccount, address = {}) {
-  const account = String(stripeAccount || '').toLowerCase();
-  const country = String(address.country || '').toUpperCase();
-  return account === 'br' || country === 'BR' ? 'pt-BR' : 'en-US';
+// The account decides the language, the issuer and the numbering (shipment-market); the address never does.
+function invoiceLocale(stripeAccount) {
+  return String(stripeAccount || '').toLowerCase() === 'br' ? 'pt-BR' : 'en-US';
 }
 
 function toDateTime(value, locale) {
@@ -207,7 +206,7 @@ function buildInvoiceDocument({
   const ledgerAddress = parseJsonColumn(ledger.address) || null;
   const fallbackAddress = stripeAddress(invoice.customer_shipping) || stripeAddress({ address: invoice.customer_address });
   const shipTo = ledgerAddress && pick(ledgerAddress.city, ledgerAddress.zipcode) ? ledgerAddress : fallbackAddress || {};
-  const locale = invoiceLocale(stripeAccount, shipTo);
+  const locale = invoiceLocale(stripeAccount);
   const copy = INVOICE_COPY[locale];
   const country = locale === 'pt-BR' ? 'BR' : 'US';
   const currency = String(invoice.currency || (locale === 'pt-BR' ? 'brl' : 'usd')).toLowerCase();

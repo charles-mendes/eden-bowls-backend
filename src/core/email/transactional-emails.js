@@ -361,6 +361,77 @@ function buildCourierDeliveredEmail({
   };
 }
 
+// What each address problem code asks the customer to fix (delivery-address-issues), in plain words.
+const ADDRESS_ISSUE_TEXT = {
+  address_street_missing: ['Falta o nome da rua no endereço de entrega.', 'The street is missing from the delivery address.'],
+  address_number_missing: ['Falta o número no endereço de entrega.', 'The street number is missing from the delivery address.'],
+  address_neighborhood_missing: ['Falta o bairro no endereço de entrega.', 'The neighborhood is missing from the delivery address.'],
+  address_city_missing: ['Falta a cidade no endereço de entrega.', 'The city is missing from the delivery address.'],
+  address_state_missing: ['Falta o estado no endereço de entrega.', 'The state is missing from the delivery address.'],
+  address_zipcode_invalid: ['O CEP do endereço de entrega precisa ter 8 dígitos.', 'The delivery ZIP code is not valid.'],
+  recipient_name_missing: ['Falta o nome de quem vai receber a entrega.', 'The name of the person who receives the box is missing.'],
+  address_incomplete: ['O endereço de entrega está incompleto: confira rua, cidade, estado e CEP.', 'The delivery address is incomplete: check the street, city, state and ZIP code.'],
+  po_box_not_allowed: ['Não entregamos em caixa postal. Informe um endereço com rua e número.', 'We cannot deliver to a PO box. Please enter a street address.'],
+  military_address_not_supported: ['Não entregamos em endereço militar (APO, FPO ou DPO).', 'We cannot deliver to a military address (APO, FPO or DPO).'],
+  courier_address_unusable: ['O entregador não conseguiu entregar no endereço cadastrado. Confira o endereço e o complemento.', 'Our courier could not deliver to the saved address. Please check the address and the apartment or unit.'],
+  tax_document_missing: ['Falta o CPF, que a nota fiscal da sua assinatura exige.', 'The CPF required on the invoice is missing.'],
+  fiscal_name_missing: ['Falta o nome completo para a nota fiscal.', 'The full name for the invoice is missing.']
+};
+
+function addressIssueLines(codes, pt) {
+  return (Array.isArray(codes) ? codes : [])
+    .map((code) => ADDRESS_ISSUE_TEXT[code] && ADDRESS_ISSUE_TEXT[code][pt ? 0 : 1])
+    .filter(Boolean);
+}
+
+// The one letter of an address problem (delivery-address-issues): one paragraph per code and a link to the address
+// step of that subscription in the store, also for the CPF and the fiscal name, which are saved in the same step.
+function buildDeliveryAddressIssueEmail({
+  firstName,
+  codes = [],
+  editUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const url = String(editUrl || '').trim();
+  const lines = addressIssueLines(codes, pt);
+  const subject = pt
+    ? 'Precisamos de um dado para enviar sua tigela'
+    : 'We need one detail to ship your bowl';
+  const intro = pt
+    ? `${hello} Sua próxima entrega está parada até você completar os dados abaixo.`
+    : `${hello} Your next delivery is on hold until you complete the details below.`;
+  const action = pt
+    ? 'Corrija pelo link abaixo. Assim que salvar, a entrega segue normalmente.'
+    : 'Fix it with the link below. As soon as you save, the delivery moves on.';
+  const text = [intro, ...lines, action, url].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(intro),
+    ...lines.map((line) => paragraphHtml(line)),
+    paragraphHtml(action),
+    url ? buttonHtml({ href: url, label: pt ? 'Corrigir endereço' : 'Fix my address' }) : ''
+  ].join('');
+
+  return {
+    id: 'delivery-address-issue',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: pt ? 'Sua entrega está esperando um dado.' : 'Your delivery is waiting for one detail.',
+      kicker: pt ? 'Entrega' : 'Delivery',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
 function buildAdminNewSubscriptionEmail({
   customerName,
   customerEmail,
@@ -1002,6 +1073,7 @@ module.exports = {
   buildCancelledEmail,
   buildCourierDeliveredEmail,
   buildCourierOutForDeliveryEmail,
+  buildDeliveryAddressIssueEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,
   buildPausedEmail,

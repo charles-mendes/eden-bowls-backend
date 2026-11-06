@@ -3,10 +3,11 @@ const { createCheckoutLockStore } = require('../src/core/checkout-idempotency');
 const { OnboardingSubscriptionCheckoutService } = require('../src/services/onboarding-subscription-checkout.service');
 const { StripeCouponService } = require('../src/services/stripe-coupon.service');
 const { ShippingQuoteSigner } = require('../src/core/shipping-quote-token');
+const { validateCheckoutState } = require('../src/core/checkout-state');
 
 const quoteSigner = new ShippingQuoteSigner({ secret: 'test-shipping-quote-secret' });
-const US_ADDRESS = { country: 'US', zipcode: '94105', state: 'CA', city: 'San Francisco', recipient_name: 'Ana Costa' };
-const BR_ADDRESS = { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' };
+const US_ADDRESS = { country: 'US', street: '1 Market St', zipcode: '94105', state: 'CA', city: 'San Francisco', recipient_name: 'Ana Costa' };
+const BR_ADDRESS = { country: 'BR', street: 'Av. Paulista', number: '1000', neighborhood: 'Bela Vista', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' };
 
 function quoted(address, shipping, signer = quoteSigner) {
   return {
@@ -424,7 +425,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   });
 
   test.each([
-    ['missing', { country: 'US', zipcode: '94105', state: 'CA', city: 'San Francisco' }],
+    ['missing', { country: 'US', street: '1 Market St', zipcode: '94105', state: 'CA', city: 'San Francisco' }],
     ['invalid', { ...US_ADDRESS, recipient_name: 'a@b' }]
   ])('a saved address with a %s recipient is refused before Stripe', async (_label, address) => {
     const { service, repository, stripeBilling } = buildService({
@@ -442,6 +443,31 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     });
     expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
     expect(repository.checkout).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['a US address without a street', { ...US_ADDRESS, street: '' }, ['street']],
+    ['a Brazil address without a neighborhood', { ...BR_ADDRESS, neighborhood: '' }, ['neighborhood']]
+  ])('%s is refused before Stripe with the missing fields', async (_label, address, fields) => {
+    const { service, repository, stripeBilling } = buildService({
+      repository: {
+        checkout: jest.fn(),
+        getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, address }),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+
+    await expect(service.checkout({ userId: 7, payload })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'address_incomplete', fields }
+    });
+    expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    expect(repository.checkout).not.toHaveBeenCalled();
+  });
+
+  test('the onboarding session check still asks only for country, CEP, state and city', () => {
+    expect(() => validateCheckoutState({ ...validContext, address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' } })).not.toThrow();
   });
 
   test('copies the recipient into the subscription address and keeps it out of the Stripe name', async () => {
@@ -859,7 +885,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('uses the BR Stripe client for a Brazil address', async () => {
     const brContext = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' },
+      address: BR_ADDRESS,
       shipping: quoted(BR_ADDRESS, { ...validContext.shipping, distance: 10 }),
       planSelection: {
         ...validContext.planSelection,
@@ -918,7 +944,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('blocks Brazil checkout when STRIPE_BR_ENABLED is off', async () => {
     const brContext = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' },
+      address: BR_ADDRESS,
       shipping: quoted(BR_ADDRESS, { ...validContext.shipping, distance: 10 })
     };
     const { service, stripeBilling } = buildService({
@@ -942,7 +968,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('rejects a Brazil checkout that has no catalog currency', async () => {
     const brContext = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' },
+      address: BR_ADDRESS,
       shipping: quoted(BR_ADDRESS, { ...validContext.shipping, distance: 10 }),
       planSelection: {
         ...validContext.planSelection,
@@ -975,7 +1001,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('refuses a Brazil address farther than 50 km and accepts 49 km', async () => {
     const far = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' },
+      address: BR_ADDRESS,
       planSelection: {
         ...validContext.planSelection,
         catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
@@ -1033,7 +1059,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('a BR checkout needs a valid CPF and full name, saves them and takes no charge without them', async () => {
     const context = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' },
+      address: BR_ADDRESS,
       planSelection: {
         ...validContext.planSelection,
         catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
@@ -1097,7 +1123,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('accepts a Brazil address at exactly 50 km', async () => {
     const exact = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' },
+      address: BR_ADDRESS,
       planSelection: {
         ...validContext.planSelection,
         catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
@@ -1133,7 +1159,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('refuses checkout when the delivery area cannot be verified', async () => {
     const brazil = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' },
+      address: BR_ADDRESS,
       shipping: { rate_id: 'br:1', cost: 10 }
     };
     const unitedStates = {
@@ -1261,7 +1287,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       const context = {
         ...validContext,
         address: market === 'BR'
-          ? { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' }
+          ? BR_ADDRESS
           : validContext.address,
         planSelection: market === 'BR'
           ? {

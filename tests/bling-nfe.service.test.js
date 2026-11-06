@@ -6,7 +6,7 @@ const { buildNfeOrderLines, nfeStatusFromSituacao, protocolFromXml } = require('
 const CPF = '52998224725';
 const NOW = new Date('2026-10-31T12:00:00Z');
 
-function memoryRepository(customer = { name: 'Ana', email: 'ana@example.com', taxDocument: CPF, address: { street: 'Rua A', number: '1', neighborhood: 'Centro', city: 'SP', state: 'SP', zipcode: '01001000' } }) {
+function memoryRepository(customer = { name: 'Ana Costa', email: 'ana@example.com', taxDocument: CPF, address: { street: 'Rua A', number: '1', neighborhood: 'Centro', city: 'SP', state: 'SP', zipcode: '01001000' } }) {
   const rows = new Map();
   let nextId = 1;
   return {
@@ -29,6 +29,7 @@ function memoryRepository(customer = { name: 'Ana', email: 'ana@example.com', ta
       row.status = 'pending';
       return true;
     }),
+    listBlockedForUser: jest.fn(async (userId) => [...rows.values()].filter((row) => row.userId === userId && row.status === 'blocked_missing_document')),
     listDue: jest.fn(async () => [...rows.values()].filter((row) => ['pending', 'error', 'submitted'].includes(row.status) && row.nextAttemptAt))
   };
 }
@@ -40,6 +41,8 @@ function fakeClient(overrides = {}) {
     keepAlive: jest.fn(async () => {}),
     findContactByDocument: jest.fn(async () => null),
     createContact: jest.fn(async () => ({ id: 10 })),
+    getContact: jest.fn(async () => null),
+    updateContact: jest.fn(async () => ({ id: 10 })),
     findProductByCode: jest.fn(async () => ({ id: 20 })),
     createProduct: jest.fn(async () => ({ id: 21 })),
     findOrderByStoreNumber: jest.fn(async () => null),
@@ -68,13 +71,15 @@ const paidInvoice = {
   total_discount_amounts: [{ amount: 2000 }]
 };
 
-function build({ repository = memoryRepository(), client = fakeClient(), naturezaOperacaoId = 99 } = {}) {
+function build({ repository = memoryRepository(), client = fakeClient(), naturezaOperacaoId = 99, ledgerRepository, addressIssueService } = {}) {
   const billing = { shippingProductId: 'prod_ship', retrieveInvoiceWithLines: jest.fn(async () => paidInvoice) };
   const service = new BlingNfeService({
     repository,
     client,
     naturezaOperacaoId,
     billingFor: () => billing,
+    ledgerRepository,
+    addressIssueService,
     now: () => NOW,
     logger: { error() {}, warn() {}, info() {} }
   });
@@ -110,6 +115,52 @@ describe('recordPaidInvoice', () => {
     const [row] = [...repository.rows.values()];
     expect(row.customerName).toBe('Ana Costa');
     expect(JSON.stringify(row.customerAddress)).not.toContain('João Lima');
+  });
+
+  test('a CPF without a fiscal name blocks the note with missing_fields, and Bling is not called', async () => {
+    const { service, repository, client } = build({
+      repository: memoryRepository({ name: '', email: 'ana@example.com', taxDocument: CPF, address: { street: 'Rua A' } })
+    });
+    await record(service);
+    const [row] = [...repository.rows.values()];
+    expect(row.status).toBe('blocked_missing_document');
+    expect(row.missingFields).toEqual(['fiscal_name']);
+    expect(row.customerName).toBeNull();
+    expect(row.nextAttemptAt).toBeNull();
+    await service.runDue();
+    expect(client.createContact).not.toHaveBeenCalled();
+  });
+
+  test('without CPF and fiscal name both are listed', async () => {
+    const { service, repository } = build({ repository: memoryRepository({ name: 'Ana', email: 'a@b.c', taxDocument: '', address: {} }) });
+    await record(service);
+    const [row] = [...repository.rows.values()];
+    expect(row.missingFields).toEqual(['tax_document', 'fiscal_name']);
+  });
+
+  test('the note copies the address of its subscription', async () => {
+    const { service, repository } = build();
+    await record(service);
+    expect(repository.findCustomer).toHaveBeenCalledWith(7, 'sub_1');
+    const [row] = [...repository.rows.values()];
+    expect(row.status).toBe('pending');
+    expect(row.missingFields).toEqual([]);
+    expect(row.customerAddress).toMatchObject({ street: 'Rua A', number: '1', neighborhood: 'Centro' });
+  });
+
+  test('a subscription that ships from no market gets no note, and the payment is not stopped', async () => {
+    const ledgerRepository = { findByStripeSubscriptionId: jest.fn(async () => ({ stripeAccount: 'br', address: { country: 'US' } })) };
+    const { service, repository } = build({ ledgerRepository });
+    await expect(record(service)).resolves.toBeNull();
+    expect(repository.insertOrGet).not.toHaveBeenCalled();
+    expect(ledgerRepository.findByStripeSubscriptionId).toHaveBeenCalledWith('sub_1');
+  });
+
+  test('a Brazil subscription delivered in Brazil gets its note', async () => {
+    const ledgerRepository = { findByStripeSubscriptionId: jest.fn(async () => ({ stripeAccount: 'br', address: { country: 'BR' } })) };
+    const { service, repository } = build({ ledgerRepository });
+    await record(service);
+    expect(repository.rows.size).toBe(1);
   });
 
   test('a repeated webhook keeps one row', async () => {
@@ -271,6 +322,151 @@ describe('runDue', () => {
   });
 });
 
+describe('reading the customer again', () => {
+  test('a pending note takes the subscription address saved before the job ran', async () => {
+    const customer = { name: 'Ana Costa', email: 'a@b.co', taxDocument: CPF, address: { street: 'Rua Velha', city: 'Curitiba' } };
+    const { service, repository, client } = build({ repository: memoryRepository(customer) });
+    const { id } = await record(service);
+    customer.address = { street: 'Rua Nova', number: '9', city: 'Londrina' };
+    await service.runDue();
+    expect(repository.rows.get(id).customerAddress).toMatchObject({ street: 'Rua Nova', city: 'Londrina' });
+    expect(client.createContact.mock.calls[0][0].endereco.geral).toMatchObject({ endereco: 'Rua Nova', municipio: 'Londrina' });
+  });
+
+  test('the job keeps the operator correction', async () => {
+    const customer = { name: 'Ana Costa', email: 'a@b.co', taxDocument: CPF, address: { street: 'Rua Velha', city: 'Curitiba' } };
+    const { service, repository } = build({ repository: memoryRepository(customer) });
+    const { id } = await record(service);
+    Object.assign(repository.rows.get(id), {
+      customerAddress: { street: 'Rua do Operador', city: 'Maringá' },
+      requestPayload: { customer_edited_at: '2026-11-01T00:00:00Z' }
+    });
+    customer.address = { street: 'Rua Nova', city: 'Londrina' };
+    await service.runDue();
+    expect(repository.rows.get(id).customerAddress).toEqual({ street: 'Rua do Operador', city: 'Maringá' });
+  });
+
+  test('a pending note whose customer lost the fiscal name goes back to blocked', async () => {
+    const customer = { name: 'Ana Costa', email: 'a@b.co', taxDocument: CPF, address: {} };
+    const { service, repository, client } = build({ repository: memoryRepository(customer) });
+    const { id } = await record(service);
+    customer.name = '';
+    await service.runDue();
+    expect(repository.rows.get(id)).toMatchObject({ status: 'blocked_missing_document', missingFields: ['fiscal_name'], nextAttemptAt: null });
+    expect(client.createContact).not.toHaveBeenCalled();
+  });
+
+  test('refreshBlockedForUser requeues the blocked notes that became complete', async () => {
+    const customer = { name: '', email: 'a@b.co', taxDocument: CPF, address: {} };
+    const { service, repository } = build({ repository: memoryRepository(customer) });
+    const { id } = await record(service);
+    expect(await service.refreshBlockedForUser(7)).toEqual({ requeued: 0 });
+    expect(repository.rows.get(id).status).toBe('blocked_missing_document');
+
+    customer.name = 'Ana Costa';
+    expect(await service.refreshBlockedForUser(7)).toEqual({ requeued: 1 });
+    expect(repository.rows.get(id)).toMatchObject({ status: 'pending', customerName: 'Ana Costa', missingFields: [] });
+    expect(repository.listBlockedForUser).toHaveBeenCalledWith(7);
+  });
+
+  test('refreshBlockedForUser leaves an operator-corrected note alone', async () => {
+    const customer = { name: '', email: 'a@b.co', taxDocument: CPF, address: {} };
+    const { service, repository } = build({ repository: memoryRepository(customer) });
+    const { id } = await record(service);
+    repository.rows.get(id).requestPayload = { customer_edited_at: '2026-11-01T00:00:00Z' };
+    customer.name = 'Ana Costa';
+    expect(await service.refreshBlockedForUser(7)).toEqual({ requeued: 0 });
+    expect(repository.rows.get(id).status).toBe('blocked_missing_document');
+  });
+});
+
+describe('nfe_check (delivery-address-issues)', () => {
+  const ledger = { id: 5, stripeSubscriptionId: 'sub_1', userId: 7, stripeAccount: 'br', address: { country: 'BR' } };
+
+  test('a note blocked when recorded reports the subscription; a complete note does not', async () => {
+    const addressIssueService = { report: jest.fn() };
+    const ledgerRepository = { findByStripeSubscriptionId: jest.fn(async () => ledger) };
+    const blocked = build({ repository: memoryRepository({ name: '', email: 'a@b.c', taxDocument: CPF, address: {} }), ledgerRepository, addressIssueService });
+    await record(blocked.service);
+    expect(addressIssueService.report).toHaveBeenCalledWith({ subscription: ledger, source: 'nfe_check' });
+
+    const fine = { report: jest.fn() };
+    await record(build({ ledgerRepository, addressIssueService: fine }).service);
+    expect(fine.report).not.toHaveBeenCalled();
+  });
+
+  test('a note blocked by the job reports the subscription', async () => {
+    const customer = { name: 'Ana Costa', email: 'a@b.c', taxDocument: CPF, address: {} };
+    const addressIssueService = { report: jest.fn() };
+    const ledgerRepository = { findByStripeSubscriptionId: jest.fn(async () => ledger) };
+    const { service } = build({ repository: memoryRepository(customer), ledgerRepository, addressIssueService });
+    await record(service);
+    customer.taxDocument = '';
+    await service.runDue();
+    expect(addressIssueService.report).toHaveBeenCalledWith({ subscription: ledger, source: 'nfe_check' });
+  });
+});
+
+describe('detail', () => {
+  test('returns what a blocked note is missing', async () => {
+    const { service, repository } = build({ repository: memoryRepository({ name: '', email: 'a@b.c', taxDocument: CPF, address: {} }) });
+    const { id } = await record(service);
+    const { data } = await service.detail(id);
+    expect(data).toMatchObject({ status: 'blocked_missing_document', missing_fields: ['fiscal_name'] });
+    repository.rows.get(id).missingFields = null;
+    expect((await service.detail(id)).data.missing_fields).toEqual([]);
+  });
+});
+
+describe('detail address_issue', () => {
+  test('returns the problem of the note subscription', async () => {
+    const issue = { id: 3, codes: ['fiscal_name_missing'], email_sent_at: '2026-11-03T12:00:00.000Z' };
+    const addressIssueService = { report: jest.fn(), latestFor: jest.fn(async () => issue) };
+    const ledgerRepository = { findByStripeSubscriptionId: jest.fn(async () => ({ id: 5, stripeAccount: 'br', address: { country: 'BR' } })) };
+    const { service } = build({ repository: memoryRepository({ name: '', email: 'a@b.c', taxDocument: CPF, address: {} }), ledgerRepository, addressIssueService });
+    const { id } = await record(service);
+    const { data } = await service.detail(id);
+    expect(data).toMatchObject({ missing_fields: ['fiscal_name'], address_issue: issue });
+    expect(addressIssueService.latestFor).toHaveBeenCalledWith(5);
+  });
+});
+
+describe('the Bling contact follows the note', () => {
+  const blingContact = (overrides = {}) => ({
+    id: 11,
+    nome: 'Ana Costa',
+    numeroDocumento: CPF,
+    endereco: { geral: { endereco: 'Rua A', numero: '1', bairro: 'Centro', municipio: 'SP', uf: 'SP', cep: '01001-000' } },
+    ...overrides
+  });
+
+  test('a contact equal to the note is not updated', async () => {
+    const client = fakeClient({ findContactByDocument: jest.fn(async () => ({ id: 11 })), getContact: jest.fn(async () => blingContact()) });
+    const { service } = build({ client });
+    await record(service);
+    await service.runDue();
+    expect(client.getContact).toHaveBeenCalledWith(11);
+    expect(client.updateContact).not.toHaveBeenCalled();
+    expect(client.createContact).not.toHaveBeenCalled();
+    expect(client.createOrder.mock.calls[0][0].contato).toEqual({ id: 11 });
+  });
+
+  test('a customer who moved gets the contact updated before the order', async () => {
+    const client = fakeClient({
+      findContactByDocument: jest.fn(async () => ({ id: 11 })),
+      getContact: jest.fn(async () => blingContact({ endereco: { geral: { endereco: 'Rua Velha', numero: '1', municipio: 'SP' } } }))
+    });
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    await service.runDue();
+    const [contactId, payload] = client.updateContact.mock.calls[0];
+    expect(contactId).toBe(11);
+    expect(payload).toMatchObject({ nome: 'Ana Costa', numeroDocumento: CPF, endereco: { geral: { endereco: 'Rua A', bairro: 'Centro' } } });
+    expect(client.updateContact.mock.invocationCallOrder[0]).toBeLessThan(client.createOrder.mock.invocationCallOrder[0]);
+    expect(repository.rows.get(id).requestPayload.contact_update).toMatchObject({ nome: 'Ana Costa' });
+  });
+});
+
 describe('retry', () => {
   test.each(['error', 'rejected', 'blocked_missing_document'])('requeues %s', async (status) => {
     const { service, repository } = build();
@@ -289,12 +485,37 @@ describe('retry', () => {
   });
 
   test('a blocked note takes the document saved after it was recorded', async () => {
-    const customer = { name: 'Ana', email: 'a@b.co', taxDocument: '', address: {} };
+    const customer = { name: 'Ana Costa', email: 'a@b.co', taxDocument: '', address: {} };
     const { service, repository } = build({ repository: memoryRepository(customer) });
     const { id } = await record(service);
     customer.taxDocument = CPF;
     await service.retry(id);
     expect(repository.rows.get(id)).toMatchObject({ status: 'pending', customerDocument: CPF });
+  });
+
+  test('a note that already has a Bling contact reads the customer again too', async () => {
+    const customer = { name: 'Ana Costa', email: 'a@b.co', taxDocument: CPF, address: { city: 'Curitiba' } };
+    const { service, repository } = build({ repository: memoryRepository(customer) });
+    const { id } = await record(service);
+    Object.assign(repository.rows.get(id), { status: 'error', blingContactId: 10 });
+    customer.address = { city: 'Londrina' };
+    await service.retry(id);
+    expect(repository.rows.get(id)).toMatchObject({ status: 'pending', customerAddress: expect.objectContaining({ city: 'Londrina' }) });
+  });
+
+  test('an operator correction is kept on retry', async () => {
+    const customer = { name: 'Ana Costa', email: 'a@b.co', taxDocument: CPF, address: { city: 'Curitiba' } };
+    const { service, repository } = build({ repository: memoryRepository(customer) });
+    const { id } = await record(service);
+    Object.assign(repository.rows.get(id), {
+      status: 'error',
+      customerAddress: { city: 'Maringá' },
+      requestPayload: { customer_edited_at: '2026-11-01T00:00:00Z' }
+    });
+    customer.address = { city: 'Londrina' };
+    await service.retry(id);
+    expect(repository.rows.get(id).customerAddress).toEqual({ city: 'Maringá' });
+    expect(repository.findCustomer).toHaveBeenCalledTimes(1);
   });
 
   test('a blocked note with still no document stays blocked', async () => {
@@ -409,6 +630,17 @@ describe('BlingClient', () => {
     await new BlingClient({ ...options, connection: store, fetchImpl }).findContactByDocument(CPF);
     expect(fetchImpl.mock.calls[1][1].headers.Authorization).toBe('Bearer new');
     expect(fetchImpl.mock.calls[1][0]).toContain('numeroDocumento=52998224725');
+  });
+
+  test('updateContact replaces the contact with PUT /contatos/{id} and the whole body', async () => {
+    const store = connection({ accessToken: 'tok', refreshToken: 'r1', accessExpiresAt: new Date(NOW.getTime() + 3600000), refreshedAt: NOW, needsAuthorization: false });
+    const fetchImpl = jest.fn(async () => response(200, { data: { id: 11 } }));
+    const payload = { nome: 'Ana Costa', numeroDocumento: CPF, endereco: { geral: { endereco: 'Rua A' } } };
+    await expect(new BlingClient({ ...options, connection: store, fetchImpl }).updateContact(11, payload)).resolves.toEqual({ id: 11 });
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe('https://api.bling.com.br/Api/v3/contatos/11');
+    expect(init.method).toBe('PUT');
+    expect(JSON.parse(init.body)).toEqual(payload);
   });
 
   test('a refused refresh asks for a new authorization', async () => {

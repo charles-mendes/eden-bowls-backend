@@ -42,7 +42,7 @@ The courier queue and the Today count of Brazil boxes to dispatch MUST include a
 
 ### Requirement: A dispatch needs a complete Brazil address
 
-A dispatch MUST be refused with HTTP 422 and code `courier_address_incomplete` when the subscription address lacks the street, number, neighborhood, city, state, an 8-digit CEP or the recipient name. The response MUST list the failing codes in `issues`. `confirm_not_ready` MUST NOT bypass it.
+A dispatch MUST be refused with HTTP 422 and code `courier_address_incomplete` when the subscription address lacks the street, number, neighborhood, city, state, an 8-digit CEP or the recipient name. The response MUST list the failing codes in `issues`. `confirm_not_ready` MUST NOT bypass it. Each field MUST accept the aliases already stored (`street`, `line1`, `address_line1`; `zipcode`, `postal_code`).
 
 #### Scenario: No neighborhood
 

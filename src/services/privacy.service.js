@@ -59,6 +59,7 @@ class PrivacyService {
     this.profileRepository = options.profileRepository || null;
     this.quotesRepository = options.quotesRepository || null;
     this.customerContactsRepository = options.customerContactsRepository || null;
+    this.deliveryAddressIssuesRepository = options.deliveryAddressIssuesRepository || null;
     this.customerStore = options.customerStore || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.mailer = options.mailer || null;
@@ -239,6 +240,10 @@ class PrivacyService {
     const contacts = this.customerContactsRepository && typeof this.customerContactsRepository.listByUser === 'function'
       ? await this.customerContactsRepository.listByUser(userId)
       : [];
+    const addressIssues = this.deliveryAddressIssuesRepository && typeof this.deliveryAddressIssuesRepository.listByUser === 'function'
+      ? await this.deliveryAddressIssuesRepository.listByUser(userId)
+      : [];
+    const isoDate = (value) => (value instanceof Date ? value.toISOString() : (value || null));
 
     return {
       exportedAt: this.now().toISOString(),
@@ -274,6 +279,16 @@ class PrivacyService {
         outcome: contact.outcome,
         note: contact.note,
         createdAt: contact.created_at instanceof Date ? contact.created_at.toISOString() : contact.created_at
+      })),
+      // delivery-address-issues: what the customer was asked to fix, and when.
+      addressIssues: addressIssues.map((issue) => ({
+        subscriptionId: issue.stripeSubscriptionId,
+        codes: issue.codes,
+        source: issue.source,
+        openedAt: isoDate(issue.openedAt),
+        emailSentAt: isoDate(issue.emailSentAt),
+        resolvedAt: isoDate(issue.resolvedAt),
+        resolvedBy: issue.resolvedBy
       }))
     };
   }

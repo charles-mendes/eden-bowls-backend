@@ -17,6 +17,7 @@ const COLUMNS = {
   customerEmail: 'customer_email',
   customerDocument: 'customer_document',
   customerAddress: 'customer_address',
+  missingFields: 'missing_fields',
   requestPayload: 'request_payload',
   responsePayload: 'response_payload',
   danfeUrl: 'danfe_url',
@@ -34,7 +35,7 @@ const COLUMNS = {
   emailLastError: 'email_last_error',
   emailNextAttemptAt: 'email_next_attempt_at'
 };
-const JSON_COLUMNS = new Set(['customerAddress', 'requestPayload', 'responsePayload']);
+const JSON_COLUMNS = new Set(['customerAddress', 'missingFields', 'requestPayload', 'responsePayload']);
 
 function isoOrNull(value) {
   if (value == null) return null;
@@ -78,6 +79,7 @@ function mapRow(row) {
     customerEmail: row.customer_email || null,
     customerDocument: row.customer_document || null,
     customerAddress: parseJson(row.customer_address),
+    missingFields: parseJson(row.missing_fields),
     requestPayload: parseJson(row.request_payload),
     responsePayload: parseJson(row.response_payload),
     danfeUrl: row.danfe_url || null,
@@ -108,7 +110,7 @@ class BlingNfeRepository {
     this.dataSource = dataSource;
     this.usersTable = options.usersTableName || 'wp_users';
     this.usermetaTable = options.usermetaTableName || 'wp_usermeta';
-    this.stateTable = options.stateTableName || 'onboarding_user_state';
+    this.subscriptionsTable = options.subscriptionsTableName || 'stripe_subscriptions';
   }
 
   async findById(id) {
@@ -139,13 +141,23 @@ class BlingNfeRepository {
     return rows.map(mapRow);
   }
 
+  // The notes of a customer still waiting for a CPF or a fiscal name (nfe-admin).
+  async listBlockedForUser(userId) {
+    const rows = await this.dataSource.query(
+      `SELECT * FROM \`${TABLE}\` WHERE \`user_id\` = ? AND \`status\` = ? ORDER BY \`id\``,
+      [userId, NFE_STATUS.BLOCKED_MISSING_DOCUMENT]
+    );
+    return rows.map(mapRow);
+  }
+
   // The unique key on (stripe_account, stripe_invoice_id) keeps a repeated webhook to one row.
   async insertOrGet(input) {
     await this.dataSource.query(
       `INSERT IGNORE INTO \`${TABLE}\`
         (\`status\`, \`user_id\`, \`stripe_account\`, \`stripe_subscription_id\`, \`stripe_invoice_id\`, \`total_minor\`,
-         \`currency\`, \`customer_name\`, \`customer_email\`, \`customer_document\`, \`customer_address\`, \`next_attempt_at\`)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         \`currency\`, \`customer_name\`, \`customer_email\`, \`customer_document\`, \`customer_address\`, \`missing_fields\`,
+         \`next_attempt_at\`)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.status,
         input.userId,
@@ -158,6 +170,7 @@ class BlingNfeRepository {
         input.customerEmail,
         input.customerDocument,
         JSON.stringify(input.customerAddress || null),
+        input.missingFields && input.missingFields.length ? JSON.stringify(input.missingFields) : null,
         toMysqlDateTime(input.nextAttemptAt)
       ]
     );
@@ -290,22 +303,26 @@ class BlingNfeRepository {
   }
 
   // Name, email, saved document and the address of the customer's profile.
-  async findCustomer(userId) {
+  // The customer a note names (nfe-admin): the account's CPF and fiscal name, and the delivery address of the
+  // subscription of the note's invoice, the one the box goes to. The checkout state is not read: the store edits
+  // the subscription, and a copy there would go stale.
+  async findCustomer(userId, stripeSubscriptionId) {
     const rows = await this.dataSource.query(
-      `SELECT u.\`user_email\`, u.\`display_name\`, s.\`address\`,
+      `SELECT u.\`user_email\`,
+         (SELECT s.\`address\` FROM \`${this.subscriptionsTable}\` s
+           WHERE s.\`stripe_subscription_id\` = ? LIMIT 1) AS address,
          (SELECT m.\`meta_value\` FROM \`${this.usermetaTable}\` m
            WHERE m.\`user_id\` = u.\`ID\` AND m.\`meta_key\` = ? ORDER BY m.\`umeta_id\` DESC LIMIT 1) AS tax_document,
          (SELECT m.\`meta_value\` FROM \`${this.usermetaTable}\` m
            WHERE m.\`user_id\` = u.\`ID\` AND m.\`meta_key\` = ? ORDER BY m.\`umeta_id\` DESC LIMIT 1) AS fiscal_name
        FROM \`${this.usersTable}\` u
-       LEFT JOIN \`${this.stateTable}\` s ON s.\`user_id\` = u.\`ID\`
        WHERE u.\`ID\` = ? LIMIT 1`,
-      [TAX_DOCUMENT_META_KEY, FISCAL_NAME_META_KEY, userId]
+      [String(stripeSubscriptionId || ''), TAX_DOCUMENT_META_KEY, FISCAL_NAME_META_KEY, userId]
     );
     const row = rows && rows[0];
     if (!row) return null;
     return {
-      name: row.fiscal_name || row.display_name || '',
+      name: row.fiscal_name || '',
       email: row.user_email || '',
       taxDocument: row.tax_document || '',
       address: parseJson(row.address)

@@ -44,6 +44,7 @@ class SubscriptionsDetailRepository {
     this.stripeBilling = options.stripeBilling || null;
     this.upsShipmentRepository = options.upsShipmentRepository || null;
     this.courierDeliveryRepository = options.courierDeliveryRepository || null;
+    this.fiscalRepository = options.fiscalRepository || null;
     this.productsRepository = options.productsRepository || null;
   }
 
@@ -162,6 +163,10 @@ class SubscriptionsDetailRepository {
       } catch (_error) {
         extras.billingHistory = [];
       }
+    }
+
+    if (ledgerStripeAccount(row) === 'br' && this.fiscalRepository) {
+      extras.fiscal = await this.fiscalRepository.findFiscalData(row.userId);
     }
 
     return {

@@ -124,7 +124,7 @@ describe('plan selection refuses recipes outside the pet line', () => {
 
 describe('subscription checkout checks the saved plan', () => {
   const signer = new ShippingQuoteSigner({ secret: 'test-shipping-quote-secret' });
-  const address = { country: 'US', zipcode: '94105', state: 'CA', city: 'San Francisco', recipient_name: 'Ana Costa' };
+  const address = { country: 'US', street: '1 Market St', zipcode: '94105', state: 'CA', city: 'San Francisco', recipient_name: 'Ana Costa' };
   const shipping = { rate_id: 'fixed_us:default', cost: 12.9, delivery_days: 1 };
 
   function checkoutFor(planPets, publishedLines) {

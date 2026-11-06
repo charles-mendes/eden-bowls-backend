@@ -128,11 +128,20 @@ describe('applying the correction in the job', () => {
     }
   });
 
-  test('does nothing for a note nobody corrected', async () => {
-    const getNfe = jest.fn();
-    const { service } = build([row()], { getNfe });
-    await service.applyCustomerEdit(row(), 40);
-    expect(getNfe).not.toHaveBeenCalled();
+  test('a note nobody corrected takes the row customer when its contact differs', async () => {
+    const updateNfe = jest.fn(async () => ({ id: 40 }));
+    const note = row({ customerName: 'Ana Correta', customerEmail: 'ana@example.com', customerDocument: '52998224725', customerAddress: { ...input.address, complement: '' } });
+    const { service } = build([note], { getNfe: jest.fn(async () => blingNote()), updateNfe });
+    await service.applyCustomerEdit(note, 40);
+    expect(updateNfe.mock.calls[0][1].contato).toMatchObject({ nome: 'Ana Correta', endereco: { endereco: 'Rua Nova' } });
+  });
+
+  test('a note whose contact already equals the row is left as is', async () => {
+    const updateNfe = jest.fn();
+    const note = row({ customerName: 'Ana Errada', customerEmail: 'ana@example.com', customerDocument: '52998224725', customerAddress: { street: 'Rua Velha', number: '1', complement: 'Casa', neighborhood: 'Centro', city: 'Curitiba', state: 'PR', zipcode: '80010000' } });
+    const { service } = build([note], { getNfe: jest.fn(async () => blingNote()), updateNfe });
+    await service.applyCustomerEdit(note, 40);
+    expect(updateNfe).not.toHaveBeenCalled();
   });
 
   test('a second try finds the data already there', async () => {

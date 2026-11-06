@@ -7,12 +7,17 @@ const { createDataSource } = require('../infrastructure/db');
 const { SubscriptionLedgerRepository } = require('../infrastructure/repositories/subscription-ledger.repository');
 const { PROFILE_MARKET_META_KEY } = require('../core/admin-market-scope');
 const { FISCAL_NAME_META_KEY } = require('../core/tax-document');
+const { ADDRESS_KEYS } = require('../core/delivery-address-check');
+const { marketExceptionSql } = require('../core/shipment-market');
 
 const OPEN_DAYS = 30;
 // Tables created by different migrations carry different collations; joins compare in one.
 const same = (left, right) => `${left} COLLATE utf8mb4_unicode_ci = ${right} COLLATE utf8mb4_unicode_ci`;
 
 const field = (key) => `NULLIF(TRIM(JSON_UNQUOTE(JSON_EXTRACT(q.address, '$.${key}'))), '')`;
+// The same aliases the courier, the label and the problems read (delivery-address-check), so the survey counts
+// what the locks will stop.
+const anyOf = (name) => `COALESCE(${ADDRESS_KEYS[name].map(field).join(', ')})`;
 const country = `UPPER(${field('country')})`;
 
 // One query per count, each a COUNT over the open paid cycles. Exported so the test can check every one is a SELECT.
@@ -26,12 +31,13 @@ function precheckQueries({ queueSourceSql, usermetaTable = 'wp_usermeta', nfeTab
   const count = (extra) => `SELECT COUNT(*) AS total FROM ${queueSourceSql} WHERE ${open}${extra ? ` AND ${extra}` : ''}`;
   const brazil = `${country} = 'BR'`;
   const incomplete = [
-    `COALESCE(${field('street')}, ${field('address_line1')}, ${field('line1')}) IS NULL`,
-    `${field('city')} IS NULL`,
-    `${field('state')} IS NULL`,
-    `COALESCE(${field('postal_code')}, ${field('zipcode')}) IS NULL`,
+    `${anyOf('street')} IS NULL`,
+    `${anyOf('city')} IS NULL`,
+    `${anyOf('state')} IS NULL`,
+    `${anyOf('zipcode')} IS NULL`,
+    `${anyOf('recipient')} IS NULL`,
     `${country} IS NULL`,
-    `(${brazil} AND (${field('number')} IS NULL OR ${field('neighborhood')} IS NULL))`
+    `(${brazil} AND (${anyOf('number')} IS NULL OR ${anyOf('neighborhood')} IS NULL))`
   ].join(' OR ');
   const nfe = `(SELECT n.status FROM \`${nfeTable}\` n WHERE ${same('n.stripe_invoice_id', 'q.paid_invoice_id')} ORDER BY n.id DESC LIMIT 1)`;
   const profileMarket = `(SELECT UPPER(m.meta_value) FROM \`${usermetaTable}\` m WHERE m.user_id = q.user_id AND m.meta_key = '${PROFILE_MARKET_META_KEY}' LIMIT 1)`;
@@ -42,7 +48,8 @@ function precheckQueries({ queueSourceSql, usermetaTable = 'wp_usermeta', nfeTab
     brazilNfeNotAuthorized: count(`${brazil} AND ${nfe} IS NOT NULL AND ${nfe} <> 'authorized'`),
     brazilWithoutNfe: count(`${brazil} AND ${nfe} IS NULL`),
     brazilWithoutFiscalName: count(`${brazil} AND NOT EXISTS (SELECT 1 FROM \`${usermetaTable}\` f WHERE f.user_id = q.user_id AND f.meta_key = '${FISCAL_NAME_META_KEY}' AND TRIM(f.meta_value) <> '')`),
-    addressCountryOtherThanAccount: count(`((${brazil} AND q.stripe_account <> 'br') OR (${country} = 'US' AND q.stripe_account <> 'us'))`),
+    // shipment-market: every pair that ships from no market, an empty country included.
+    addressCountryOtherThanAccount: count(marketExceptionSql('q')),
     // X-03: the profile market and the Stripe account disagree.
     profileMarketOtherThanAccount: count(`${profileMarket} IS NOT NULL AND ${profileMarket} COLLATE utf8mb4_unicode_ci <> ${account}`)
   };

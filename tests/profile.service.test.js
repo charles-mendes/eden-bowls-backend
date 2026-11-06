@@ -599,4 +599,13 @@ describe('ProfileService', () => {
     expect(customerContactsRepository.deleteByUser).toHaveBeenCalledWith(77);
     expect(repository.deleteUserAndMeta).toHaveBeenCalledWith(77);
   });
+
+  test('deleting the account deletes its address problems', async () => {
+    const deliveryAddressIssuesRepository = { deleteByUser: jest.fn().mockResolvedValue(undefined) };
+    const { service } = createService({ options: { deliveryAddressIssuesRepository } });
+
+    await expect(service.deleteAccount({ userId: 77 })).resolves.toEqual({ deleted: true });
+
+    expect(deliveryAddressIssuesRepository.deleteByUser).toHaveBeenCalledWith(77);
+  });
 });

@@ -6,7 +6,7 @@ Decides, with one rule for every reader, which market ships a subscription's box
 
 ### Requirement: One rule decides the shipping market
 
-A subscription's shipping market MUST be BR when its Stripe account is `br` and its delivery address country is `BR`, and US when its account is `us` and its address country is `US`. Any other pair, including an address without a country, MUST be a market exception with no shipping market. Billing MUST stay with the Stripe account.
+A subscription's shipping market MUST be BR when its Stripe account is `br` and its delivery address country is `BR`, and US when its account is `us` and its address country is `US`. Any other pair, including an address without a country, MUST be a market exception with no shipping market. The country MUST be read as stored, without a default. Billing MUST stay with the Stripe account.
 
 #### Scenario: Brazil pair
 
@@ -20,8 +20,8 @@ A subscription's shipping market MUST be BR when its Stripe account is `br` and 
 
 #### Scenario: No country
 
-- **WHEN** a subscription's address has no country
-- **THEN** it is a market exception
+- **WHEN** a subscription with account `us` has an address with no country
+- **THEN** it is a market exception, not US
 
 ### Requirement: A market exception never ships or gets an NF-e
 
@@ -37,14 +37,14 @@ A market exception MUST NOT be listed in the courier queue or the UPS label queu
 - **WHEN** an operator dispatches a courier delivery for a subscription with account `us` and address country `BR`
 - **THEN** the API returns 422 with code `shipment_market_exception`
 
-### Requirement: The commercial invoice language follows the account
+### Requirement: The commercial invoice follows the account
 
-The Eden Bowls invoice MUST be in pt-BR for account `br` and in en-US for account `us`, whatever the address country.
+The Eden Bowls invoice MUST take its language, issuer and numbering from the account: pt-BR and the Brazil issuer for account `br`, en-US and the US issuer for account `us`, whatever the address country.
 
 #### Scenario: US account with a Brazil address
 
 - **WHEN** the invoice of a subscription with account `us` and address country `BR` is issued
-- **THEN** it is in en-US
+- **THEN** it is in en-US and names the US issuer
 
 ### Requirement: Market exceptions are listed for the panel
 

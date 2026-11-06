@@ -80,14 +80,15 @@ const brSubscription = (extra = {}) => ({
   stripeSubscriptionId: 'sub_br_1',
   stripeAccount: 'br',
   status: 'active',
-  address: { country: 'BR', city: 'São Paulo', neighborhood: 'Pinheiros', postal_code: '05422-000', recipient_name: 'João Lima' },
+  address: { country: 'BR', street: 'Rua dos Pinheiros', number: '100', city: 'São Paulo', state: 'SP', neighborhood: 'Pinheiros', postal_code: '05422-000', recipient_name: 'João Lima' },
   user: { id: '7', email: 'ana@example.com' },
   ...extra
 });
 
 const paidInvoice = (extra = {}) => ({ id: 'in_1', status: 'paid', subscription: 'sub_br_1', billing_reason: 'subscription_cycle', subtotal: 25900, ...extra });
 
-function setup({ subscription = brSubscription(), invoice = paidInvoice(), productionStatus = 'ready', seed = [], cycles = [], mailer, profileRepository } = {}) {
+function setup({ subscription = brSubscription(), invoice = paidInvoice(), productionStatus = 'ready', seed = [], cycles = [], mailer, profileRepository, issues = new Map() } = {}) {
+  const addressIssueService = { report: jest.fn(async () => null), latestForSubscriptions: jest.fn(async () => issues) };
   const repository = memoryRepository(seed);
   const auditService = { record: jest.fn() };
   const transactionalMailer = mailer || { notifyCourierOutForDelivery: jest.fn(), notifyCourierDelivered: jest.fn() };
@@ -104,8 +105,8 @@ function setup({ subscription = brSubscription(), invoice = paidInvoice(), produ
     listPaidCourierCycles: jest.fn(async ({ deliveryFloor }) => cycles.filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor))
   };
   const logger = { error: jest.fn(), warn() {}, info() {} };
-  const service = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, profileRepository, auditService, transactionalMailer, logger, now: () => NOW });
-  return { service, repository, auditService, transactionalMailer, adminBillingService, ledgerRepository, logger };
+  const service = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, profileRepository, auditService, transactionalMailer, addressIssueService, logger, now: () => NOW });
+  return { service, repository, auditService, transactionalMailer, adminBillingService, ledgerRepository, logger, addressIssueService };
 }
 
 const actor = { userId: 99, email: 'ops@edenbowls.com' };
@@ -120,15 +121,42 @@ describe('Only a paid Brazil delivery can get a courier record', () => {
     expect(repository.rows).toHaveLength(1);
   });
 
+  test('an incomplete address is a lock, even when the operator confirms the order is not ready', async () => {
+    const { service, repository } = setup({ subscription: brSubscription({ address: { ...brSubscription().address, neighborhood: '' } }), productionStatus: 'in_production' });
+    const result = await code(service.dispatch({ subscriptionId: '42', body: { ...dispatchBody(), confirm_not_ready: true }, actor }));
+    expect(result).toMatchObject({ status: 422, code: 'courier_address_incomplete', details: { issues: ['address_neighborhood_missing'] } });
+    expect(repository.rows).toHaveLength(0);
+  });
+
+  test('the address lock reports a courier_check problem; a market exception reports none', async () => {
+    const incomplete = brSubscription({ address: { ...brSubscription().address, number: '' } });
+    const locked = setup({ subscription: incomplete });
+    await code(locked.service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }));
+    expect(locked.addressIssueService.report).toHaveBeenCalledWith({ subscription: incomplete, source: 'courier_check', extra: [] });
+
+    const crossed = setup({ subscription: brSubscription({ stripeAccount: 'us', address: { ...incomplete.address } }) });
+    await code(crossed.service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }));
+    expect(crossed.addressIssueService.report).not.toHaveBeenCalled();
+
+    const fine = setup();
+    await fine.service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor });
+    expect(fine.addressIssueService.report).not.toHaveBeenCalled();
+  });
+
   test('US subscription gets courier_country_not_supported', async () => {
-    const { service, repository } = setup({ subscription: brSubscription({ address: { country: 'US' } }) });
+    const { service, repository } = setup({ subscription: brSubscription({ stripeAccount: 'us', address: { country: 'US' } }) });
     expect(await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }))).toMatchObject({ status: 422, code: 'courier_country_not_supported' });
     expect(repository.rows).toHaveLength(0);
   });
 
-  test('an address with no country is refused the same way', async () => {
-    const { service } = setup({ subscription: brSubscription({ address: {} }) });
-    expect(await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }))).toMatchObject({ code: 'courier_country_not_supported' });
+  test.each([
+    ['a US account delivered in Brazil', { stripeAccount: 'us' }],
+    ['a Brazil account delivered in the US', { address: { country: 'US' } }],
+    ['an address with no country', { address: {} }]
+  ])('%s is a market exception', async (_label, extra) => {
+    const { service, repository } = setup({ subscription: brSubscription(extra) });
+    expect(await code(service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }))).toMatchObject({ status: 422, code: 'shipment_market_exception' });
+    expect(repository.rows).toHaveLength(0);
   });
 
   test.each([
@@ -258,6 +286,20 @@ describe('Status moves only forward', () => {
     expect(auditService.record.mock.calls[0][0].metadata).toMatchObject({ failureKind: 'address_unusable' });
   });
 
+  test('address_unusable reports courier_failed with the courier code; another kind reports nothing', async () => {
+    const unusable = setup({ seed: onTheRoad() });
+    await unusable.service.markFailed(1, { reason: 'Portaria não aceita entrega', failure_kind: 'address_unusable' }, actor);
+    expect(unusable.addressIssueService.report).toHaveBeenCalledWith({
+      subscription: expect.objectContaining({ stripeSubscriptionId: 'sub_br_1' }),
+      source: 'courier_failed',
+      extra: ['courier_address_unusable']
+    });
+
+    const absent = setup({ seed: onTheRoad() });
+    await absent.service.markFailed(1, { reason: 'Ninguém em casa', failure_kind: 'customer_absent' }, actor);
+    expect(absent.addressIssueService.report).not.toHaveBeenCalled();
+  });
+
   test('Failure with an unknown kind returns 422 and stays on the road', async () => {
     const { service, repository } = setup({ seed: onTheRoad() });
     expect(await code(service.markFailed(1, { reason: 'x', failure_kind: 'lost' }, actor))).toMatchObject({ status: 422, details: { field: 'failure_kind' } });
@@ -376,7 +418,7 @@ describe('The queue lists Brazil delivery work in four groups', () => {
   const cycle = (invoice, deliveryDate, extra = {}) => ({
     id: 42, stripeSubscriptionId: 'sub_br_1', stripeAccount: 'br', status: 'active', productionStatus: 'ready',
     paidInvoiceId: invoice, deliveryDate, customerEmail: 'ana@example.com',
-    address: { country: 'BR', city: 'São Paulo', neighborhood: 'Pinheiros', postal_code: '05422-000', recipient_name: 'João Lima' },
+    address: { country: 'BR', street: 'Rua dos Pinheiros', number: '100', city: 'São Paulo', state: 'SP', neighborhood: 'Pinheiros', postal_code: '05422-000', recipient_name: 'João Lima' },
     ...extra
   });
   const delivery = (id, invoice, status, extra = {}) => ({ id, subscription_id: '42', stripe_invoice_id: invoice, status, stripe_account: 'br', out_for_delivery_at: NOW, ...extra });
@@ -403,10 +445,34 @@ describe('The queue lists Brazil delivery work in four groups', () => {
     expect(data.to_dispatch[0].items).toEqual([{ flavor: 'Frango', quantity: 4, pack_size: expect.any(String) }]);
   });
 
+  test('to-dispatch rows carry the address problem, and reading the queue opens none', async () => {
+    const address = { country: 'BR', city: 'São Paulo', state: 'SP', neighborhood: 'Pinheiros', postal_code: '05422-000', recipient_name: 'João Lima' };
+    const issue = { id: 3, codes: ['address_street_missing', 'address_number_missing'], email_sent_at: '2026-11-03T12:00:00.000Z' };
+    const { service, addressIssueService } = setup({ cycles: [cycle('in_new', '2026-11-05', { id: 42, userId: '10', address })], issues: new Map([[42, issue]]) });
+    const { data } = await service.listQueue(actor);
+    expect(data.to_dispatch[0]).toMatchObject({ subscription_id: '42', address_issue: issue });
+    expect(addressIssueService.latestForSubscriptions).toHaveBeenCalledWith([42]);
+    expect(addressIssueService.report).not.toHaveBeenCalled();
+  });
+
   test('A row without phone or instructions carries null', async () => {
-    const { service } = setup({ profileRepository: { listDeliveryContacts: jest.fn(async () => new Map()) }, cycles: [cycle('in_new', '2026-11-05', { userId: '10' })] });
+    const address = { country: 'BR', city: 'São Paulo', state: 'SP', neighborhood: 'Pinheiros', postal_code: '05422-000', recipient_name: 'João Lima' };
+    const { service } = setup({ profileRepository: { listDeliveryContacts: jest.fn(async () => new Map()) }, cycles: [cycle('in_new', '2026-11-05', { userId: '10', address })] });
     const { data } = await service.listQueue(actor);
     expect(data.to_dispatch[0]).toMatchObject({ phone: null, delivery_instructions: null, address: { street: null, number: null, city: 'São Paulo' } });
+    expect(data.to_dispatch[0].issues).toEqual(['address_street_missing', 'address_number_missing']);
+  });
+
+  test('Rows that can still be dispatched carry what the address lacks; the others carry nothing', async () => {
+    const address = { ...cycle('x').address, neighborhood: '' };
+    const { service } = setup({
+      cycles: [cycle('in_wait', '2026-11-05', { address }), cycle('in_fail', '2026-11-04', { address }), cycle('in_road', '2026-11-04')],
+      seed: [delivery(1, 'in_fail', 'failed', { failed_at: NOW }), delivery(2, 'in_road', 'out_for_delivery')]
+    });
+    const { data } = await service.listQueue(actor);
+    expect(data.to_dispatch[0].issues).toEqual(['address_neighborhood_missing']);
+    expect(data.failed[0].issues).toEqual(['address_neighborhood_missing']);
+    expect(data.out_for_delivery[0]).not.toHaveProperty('issues');
   });
 
   test('Paid cycle waiting, old paid cycle, recipient and address fields', async () => {

@@ -96,6 +96,27 @@ describe('a cycle enters production when its invoice is paid (3.12)', () => {
   });
 });
 
+describe('payment_check (delivery-address-issues)', () => {
+  test('a counted paid cycle reports the ledger row after it enters production; a skip reports nothing', async () => {
+    const report = jest.fn();
+    const row = { id: 42, stripeSubscriptionId: 'sub_123', chargedDeliveries: 1 };
+    const webhook = new StripeWebhookService({
+      ledgerRepository: {
+        findByStripeSubscriptionId: jest.fn().mockResolvedValue(row),
+        incrementChargedDeliveries: jest.fn().mockResolvedValue({ ...row, chargedDeliveries: 2 })
+      },
+      paidCycles: { recordPaid: jest.fn() },
+      addressIssueService: { report }
+    });
+    await webhook.recordChargedDelivery({ invoice: { id: 'in_2', billing_reason: 'subscription_cycle', subtotal: 100 }, subscriptionId: 'sub_123', subscription: {}, billing: {} });
+    expect(report).toHaveBeenCalledWith({ subscription: { ...row, chargedDeliveries: 2 }, source: 'payment_check' });
+
+    report.mockClear();
+    await webhook.recordChargedDelivery({ invoice: { id: 'in_skip', billing_reason: 'subscription_update', subtotal: 0 }, subscriptionId: 'sub_123', subscription: {}, billing: {} });
+    expect(report).not.toHaveBeenCalled();
+  });
+});
+
 describe('Meu Plano shows the paid delivery on its way (3.12)', () => {
   // The January delivery was paid late and is in production; the February renewal is the following delivery.
   const input = {

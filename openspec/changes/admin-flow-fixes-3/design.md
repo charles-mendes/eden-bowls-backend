@@ -38,6 +38,7 @@ Ver proposal.md (Why). Estado atual que molda a solução:
 ### D1. `src/core/shipment-market.js`
 
 - **Interface.** `shipmentMarket({ stripeAccount, address })` devolve `{ market: 'BR' | 'US' | null, exception: boolean }`.
+- **País cru.** Lê `address.country` como está gravado, sem padrão. `normalizeShipTo` da UPS põe `US` quando o país está vazio. Se a regra lesse dali, uma conta `us` sem país viraria mercado US.
 - **SQL.** O mesmo critério em SQL fica num helper `shipmentMarketSql(alias)` no repositório do ledger, usado pelas filas, pela contagem e pela lista de exceções. A regra fica escrita uma vez em JS e uma em SQL, e cada uma tem teste.
 - **Alternativa descartada:** filtrar em JS depois da consulta. Quebraria o `LIMIT 201` e a contagem sem teto do Hoje.
 
@@ -45,15 +46,20 @@ Ver proposal.md (Why). Estado atual que molda a solução:
 
 - **Exceção de mercado.** `shipment_market_exception` vale para o courier e para a UPS.
   - No courier, uma conta `us` com endereço US continua `courier_country_not_supported`, para não mudar a resposta de hoje. A exceção cobre só o par cruzado ou o país vazio.
-  - Na UPS, a exceção entra em `inspectLabel` como primeiro motivo, antes de `country_not_supported`. Assim a fila e a compra avulsa mostram o mesmo motivo.
+  - Na UPS, a exceção entra em `inspectLabel` como primeiro motivo, antes de `country_not_supported`. Ela aparece na compra avulsa e em `label_issues` do detalhe da assinatura. A fila de etiquetas não mostra a exceção, porque o par cruzado já sai da consulta (D1). O lugar dessa lista é a página "Exceções de mercado".
 
 ### D3. `src/core/delivery-address-check.js`
 
+- **Apelidos.** As duas funções leem os mesmos apelidos que o resto do código: `street`/`line1`/`address_line1`/`address`, `zipcode`/`postal_code`/`zipCode`, `complement`/`line2`/`address_line2`. O checkout grava as duas formas, e um leitor só de `zipcode` travaria um endereço completo.
 - **Brasil.** `brazilAddressIssues(address)` devolve códigos estáveis: `address_street_missing`, `address_number_missing`, `address_neighborhood_missing`, `address_city_missing`, `address_state_missing`, `address_zipcode_invalid` (CEP sem 8 dígitos) e `recipient_name_missing`.
-- **EUA.** `usAddressIssues(address)` reaproveita o que `inspectLabel` já confere sobre o endereço (P.O. Box, militar, incompleto, nome) e devolve os códigos que a UPS já usa.
-  - `inspectLabel` passa a chamar essa função, sem mudar os códigos.
+- **EUA.** `usAddressIssues(address)` reaproveita o que `inspectLabel` já confere sobre o endereço (P.O. Box, militar, incompleto) e devolve **um** código, na mesma ordem de hoje (a cadeia `else if`).
+  - O nome de quem recebe fica fora da função: continua em `inspectLabel` por `resolveRecipientName`, com o fallback do `display_name` que já existe. O gatilho `payment_check` dos EUA usa a mesma composição (endereço, mais nome com fallback).
+  - `inspectLabel` passa a chamar essa função, sem mudar os códigos nem a quantidade. Os testes atuais de etiqueta continuam iguais.
   - `ship_from_missing` e `ups_not_configured` ficam fora: são problema da operação, não do cliente.
 - **Validador da edição e do checkout.** Usa as mesmas funções, mas responde `address_incomplete` com `fields` (nomes de campo do payload), porque a loja marca campo a campo.
+  - No checkout, a checagem entra no serviço que inicia a assinatura (`onboarding-subscription-checkout.service.js`), antes da Stripe.
+  - `hasAddress`, em `checkout-state.js`, alimenta `session_incomplete` no onboarding e não muda.
+  - A loja só trata `address_incomplete` na edição. No checkout, a tela já exige os campos.
 - **Nome de quem recebe.** Continua com `recipient_name_required`, que já existe.
 
 ### D4. Edição: recusar em vez de trocar o país
@@ -69,7 +75,7 @@ Ver proposal.md (Why). Estado atual que molda a solução:
 
 - **Campos.** `tax_document` e `fiscal_name` são opcionais no payload de preview e commit, e só valem para a conta `br`. Na conta `us`, qualquer um deles dá 422 `fiscal_fields_not_allowed`. A validação é a mesma do checkout (`parseCpf`, `parseFiscalName`), com os mesmos códigos de erro.
 - **Gravação.** O commit grava os dois metas do usuário depois do `upsert` do ledger. Se a Stripe falhar, nada é gravado.
-- **Depois de gravar.** O commit chama `blingNfeService.refreshBlockedForUser(userId)` e `addressIssueService.resolveIfPasses(subscription)`.
+- **Depois de gravar.** O commit chama `blingNfeService.refreshBlockedForUser(userId)` e `addressIssueService.recheckForUser(userId)`. As duas são por usuário, porque CPF e nome fiscal são da conta.
 - **Fluxo na loja.** Os campos entram no mesmo commit, sem rota nova, para o cliente salvar tudo de uma vez.
 - **Alternativa descartada:** uma rota própria `PUT /subscriptions/:id/fiscal`. Seria mais simples no backend, mas daria dois salvamentos na tela, um capaz de falhar sem o outro.
 
@@ -101,12 +107,18 @@ Ver proposal.md (Why). Estado atual que molda a solução:
   - **Leitura.** Índices em `(subscription_id, opened_at)` e `user_id`.
 - **Collation.** `utf8mb4_unicode_ci`, explícita na migração, para evitar o `COLLATE` nos joins que o courier exigiu.
 - **Serviço `DeliveryAddressIssueService`.**
-  - **`report({ subscription, codes, source })`.**
+  - **`report({ subscription, source, extra = [] })`.** Calcula o conjunto ainda verdadeiro e não recebe só o código daquele passo.
+    - **Conjunto.** São os códigos de endereço do mercado de saída e, no BR, `tax_document_missing` e `fiscal_name_missing` lidos dos metas, mais `extra` (`courier_address_unusable` na falha do courier).
+    - **Pagamento.** Assim, `nfe_check` e `payment_check` do mesmo pagamento dão o mesmo conjunto: um problema e um e-mail. Sem isso, o segundo encerraria o primeiro como `superseded` e o problema fiscal sumiria com a nota ainda travada.
+    - **Exceção de mercado.** Sem mercado de saída, não faz nada.
     - Sem códigos, não faz nada.
     - Com o mesmo conjunto do aberto, não faz nada.
     - Com outro conjunto, encerra o aberto como `superseded` e insere o novo. Uma corrida no índice único lê o aberto vencedor e não insere.
     - Depois de inserir, envia o e-mail.
-  - **`resolveIfPasses(subscription)`.** Recalcula os códigos do mercado (endereço, mais CPF e nome fiscal quando o problema tem algum desses) e encerra o problema como `customer` se não sobrar nada.
+  - **`recheckForUser(userId, { addressSavedFor })`.** Recalcula o conjunto de cada problema aberto das assinaturas do usuário.
+    - **Nada sobrou.** Encerra como `customer`.
+    - **Sobrou algo.** Grava só os códigos restantes no mesmo problema, sem e-mail. Um salvamento não é evento de abertura.
+    - **Endereço novo.** `courier_address_unusable` sai quando o endereço daquela assinatura foi salvo (`addressSavedFor`).
   - **`latestForSubscriptions(ids)`.** Devolve o aberto ou o último resolvido nos últimos 30 dias, para as filas e os detalhes, numa consulta só.
 - **Falhas.** Um erro no serviço é registrado e nunca derruba o despacho, a compra, o pagamento ou a NF-e. O problema é um efeito colateral, não uma condição.
 
@@ -114,11 +126,13 @@ Ver proposal.md (Why). Estado atual que molda a solução:
 
 | Evento | Onde | Códigos |
 |---|---|---|
-| `payment_check` | `stripe-webhook.service.js`, depois do ciclo pago, com o ledger da assinatura | mercado BR: `brazilAddressIssues`; mercado US: `usAddressIssues`; exceção de mercado: nenhum (vai para a lista) |
-| `courier_check` | `dispatch`, quando a trava recusa | os códigos da recusa |
-| `ups_check` | `createForSubscription`, quando `inspectLabel` recusa por um código de endereço | só os códigos de endereço |
-| `courier_failed` | `markFailed` com `address_unusable` | `courier_address_unusable` (o texto do operador não vai ao e-mail) |
-| `nfe_check` | `recordPaidInvoice` e `emit`, quando a nota trava | `tax_document_missing`, `fiscal_name_missing` |
+| `payment_check` | `stripe-webhook.service.js`, depois do ciclo pago (`recordChargedDelivery`), com o ledger da assinatura | o conjunto do mercado |
+| `courier_check` | `dispatch`, quando a trava de endereço (`courier_address_incomplete`) recusa; `shipment_market_exception` não reporta | o conjunto do mercado |
+| `ups_check` | `createForSubscription`, quando `inspectLabel` recusa por um código de endereço ou de nome | o conjunto do mercado |
+| `courier_failed` | `markFailed` com `address_unusable` | o conjunto do mercado mais `courier_address_unusable` (o texto do operador não vai ao e-mail) |
+| `nfe_check` | `recordPaidInvoice` e `emit`, quando a nota trava | o conjunto do mercado |
+
+Todos chamam `report` com a fonte. O conjunto é sempre recalculado, então os gatilhos não dependem da ordem em que rodam.
 
 A compra em lote da UPS usa o mesmo `createForSubscription`, então também abre problemas.
 
@@ -127,7 +141,7 @@ A compra em lote da UPS usa o mesmo `createForSubscription`, então também abre
 - **Envio.** Template novo em `core/email/transactional-emails.js`, em pt-BR e en-US conforme a conta. Sai por `sendClaimed` com `referenceId = issue.id`. Uma segunda tentativa do mesmo problema vira `duplicate`.
 - **Conteúdo.** Um parágrafo por código, em texto simples. O link é `STORE_APP_URL + /dashboard/plans/{stripeSubscriptionId}/edit?step=address`.
 - **Depois do envio.** Grava `email_sent_at`. Uma falha de SMTP é registrada no log e o problema fica sem `email_sent_at`, sem nova tentativa por job. Segue o padrão das cartas do courier, fora de `RESEND_TEMPLATES`. O painel mostra "E-mail não enviado".
-- **Configuração.** Entra na lista de e-mails automáticos configuráveis (`automated-email-settings`), ligado por padrão, como os outros.
+- **Configuração.** Não entra em `automated-email-settings`, que só tem estágio de vida, renovação e aviso de plano, e o painel não ganha tela para um interruptor. O e-mail sai sempre.
 
 ### D10. Contratos de leitura
 
@@ -146,7 +160,7 @@ A compra em lote da UPS usa o mesmo `createForSubscription`, então também abre
 - [`PUT /contatos/{id}` do Bling exige o corpo completo] → O payload é o mesmo de `createContact`, que já é completo. O teste do cliente confere o método, o caminho e o corpo.
 - [A regra escrita em JS e em SQL pode divergir] → Teste de tabela com os quatro pares e o país vazio nas duas formas (JS e integração MySQL).
 - [Um gatilho no webhook de pagamento envia e-mail no meio do fluxo de pagamento] → O envio roda depois do ciclo gravado, e o erro não sobe (D7).
-- [A fatura de conta `us` com endereço BR muda de idioma] → Aceito (BREAKING na proposta). Sem produção, nenhuma fatura real muda.
+- [A fatura de conta `us` com endereço BR muda de idioma e de emissor] → `invoiceLocale` decide também o emissor (`currentIssuer(locale)`) e a numeração por ano. Aceito (BREAKING na proposta). O teste da fatura prende o idioma e o emissor. Sem produção, nenhuma fatura real muda.
 
 ## Migration Plan
 

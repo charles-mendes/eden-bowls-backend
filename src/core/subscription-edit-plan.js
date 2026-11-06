@@ -1,4 +1,9 @@
 const { HttpError } = require('./http-error');
+const { missingAddressFields } = require('./delivery-address-check');
+const { RECIPIENT_NAME_KEY, validateRecipientName } = require('./recipient-name');
+const { ledgerStripeAccount } = require('./stripe-account');
+const { parseJsonColumn } = require('./stripe-subscription-map');
+const { parseCpf, parseFiscalName } = require('./tax-document');
 const { collectPriceItems } = require('./checkout-state');
 const { resolveMarket } = require('./market');
 const { roundMoney } = require('./plan-catalog-pricing');
@@ -9,12 +14,64 @@ function countryFromPayload(payload = {}) {
   return raw === 'BR' ? 'BR' : 'US';
 }
 
-// A subscription never leaves the market of its Stripe account, whatever country the edit payload claims.
-function withLedgerMarket(payload = {}, stripeAccount) {
-  const country = stripeAccount === 'br' ? 'BR' : 'US';
+function storedAddressOf(row = {}) {
+  return parseJsonColumn(row.address) || {};
+}
+
+// A subscription never leaves the market of its Stripe account (subscription-contract). An address of another
+// country is refused instead of rewritten, and a subscription whose stored address is already of another market
+// cannot edit its address at all: that is a market exception, resolved by hand. An address without a country takes
+// the account's. A sent address must be complete, with a recipient sent or already stored.
+function assertLedgerMarket(payload = {}, row = {}) {
+  const country = ledgerStripeAccount(row) === 'br' ? 'BR' : 'US';
   const next = { ...payload, country };
-  if (payload.address) next.address = { ...payload.address, country };
+  if (!payload.address) return next;
+
+  const stored = storedAddressOf(row);
+  const storedCountry = String(stored.country || '').trim().toUpperCase();
+  if (storedCountry && storedCountry !== country) {
+    throw new HttpError(422, 'The address of this subscription is from another country. Contact Eden Bowls.', {
+      code: 'subscription_market_mismatch'
+    });
+  }
+  const sentCountry = String(payload.address.country || payload.country || '').trim().toUpperCase();
+  if (sentCountry && sentCountry !== country) {
+    throw new HttpError(422, country === 'BR' ? 'This subscription delivers in Brazil.' : 'This subscription delivers in the United States.', {
+      code: 'address_country_mismatch'
+    });
+  }
+  const address = { ...payload.address, country };
+  const fields = missingAddressFields(address, country);
+  if (fields.length) {
+    throw new HttpError(422, 'The delivery address is incomplete.', { code: 'address_incomplete', fields });
+  }
+  const recipient = address.recipient_name !== undefined ? address.recipient_name : stored[RECIPIENT_NAME_KEY];
+  if (!validateRecipientName(recipient)) {
+    throw new HttpError(422, 'The recipient name is required.', { code: 'recipient_name_required', field: RECIPIENT_NAME_KEY });
+  }
+  next.address = address;
   return next;
+}
+
+// The CPF and the fiscal name an edit may carry (subscription-contract): Brazil accounts only, with the checkout
+// rules. Only what was sent comes back; both belong to the account, not to this subscription.
+function parseEditFiscal(payload = {}, row = {}) {
+  const sentDocument = payload.tax_document !== undefined;
+  const sentName = payload.fiscal_name !== undefined;
+  if (!sentDocument && !sentName) return {};
+  if (ledgerStripeAccount(row) !== 'br') {
+    throw new HttpError(422, 'CPF and fiscal name are only for subscriptions in Brazil.', { code: 'fiscal_fields_not_allowed' });
+  }
+  const fiscal = {};
+  if (sentDocument) {
+    fiscal.taxDocument = parseCpf(payload.tax_document);
+    if (!fiscal.taxDocument) throw new HttpError(422, 'A valid CPF is required.', { code: 'tax_document_required' });
+  }
+  if (sentName) {
+    fiscal.fiscalName = parseFiscalName(payload.fiscal_name);
+    if (!fiscal.fiscalName) throw new HttpError(422, 'The full name is required.', { code: 'fiscal_name_required' });
+  }
+  return fiscal;
 }
 
 function shippingCostFrom(shipping = {}) {
@@ -148,7 +205,8 @@ async function resolveProposedPlan(planPreviewRepository, resolveSubscriptionIte
 
 module.exports = {
   countryFromPayload,
-  withLedgerMarket,
+  assertLedgerMarket,
+  parseEditFiscal,
   shippingCostFrom,
   extractStripeItemRefs,
   diffSubscriptionItems,

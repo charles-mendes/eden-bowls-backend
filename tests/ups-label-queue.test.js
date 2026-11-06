@@ -8,13 +8,14 @@ const cycle = (id, invoice, extra = {}) => ({
   deliveryDate: '2026-11-05', address, userId: 7, ...extra
 });
 
-function queueService({ cycles, shipments = [], configured = true }) {
+function queueService({ cycles, shipments = [], configured = true, addressIssueService }) {
   const listPaidLabelCycles = jest.fn().mockResolvedValue(cycles);
   const service = new UpsShipmentService({
     repository: { listActiveByInvoiceIds: jest.fn().mockResolvedValue(shipments) },
     ledgerRepository: { listPaidLabelCycles },
     upsClient: { isConfigured: () => configured },
     shippingService: { settings: { us: { ship_from: { zipcode: '33101' } } } },
+    addressIssueService,
     now: () => new Date('2026-11-03T12:00:00Z')
   });
   return { service, listPaidLabelCycles };
@@ -26,7 +27,8 @@ describe('paid cycle read for the label queue', () => {
     await new SubscriptionLedgerRepository({ isInitialized: true, query }).listPaidLabelCycles({ deliveryFloor: '2026-10-04', limit: 101 });
 
     const [sql, params] = query.mock.calls[0];
-    expect(sql).toContain("q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL AND q.stripe_account = 'us'");
+    expect(sql).toContain("q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL AND (q.stripe_account = 'us' AND");
+    expect(sql).toContain("'$.country')), ''))) = 'US')");
     expect(sql).toContain('COALESCE(q.delivery_date, DATE(q.cycle_period_end)) >= ?');
     expect(sql).not.toContain('production_status =');
     expect(params).toEqual(['2026-10-04', 101]);
@@ -70,6 +72,21 @@ describe('UpsShipmentService.listLabelQueue', () => {
     expect(data.unresolved.map((item) => [item.invoice_id, item.shipment.id])).toEqual([['in_pending', 12], ['in_unknown', 13]]);
     expect(data.created.map((item) => item.invoice_id)).toEqual(['in_created']);
     expect(data.truncated).toBe(false);
+  });
+
+  test('ready rows carry the address problem, and reading the queue opens none', async () => {
+    const issue = { id: 3, codes: ['po_box_not_allowed'], email_sent_at: null };
+    const addressIssueService = { report: jest.fn(), latestForSubscriptions: jest.fn(async () => new Map([[1, issue]])) };
+    const { service } = queueService({
+      cycles: [cycle(1, 'in_ready', { address: { ...address, line1: 'PO Box 9' } }), cycle(2, 'in_created')],
+      shipments: [{ id: 14, stripe_invoice_id: 'in_created', status: 'created', ups_shipment_id: 'ups_14' }],
+      addressIssueService
+    });
+    const { data } = await service.listLabelQueue({});
+    expect(data.ready[0]).toMatchObject({ subscription_id: '1', address_issue: issue });
+    expect(data.created[0]).not.toHaveProperty('address_issue');
+    expect(addressIssueService.latestForSubscriptions).toHaveBeenCalledWith([1]);
+    expect(addressIssueService.report).not.toHaveBeenCalled();
   });
 
   test('Two paid cycles without a label: both are listed', async () => {

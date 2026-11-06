@@ -7,7 +7,7 @@ const { CourierDeliveryService } = require('../src/services/courier-delivery.ser
 
 const jwt = { secret: 'test-secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
 const token = () => issueJwtToken({ data: { user: { id: 7 } } }, { ...jwt, ttlSeconds: 900, now: Math.floor(Date.now() / 1000) });
-const brSubscription = { id: '42', stripeSubscriptionId: 'sub_br_1', stripeAccount: 'br', status: 'active', address: { country: 'BR', recipient_name: 'João Lima' }, user: { id: '9', email: 'ana@example.com' } };
+const brSubscription = { id: '42', stripeSubscriptionId: 'sub_br_1', stripeAccount: 'br', status: 'active', address: { country: 'BR', street: 'Rua A', number: '10', neighborhood: 'Centro', city: 'São Paulo', state: 'SP', zipcode: '01001000', recipient_name: 'João Lima' }, user: { id: '9', email: 'ana@example.com' } };
 const paidInvoice = { id: 'in_1', status: 'paid', subscription: 'sub_br_1', billing_reason: 'subscription_cycle', subtotal: 25900 };
 
 function appFor(identity, { productionStatus = 'ready', row = null } = {}) {

@@ -231,4 +231,74 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     await expect(count(['us'])).resolves.toBe(0);
     await expect(count([])).resolves.toBe(0);
   });
+
+  test('the courier and label queues take only their shipping market', async () => {
+    await dataSource.query(`CREATE TABLE IF NOT EXISTS \`${courierTable}\` (
+      id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      stripe_invoice_id varchar(191) NOT NULL,
+      status varchar(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    const pairs = [
+      ['sub_br_br', 'br', '{"country":"BR"}', 'in_br_br'],
+      ['sub_us_us', 'us', '{"country":"US"}', 'in_us_us'],
+      ['sub_us_br', 'us', '{"country":"BR"}', 'in_us_br'],
+      ['sub_br_us', 'br', '{"country":"US"}', 'in_br_us'],
+      ['sub_us_none', 'us', '{"city":"Austin"}', 'in_us_none']
+    ];
+    for (const [sub, account, address, invoice] of pairs) {
+      const result = await dataSource.query(
+        `INSERT INTO \`${ledgerTable}\` (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end, address)
+         VALUES (7, 'ana@edenbowls.com', ?, 'cus_m', ?, 'active', '2026-10-01 08:00:00', '2026-11-01 08:00:00', ?)`,
+        [sub, account, address]
+      );
+      await dataSource.query(
+        `INSERT INTO \`${cycleTable}\` (subscription_id, period_end, status, paid_at, paid_invoice_id, delivery_date) VALUES (?, '2027-01-05 08:00:00', 'ready', '2027-01-01 07:00:00', ?, '2027-01-05')`,
+        [result.insertId, invoice]
+      );
+    }
+
+    const courier = await repository.listPaidCourierCycles({ deliveryFloor: '2027-01-01', limit: 50 });
+    const labels = await repository.listPaidLabelCycles({ deliveryFloor: '2027-01-01', limit: 50 });
+    expect(courier.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_br_br']);
+    expect(labels.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_us_us']);
+    await expect(repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2027-01-01', courierTableName: courierTable })).resolves.toBe(1);
+  });
+
+  test('lists the subscriptions that ship from no market, with their open paid cycles', async () => {
+    const upsTable = `it_${suffix}_ups_shipments`;
+    await dataSource.query(`CREATE TABLE \`${upsTable}\` (
+      id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      stripe_invoice_id varchar(191) NOT NULL,
+      status varchar(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    try {
+      const insert = async (sub, account, status, address) => (await dataSource.query(
+        `INSERT INTO \`${ledgerTable}\` (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end, address)
+         VALUES (8, 'x@example.com', ?, 'cus_x', ?, ?, '2027-02-01 08:00:00', '2027-03-01 08:00:00', ?)`,
+        [sub, account, status, address]
+      )).insertId;
+      const crossed = await insert('sub_exc_us_br', 'us', 'active', '{"country":"BR"}');
+      await insert('sub_exc_canceled', 'br', 'canceled', '{"country":"US"}');
+      await insert('sub_exc_none', 'br', 'active', '{"city":"Curitiba"}');
+      const cycle = (invoice, delivery) => dataSource.query(
+        `INSERT INTO \`${cycleTable}\` (subscription_id, period_end, status, paid_at, paid_invoice_id, delivery_date) VALUES (?, ?, 'ready', ?, ?, ?)`,
+        [crossed, `${delivery} 08:00:00`, `${delivery} 07:00:00`, invoice, delivery]
+      );
+      await cycle('in_exc_open', '2027-02-05');
+      await cycle('in_exc_labeled', '2027-02-06');
+      await cycle('in_exc_old', '2026-12-01');
+      await dataSource.query(`INSERT INTO \`${upsTable}\` (stripe_invoice_id, status) VALUES ('in_exc_labeled', 'created')`);
+
+      const listed = await repository.listMarketExceptions({ deliveryFloor: '2027-01-15', courierTableName: courierTable, upsTableName: upsTable });
+      const ours = listed.filter((row) => row.stripeSubscriptionId.startsWith('sub_exc_'));
+      expect(ours.map((row) => [row.stripeSubscriptionId, row.openPaidCycles])).toEqual([
+        ['sub_exc_us_br', 1],
+        ['sub_exc_none', 0]
+      ]);
+      const usOnly = await repository.listMarketExceptions({ deliveryFloor: '2027-01-15', stripeAccounts: ['us'], courierTableName: courierTable, upsTableName: upsTable });
+      expect(usOnly.filter((row) => row.stripeSubscriptionId.startsWith('sub_exc_')).map((row) => row.stripeSubscriptionId)).toEqual(['sub_exc_us_br']);
+    } finally {
+      await dataSource.query(`DROP TABLE IF EXISTS \`${upsTable}\``);
+    }
+  });
 });

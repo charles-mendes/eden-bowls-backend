@@ -40,6 +40,7 @@ class StripeWebhookService {
     this.webhookSecret = options.webhookSecret || '';
     this.eventsRepository = options.eventsRepository || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.addressIssueService = options.addressIssueService || null;
     this.customerStore = options.customerStore || null;
     this.shippingProductId = options.shippingProductId || '';
     this.transactionalMailer = options.transactionalMailer || null;
@@ -542,6 +543,10 @@ class StripeWebhookService {
     // The cycle this invoice paid enters production; until now it was awaiting payment.
     if (this.paidCycles) {
       await this.paidCycles.recordPaid({ ledgerRow: row, subscription, invoice, estimate: delivery });
+    }
+    // delivery-address-issues: a paid cycle whose address its market cannot ship. Only logs its own errors.
+    if (this.addressIssueService && row) {
+      await this.addressIssueService.report({ subscription: row, source: 'payment_check' });
     }
     if (this.pendingDeliveryChanges) {
       await this.pendingDeliveryChanges.applyAfterCharge({ subscriptionId, subscription, billing });

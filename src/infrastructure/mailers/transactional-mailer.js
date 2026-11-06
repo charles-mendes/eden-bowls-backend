@@ -16,7 +16,8 @@ const {
   buildResumedEmail,
   buildShippedEmail,
   buildCourierDeliveredEmail,
-  buildCourierOutForDeliveryEmail
+  buildCourierOutForDeliveryEmail,
+  buildDeliveryAddressIssueEmail
 } = require('../../core/email/transactional-emails');
 const { buildLifeStageChangeEmail, formatDeadline, packsUrl } = require('../../core/email/life-stage-emails');
 const {
@@ -36,6 +37,7 @@ const TEMPLATES = {
   shipped: 'shipped',
   courierOutForDelivery: 'courier_out_for_delivery',
   courierDelivered: 'courier_delivered',
+  deliveryAddressIssue: 'delivery_address_issue',
   renewal: 'renewal',
   paused: 'paused',
   resumed: 'resumed',
@@ -466,6 +468,25 @@ function createTransactionalMailer(options = {}) {
     });
   }
 
+  // The letter of an address problem (delivery-address-issues), claimed once per problem. It is not in
+  // RESEND_TEMPLATES nor in the automated email settings: it always goes out, and a failed send is only logged.
+  async function notifyDeliveryAddressIssue({ issue = {}, subscription = {} } = {}) {
+    const id = String(subscription.stripeSubscriptionId || issue.stripeSubscriptionId || '').trim();
+    const referenceId = String(issue.id || '').trim();
+    const to = String((subscription.user && subscription.user.email) || subscription.customerEmail || '').trim();
+    if (!id || !referenceId || !to) {
+      return missingContext(TEMPLATES.deliveryAddressIssue);
+    }
+    const content = buildDeliveryAddressIssueEmail({
+      firstName: firstNameFrom(subscription),
+      codes: issue.codes,
+      editUrl: `${dashboardPlansUrl(storeAppUrl)}/${encodeURIComponent(id)}/edit?step=address`,
+      locale: localeFrom({ stripeAccount: subscription.stripeAccount || issue.stripeAccount }),
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({ subscriptionId: id, template: TEMPLATES.deliveryAddressIssue, referenceId, to, content });
+  }
+
   function customerTarget({ ledger = {}, subscriptionId, referenceId, fallbackEmail }) {
     return {
       id: String(subscriptionId || ledger.stripeSubscriptionId || '').trim(),
@@ -798,6 +819,7 @@ function createTransactionalMailer(options = {}) {
     notifyShipped,
     notifyCourierOutForDelivery,
     notifyCourierDelivered,
+    notifyDeliveryAddressIssue,
     notifyRenewal,
     notifyRenewalNotice,
     notifyPlanEndingNotice,

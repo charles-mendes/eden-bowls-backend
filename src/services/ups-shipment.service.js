@@ -1,5 +1,6 @@
+const { shipmentMarket } = require('../core/shipment-market');
+const { usAddressIssue } = require('../core/delivery-address-check');
 const { HttpError } = require('../core/http-error');
-const { isPoBoxAddress } = require('../core/po-box');
 const { assertStripeAccountMarket, constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { ledgerStripeAccount } = require('../core/stripe-account');
 const { extractSubscriptionIdFromInvoice } = require('../core/stripe-subscription-map');
@@ -47,12 +48,11 @@ function upsRejectedShipment(error) {
   return details.code === 'ups_upstream_error' && status >= 400 && status < 500;
 }
 
-// UPS does not deliver to US military mail: APO, FPO and DPO cities, or the AA, AE and AP states.
-function isMilitaryAddress(shipTo = {}) {
-  const city = String(shipTo.city || '').trim().toUpperCase();
-  const state = String(shipTo.state || '').trim().toUpperCase();
-  return ['APO', 'FPO', 'DPO'].includes(city) || ['AA', 'AE', 'AP'].includes(state);
-}
+const US_ADDRESS_MESSAGES = {
+  po_box_not_allowed: 'UPS cannot deliver to a P.O. Box. Please use a street address.',
+  military_address_not_supported: 'UPS does not deliver to APO, FPO or DPO addresses.',
+  address_incomplete: 'The delivery address is incomplete.'
+};
 
 function unresolvedShipmentError(shipment) {
   return new HttpError(409, 'A UPS shipment for this invoice has no confirmed outcome. Check UPS, then void it before buying another label.', {
@@ -65,6 +65,8 @@ const QUEUE_LIMIT = 100;
 const QUEUE_DELIVERY_DAYS = 30;
 const UNRESOLVED_STATUSES = new Set(['pending', 'unknown']);
 
+const CUSTOMER_LABEL_CODES = new Set(['po_box_not_allowed', 'military_address_not_supported', 'address_incomplete', 'recipient_name_missing']);
+
 class UpsShipmentService {
   constructor(options = {}) {
     this.repository = options.repository || null;
@@ -72,6 +74,7 @@ class UpsShipmentService {
     this.labelStorage = options.labelStorage || null;
     this.shippingService = options.shippingService || null;
     this.adminBillingService = options.adminBillingService || null;
+    this.addressIssueService = options.addressIssueService || null;
     this.ledgerRepository = options.ledgerRepository || null;
     this.profileRepository = options.profileRepository || null;
     this.transactionalMailer = options.transactionalMailer || null;
@@ -212,6 +215,11 @@ class UpsShipmentService {
         data.created.push(item);
       }
     }
+    // delivery-address-issues: the ready rows carry the subscription's problem, read for the page at once.
+    if (this.addressIssueService && data.ready.length) {
+      const latest = await this.addressIssueService.latestForSubscriptions(data.ready.map((item) => Number(item.subscription_id)));
+      for (const item of data.ready) item.address_issue = latest.get(Number(item.subscription_id)) || null;
+    }
     return { success: true, data };
   }
 
@@ -247,6 +255,11 @@ class UpsShipmentService {
     const { shipTo, settings, shipFrom, issues } = await this.inspectLabel(subscription);
     if (issues.length) {
       const [issue] = issues;
+      // delivery-address-issues: only a refusal the customer can fix opens a problem; the country of a crossed
+      // subscription and the ship-from setting are not the customer's.
+      if (this.addressIssueService && issues.some((item) => CUSTOMER_LABEL_CODES.has(item.code))) {
+        await this.addressIssueService.report({ subscription, source: 'ups_check' });
+      }
       throw new HttpError(422, issue.message, { code: issue.code });
     }
 
@@ -410,14 +423,14 @@ class UpsShipmentService {
     const shipFrom = settings.ship_from || {};
     const issues = [];
 
-    if (shipTo.country !== 'US') {
+    if (shipmentMarket({ stripeAccount: subscription.stripeAccount || subscription.stripe_account, address }).exception
+      && (subscription.stripeAccount || subscription.stripe_account)) {
+      issues.push({ code: 'shipment_market_exception', message: 'The Stripe account and the address country of this subscription do not match, so it ships from no market.' });
+    } else if (shipTo.country !== 'US') {
       issues.push({ code: 'country_not_supported', message: 'UPS shipments are only available for US addresses.', country: shipTo.country });
-    } else if (isPoBoxAddress(shipTo.street, shipTo.street2)) {
-      issues.push({ code: 'po_box_not_allowed', message: 'UPS cannot deliver to a P.O. Box. Please use a street address.' });
-    } else if (isMilitaryAddress(shipTo)) {
-      issues.push({ code: 'military_address_not_supported', message: 'UPS does not deliver to APO, FPO or DPO addresses.' });
-    } else if (![shipTo.street, shipTo.city, shipTo.state, shipTo.zipcode].every((value) => String(value).trim())) {
-      issues.push({ code: 'address_incomplete', message: 'The delivery address is incomplete.' });
+    } else {
+      const code = usAddressIssue(address);
+      if (code) issues.push({ code, message: US_ADDRESS_MESSAGES[code] });
     }
     if (!String(shipFrom.zipcode || '').replace(/\D/g, '')) {
       issues.push({ code: 'ship_from_missing', message: 'US ship-from is not configured.' });

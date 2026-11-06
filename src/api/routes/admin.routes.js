@@ -252,6 +252,16 @@ function registerAdminRoutes(app, dependencies = {}) {
     await handle(response, next, async () => courierService().listQueue(request.adminIdentity));
   });
 
+  // Subscriptions whose account and address country fit no shipping market (shipment-market).
+  app.get('/api/v1/admin/market-exceptions', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.marketExceptionsService) {
+        throw new HttpError(503, 'Market exceptions are not available.');
+      }
+      return dependencies.marketExceptionsService.list(request.adminIdentity);
+    });
+  });
+
   // Contacts made with the customer outside the system (customer-contacts).
   function contactsService() {
     if (!dependencies.customerContactsService) {
@@ -711,7 +721,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.adminBillingService) {
         throw new HttpError(503, 'Billing service is not available.');
       }
-      return dependencies.adminBillingService.getSubscription(request.params.id, request.adminIdentity);
+      return dependencies.adminBillingService.getSubscription(request.params.id, request.adminIdentity, { detail: true });
     });
   });
 

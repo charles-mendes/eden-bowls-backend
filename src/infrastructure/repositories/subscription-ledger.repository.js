@@ -6,6 +6,7 @@ const {
 } = require('../../core/stripe-subscription-map');
 const { PROFILE_MARKET_META_KEY, appendInFilter } = require('../../core/admin-market-scope');
 const { dateOnly } = require('./subscription-production.repository');
+const { marketExceptionSql, shipmentMarketSql } = require('../../core/shipment-market');
 
 // A subscription is activated the first time it reaches a status Stripe bills.
 const BILLABLE_STATUSES = new Set(['active', 'trialing', 'past_due']);
@@ -733,15 +734,16 @@ class SubscriptionLedgerRepository {
     ) q`;
   }
 
-  // Paid US cycles for the UPS label queue (ups-label-queue): every paid cycle, whatever its production
-  // status, delivered on or after deliveryFloor. Without a delivery date the period end stands in.
+  // Paid cycles of the US shipping market for the UPS label queue (ups-label-queue, shipment-market): account `us`
+  // and address in the US, whatever the production status, delivered on or after deliveryFloor. Without a delivery
+  // date the period end stands in.
   async listPaidLabelCycles({ deliveryFloor, limit }) {
     this.ensureDataSource();
     const deliveryKey = 'COALESCE(q.delivery_date, DATE(q.cycle_period_end))';
     const rows = await this.dataSource.query(
       [
         `SELECT q.* FROM ${this.queueSourceSql()}`,
-        "WHERE q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL AND q.stripe_account = 'us'",
+        `WHERE q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL AND ${shipmentMarketSql('US')}`,
         `AND ${deliveryKey} >= ?`,
         `ORDER BY ${deliveryKey} ASC, q.id ASC`,
         'LIMIT ?'
@@ -751,8 +753,8 @@ class SubscriptionLedgerRepository {
     return (Array.isArray(rows) ? rows : []).map((row) => this.mapQueueRow(row)).filter(Boolean);
   }
 
-  // Paid cycles delivered in Brazil, by address country, for the courier queue (courier-delivery). The Stripe
-  // account does not decide: the delivery address does, as on the subscription detail.
+  // Paid cycles of the Brazil shipping market for the courier queue (courier-delivery, shipment-market): account
+  // `br` and address in Brazil. A crossed pair goes to the market exceptions list instead.
   async listPaidCourierCycles({ deliveryFloor, limit }) {
     this.ensureDataSource();
     const deliveryKey = 'COALESCE(q.delivery_date, DATE(q.cycle_period_end))';
@@ -760,7 +762,7 @@ class SubscriptionLedgerRepository {
       [
         `SELECT q.* FROM ${this.queueSourceSql()}`,
         "WHERE q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL",
-        "AND UPPER(JSON_UNQUOTE(JSON_EXTRACT(q.address, '$.country'))) = 'BR'",
+        `AND ${shipmentMarketSql('BR')}`,
         `AND ${deliveryKey} >= ?`,
         `ORDER BY ${deliveryKey} ASC, q.id ASC`,
         'LIMIT ?'
@@ -777,7 +779,7 @@ class SubscriptionLedgerRepository {
     const deliveryKey = 'COALESCE(q.delivery_date, DATE(q.cycle_period_end))';
     const where = [
       "q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL",
-      "UPPER(JSON_UNQUOTE(JSON_EXTRACT(q.address, '$.country'))) = 'BR'",
+      shipmentMarketSql('BR'),
       `${deliveryKey} >= ?`,
       // courier_deliveries was created with the server collation; the ledger tables use utf8mb4_unicode_ci.
       `NOT EXISTS (SELECT 1 FROM \`${courierTableName}\` cd WHERE cd.stripe_invoice_id COLLATE utf8mb4_unicode_ci = q.paid_invoice_id COLLATE utf8mb4_unicode_ci AND cd.status IN ('out_for_delivery', 'delivered', 'failed'))`
@@ -790,6 +792,48 @@ class SubscriptionLedgerRepository {
     }
     const rows = await this.dataSource.query(`SELECT COUNT(*) AS total FROM ${this.queueSourceSql()} WHERE ${where.join(' AND ')}`, params);
     return Number((Array.isArray(rows) && rows[0] && rows[0].total) || 0);
+  }
+
+  // Subscriptions that ship from no market (shipment-market): not canceled, account and stored address country
+  // not a pair. Each carries its paid cycles since deliveryFloor whose box has not left (no courier delivery on the
+  // road or delivered, no created or delivered label). The courier and UPS tables use another collation.
+  async listMarketExceptions({ deliveryFloor, limit = 200, stripeAccounts = null, courierTableName = 'courier_deliveries', upsTableName = 'ups_shipments' }) {
+    this.ensureDataSource();
+    const same = (left, right) => `${left} COLLATE utf8mb4_unicode_ci = ${right} COLLATE utf8mb4_unicode_ci`;
+    const where = ["s.status NOT IN ('canceled', 'incomplete_expired')", marketExceptionSql('s')];
+    const params = [deliveryFloor];
+    if (Array.isArray(stripeAccounts)) {
+      if (!stripeAccounts.length) return [];
+      where.push(`s.stripe_account IN (${stripeAccounts.map(() => '?').join(', ')})`);
+      params.push(...stripeAccounts);
+    }
+    params.push(Number(limit));
+    const rows = await this.dataSource.query(
+      [
+        'SELECT s.id, s.user_id, s.customer_email, s.stripe_subscription_id, s.stripe_account, s.status, s.address,',
+        `  (SELECT COUNT(*) FROM \`${this.productionCyclesTableName}\` c`,
+        '    WHERE c.subscription_id = s.id AND c.paid_at IS NOT NULL AND c.paid_invoice_id IS NOT NULL',
+        '      AND COALESCE(c.delivery_date, DATE(c.period_end)) >= ?',
+        `      AND NOT EXISTS (SELECT 1 FROM \`${courierTableName}\` cd WHERE ${same('cd.stripe_invoice_id', 'c.paid_invoice_id')} AND cd.status IN ('out_for_delivery', 'delivered'))`,
+        `      AND NOT EXISTS (SELECT 1 FROM \`${upsTableName}\` us WHERE ${same('us.stripe_invoice_id', 'c.paid_invoice_id')} AND us.status IN ('created', 'delivered'))`,
+        '  ) AS open_paid_cycles',
+        `FROM \`${this.tableName}\` s`,
+        `WHERE ${where.join(' AND ')}`,
+        'ORDER BY s.id ASC',
+        'LIMIT ?'
+      ].join(' '),
+      params
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => ({
+      id: Number(row.id),
+      userId: row.user_id == null ? null : Number(row.user_id),
+      customerEmail: row.customer_email ? String(row.customer_email) : null,
+      stripeSubscriptionId: String(row.stripe_subscription_id || ''),
+      stripeAccount: String(row.stripe_account || '').toLowerCase(),
+      status: String(row.status || ''),
+      address: parseJsonColumn(row.address) || {},
+      openPaidCycles: Number(row.open_paid_cycles || 0)
+    }));
   }
 
   // The paid cycles of one subscription, newest delivery first, for shipping from the subscription detail.

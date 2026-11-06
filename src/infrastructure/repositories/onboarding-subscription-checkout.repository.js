@@ -78,6 +78,18 @@ class OnboardingSubscriptionCheckoutRepository {
     };
   }
 
+  // The account's CPF and fiscal name, as stored (null when absent): the edit and the NF-e read the same metas.
+  async findFiscalData(userId) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT \`meta_key\`, \`meta_value\` FROM \`${this.usermetaTableName}\`
+       WHERE \`user_id\` = ? AND \`meta_key\` IN (?, ?) ORDER BY \`umeta_id\` ASC`,
+      [userId, TAX_DOCUMENT_META_KEY, FISCAL_NAME_META_KEY]
+    );
+    const meta = Object.fromEntries((rows || []).map((row) => [row.meta_key, row.meta_value]));
+    return { taxDocument: meta[TAX_DOCUMENT_META_KEY] || null, fiscalName: meta[FISCAL_NAME_META_KEY] || null };
+  }
+
   async saveTaxDocument(userId, document) {
     await this.replaceUserMeta(userId, TAX_DOCUMENT_META_KEY, document);
   }
