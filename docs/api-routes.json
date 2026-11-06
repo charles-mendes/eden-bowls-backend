@@ -497,6 +497,22 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/shipments/pickups"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/shipments/pickups"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/shipments/pickups/:id/cancel"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/shipments/pickups/:id/not-created"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/shipments/queue"
   },
   {

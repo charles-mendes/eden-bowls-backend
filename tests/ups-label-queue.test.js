@@ -8,7 +8,7 @@ const cycle = (id, invoice, extra = {}) => ({
   deliveryDate: '2026-11-05', address, userId: 7, ...extra
 });
 
-function queueService({ cycles, atWork = [], later = 0, shipments = [], configured = true, addressIssueService }) {
+function queueService({ cycles, atWork = [], later = 0, shipments = [], configured = true, addressIssueService, pickupRepository }) {
   const listPaidLabelCycles = jest.fn().mockResolvedValue(cycles);
   const listLabelCyclesWithActiveShipment = jest.fn().mockResolvedValue(atWork);
   const countPaidLabelCyclesWithoutShipment = jest.fn().mockResolvedValue(later);
@@ -18,6 +18,7 @@ function queueService({ cycles, atWork = [], later = 0, shipments = [], configur
     upsClient: { isConfigured: () => configured },
     shippingService: { settings: { us: { ship_from: { zipcode: '33101' } } } },
     addressIssueService,
+    pickupRepository,
     now: () => new Date('2026-11-03T12:00:00Z')
   });
   return { service, listPaidLabelCycles, listLabelCyclesWithActiveShipment, countPaidLabelCyclesWithoutShipment };
@@ -189,5 +190,35 @@ describe('UpsShipmentService.listLabelQueue', () => {
     const { service } = queueService({ cycles: [] });
 
     await expect(service.listLabelQueue({}, { from: '2026-10-05', to: '2026-11-30' })).rejects.toMatchObject({ statusCode: 400, details: { code: 'invalid_delivery_range' } });
+  });
+
+  test('created labels carry their active pickup, read once; a canceled one gives null', async () => {
+    const pickupRepository = {
+      listActiveByIds: jest.fn().mockResolvedValue([
+        { id: 31, pickup_date: '2026-11-09', status: 'requested', prn: '2929602E9CP', shipment_ids: [14] },
+        { id: 33, pickup_date: '2026-11-03', status: 'pending', prn: null, created_at: new Date('2026-11-03T11:00:00Z') }
+      ])
+    };
+    const { service } = queueService({
+      cycles: [cycle(2, 'in_a'), cycle(3, 'in_b'), cycle(4, 'in_c')],
+      shipments: [
+        { id: 14, stripe_invoice_id: 'in_a', status: 'created', ups_shipment_id: 'ups_14', pickup_id: 31 },
+        { id: 15, stripe_invoice_id: 'in_b', status: 'created', ups_shipment_id: 'ups_15', pickup_id: 32 },
+        { id: 16, stripe_invoice_id: 'in_c', status: 'created', ups_shipment_id: 'ups_16', pickup_id: 33 }
+      ],
+      pickupRepository
+    });
+
+    const { data } = await service.listLabelQueue({}, {});
+
+    expect(pickupRepository.listActiveByIds).toHaveBeenCalledTimes(1);
+    expect(pickupRepository.listActiveByIds).toHaveBeenCalledWith([31, 32, 33]);
+    expect(data.created.map((item) => item.pickup)).toEqual([
+      { id: 31, pickup_date: '2026-11-09', status: 'requested', prn: '2929602E9CP' },
+      null,
+      // A reservation left pending for an hour reads as unknown.
+      { id: 33, pickup_date: '2026-11-03', status: 'unknown', prn: null }
+    ]);
+    expect(data.created[0]).not.toHaveProperty('pickup_id');
   });
 });

@@ -352,3 +352,66 @@ describe('UpsClient ship-to name', () => {
     expect(address.AttentionName).toBe(name.slice(0, 35));
   });
 });
+
+describe('UPS pickup', () => {
+  const shipFrom = { name: 'Eden Bowls', street: '100 Main St', street2: 'Suite 2', city: 'Boca Raton', state: 'FL', zipcode: '33431', country: 'US', phone: '(305) 555-0100' };
+
+  test('creates a pickup with the date, window, count, address, phone and total weight', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/pickupcreation/v2409/pickup': () => jsonResponse(200, { PickupCreationResponse: { PRN: '2929602E9CP' } })
+    });
+    const ups = client({ fetchImpl });
+
+    const result = await ups.createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 8, shipFrom, serviceCode: '03', weightLb: 10 });
+
+    expect(result.prn).toBe('2929602E9CP');
+    const call = calls.find((item) => item.url.includes('/api/pickupcreation/'));
+    expect(call.init.method).toBe('POST');
+    const body = JSON.parse(call.init.body).PickupCreationRequest;
+    expect(body.RatePickupIndicator).toBe('N');
+    expect(body.Shipper.Account.AccountNumber).toBe('A1B2C3');
+    expect(body.PickupDateInfo).toEqual({ PickupDate: '20261109', ReadyTime: '1400', CloseTime: '1800' });
+    expect(body.PickupAddress).toMatchObject({ AddressLine: '100 Main St Suite 2', City: 'Boca Raton', StateProvince: 'FL', PostalCode: '33431', Phone: { Number: '3055550100' } });
+    expect(body.PickupPiece).toEqual([{ ServiceCode: '003', Quantity: '8', DestinationCountryCode: 'US', ContainerCode: '01' }]);
+    expect(body.TotalWeight).toEqual({ Weight: '80', UnitOfMeasurement: 'LBS' });
+    expect(body.PaymentMethod).toBe('01');
+  });
+
+  test('a response without PRN is ups_pickup_incomplete', async () => {
+    const { fetchImpl } = fakeUps({ '/api/pickupcreation/v2409/pickup': () => jsonResponse(200, { PickupCreationResponse: {} }) });
+    await expect(client({ fetchImpl }).createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 1, shipFrom }))
+      .rejects.toMatchObject({ statusCode: 502, details: { code: 'ups_pickup_incomplete' } });
+  });
+
+  test('a 401 on create is not repeated', async () => {
+    const { fetchImpl, calls } = fakeUps({ '/api/pickupcreation/v2409/pickup': () => jsonResponse(401, {}) });
+    await expect(client({ fetchImpl }).createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 1, shipFrom })).rejects.toBeTruthy();
+    expect(calls.filter((item) => item.url.includes('/api/pickupcreation/'))).toHaveLength(1);
+  });
+
+  test('cancels by PRN in the header', async () => {
+    const { fetchImpl, calls } = fakeUps();
+    await client({ fetchImpl }).cancelPickup('2929602E9CP');
+    const call = calls.find((item) => item.url.includes('/pickup/02'));
+    expect(call.url).toBe(`${CIE}/api/shipments/v2409/pickup/02`);
+    expect(call.init.method).toBe('DELETE');
+    expect(call.init.headers.Prn).toBe('2929602E9CP');
+  });
+
+  test('the simulation client refuses both', async () => {
+    const ups = client({ simulationOnly: true, fetchImpl: fakeUps().fetchImpl });
+    await expect(ups.createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 1, shipFrom })).rejects.toMatchObject({ details: { code: 'ups_simulation_only' } });
+    await expect(ups.cancelPickup('X')).rejects.toMatchObject({ details: { code: 'ups_simulation_only' } });
+  });
+
+  test('a label buy carries the ship-from phone when there is one', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/shipments/v2409/ship': () => jsonResponse(200, {
+        ShipmentResponse: { ShipmentResults: { ShipmentIdentificationNumber: '1ZSHIP', PackageResults: { TrackingNumber: '1ZSHIP' } } }
+      })
+    });
+    await client({ fetchImpl }).createShipment({ shipFrom, shipTo: { zipcode: '10001' }, package: {} });
+    const body = JSON.parse(calls.find((item) => item.url.includes('/ship')).init.body);
+    expect(body.ShipmentRequest.Shipment.Shipper.Phone).toEqual({ Number: '3055550100' });
+  });
+});

@@ -49,6 +49,7 @@ class UpsShipmentRepository {
       delivered_at: row.delivered_at || null,
       shipped_letter_sent_at: row.shipped_letter_sent_at || null,
       shipped_at: row.shipped_at || null,
+      pickup_id: row.pickup_id == null ? null : Number(row.pickup_id),
       raw_response: rawResponse,
       created_at: row.created_at,
       updated_at: row.updated_at
@@ -109,6 +110,16 @@ class UpsShipmentRepository {
   async countUnresolved() {
     this.ensureDataSource();
     const rows = await this.dataSource.query(`SELECT COUNT(*) AS total FROM \`${this.tableName}\` WHERE \`status\` IN ('pending', 'unknown')`);
+    return Number((Array.isArray(rows) && rows[0] && rows[0].total) || 0);
+  }
+
+  // Created labels with no active pickup and no tracking scan yet, for Today (ups-pickup).
+  async countCreatedWithoutPickup() {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT COUNT(*) AS total FROM \`${this.tableName}\`
+        WHERE \`status\` = 'created' AND \`pickup_id\` IS NULL AND \`in_transit_at\` IS NULL AND \`out_for_delivery_at\` IS NULL`
+    );
     return Number((Array.isArray(rows) && rows[0] && rows[0].total) || 0);
   }
 

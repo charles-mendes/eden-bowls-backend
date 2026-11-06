@@ -237,6 +237,30 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  // UPS on-demand pickups (ups-pickup).
+  function pickupService() {
+    if (!dependencies.upsPickupService) {
+      throw new HttpError(503, 'UPS pickup service is not available.');
+    }
+    return dependencies.upsPickupService;
+  }
+
+  app.get('/api/v1/admin/shipments/pickups', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => pickupService().list(request.adminIdentity, { from: request.query && request.query.from }));
+  });
+
+  app.post('/api/v1/admin/shipments/pickups', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => pickupService().request({ actor: request.adminIdentity, body: request.body || {} }));
+  });
+
+  app.post('/api/v1/admin/shipments/pickups/:id/cancel', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => pickupService().cancel(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/shipments/pickups/:id/not-created', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => pickupService().markNotCreated(request.params.id, request.adminIdentity));
+  });
+
   app.post('/api/v1/admin/shipments/:id/refresh-tracking', requirePermission('shipping.read', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.upsShipmentService) {

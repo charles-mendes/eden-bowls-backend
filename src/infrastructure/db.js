@@ -86,6 +86,7 @@ const { AddCourierFailureKind1700000000064 } = require('./migrations/17000000000
 const { CreateCustomerContacts1700000000065 } = require('./migrations/1700000000065-create-customer-contacts');
 const { CreateDeliveryAddressIssues1700000000066 } = require('./migrations/1700000000066-create-delivery-address-issues');
 const { AddNfeMissingFields1700000000067 } = require('./migrations/1700000000067-add-nfe-missing-fields');
+const { CreateUpsPickups1700000000068 } = require('./migrations/1700000000068-create-ups-pickups');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -197,7 +198,8 @@ function buildDataSourceOptions(env) {
       AddCourierFailureKind1700000000064,
       CreateCustomerContacts1700000000065,
       CreateDeliveryAddressIssues1700000000066,
-      AddNfeMissingFields1700000000067
+      AddNfeMissingFields1700000000067,
+      CreateUpsPickups1700000000068
     ],
     synchronize: false,
     logging: false,

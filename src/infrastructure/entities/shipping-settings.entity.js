@@ -225,6 +225,12 @@ function buildShippingUsSettingsEntitySchema(tableName = 'shipping_us_settings')
         length: 2,
         default: 'US'
       },
+      shipFromPhone: {
+        name: 'ship_from_phone',
+        type: String,
+        length: 32,
+        default: ''
+      },
       packageWeightLb: {
         name: 'package_weight_lb',
         type: 'decimal',

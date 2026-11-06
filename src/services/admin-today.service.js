@@ -143,8 +143,12 @@ class AdminTodayService {
     const ups = us && this.upsShipmentRepository && typeof this.upsShipmentRepository.countUnresolved === 'function'
       ? this.upsShipmentRepository.countUnresolved()
       : 0;
-    const [courierCounts, nfeCounts, upsUnresolved, blingConnected, addressIssues, marketExceptions] = await Promise.all([
-      courier, nfe, ups, this.blingState(actor), this.addressIssueCounts(markets), this.marketExceptionCounts(markets)
+    // ups-pickup: created labels with no pickup asked of UPS and no tracking scan yet.
+    const withoutPickup = us && this.upsShipmentRepository && typeof this.upsShipmentRepository.countCreatedWithoutPickup === 'function'
+      ? this.upsShipmentRepository.countCreatedWithoutPickup()
+      : 0;
+    const [courierCounts, nfeCounts, upsUnresolved, upsLabelsWithoutPickup, blingConnected, addressIssues, marketExceptions] = await Promise.all([
+      courier, nfe, ups, withoutPickup, this.blingState(actor), this.addressIssueCounts(markets), this.marketExceptionCounts(markets)
     ]);
     return {
       courierToDispatch: courierCounts.toDispatch,
@@ -156,6 +160,7 @@ class AdminTodayService {
       nfeRejected: nfeCounts.rejected,
       nfeError: nfeCounts.error,
       upsUnresolved,
+      upsLabelsWithoutPickup,
       blingConnected,
       addressIssues,
       marketExceptions

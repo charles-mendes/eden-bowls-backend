@@ -20,12 +20,12 @@ function row(overrides = {}) {
   };
 }
 
-function service({ rows, total = rows.length, shipments = [], closed = [], courierRows = [], courierCounts = { toDispatch: 0, onTheRoadLong: 0, failed: 0 }, nfeCounts = {}, upsUnresolved = 0, bling = { configured: true, connected: true }, contacts = new Map(), people = new Map(), issueCounts = new Map(), exceptionCounts = new Map(), withIssues = true }) {
+function service({ rows, total = rows.length, shipments = [], closed = [], courierRows = [], courierCounts = { toDispatch: 0, onTheRoadLong: 0, failed: 0 }, nfeCounts = {}, upsUnresolved = 0, upsWithoutPickup = 0, bling = { configured: true, connected: true }, contacts = new Map(), people = new Map(), issueCounts = new Map(), exceptionCounts = new Map(), withIssues = true }) {
   const ledgerRepository = { listQueue: jest.fn().mockResolvedValue({ total, items: rows }), countMarketExceptions: jest.fn(async ({ stripeAccounts }) => new Map([...exceptionCounts].filter(([account]) => stripeAccounts.includes(account)))) };
   const deliveryAddressIssuesRepository = withIssues
     ? { countOpenByAccount: jest.fn(async ({ stripeAccounts }) => new Map([...issueCounts].filter(([account]) => stripeAccounts.includes(account)))) }
     : null;
-  const upsShipmentRepository = { listActiveByInvoiceIds: jest.fn().mockResolvedValue(shipments), countUnresolved: jest.fn().mockResolvedValue(upsUnresolved) };
+  const upsShipmentRepository = { listActiveByInvoiceIds: jest.fn().mockResolvedValue(shipments), countUnresolved: jest.fn().mockResolvedValue(upsUnresolved), countCreatedWithoutPickup: jest.fn().mockResolvedValue(upsWithoutPickup) };
   const calendar = { listActive: jest.fn().mockResolvedValue(closed) };
   const courierDeliveryService = { countQueue: jest.fn().mockResolvedValue(courierCounts) };
   const courierDeliveryRepository = { listByInvoiceIds: jest.fn().mockResolvedValue(courierRows) };
@@ -165,7 +165,7 @@ describe('AdminTodayService', () => {
     expect(result.data.fulfillment).toEqual({
       courierToDispatch: 230, courierOnTheRoadLong: 2, courierFailed: 1, courierAwaitingNfe: null,
       nfeMissingDocument: 0, nfeRejected: 1, nfeError: 3,
-      upsUnresolved: 4, blingConnected: true,
+      upsUnresolved: 4, upsLabelsWithoutPickup: 0, blingConnected: true,
       addressIssues: { BR: { open: 0, stale: 0 }, US: { open: 0, stale: 0 } },
       marketExceptions: { BR: 0, US: 0 }
     });
@@ -221,7 +221,8 @@ describe('AdminTodayService', () => {
 
     expect(courierDeliveryService.countQueue).toHaveBeenCalledWith(brOperator);
     expect(upsShipmentRepository.countUnresolved).not.toHaveBeenCalled();
-    expect(result.data.fulfillment).toMatchObject({ courierToDispatch: 2, nfeRejected: 1, upsUnresolved: 0, blingConnected: null });
+    expect(upsShipmentRepository.countCreatedWithoutPickup).not.toHaveBeenCalled();
+    expect(result.data.fulfillment).toMatchObject({ courierToDispatch: 2, nfeRejected: 1, upsUnresolved: 0, upsLabelsWithoutPickup: 0, blingConnected: null });
   });
 
   // admin-flow-fixes-4 (PM-25): part of "a despachar", waiting for an authorized NF-e.
@@ -248,6 +249,25 @@ describe('AdminTodayService', () => {
     expect(courierDeliveryService.countQueue).not.toHaveBeenCalled();
     expect(blingNfeRepository.countByStatuses).not.toHaveBeenCalled();
     expect(result.data.fulfillment).toMatchObject({ courierToDispatch: 0, nfeRejected: 0, upsUnresolved: 1 });
+  });
+
+  // admin-flow-fixes-6 (ups-pickup): created labels with no pickup asked of UPS.
+  test('counts the US labels without a pickup', async () => {
+    const { service: today, upsShipmentRepository } = service({ rows: [], upsWithoutPickup: 3 });
+
+    const result = await today.overview({ account: 'us' }, adminActor);
+
+    expect(upsShipmentRepository.countCreatedWithoutPickup).toHaveBeenCalledTimes(1);
+    expect(result.data.fulfillment.upsLabelsWithoutPickup).toBe(3);
+  });
+
+  test('the Brazil screen counts no label without a pickup', async () => {
+    const { service: today, upsShipmentRepository } = service({ rows: [], upsWithoutPickup: 3 });
+
+    const result = await today.overview({ account: 'br' }, adminActor);
+
+    expect(upsShipmentRepository.countCreatedWithoutPickup).not.toHaveBeenCalled();
+    expect(result.data.fulfillment.upsLabelsWithoutPickup).toBe(0);
   });
 
   test('an admin hears that Bling is disconnected; nothing where Bling is not configured', async () => {

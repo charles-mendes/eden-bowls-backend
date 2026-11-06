@@ -13,6 +13,9 @@ const SERVICE_LABELS = {
   '11': 'UPS Standard'
 };
 
+// Pickup Creation and Pickup Cancel share the version of the Shipping API (v2409).
+const PICKUP_VERSION = 'v2409';
+
 const UPS_BASE_URLS = Object.freeze({
   cie: 'https://wwwcie.ups.com',
   production: 'https://onlinetools.ups.com'
@@ -438,6 +441,71 @@ class UpsClient {
       currency: String(results?.ShipmentCharges?.TotalCharges?.CurrencyCode || 'USD'),
       raw: response
     };
+  }
+
+  // UPS on-demand pickup (ups-pickup). One call per request: a timeout is never retried here, and the 401 retry is
+  // off, as in createShipment, so UPS never gets a second pickup for the same boxes.
+  async createPickup({ pickupDate, readyTime, closeTime, packageCount, shipFrom = {}, serviceCode, weightLb }) {
+    this.ensureCanShip();
+    const count = Number(packageCount);
+    const weight = Number(weightLb) > 0 ? Number(weightLb) : 10;
+    const code = String(serviceCode || '03').trim() || '03';
+    const body = {
+      PickupCreationRequest: {
+        Request: { TransactionReference: { CustomerContext: 'eden-bowls-pickup' } },
+        RatePickupIndicator: 'N',
+        Shipper: { Account: { AccountNumber: this.accountNumber, AccountCountryCode: 'US' } },
+        PickupDateInfo: {
+          PickupDate: String(pickupDate || '').replace(/-/g, ''),
+          ReadyTime: String(readyTime || '').replace(':', ''),
+          CloseTime: String(closeTime || '').replace(':', '')
+        },
+        PickupAddress: {
+          CompanyName: String(shipFrom.name || 'Eden Bowls').slice(0, 27),
+          ContactName: String(shipFrom.name || 'Eden Bowls').slice(0, 22),
+          AddressLine: [shipFrom.street, shipFrom.street2].filter(Boolean).map((line) => String(line).slice(0, 73)).join(' ').slice(0, 73),
+          City: String(shipFrom.city || '').slice(0, 50),
+          StateProvince: String(shipFrom.state || '').slice(0, 5),
+          PostalCode: String(shipFrom.zipcode || '').replace(/\D/g, '').slice(0, 9),
+          CountryCode: String(shipFrom.country || 'US').toUpperCase().slice(0, 2),
+          ResidentialIndicator: 'N',
+          Phone: { Number: String(shipFrom.phone || '').replace(/\D/g, '').slice(0, 15) }
+        },
+        AlternateAddressIndicator: 'N',
+        PickupPiece: [{
+          ServiceCode: code.padStart(3, '0'),
+          Quantity: String(count),
+          DestinationCountryCode: 'US',
+          ContainerCode: '01'
+        }],
+        TotalWeight: { Weight: String(Math.round(weight * count * 10) / 10), UnitOfMeasurement: 'LBS' },
+        OverweightIndicator: 'N',
+        PaymentMethod: '01'
+      }
+    };
+
+    const response = await this.request(`/api/pickupcreation/${PICKUP_VERSION}/pickup`, {
+      method: 'POST',
+      jsonBody: body,
+      retryOnUnauthorized: false
+    });
+    const prn = String(response?.PickupCreationResponse?.PRN || '').trim();
+    if (!prn) {
+      throw new HttpError(502, 'UPS pickup response missing the confirmation number.', { code: 'ups_pickup_incomplete' });
+    }
+    return { prn, raw: response };
+  }
+
+  async cancelPickup(prn) {
+    this.ensureCanShip();
+    const number = String(prn || '').trim();
+    if (!number) {
+      throw new HttpError(400, 'Pickup confirmation number is required.', { code: 'invalid_prn' });
+    }
+    return this.request(`/api/shipments/${PICKUP_VERSION}/pickup/02`, {
+      method: 'DELETE',
+      headers: { Prn: number }
+    });
   }
 
   async track(trackingNumber, options = {}) {

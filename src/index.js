@@ -89,6 +89,8 @@ const { DeliveryCalendarStripeSyncsRepository } = require('./infrastructure/repo
 const { UpsClient } = require('./infrastructure/shipping/ups-client');
 const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shipment.repository');
 const { UpsShipmentService } = require('./services/ups-shipment.service');
+const { UpsPickupService } = require('./services/ups-pickup.service');
+const { UpsPickupRepository } = require('./infrastructure/repositories/ups-pickup.repository');
 const { CourierDeliveryRepository } = require('./infrastructure/repositories/courier-delivery.repository');
 const { CourierDeliveryService } = require('./services/courier-delivery.service');
 const { MarketExceptionsService } = require('./services/market-exceptions.service');
@@ -262,6 +264,7 @@ async function bootstrap() {
   });
   const upsLabelStorage = new LocalUpsLabelStorage({ directory: env.UPS_LABEL_DIR });
   const upsShipmentRepository = new UpsShipmentRepository(dataSource);
+  const upsPickupRepository = new UpsPickupRepository(dataSource);
   const courierDeliveryRepository = new CourierDeliveryRepository(dataSource);
   const customerContactsRepository = new CustomerContactsRepository(dataSource);
   const deliveryAddressIssuesRepository = new DeliveryAddressIssuesRepository(dataSource);
@@ -786,6 +789,7 @@ async function bootstrap() {
   });
   const upsShipmentService = new UpsShipmentService({
     repository: upsShipmentRepository,
+    pickupRepository: upsPickupRepository,
     upsClient,
     labelStorage: upsLabelStorage,
     shippingService,
@@ -795,6 +799,14 @@ async function bootstrap() {
     transactionalMailer,
     auditService: adminAuditService,
     addressIssueService,
+    logger
+  });
+  const upsPickupService = new UpsPickupService({
+    repository: upsPickupRepository,
+    upsClient,
+    shippingService,
+    calendar: deliveryCalendar,
+    auditService: adminAuditService,
     logger
   });
   const customerContactsService = new CustomerContactsService({
@@ -976,6 +988,7 @@ async function bootstrap() {
     adminReportsService,
     adminDeliveryCalendarService,
     upsShipmentService,
+    upsPickupService,
     courierDeliveryService,
     marketExceptionsService,
     subscriptionPaidCyclesService,

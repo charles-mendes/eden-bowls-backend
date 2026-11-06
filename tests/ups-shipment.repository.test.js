@@ -151,4 +151,12 @@ describe('AddUpsShipmentsActiveInvoiceUnique1700000000030', () => {
       'ALTER TABLE ups_shipments DROP COLUMN active_invoice_id'
     ]);
   });
+
+  test('counts created labels with no pickup and no tracking scan', async () => {
+    const query = jest.fn().mockResolvedValue([{ total: 3 }]);
+    const repository = new UpsShipmentRepository({ isInitialized: true, query });
+
+    await expect(repository.countCreatedWithoutPickup()).resolves.toBe(3);
+    expect(query.mock.calls[0][0]).toContain("`status` = 'created' AND `pickup_id` IS NULL AND `in_transit_at` IS NULL AND `out_for_delivery_at` IS NULL");
+  });
 });

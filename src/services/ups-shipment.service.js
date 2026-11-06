@@ -9,6 +9,7 @@ const { deliveryTimeline } = require('../core/delivery-timeline');
 const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
 const { invoiceReadinessReasons } = require('../core/dispatch-readiness');
 const { resolveDeliveryRange, dayAfter } = require('../core/delivery-range');
+const { effectivePickupStatus } = require('../core/ups-pickup-status');
 
 // The checkout recipient first (delivery-recipient); older subscriptions keep the name keys they may carry.
 function addressRecipient(address = {}) {
@@ -80,6 +81,7 @@ function labelDeliveryKey(cycle) {
 class UpsShipmentService {
   constructor(options = {}) {
     this.repository = options.repository || null;
+    this.pickupRepository = options.pickupRepository || null;
     this.upsClient = options.upsClient || null;
     this.labelStorage = options.labelStorage || null;
     this.shippingService = options.shippingService || null;
@@ -244,15 +246,30 @@ class UpsShipmentService {
       } else if (UNRESOLVED_STATUSES.has(shipment.status)) {
         data.unresolved.push(item);
       } else {
-        data.created.push(item);
+        data.created.push({ ...item, pickup_id: shipment.pickup_id || null });
       }
     }
+    await this.attachPickups(data.created);
     // delivery-address-issues: the ready rows carry the subscription's problem, read for the page at once.
     if (this.addressIssueService && data.ready.length) {
       const latest = await this.addressIssueService.latestForSubscriptions(data.ready.map((item) => Number(item.subscription_id)));
       for (const item of data.ready) item.address_issue = latest.get(Number(item.subscription_id)) || null;
     }
     return { success: true, data };
+  }
+
+  // ups-pickup: each created label carries its active pickup (requested or unknown), read for the page at once.
+  async attachPickups(created) {
+    const ids = created.map((item) => item.pickup_id).filter(Boolean);
+    const active = ids.length && this.pickupRepository ? await this.pickupRepository.listActiveByIds(ids) : [];
+    const byId = new Map(active.map((pickup) => [pickup.id, pickup]));
+    for (const item of created) {
+      const pickup = byId.get(item.pickup_id) || null;
+      delete item.pickup_id;
+      item.pickup = pickup
+        ? { id: pickup.id, pickup_date: pickup.pickup_date, status: effectivePickupStatus(pickup, this.now ? this.now() : new Date()), prn: pickup.prn }
+        : null;
+    }
   }
 
   async listLabelIssues(subscription) {

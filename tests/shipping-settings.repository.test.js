@@ -100,7 +100,7 @@ describe('ShippingSettingsRepository', () => {
     expect(saved.us.max_transit_days).toBe(2);
     const [sql, params] = dataSource.query.mock.calls.find(([text]) => text.includes('INSERT INTO `shipping_us_settings`'));
     expect(sql).toContain('`max_transit_days` = VALUES(`max_transit_days`)');
-    expect(params[params.length - 1]).toBe(2);
+    expect(params[params.length - 2]).toBe(2);
   });
 
   test('throws 503 when datasource is not initialized', async () => {
@@ -110,5 +110,26 @@ describe('ShippingSettingsRepository', () => {
       statusCode: 503,
       message: 'Database connection is not initialized.'
     });
+  });
+
+  test('reads and saves the US ship-from phone, empty for a row without it', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([brRow])
+        .mockResolvedValueOnce([usRow])
+        .mockResolvedValueOnce([brRow])
+        .mockResolvedValueOnce([{ ...usRow, ship_from_phone: '305 555 0100' }])
+        .mockResolvedValue({ affectedRows: 1 })
+    };
+    const repository = new ShippingSettingsRepository(dataSource);
+
+    expect((await repository.get()).us.ship_from.phone).toBe('');
+    const saved = await repository.save({ us: { ship_from: { phone: ' 305 555 0199 ' } } });
+
+    expect(saved.us.ship_from.phone).toBe('305 555 0199');
+    const [sql, params] = dataSource.query.mock.calls.find(([text]) => text.includes('INSERT INTO `shipping_us_settings`'));
+    expect(sql).toContain('`ship_from_phone` = VALUES(`ship_from_phone`)');
+    expect(params[params.length - 1]).toBe('305 555 0199');
   });
 });
