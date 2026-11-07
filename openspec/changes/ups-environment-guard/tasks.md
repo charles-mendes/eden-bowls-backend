@@ -27,4 +27,4 @@
 
 - [x] 5.1 Update `.env.example`, `.env.qa.example`, and the UPS section of `docs/production-go-live.md` with the runtime table, the migration precondition, and how to close an unknown row. Do not write any credential.
 - [ ] 5.2 On the QA host, confirm `.env` has `EDEN_RUNTIME=qa` and `UPS_ENV` empty or `cie`, and that no invoice has two `ups_shipments` rows that are not voided, before deploying this change. Do not print secrets.
-- [ ] 5.3 In the admin panel repo, show `unknown` rows and offer the confirmed close (`confirm_not_created: true`) after the operator checks UPS.
+- [x] 5.3 In the admin panel repo, show `unknown` rows and offer the confirmed close (`confirm_not_created: true`) after the operator checks UPS.
