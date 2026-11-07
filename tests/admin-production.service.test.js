@@ -178,6 +178,21 @@ describe('AdminProductionService', () => {
     expect(listQueueMetricRows).toHaveBeenCalledWith(expect.not.objectContaining({ due: expect.anything() }));
   });
 
+  // Today counts overdue cycles 30 days back; the queue it opens must list the same ones whatever its window.
+  test('looks back 30 days for overdue cycles whatever the window, as Today counts them', async () => {
+    const listQueue = jest.fn().mockResolvedValue({ total: 0, items: [] });
+    const listQueueMetricRows = jest.fn().mockResolvedValue([]);
+    const service = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository: { listQueue, listQueueMetricRows }
+    });
+
+    await service.listQueue({ windowDays: 7, includeOverdue: true, due: 'overdue' }, { page: 1, perPage: 20, offset: 0 });
+
+    expect(listQueue).toHaveBeenCalledWith(expect.objectContaining({ overdueFloor: '2026-08-21 03:00:00' }));
+    expect(listQueueMetricRows).toHaveBeenCalledWith(expect.objectContaining({ overdueFloor: '2026-08-21 03:00:00' }));
+  });
+
   test('blocks in_production when a note is provided', async () => {
     const productionRepository = {
       findBySubscriptionAndPeriodEnd: jest.fn().mockResolvedValue({ status: 'in_production' }),

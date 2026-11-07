@@ -4,7 +4,7 @@ const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { constrainMarketQuery, marketFromStripeAccount } = require('../core/admin-market-scope');
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { flavorKeyFromLabel } = require('../core/flavors');
-const { DEFAULT_TIMEZONE, presentProductionQueueItem } = require('../core/production-queue-presenter');
+const { DEFAULT_TIMEZONE, OVERDUE_DAYS, presentProductionQueueItem } = require('../core/production-queue-presenter');
 const { allocateCoverageDetail, buildOverview, cyclePacks } = require('../core/pack-stock');
 const { measureStockComputation } = require('../core/stock-metrics');
 
@@ -17,7 +17,7 @@ function windowBounds({ timezone, windowDays, now }) {
   return {
     startOfToday: today.toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     windowEndExclusive: today.plus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
-    overdueFloor: today.minus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
+    overdueFloor: today.minus({ days: OVERDUE_DAYS }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
   };
 }
 

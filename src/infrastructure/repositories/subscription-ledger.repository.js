@@ -970,12 +970,15 @@ class SubscriptionLedgerRepository {
   }
 
   queueMembership({ startOfToday, startOfTomorrow, startOfDayAfterTomorrow, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, due, q }) {
+    // The overdue floor only drops unpaid cycles, which billing follows up. A paid cycle that was never prepared
+    // stays in the queue however late it is: the customer paid and is still waiting.
     const where = [
       `(
         (q.due_at >= ? AND q.due_at < ?)
         OR (
-          ? AND q.due_at >= ? AND q.due_at < ?
+          ? AND q.due_at < ?
           AND q.production_status <> 'ready'
+          AND (q.due_at >= ? OR q.payment_state = 'paid')
         )
       )`
     ];
@@ -983,16 +986,11 @@ class SubscriptionLedgerRepository {
       startOfToday,
       windowEndExclusive,
       includeOverdue ? 1 : 0,
-      overdueFloor,
-      startOfToday
+      startOfToday,
+      overdueFloor
     ];
 
-    const accounts = Array.isArray(stripeAccounts) && stripeAccounts.length
-      ? stripeAccounts.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
-      : (account ? [String(account).trim().toLowerCase()] : []);
-    if (accounts.length) {
-      appendInFilter(where, params, 'q.stripe_account', accounts);
-    }
+    this.appendQueueAccounts(where, params, { account, stripeAccounts });
 
     if (productionStatus) {
       where.push('q.production_status = ?');
@@ -1029,6 +1027,37 @@ class SubscriptionLedgerRepository {
       whereSql: `WHERE ${where.join(' AND ')}`,
       params
     };
+  }
+
+  appendQueueAccounts(where, params, { account, stripeAccounts }) {
+    const accounts = Array.isArray(stripeAccounts) && stripeAccounts.length
+      ? stripeAccounts.map((item) => String(item).trim().toLowerCase()).filter(Boolean)
+      : (account ? [String(account).trim().toLowerCase()] : []);
+    if (accounts.length) {
+      appendInFilter(where, params, 'q.stripe_account', accounts);
+    }
+  }
+
+  // Paid cycles still not ready whose due day is before `overdueFloor`: counted on their own so Today shows them
+  // however many rows its list cuts.
+  async countStalePaidQueue({ overdueFloor, account, stripeAccounts } = {}) {
+    this.ensureDataSource();
+    const where = ["q.payment_state = 'paid'", "q.production_status <> 'ready'", 'q.due_at < ?'];
+    const params = [overdueFloor];
+    this.appendQueueAccounts(where, params, { account, stripeAccounts });
+
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT COUNT(*) AS total FROM ${this.queueSourceSql()} WHERE ${where.join(' AND ')}`,
+        params
+      );
+      return Number(Array.isArray(rows) && rows[0] ? rows[0].total : 0);
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return 0;
+      }
+      throw error;
+    }
   }
 
   mapQueueRow(row) {

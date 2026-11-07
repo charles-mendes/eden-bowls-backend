@@ -9,6 +9,10 @@ const { parseWeightToGrams } = require('./plan-catalog-pricing');
 
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 
+// How far back the queue, Today and the stock read keep an unpaid overdue cycle, whatever window they show; older
+// ones are billing's to follow. A paid cycle never drops out: past this age Today flags it as stale.
+const OVERDUE_DAYS = 30;
+
 const PAYMENT_LABELS = {
   awaiting_payment: 'Aguardando pagamento',
   past_due: 'Pagamento atrasado'
@@ -250,6 +254,7 @@ function presentProductionQueueItem(row, options = {}) {
 
 module.exports = {
   DEFAULT_TIMEZONE,
+  OVERDUE_DAYS,
   recipientDisplayName,
   civilDaysUntil,
   dueBucket,

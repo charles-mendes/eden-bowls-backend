@@ -1,12 +1,10 @@
 const { DateTime } = require('luxon');
 const { parseStripeAccountInput } = require('../core/stripe-account');
-const { presentProductionQueueItem } = require('../core/production-queue-presenter');
+const { OVERDUE_DAYS, presentProductionQueueItem } = require('../core/production-queue-presenter');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { resolveTimezone } = require('./admin-production.service');
 const { presentContact } = require('./customer-contacts.service');
 
-// Overdue work older than this is a data problem, not today's work; the production page still lists it.
-const OVERDUE_DAYS = 30;
 const MAX_ITEMS = 200;
 const NFE_ACTION_STATUSES = ['blocked_missing_document', 'rejected', 'error'];
 
@@ -23,6 +21,10 @@ function upsLabelState(status) {
 // Brazil by the delivery address, as the courier queue decides.
 function isPaidBrazilDelivery(item) {
   return item.paymentState === 'paid' && Boolean(item.paidInvoiceId) && String(item.country || '').toUpperCase() === 'BR';
+}
+
+function isStalePaid(item) {
+  return item.paymentState === 'paid' && item.productionStatus !== 'ready' && item.daysUntil < -OVERDUE_DAYS;
 }
 
 function marketOf(item) {
@@ -67,16 +69,22 @@ class AdminTodayService {
       account = scoped.stripeAccount || account;
     }
 
-    const result = await this.ledgerRepository.listQueue({
-      startOfToday: toSql(today),
-      windowEndExclusive: toSql(today.plus({ days: 2 })),
-      overdueFloor: toSql(today.minus({ days: OVERDUE_DAYS })),
-      includeOverdue: true,
-      account,
-      stripeAccounts,
-      offset: 0,
-      perPage: MAX_ITEMS
-    });
+    const overdueFloor = toSql(today.minus({ days: OVERDUE_DAYS }));
+    const [result, stalePaid] = await Promise.all([
+      this.ledgerRepository.listQueue({
+        startOfToday: toSql(today),
+        windowEndExclusive: toSql(today.plus({ days: 2 })),
+        overdueFloor,
+        includeOverdue: true,
+        account,
+        stripeAccounts,
+        offset: 0,
+        perPage: MAX_ITEMS
+      }),
+      typeof this.ledgerRepository.countStalePaidQueue === 'function'
+        ? this.ledgerRepository.countStalePaidQueue({ overdueFloor, account, stripeAccounts })
+        : 0
+    ]);
 
     const items = result.items
       .map((row) => ({ ...presentProductionQueueItem(row, { timezone, now, actor }), paidInvoiceId: row.paidInvoiceId || null }))
@@ -98,6 +106,8 @@ class AdminTodayService {
       const presentedItem = {
         ...rest,
         market,
+        // Paid, still not ready and late past the unpaid floor: Today asks for it apart from the day's overdue work.
+        stale: isStalePaid(item),
         upsLabel: needsLabel ? upsLabelState(labeled.get(paidInvoiceId)) : null,
         courierDelivery: isPaidBrazilDelivery(item) ? (courierByInvoice.get(paidInvoiceId) || 'none') : null
       };
@@ -116,6 +126,7 @@ class AdminTodayService {
         today: today.toISODate(),
         totals,
         byMarket,
+        stalePaid,
         truncated: result.total > MAX_ITEMS,
         total: result.total,
         items: presented,

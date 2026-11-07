@@ -6,6 +6,7 @@ const { toMysqlDateTime } = require('../core/stripe-subscription-map');
 const { mapDeliverySubscription } = require('../infrastructure/repositories/subscription-deliveries.repository');
 const {
   DEFAULT_TIMEZONE,
+  OVERDUE_DAYS,
   dueBucket,
   presentProductionQueueItem
 } = require('../core/production-queue-presenter');
@@ -41,7 +42,7 @@ function civilBounds({ timezone, windowDays, now = new Date() }) {
     startOfTomorrow: today.plus({ days: 1 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     startOfDayAfterTomorrow: today.plus({ days: 2 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     windowEndExclusive: today.plus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
-    overdueFloor: today.minus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
+    overdueFloor: today.minus({ days: OVERDUE_DAYS }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
   };
 }
 

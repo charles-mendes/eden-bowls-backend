@@ -84,6 +84,23 @@ describe('AdminTodayService', () => {
     }));
   });
 
+  // A paid cycle never prepared is not dropped by the overdue month: Today counts it apart and flags it.
+  test('counts and flags paid cycles still not ready past the overdue month', async () => {
+    const { service: today, ledgerRepository } = service({
+      rows: [
+        row({ id: 1, productionStatus: 'to_prepare', dueAt: '2026-08-20 15:00:00' }),
+        row({ id: 2, productionStatus: 'to_prepare', dueAt: '2026-10-05 15:00:00' })
+      ]
+    });
+    ledgerRepository.countStalePaidQueue = jest.fn().mockResolvedValue(3);
+
+    const result = await today.overview({ timezone: 'America/Sao_Paulo', account: 'br' }, adminActor);
+
+    expect(ledgerRepository.countStalePaidQueue).toHaveBeenCalledWith(expect.objectContaining({ overdueFloor: '2026-09-07 03:00:00', account: 'br' }));
+    expect(result.data.stalePaid).toBe(3);
+    expect(result.data.items.map((item) => [item.id, item.stale])).toEqual([[1, true], [2, false]]);
+  });
+
   test('flags a paid US cycle whose invoice has no UPS label', async () => {
     const { service: today, upsShipmentRepository } = service({
       rows: [row({ id: 1, paidInvoiceId: 'in_1' }), row({ id: 2, paidInvoiceId: 'in_2' }), row({ id: 3, paymentState: 'awaiting_payment', paidInvoiceId: null })],

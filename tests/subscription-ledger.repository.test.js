@@ -207,6 +207,32 @@ describe('SubscriptionLedgerRepository', () => {
     expect(all.params).toHaveLength(today.params.length - 2);
   });
 
+  // Unpaid cycles stop at the overdue floor; a paid cycle not ready stays however late it is.
+  test('keeps paid overdue cycles below the floor and drops unpaid ones', async () => {
+    const query = jest.fn().mockResolvedValueOnce([{ total: 0 }]).mockResolvedValueOnce([]);
+    await new SubscriptionLedgerRepository({ isInitialized: true, query }).listQueue({
+      startOfToday: '2026-09-20 03:00:00',
+      windowEndExclusive: '2026-09-27 03:00:00',
+      overdueFloor: '2026-08-21 03:00:00',
+      includeOverdue: true,
+      offset: 0,
+      perPage: 20
+    });
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("AND (q.due_at >= ? OR q.payment_state = 'paid')");
+    expect(params).toEqual(['2026-09-20 03:00:00', '2026-09-27 03:00:00', 1, '2026-09-20 03:00:00', '2026-08-21 03:00:00']);
+  });
+
+  test('counts paid cycles not ready past the floor, in the actor markets', async () => {
+    const query = jest.fn().mockResolvedValueOnce([{ total: 2 }]);
+    const total = await new SubscriptionLedgerRepository({ isInitialized: true, query })
+      .countStalePaidQueue({ overdueFloor: '2026-08-21 03:00:00', stripeAccounts: ['br'] });
+    const [sql, params] = query.mock.calls[0];
+    expect(total).toBe(2);
+    expect(sql).toContain("q.payment_state = 'paid' AND q.production_status <> 'ready' AND q.due_at < ?");
+    expect(params).toEqual(['2026-08-21 03:00:00', 'br']);
+  });
+
   test('queue metrics omit search and production status filters', async () => {
     const query = jest.fn().mockResolvedValueOnce([
       { current_period_end: '2026-09-20 08:00:00', production_status: 'to_prepare' }
