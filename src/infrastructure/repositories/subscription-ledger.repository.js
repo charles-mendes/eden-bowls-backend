@@ -46,6 +46,7 @@ class SubscriptionLedgerRepository {
     this.tableName = options.tableName || 'stripe_subscriptions';
     this.userStateTableName = options.userStateTableName || 'onboarding_user_state';
     this.usermetaTableName = options.usermetaTableName || 'wp_usermeta';
+    this.usersTableName = options.usersTableName || 'wp_users';
     this.chargedInvoicesTableName = options.chargedInvoicesTableName || 'subscription_charged_invoices';
     this.productionCyclesTableName = options.productionCyclesTableName || 'subscription_production_cycles';
     // keep-ready-orders-dispatchable: the queue keeps a ready Brazil cycle until its box leaves.
@@ -534,6 +535,21 @@ class SubscriptionLedgerRepository {
     return this.findByStripeSubscriptionId(subscriptionId);
   }
 
+  // Fills the recipient of one subscription address (operator-fills-recipient-name). Only when it has none, so two
+  // operators at once, or a customer save in between, never lose a name: false means nothing was written.
+  async fillAddressRecipientName(id, name) {
+    this.ensureDataSource();
+    const result = await this.dataSource.query(
+      [
+        `UPDATE \`${this.tableName}\``,
+        "SET `address` = JSON_SET(COALESCE(`address`, JSON_OBJECT()), '$.recipient_name', ?)",
+        "WHERE `id` = ? AND COALESCE(TRIM(JSON_UNQUOTE(JSON_EXTRACT(`address`, '$.recipient_name'))), '') = ''"
+      ].join(' '),
+      [name, Number(id)]
+    );
+    return Number(result && result.affectedRows) === 1;
+  }
+
   async findById(id) {
     this.ensureDataSource();
     const numericId = Number(id);
@@ -775,7 +791,7 @@ class SubscriptionLedgerRepository {
     const where = ["q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL", marketWhere, ...extraWhere, ...range.where];
     const params = [...range.params];
     const sql = [
-      `SELECT q.* FROM ${this.queueSourceSql()}`,
+      `SELECT q.*, pm.meta_value AS profile_market, u.display_name AS account_display_name FROM ${this.queueSourceSql()} ${this.profileNameJoinSql()}`,
       `WHERE ${where.join(' AND ')}`,
       `ORDER BY ${this.deliveryKeySql()} ASC, q.id ASC`
     ];
@@ -979,7 +995,7 @@ class SubscriptionLedgerRepository {
     }
     const rows = await this.dataSource.query(
       [
-        `SELECT q.* FROM ${this.queueSourceSql()}`,
+        `SELECT q.*, pm.meta_value AS profile_market, u.display_name AS account_display_name FROM ${this.queueSourceSql()} ${this.profileNameJoinSql()}`,
         `WHERE q.payment_state = 'paid' AND q.paid_invoice_id IN (${ids.map(() => '?').join(', ')})`
       ].join(' '),
       ids
@@ -990,11 +1006,27 @@ class SubscriptionLedgerRepository {
   queueJoinSql() {
     return [
       `FROM ${this.queueSourceSql()}`,
-      `LEFT JOIN \`${this.usermetaTableName}\` pm ON pm.user_id = q.user_id AND pm.meta_key = '${PROFILE_MARKET_META_KEY}'`
+      `LEFT JOIN \`${this.usermetaTableName}\` pm ON pm.user_id = q.user_id AND pm.meta_key = '${PROFILE_MARKET_META_KEY}'`,
+      this.accountNameJoinSql()
     ].join(' ');
   }
 
-  queueMembership({ startOfToday, startOfTomorrow, startOfDayAfterTomorrow, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, due, q }) {
+  // The account name the queue and the courier list show when the address has no recipient
+  // (operator-fills-recipient-name). Alias `u`, read as `account_display_name`.
+  accountNameJoinSql() {
+    return `LEFT JOIN \`${this.usersTableName}\` u ON u.ID = q.user_id`;
+  }
+
+  // The profile market and the account name of a queue row, for the courier list, which shows the account name
+  // only when the profile is in the actor's markets (admin-market-scope).
+  profileNameJoinSql() {
+    return [
+      `LEFT JOIN \`${this.usermetaTableName}\` pm ON pm.user_id = q.user_id AND pm.meta_key = '${PROFILE_MARKET_META_KEY}'`,
+      this.accountNameJoinSql()
+    ].join(' ');
+  }
+
+  queueMembership({ startOfToday, startOfTomorrow, startOfDayAfterTomorrow, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, due, q, nameMarkets = null }) {
     // The overdue floor only drops unpaid cycles, which billing follows up. A paid cycle that was never prepared
     // stays in the queue however late it is: the customer paid and is still waiting.
     // keep-ready-orders-dispatchable: a ready Brazil cycle (the courier's market) stays past its day, within the
@@ -1054,8 +1086,14 @@ class SubscriptionLedgerRepository {
       // The name the queue shows comes from these address keys, in this order (production-queue-presenter).
       // JSON strings compare as binary, so both sides are lowered to match case-insensitively.
       const nameKeys = QUEUE_NAME_KEYS.map((key) => `LOWER(JSON_UNQUOTE(JSON_EXTRACT(q.address, '$.${key}'))) LIKE LOWER(?)`);
-      where.push(`(q.customer_email LIKE ? OR q.stripe_subscription_id LIKE ? OR q.stripe_customer_id LIKE ? OR CAST(q.user_id AS CHAR) LIKE ? OR ${nameKeys.join(' OR ')})`);
-      params.push(needle, needle, needle, needle, ...QUEUE_NAME_KEYS.map(() => needle));
+      // The account name too, which the queue shows when the address has no recipient, and only where it shows
+      // it: with `nameMarkets`, a profile in one of those markets (admin-market-scope).
+      const markets = Array.isArray(nameMarkets) ? nameMarkets.map((market) => String(market).toUpperCase()).filter(Boolean) : null;
+      const accountSql = markets
+        ? (markets.length ? `(LOWER(u.display_name) LIKE LOWER(?) AND UPPER(TRIM(pm.meta_value)) IN (${markets.map(() => '?').join(', ')}))` : null)
+        : 'LOWER(u.display_name) LIKE LOWER(?)';
+      where.push(`(q.customer_email LIKE ? OR q.stripe_subscription_id LIKE ? OR q.stripe_customer_id LIKE ? OR CAST(q.user_id AS CHAR) LIKE ? OR ${nameKeys.join(' OR ')}${accountSql ? ` OR ${accountSql}` : ''})`);
+      params.push(needle, needle, needle, needle, ...QUEUE_NAME_KEYS.map(() => needle), ...(accountSql ? [needle, ...(markets || [])] : []));
     }
 
     return {
@@ -1113,6 +1151,7 @@ class SubscriptionLedgerRepository {
       preparationDay: dateOnly(row.preparation_day),
       deliveryDate: dateOnly(row.delivery_date),
       displayName: null,
+      accountDisplayName: row.account_display_name == null ? null : String(row.account_display_name),
       profileMarket: row.profile_market ? String(row.profile_market).trim().toUpperCase() : mapped.profileMarket,
       paymentMethodLast4: null,
       paymentMethodBrand: null
@@ -1120,7 +1159,7 @@ class SubscriptionLedgerRepository {
   }
 
   queueSelectSql() {
-    return 'SELECT q.*, pm.meta_value AS profile_market';
+    return 'SELECT q.*, pm.meta_value AS profile_market, u.display_name AS account_display_name';
   }
 
   async listQueue(input = {}) {

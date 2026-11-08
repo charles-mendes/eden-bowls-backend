@@ -196,6 +196,24 @@ function recipientDisplayName(address, email) {
   return String(value.recipient_name || value.name || value.full_name || value.recipient || email || '');
 }
 
+// The account name as a name to show, or null when there is none or it is an email (WordPress fills
+// `display_name` with the login, often the email).
+function accountNameOf(value) {
+  const name = String(value == null ? '' : value).trim();
+  return name && !name.includes('@') ? name : null;
+}
+
+// The name operation screens show and where it came from (operator-fills-recipient-name): the recipient, then the
+// account name, then the email. Only the recipient counts for the courier; the others are for reading the row.
+function shownName(address, { accountName, email } = {}) {
+  const value = jsonColumn(address);
+  const recipient = String(value.recipient_name || value.name || value.full_name || value.recipient || '');
+  if (recipient) return { name: recipient, source: 'recipient' };
+  const account = accountNameOf(accountName);
+  if (account) return { name: account, source: 'account' };
+  return { name: String(email || ''), source: 'email' };
+}
+
 function presentProductionQueueItem(row, options = {}) {
   const timezone = options.timezone || DEFAULT_TIMEZONE;
   const now = options.now || new Date();
@@ -209,7 +227,11 @@ function presentProductionQueueItem(row, options = {}) {
   // A paid cycle is due on its preparation day; an unpaid one on its charge.
   const daysUntil = civilDaysUntil(row.dueAt || row.currentPeriodEnd || row.current_period_end, timezone, now);
   const address = jsonColumn(row.address);
-  const displayName = recipientDisplayName(address, row.customerEmail || row.customer_email);
+  const customerProfileInScope = canAccessMarket(options.actor || {}, row.profileMarket || row.profile_market);
+  // The account name is a live profile read, so it shows only when the profile is in the actor's markets
+  // (admin-market-scope); otherwise the row keeps the ledger email.
+  const accountName = customerProfileInScope ? accountNameOf(row.accountDisplayName) : null;
+  const shown = shownName(address, { accountName, email: row.customerEmail || row.customer_email });
   // The cycle key the admin sends back when it changes the production status.
   const periodEnd = toJsDate(row.cyclePeriodEnd || row.currentPeriodEnd || row.current_period_end);
   const { country, city } = addressBits(row);
@@ -226,7 +248,9 @@ function presentProductionQueueItem(row, options = {}) {
     daysUntil,
     dueBucket: dueBucket(daysUntil),
     dueLabel: dueLabel(daysUntil),
-    displayName: String(displayName),
+    displayName: shown.name,
+    nameSource: shown.source,
+    accountName,
     email: String(row.customerEmail || row.customer_email || ''),
     flavorMix: flavorMixFor(lineItems),
     packCount,
@@ -252,7 +276,7 @@ function presentProductionQueueItem(row, options = {}) {
     subtotal,
     currency: catalog.currency || (country === 'BR' ? 'BRL' : null),
     stripeAccount,
-    customerProfileInScope: canAccessMarket(options.actor || {}, row.profileMarket || row.profile_market),
+    customerProfileInScope,
     dense: lineItems.length > 3 || packSizeLabel === 'misto',
     lineItems
   };
@@ -262,6 +286,8 @@ module.exports = {
   DEFAULT_TIMEZONE,
   OVERDUE_DAYS,
   recipientDisplayName,
+  accountNameOf,
+  shownName,
   civilDaysUntil,
   dueBucket,
   dueLabel,

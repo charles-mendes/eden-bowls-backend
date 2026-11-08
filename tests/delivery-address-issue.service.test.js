@@ -151,6 +151,45 @@ describe('recheckForUser', () => {
   });
 });
 
+// operator-fills-recipient-name: the operator filled the recipient of one subscription in the panel.
+describe('recheckSubscription', () => {
+  const noName = { recipient_name: '' };
+
+  test('closes the problem as the operator when nothing is left, without an email', async () => {
+    const { service, repository, mailer: mail } = build();
+    await service.report({ subscription: brSub(noName), source: 'courier_check' });
+    mail.notifyDeliveryAddressIssue.mockClear();
+    const result = await service.recheckSubscription(brSub({ recipient_name: 'Ana Costa' }));
+    expect(result).toEqual({ closed: true, codes: [] });
+    expect(repository.rows[0]).toMatchObject({ open: false, resolvedBy: 'operator' });
+    expect(mail.notifyDeliveryAddressIssue).not.toHaveBeenCalled();
+  });
+
+  test('keeps what is left on the same problem, without an email', async () => {
+    const { service, repository, mailer: mail } = build();
+    await service.report({ subscription: brSub({ ...noName, number: '' }), source: 'courier_check' });
+    mail.notifyDeliveryAddressIssue.mockClear();
+    const result = await service.recheckSubscription(brSub({ recipient_name: 'Ana Costa', number: '' }));
+    expect(result).toEqual({ closed: false, codes: ['address_number_missing'] });
+    expect(repository.rows).toHaveLength(1);
+    expect(repository.rows[0]).toMatchObject({ open: true, codes: ['address_number_missing'] });
+    expect(mail.notifyDeliveryAddressIssue).not.toHaveBeenCalled();
+  });
+
+  test('keeps the courier refusal of the address', async () => {
+    const { service, repository } = build();
+    await service.report({ subscription: brSub(noName), source: 'courier_failed', extra: ['courier_address_unusable'] });
+    await service.recheckSubscription(brSub({ recipient_name: 'Ana Costa' }));
+    expect(repository.rows[0]).toMatchObject({ open: true, codes: ['courier_address_unusable'] });
+  });
+
+  test('no open problem: nothing to do', async () => {
+    const { service, repository } = build();
+    expect(await service.recheckSubscription(brSub())).toBeNull();
+    expect(repository.close).not.toHaveBeenCalled();
+  });
+});
+
 describe('latestForSubscriptions', () => {
   test('presents the problem per ledger id, and an error reads as none', async () => {
     const { service, repository } = build();

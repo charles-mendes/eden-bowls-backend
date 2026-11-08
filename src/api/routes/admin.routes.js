@@ -772,6 +772,16 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  // operator-fills-recipient-name: fills the missing recipient of one subscription, nothing else of the address.
+  app.patch('/api/v1/admin/billing/subscriptions/:id/recipient-name', requirePermission('users.delivery.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminBillingService) {
+        throw new HttpError(503, 'Billing service is not available.');
+      }
+      return dependencies.adminBillingService.fillRecipientName(request.params.id, request.body || {}, request.adminIdentity);
+    });
+  });
+
   app.get('/api/v1/admin/billing/metrics', requirePermission('billing.subscribers.read', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminBillingService) {

@@ -734,6 +734,24 @@ describe('The queue lists Brazil delivery work in four groups', () => {
     expect(data.to_dispatch.map((item) => item.recipient_name)).toEqual(['Ana Costa', 'ana@example.com']);
   });
 
+  // operator-fills-recipient-name: the account name before the email, only for a profile in the operator's market.
+  test('no recipient: the account name of a profile in scope, with its source; out of scope keeps the email', async () => {
+    const brOperator = { userId: 99, email: 'ops@edenbowls.com', roles: ['operator'], markets: ['BR'] };
+    const { service } = setup({
+      cycles: [
+        cycle('in_a', '2026-11-03', { address: { country: 'BR' }, profileMarket: 'BR', accountDisplayName: 'Carla Dias' }),
+        cycle('in_o', '2026-11-04', { address: { country: 'BR' }, profileMarket: 'US', accountDisplayName: 'Bruno Reis' }),
+        cycle('in_r', '2026-11-05', { profileMarket: 'BR', accountDisplayName: 'Carla Dias' })
+      ]
+    });
+    const { data } = await service.listQueue(brOperator);
+    expect(data.to_dispatch.map(({ recipient_name, name_source, account_name }) => [recipient_name, name_source, account_name])).toEqual([
+      ['Carla Dias', 'account', 'Carla Dias'],
+      ['ana@example.com', 'email', null],
+      ['João Lima', 'recipient', 'Carla Dias']
+    ]);
+  });
+
   // admin-flow-fixes-4 (PM-25): rows whose box can still leave carry the invoice's NF-e.
   test('to-dispatch and failed rows carry the NF-e of their account, read at once; on the road carries none', async () => {
     const notes = [

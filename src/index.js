@@ -269,7 +269,7 @@ async function bootstrap() {
   const customerContactsRepository = new CustomerContactsRepository(dataSource);
   const deliveryAddressIssuesRepository = new DeliveryAddressIssuesRepository(dataSource);
   const stripeAccounts = createStripeAccountsFromEnv(env, { logger });
-  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource, { courierTableName: courierDeliveryRepository.tableName });
+  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource, { courierTableName: courierDeliveryRepository.tableName, usersTableName: env.WP_USERS_TABLE_NAME });
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const deliveryCalendar = new DeliveryClosedDaysRepository(dataSource);
   // One delivery rule for the checkout estimate, the order confirmation email, and the production queue.
@@ -785,6 +785,7 @@ async function bootstrap() {
     stripeAccounts,
     stripeBilling,
     profileRepository,
+    auditService: adminAuditService,
     secretKey: env.STRIPE_US_SECRET_KEY
   });
   const upsShipmentService = new UpsShipmentService({

@@ -154,8 +154,9 @@ describe('SubscriptionLedgerRepository', () => {
     expect(sql).toContain('ORDER BY q.due_at ASC, q.id ASC');
     expect(sql).toContain('LEFT JOIN `subscription_production_cycles`');
     expect(sql).toContain('hsr_market_country');
-    expect(sql).not.toContain('LEFT JOIN `wp_users`');
-    expect(sql).not.toContain('u.display_name');
+    // operator-fills-recipient-name: the account name, which the presenter keeps only for a profile in scope.
+    expect(sql).toContain('LEFT JOIN `wp_users` u ON u.ID = q.user_id');
+    expect(sql).toContain('u.display_name AS account_display_name');
     expect(sql).not.toContain('payment_method_last4');
   });
 
@@ -175,7 +176,37 @@ describe('SubscriptionLedgerRepository', () => {
     for (const key of ['recipient_name', 'name', 'full_name', 'recipient']) {
       expect(sql).toContain(`LOWER(JSON_UNQUOTE(JSON_EXTRACT(q.address, '$.${key}'))) LIKE LOWER(?)`);
     }
-    expect(params.filter((value) => value === '%Souza%')).toHaveLength(8);
+    // Four id columns, four address keys and the account name (no market limit for an unscoped caller).
+    expect(sql).toContain('LOWER(u.display_name) LIKE LOWER(?)');
+    expect(params.filter((value) => value === '%Souza%')).toHaveLength(9);
+  });
+
+  test('queue search matches the account name only for a profile in the given markets', async () => {
+    const query = jest.fn().mockResolvedValueOnce([{ total: 0 }]).mockResolvedValueOnce([]);
+    await new SubscriptionLedgerRepository({ isInitialized: true, query }).listQueue({
+      startOfToday: '2026-09-20 03:00:00',
+      windowEndExclusive: '2026-09-27 03:00:00',
+      overdueFloor: '2026-09-13 03:00:00',
+      includeOverdue: true,
+      q: 'Costa',
+      nameMarkets: ['BR'],
+      offset: 0,
+      perPage: 20
+    });
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('(LOWER(u.display_name) LIKE LOWER(?) AND UPPER(TRIM(pm.meta_value)) IN (?))');
+    expect(params).toContain('BR');
+  });
+
+  test('fills the recipient only when the address has none', async () => {
+    const query = jest.fn().mockResolvedValueOnce({ affectedRows: 1 }).mockResolvedValueOnce({ affectedRows: 0 });
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+    expect(await repository.fillAddressRecipientName(200, 'Ana Costa')).toBe(true);
+    expect(await repository.fillAddressRecipientName(200, 'Ana Costa')).toBe(false);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("JSON_SET(COALESCE(`address`, JSON_OBJECT()), '$.recipient_name', ?)");
+    expect(sql).toContain("COALESCE(TRIM(JSON_UNQUOTE(JSON_EXTRACT(`address`, '$.recipient_name'))), '') = ''");
+    expect(params).toEqual(['Ana Costa', 200]);
   });
 
   test('narrows the queue to one civil-day due bucket', async () => {

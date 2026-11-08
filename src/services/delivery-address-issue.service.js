@@ -160,6 +160,27 @@ class DeliveryAddressIssueService {
     return { closed, updated };
   }
 
+  // After an operator filled data of one subscription in the panel (operator-fills-recipient-name): its open
+  // problem is checked again like a customer save, closing with `resolvedBy` when nothing is left. No email.
+  async recheckSubscription(input, { resolvedBy = 'operator' } = {}) {
+    const subscription = normalized(input);
+    if (!this.repository || !subscription) return null;
+    try {
+      const open = await this.repository.findOpen(subscription.id);
+      if (!open) return null;
+      const codes = await this.codesFor(subscription, open.codes.includes(UNUSABLE) ? [UNUSABLE] : []);
+      if (!codes || codes.length === 0) {
+        const closed = await this.repository.close(open.id, { resolvedBy, now: this.now() });
+        return { closed: Boolean(closed), codes: [] };
+      }
+      if (!sameCodes(open.codes, codes)) await this.repository.updateCodes(open.id, codes);
+      return { closed: false, codes };
+    } catch (error) {
+      this.logger.error({ subscriptionId: subscription.stripeSubscriptionId, message: error && error.message }, 'Address problem not checked again.');
+      return null;
+    }
+  }
+
   // Ledger id → `address_issue` for a page of rows, in one query. A read never opens a problem.
   async latestForSubscriptions(subscriptionIds = []) {
     if (!this.repository || subscriptionIds.length === 0) return new Map();

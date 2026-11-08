@@ -13,6 +13,8 @@ const {
 const {
   constrainMarketQuery,
   assertStripeAccountMarket,
+  effectiveMarkets,
+  isAdminIdentity,
   marketFromStripeAccount,
   shouldEnforceMarketScope
 } = require('../core/admin-market-scope');
@@ -196,6 +198,8 @@ class AdminProductionService {
       productionStatus: query.productionStatus || undefined,
       due: query.due || undefined,
       q: query.q || undefined,
+      // The search reads the account name only where the queue would show it (admin-market-scope).
+      nameMarkets: shouldEnforceMarketScope(actor) && !isAdminIdentity(actor) ? effectiveMarkets(actor) : null,
       offset: pagination.offset,
       perPage: pagination.perPage
     };

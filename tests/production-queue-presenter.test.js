@@ -217,4 +217,31 @@ describe('presentProductionQueueItem recipient', () => {
     const item = presentProductionQueueItem(baseRow({ address }));
     expect(item.displayName).toBe('ana@edenbowls.com');
   });
+  // operator-fills-recipient-name: the account name comes before the email, only for a profile in scope.
+  const brOperator = { roles: ['operator'], markets: ['BR'], permissions: ['market.br'] };
+  const noName = () => {
+    const { name, ...address } = baseRow().address;
+    return address;
+  };
+
+  test('no recipient: the account name of a profile in scope, marked as such', () => {
+    const item = presentProductionQueueItem(baseRow({ address: noName(), profileMarket: 'BR', accountDisplayName: ' Carla Dias ' }), { actor: brOperator });
+    expect(item).toMatchObject({ displayName: 'Carla Dias', nameSource: 'account', accountName: 'Carla Dias' });
+  });
+
+  test('no recipient and a profile out of scope: the email, no account name', () => {
+    const item = presentProductionQueueItem(baseRow({ address: noName(), profileMarket: 'US', accountDisplayName: 'Carla Dias' }), { actor: brOperator });
+    expect(item).toMatchObject({ displayName: 'ana@edenbowls.com', nameSource: 'email', accountName: null, customerProfileInScope: false });
+  });
+
+  test('an account name that is an email is not a name', () => {
+    const item = presentProductionQueueItem(baseRow({ address: noName(), profileMarket: 'BR', accountDisplayName: 'carla@x.com' }), { actor: brOperator });
+    expect(item).toMatchObject({ displayName: 'ana@edenbowls.com', nameSource: 'email', accountName: null });
+  });
+
+  test('the recipient wins over the account name and still carries the suggestion', () => {
+    const item = presentProductionQueueItem(baseRow({ profileMarket: 'BR', accountDisplayName: 'Carla Dias' }), { actor: brOperator });
+    expect(item).toMatchObject({ nameSource: 'recipient', accountName: 'Carla Dias' });
+    expect(item.displayName).not.toBe('Carla Dias');
+  });
 });

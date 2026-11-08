@@ -56,6 +56,10 @@
     "path": "/api/v1/admin/billing/subscriptions/:id/paid-cycles"
   },
   {
+    "method": "PATCH",
+    "path": "/api/v1/admin/billing/subscriptions/:id/recipient-name"
+  },
+  {
     "method": "GET",
     "path": "/api/v1/admin/billing/subscriptions/:id/shipments"
   },

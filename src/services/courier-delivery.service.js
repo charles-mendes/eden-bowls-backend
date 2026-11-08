@@ -1,11 +1,11 @@
 const { DateTime } = require('luxon');
 const { HttpError } = require('../core/http-error');
-const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
+const { canAccessMarket, constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { extractSubscriptionIdFromInvoice, parseJsonColumn } = require('../core/stripe-subscription-map');
 const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
 const { invoiceReadinessReasons } = require('../core/dispatch-readiness');
 const { parseCourierDetails, parseFailureKind, parseFailureReason } = require('../core/courier-fields');
-const { presentProductionQueueItem, recipientDisplayName } = require('../core/production-queue-presenter');
+const { presentProductionQueueItem, recipientDisplayName, accountNameOf, shownName } = require('../core/production-queue-presenter');
 const { shipmentMarket } = require('../core/shipment-market');
 const { brazilAddressIssues } = require('../core/delivery-address-check');
 const { resolveDeliveryRange, dayAfter } = require('../core/delivery-range');
@@ -371,7 +371,7 @@ class CourierDeliveryService {
       return accounts.has(account);
     };
     const contacts = await this.deliveryContacts([...known.values()]);
-    const item = (cycle, row) => this.presentQueueItem(cycle, row, contacts);
+    const item = (cycle, row) => this.presentQueueItem(cycle, row, contacts, actor);
     const truncated = cycles.length > QUEUE_LIMIT;
     const data = {
       ...empty,
@@ -474,10 +474,13 @@ class CourierDeliveryService {
     return addresses.filter((address) => brazilAddressIssues(address).length > 0).length;
   }
 
-  presentQueueItem(cycle, row, contacts = new Map()) {
+  presentQueueItem(cycle, row, contacts = new Map(), actor = {}) {
     const address = addressOf(cycle ? cycle.address : null);
     const contact = (cycle && contacts.get(String(cycle.userId))) || {};
     const lineItems = cycle ? presentProductionQueueItem(cycle).lineItems : [];
+    // A live profile read: only when the profile is in the actor's markets (admin-market-scope).
+    const accountName = cycle && canAccessMarket(actor, cycle.profileMarket) ? accountNameOf(cycle.accountDisplayName) : null;
+    const shown = shownName(address, { accountName, email: cycle && cycle.customerEmail });
     const value = (...keys) => {
       for (const key of keys) {
         const text = String(address[key] == null ? '' : address[key]).trim();
@@ -489,7 +492,9 @@ class CourierDeliveryService {
       subscription_id: String((cycle && cycle.id) || (row && row.subscription_id) || ''),
       stripe_subscription_id: cycle ? cycle.stripeSubscriptionId : null,
       invoice_id: row ? row.stripe_invoice_id : cycle.paidInvoiceId,
-      recipient_name: recipientDisplayName(address, cycle && cycle.customerEmail) || null,
+      recipient_name: shown.name || null,
+      name_source: shown.source,
+      account_name: accountName,
       neighborhood: address.neighborhood || null,
       city: address.city || null,
       zipcode: address.postal_code || address.zipcode || address.zipCode || null,
