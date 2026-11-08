@@ -279,7 +279,10 @@ function registerAdminRoutes(app, dependencies = {}) {
   }
 
   app.get('/api/v1/admin/courier-deliveries/queue', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => courierService().listQueue(request.adminIdentity, deliveryRangeQuery(request.query)));
+    await handle(response, next, async () => courierService().listQueue(request.adminIdentity, {
+      ...deliveryRangeQuery(request.query),
+      preparo: (request.query || {}).preparo
+    }));
   });
 
   // Subscriptions whose account and address country fit no shipping market (shipment-market).

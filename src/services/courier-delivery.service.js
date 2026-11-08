@@ -66,6 +66,15 @@ function toTime(value) {
 // statuses, edits, the admin queue, the audit entries and the two letters.
 const NFE_AUTHORIZED = 'authorized';
 
+// simplify-brazil-dispatch: "A despachar" opens on ready cycles; `todos` brings back every paid cycle.
+const PREPARO_VALUES = new Set(['prontos', 'todos']);
+
+function parsePreparo(value) {
+  if (value === undefined || value === null || value === '') return 'prontos';
+  if (typeof value === 'string' && PREPARO_VALUES.has(value)) return value;
+  throw new HttpError(400, 'preparo must be prontos or todos.', { code: 'invalid_preparo' });
+}
+
 class CourierDeliveryService {
   constructor(options = {}) {
     this.repository = options.repository || null;
@@ -296,9 +305,11 @@ class CourierDeliveryService {
   // counted. The 200-row limit counts only cycles still to dispatch.
   async listQueue(actor = {}, query = {}) {
     this.ensureReady();
+    const preparo = parsePreparo(query.preparo);
+    const readyOnly = preparo === 'prontos';
     const range = resolveDeliveryRange(query, { now: this.now(), zone: TIMEZONE });
     const presentRange = { from: range.from, to: range.to, default: range.default };
-    const empty = { to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false, range: presentRange, later: 0, next_from: null, nfe_required: this.nfeRequired };
+    const empty = { to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false, range: presentRange, preparo, later: 0, next_from: null, nfe_required: this.nfeRequired };
     let accounts = null;
     if (shouldEnforceMarketScope(actor)) {
       const scope = constrainMarketQuery(actor, {});
@@ -315,13 +326,15 @@ class CourierDeliveryService {
       deliveryFloor: range.from,
       deliveryCeiling: range.to,
       limit: QUEUE_LIMIT + 1,
-      courierTableName
+      courierTableName,
+      readyOnly
     });
     const later = typeof this.ledgerRepository.countPaidCourierCyclesToDispatch === 'function'
       ? this.ledgerRepository.countPaidCourierCyclesToDispatch({
         deliveryFloor: dayAfter(range.to, TIMEZONE),
         courierTableName,
-        stripeAccounts: accounts ? [...accounts] : null
+        stripeAccounts: accounts ? [...accounts] : null,
+        readyOnly
       })
       : Promise.resolve(0);
     const [onTheRoad, failedRows, deliveredRows] = await Promise.all([
@@ -430,12 +443,13 @@ class CourierDeliveryService {
     }
     const now = this.now();
     const today = DateTime.fromJSDate(now, { zone: TIMEZONE }).startOf('day');
-    // The queue's default range, so the count matches the list Today opens.
+    // The queue's default range and default preparo (ready only), so the count matches the list Today opens.
     const toDispatchQuery = {
       deliveryFloor: today.minus({ days: DISPATCH_FLOOR_DAYS }).toISODate(),
       deliveryCeiling: today.plus({ days: 1 }).toISODate(),
       courierTableName: this.repository.tableName || 'courier_deliveries',
-      stripeAccounts: accounts
+      stripeAccounts: accounts,
+      readyOnly: true
     };
     const [toDispatch, onTheRoadLong, failed, awaitingNfe] = await Promise.all([
       this.ledgerRepository.countPaidCourierCyclesToDispatch(toDispatchQuery),

@@ -107,11 +107,13 @@ function setup({ subscription = brSubscription(), invoice = paidInvoice(), produ
       if (fromCycles.length || cycles.length) return fromCycles;
       return ids.map((paidInvoiceId) => ({ id: 42, paidInvoiceId, productionStatus, status: 'active' }));
     }),
-    listPaidCourierCycles: jest.fn(async ({ deliveryFloor, deliveryCeiling, limit }) => cycles
+    listPaidCourierCycles: jest.fn(async ({ deliveryFloor, deliveryCeiling, limit, readyOnly }) => cycles
       .filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor && (!deliveryCeiling || (cycle.deliveryDate || '') <= deliveryCeiling))
+      .filter((cycle) => !readyOnly || cycle.productionStatus === 'ready')
       .slice(0, limit || undefined)),
-    countPaidCourierCyclesToDispatch: jest.fn(async ({ deliveryFloor, deliveryCeiling }) => cycles
-      .filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor && (!deliveryCeiling || (cycle.deliveryDate || '') <= deliveryCeiling)).length)
+    countPaidCourierCyclesToDispatch: jest.fn(async ({ deliveryFloor, deliveryCeiling, readyOnly }) => cycles
+      .filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor && (!deliveryCeiling || (cycle.deliveryDate || '') <= deliveryCeiling))
+      .filter((cycle) => !readyOnly || cycle.productionStatus === 'ready').length)
   };
   const logger = { error: jest.fn(), warn() {}, info() {} };
   const service = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, profileRepository, auditService, transactionalMailer, addressIssueService, nfeRepository, requireAuthorizedNfe: nfeRequired, logger, now: () => NOW });
@@ -504,8 +506,48 @@ describe('The queue lists Brazil delivery work in four groups', () => {
     expect(data.range).toEqual({ from: '2026-10-05', to: '2026-11-05', default: true });
     expect(data.later).toBe(1);
     expect(data.next_from).toBeNull();
-    expect(ledgerRepository.listPaidCourierCycles).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', limit: 201, courierTableName: 'courier_deliveries' });
-    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-11-06', courierTableName: 'courier_deliveries', stripeAccounts: null });
+    expect(ledgerRepository.listPaidCourierCycles).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', limit: 201, courierTableName: 'courier_deliveries', readyOnly: true });
+    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-11-06', courierTableName: 'courier_deliveries', stripeAccounts: null, readyOnly: true });
+  });
+
+  // simplify-brazil-dispatch: "A despachar" opens on ready cycles, `preparo=todos` brings back the kitchen.
+  test('without preparo "A despachar" lists only ready cycles, and later counts only ready ones', async () => {
+    const { service } = setup({ cycles: [
+      cycle('in_ready', '2026-11-05'),
+      cycle('in_kitchen', '2026-11-05', { productionStatus: 'in_production' }),
+      cycle('in_later_ready', '2026-11-07'),
+      cycle('in_later_kitchen', '2026-11-07', { productionStatus: 'to_prepare' })
+    ] });
+    const { data } = await service.listQueue(actor);
+    expect(invoices(data.to_dispatch)).toEqual(['in_ready']);
+    expect(data.later).toBe(1);
+    expect(data.preparo).toBe('prontos');
+    await expect(service.listQueue(actor, { preparo: 'prontos' })).resolves.toMatchObject({ data: { preparo: 'prontos' } });
+  });
+
+  test('preparo=todos lists every paid cycle to dispatch, ready or not', async () => {
+    const { service, ledgerRepository } = setup({ cycles: [cycle('in_ready', '2026-11-05'), cycle('in_kitchen', '2026-11-05', { productionStatus: 'in_production' })] });
+    const { data } = await service.listQueue(actor, { preparo: 'todos' });
+    expect(invoices(data.to_dispatch)).toEqual(['in_ready', 'in_kitchen']);
+    expect(data.preparo).toBe('todos');
+    expect(ledgerRepository.listPaidCourierCycles).toHaveBeenCalledWith(expect.objectContaining({ readyOnly: false }));
+    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith(expect.objectContaining({ readyOnly: false }));
+  });
+
+  test('an unknown preparo is refused before the queue is read', async () => {
+    const { service, ledgerRepository } = setup();
+    await expect(code(service.listQueue(actor, { preparo: 'abertos' }))).resolves.toMatchObject({ status: 400, code: 'invalid_preparo' });
+    await expect(code(service.listQueue(actor, { preparo: ['todos', 'prontos'] }))).resolves.toMatchObject({ status: 400, code: 'invalid_preparo' });
+    expect(ledgerRepository.listPaidCourierCycles).not.toHaveBeenCalled();
+  });
+
+  test('the other groups do not depend on preparo', async () => {
+    const seed = [delivery(7, 'in_road', 'out_for_delivery')];
+    const cycles = [cycle('in_road', '2026-11-05', { productionStatus: 'in_production' })];
+    const prontos = await setup({ seed, cycles }).service.listQueue(actor);
+    const todos = await setup({ seed, cycles }).service.listQueue(actor, { preparo: 'todos' });
+    expect(invoices(prontos.data.out_for_delivery)).toEqual(['in_road']);
+    expect(invoices(todos.data.out_for_delivery)).toEqual(['in_road']);
   });
 
   test('a range that reaches the later cycle lists it', async () => {
@@ -782,7 +824,7 @@ describe('Today counts of the courier queue', () => {
     repository.countOpenFailures = jest.fn().mockResolvedValue(1);
 
     await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 230, onTheRoadLong: 2, failed: 1, awaitingNfe: null });
-    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', courierTableName: 'courier_deliveries', stripeAccounts: ['br', 'us'] });
+    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', courierTableName: 'courier_deliveries', stripeAccounts: ['br', 'us'], readyOnly: true });
     expect(repository.countOnTheRoadSince.mock.calls[0][0]).toEqual(new Date(NOW.getTime() - 24 * 3600 * 1000));
   });
 
@@ -794,7 +836,24 @@ describe('Today counts of the courier queue', () => {
     repository.countOpenFailures = jest.fn().mockResolvedValue(0);
 
     await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 3, onTheRoadLong: 0, failed: 0, awaitingNfe: 2 });
-    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith(expect.objectContaining({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', nfeTableName: 'bling_nfe' }));
+    expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith(expect.objectContaining({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', nfeTableName: 'bling_nfe', readyOnly: true }));
+  });
+
+  // simplify-brazil-dispatch: Today counts what "A despachar" opens on, ready cycles only, NF-e wait included.
+  test('a cycle still in the kitchen is in neither the to-dispatch count nor the NF-e wait', async () => {
+    const cycles = [
+      { paidInvoiceId: 'in_ready', deliveryDate: '2026-11-05', productionStatus: 'ready' },
+      { paidInvoiceId: 'in_kitchen', deliveryDate: '2026-11-05', productionStatus: 'in_production' }
+    ];
+    const on = setup({ nfeRequired: true, notes: [], cycles });
+    on.repository.countOnTheRoadSince = jest.fn().mockResolvedValue(0);
+    on.repository.countOpenFailures = jest.fn().mockResolvedValue(0);
+    await expect(on.service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 1, onTheRoadLong: 0, failed: 0, awaitingNfe: 1 });
+
+    const off = setup({ cycles });
+    off.repository.countOnTheRoadSince = jest.fn().mockResolvedValue(0);
+    off.repository.countOpenFailures = jest.fn().mockResolvedValue(0);
+    await expect(off.service.countQueue({ roles: ['admin'] })).resolves.toMatchObject({ toDispatch: 1, awaitingNfe: null });
   });
 
   test('with the lock on a US-only operator counts 0 waiting', async () => {

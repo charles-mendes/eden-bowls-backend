@@ -106,6 +106,20 @@ describe('admin courier delivery routes', () => {
     expect(ledgerRepository.listPaidCourierCycles.mock.calls[0][0]).toMatchObject({ deliveryFloor: today, deliveryCeiling: today });
   });
 
+  // simplify-brazil-dispatch: the route hands preparo to the queue as sent.
+  test('the queue reads preparo from the query and refuses an unknown one', async () => {
+    const { app, ledgerRepository } = appFor(brOperator);
+    const todos = await auth(request(app).get('/api/v1/admin/courier-deliveries/queue?preparo=todos'));
+    expect(todos.status).toBe(200);
+    expect(todos.body.data.preparo).toBe('todos');
+    expect(ledgerRepository.listPaidCourierCycles.mock.calls[0][0]).toMatchObject({ readyOnly: false });
+    const prontos = await auth(request(app).get('/api/v1/admin/courier-deliveries/queue'));
+    expect(prontos.body.data.preparo).toBe('prontos');
+    const invalid = await auth(request(app).get('/api/v1/admin/courier-deliveries/queue?preparo=abertos'));
+    expect(invalid.status).toBe(400);
+    expect(JSON.stringify(invalid.body)).toContain('invalid_preparo');
+  });
+
   test('an invalid range answers 400 invalid_delivery_range', async () => {
     const { app } = appFor(brOperator);
     const response = await auth(request(app).get('/api/v1/admin/courier-deliveries/queue?from=2020-01-01'));

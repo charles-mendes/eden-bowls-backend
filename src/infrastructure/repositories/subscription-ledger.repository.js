@@ -822,10 +822,11 @@ class SubscriptionLedgerRepository {
   // Paid cycles of the Brazil shipping market to dispatch (courier-delivery, shipment-market): account `br` and
   // address in Brazil, no delivery on the road, delivered or failed, delivered in the range. A crossed pair goes to
   // the market exceptions list instead.
-  async listPaidCourierCycles({ deliveryFloor, deliveryCeiling = null, limit, courierTableName = 'courier_deliveries' }) {
+  // readyOnly (simplify-brazil-dispatch): only cycles the kitchen marked ready; a cycle with no status is not ready.
+  async listPaidCourierCycles({ deliveryFloor, deliveryCeiling = null, limit, courierTableName = 'courier_deliveries', readyOnly = false }) {
     return this.listPaidShippingCycles({
       marketWhere: shipmentMarketSql('BR'),
-      extraWhere: [this.courierOpenSql(courierTableName)],
+      extraWhere: [this.courierOpenSql(courierTableName), ...(readyOnly ? ["q.production_status = 'ready'"] : [])],
       deliveryFloor,
       deliveryCeiling,
       limit
@@ -835,7 +836,7 @@ class SubscriptionLedgerRepository {
   // How many paid Brazil cycles wait in "A despachar" (courier-delivery): the queue's rule, counted without its
   // 200-row cut. An invoice with a delivery on the road, delivered or failed is not waiting.
   // With nfeTableName (PM-25), only the cycles whose invoice has no authorized NF-e in the same Stripe account.
-  async countPaidCourierCyclesToDispatch({ deliveryFloor, deliveryCeiling = null, courierTableName = 'courier_deliveries', stripeAccounts = null, nfeTableName = null }) {
+  async countPaidCourierCyclesToDispatch({ deliveryFloor, deliveryCeiling = null, courierTableName = 'courier_deliveries', stripeAccounts = null, nfeTableName = null, readyOnly = false }) {
     this.ensureDataSource();
     const range = this.deliveryRangeSql({ deliveryFloor, deliveryCeiling });
     const where = [
@@ -844,6 +845,9 @@ class SubscriptionLedgerRepository {
       ...range.where,
       this.courierOpenSql(courierTableName)
     ];
+    if (readyOnly) {
+      where.push("q.production_status = 'ready'");
+    }
     if (nfeTableName) {
       where.push(`NOT EXISTS (SELECT 1 FROM \`${nfeTableName}\` n WHERE n.stripe_account COLLATE utf8mb4_unicode_ci = q.stripe_account COLLATE utf8mb4_unicode_ci AND n.stripe_invoice_id COLLATE utf8mb4_unicode_ci = q.paid_invoice_id COLLATE utf8mb4_unicode_ci AND n.status = 'authorized')`);
     }

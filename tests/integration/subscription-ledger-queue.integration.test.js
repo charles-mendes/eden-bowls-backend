@@ -276,6 +276,34 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     }
   });
 
+  // simplify-brazil-dispatch: with readyOnly only the ready cycle is to dispatch; without it both are.
+  test('courier readyOnly lists and counts the ready cycle and leaves the one still in production', async () => {
+    await dataSource.query(`CREATE TABLE IF NOT EXISTS \`${courierTable}\` (
+      id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      stripe_invoice_id varchar(191) NOT NULL,
+      status varchar(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    const result = await dataSource.query(
+      `INSERT INTO \`${ledgerTable}\` (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end, address)
+       VALUES (7, 'ana@edenbowls.com', 'sub_ready_br', 'cus_ready', 'br', 'active', '2026-12-01 08:00:00', '2027-01-01 08:00:00', '{"country":"BR"}')`
+    );
+    for (const [status, invoice, delivery] of [['ready', 'in_ready_ok', '2026-12-04'], ['in_production', 'in_ready_kitchen', '2026-12-05']]) {
+      await dataSource.query(
+        `INSERT INTO \`${cycleTable}\` (subscription_id, period_end, status, paid_at, paid_invoice_id, delivery_date) VALUES (?, ?, ?, ?, ?, ?)`,
+        [result.insertId, `${delivery} 08:00:00`, status, `${delivery} 07:00:00`, invoice, delivery]
+      );
+    }
+    const range = { deliveryFloor: '2026-12-01', deliveryCeiling: '2026-12-10', courierTableName: courierTable };
+
+    const ready = await repository.listPaidCourierCycles({ ...range, limit: 50, readyOnly: true });
+    const all = await repository.listPaidCourierCycles({ ...range, limit: 50 });
+
+    expect(ready.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_ready_ok']);
+    expect(all.map((cycle) => cycle.paidInvoiceId)).toEqual(['in_ready_ok', 'in_ready_kitchen']);
+    await expect(repository.countPaidCourierCyclesToDispatch({ ...range, readyOnly: true })).resolves.toBe(1);
+    await expect(repository.countPaidCourierCyclesToDispatch(range)).resolves.toBe(2);
+  });
+
   // admin-flow-fixes-5: the limit counts only what has not left, and a label at work escapes the range.
   test('shipping queues read the range and keep the limit for orders still waiting', async () => {
     const upsTable = `it_${suffix}_ups_range`;

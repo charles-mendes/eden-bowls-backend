@@ -36,6 +36,13 @@ function baseRow(overrides = {}) {
 }
 
 describe('presentProductionQueueItem', () => {
+  // simplify-brazil-dispatch: Expedir opens the courier queue on this invoice.
+  test('names the paid invoice of a paid cycle and null for an unpaid one', () => {
+    expect(presentProductionQueueItem(baseRow({ paymentState: 'paid', paidInvoiceId: 'in_123' })).paidInvoiceId).toBe('in_123');
+    expect(presentProductionQueueItem(baseRow({ paymentState: 'awaiting_payment', paidInvoiceId: null })).paidInvoiceId).toBeNull();
+    expect(presentProductionQueueItem(baseRow()).paidInvoiceId).toBeNull();
+  });
+
   test('flattens catalog line items into mix, packs, and compact lineItems', () => {
     const item = presentProductionQueueItem(baseRow(), {
       timezone: 'America/Sao_Paulo',

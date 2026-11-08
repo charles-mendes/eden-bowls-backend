@@ -29,6 +29,24 @@ describe('SubscriptionLedgerRepository courier queries', () => {
     expect(params).toEqual(['2026-10-07', '2026-11-07', 201]);
   });
 
+  // simplify-brazil-dispatch: "A despachar" opens on ready cycles; without the flag the query is unchanged.
+  test('readyOnly adds the ready status to the courier list and count, and only when asked', async () => {
+    const query = jest.fn().mockResolvedValue([{ total: 0 }]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+
+    await repository.listPaidCourierCycles({ deliveryFloor: '2026-10-07', limit: 201, readyOnly: true });
+    await repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2026-10-07', readyOnly: true });
+    await repository.listPaidCourierCycles({ deliveryFloor: '2026-10-07', limit: 201 });
+    await repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2026-10-07' });
+
+    const sqls = query.mock.calls.map(([sql]) => sql);
+    expect(sqls[0]).toContain("q.production_status = 'ready'");
+    expect(sqls[1]).toContain("q.production_status = 'ready'");
+    expect(sqls[2]).not.toContain("q.production_status = 'ready'");
+    expect(sqls[3]).not.toContain("q.production_status = 'ready'");
+    expect(query.mock.calls[0][1]).toEqual(['2026-10-07', 201]);
+  });
+
   test('countPaidCourierCyclesToDispatch takes the ceiling when given', async () => {
     const query = jest.fn().mockResolvedValue([{ total: 3 }]);
     const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });

@@ -240,6 +240,8 @@ function presentProductionQueueItem(row, options = {}) {
     productionStatus,
     paymentState: String(row.paymentState || 'paid'),
     paymentLabel: PAYMENT_LABELS[row.paymentState] || null,
+    // simplify-brazil-dispatch: the paid invoice of the cycle, so Expedir opens that order; null while unpaid.
+    paidInvoiceId: row.paidInvoiceId ? String(row.paidInvoiceId) : null,
     preparationDay: row.preparationDay || null,
     deliveryDate: row.deliveryDate || null,
     note: row.note || row.production_note || null,
