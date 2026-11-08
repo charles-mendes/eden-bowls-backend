@@ -21,11 +21,13 @@ A etiqueta UPS já usa o nome da conta quando falta o nome de quem recebe. O des
 ## Decisions
 
 - **Rota estreita, só o nome.** `PATCH /api/v1/admin/billing/subscriptions/:id/recipient-name` recebe só `recipient_name`. Uma rota de endereço completo teria de repetir a validação do endereço e a regra de mercado; o nome é o que trava hoje. Alternativa descartada: reaproveitar a edição de assinatura do cliente, que exige o endereço inteiro e passa pelo Stripe.
-- **Permissão `users.delivery.write`, escopo de mercado do registro.** É a permissão que o operador já usa para corrigir endereço. Um operador só do Brasil não grava numa assinatura dos EUA (403).
+- **Permissão `users.delivery.write`, escopo de mercado do registro.** É a permissão que o operador já usa para corrigir endereço. Um operador só do Brasil não grava numa assinatura dos EUA (404, como as outras rotas de registro).
 - **Gravação com `JSON_SET` na coluna de endereço da assinatura.** Não toca o Stripe nem o nome da conta, como pede o requisito "O nome de quem recebe fica separado do nome da conta".
 - **Auditoria sem o nome.** O registro guarda a ação, a assinatura e o ator, e se havia nome antes, mas não o nome, como já é feito na correção de endereço (só os campos).
+- **Só preencher, nunca trocar.** Com nome de quem recebe já gravado, a rota responde 409 `recipient_name_present`. Como a auditoria não guarda o nome, uma troca apagaria o nome do cliente sem volta. Trocar um nome existente fica para outra change, se precisar.
 - **Reconferência do problema.** Depois de gravar, o serviço de problemas de endereço reconfere aquela assinatura. Fecha com `resolved_by: operator` (a coluna é `VARCHAR(16)`) ou fica com os códigos que sobraram, sem e-mail.
-- **Nome da conta como segunda opção na tela, não na regra.** O nome mostrado passa a ser: nome de quem recebe → nome da conta (se não for e-mail) → e-mail. `account_name` vai separado para o painel sugerir. `brazilAddressIssues` não muda.
+- **Nome da conta só com o perfil no mercado.** A spec `admin-market-scope` manda os itens de cobrança e produção usarem só a identidade do ledger, sem leitura viva do perfil, porque o perfil pode ser de outro mercado. O nome da conta vira a única exceção, e só com `customerProfileInScope` verdadeiro. A fila e a lista de Entregas Brasil juntam o perfil (mercado e nome) e o presenter descarta o nome fora do mercado. A busca recebe os mercados do operador e só casa o nome da conta com perfil desses mercados. Admin sem restrição de mercado vê sempre.
+- **Nome da conta como segunda opção na tela, não na regra.** O nome mostrado passa a ser: nome de quem recebe → nome da conta (se não for e-mail) → e-mail. `account_name` vai separado para o painel sugerir, e `name_source` diz de onde veio o nome mostrado, para o painel marcar "(conta)". `brazilAddressIssues` não muda.
 - **Minuto da saída.** O painel manda minutos inteiros. A API compara com a saída cortada no minuto e, se a hora informada ficar antes da saída exata, grava a hora da saída. Assim a entrega nunca fica antes da saída nos dados.
 
 ## Risks / Trade-offs

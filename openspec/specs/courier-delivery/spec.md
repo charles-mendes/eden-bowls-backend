@@ -94,7 +94,7 @@ An invoice MUST have at most one active courier delivery. Out for delivery and d
 
 ### Requirement: Status moves only forward
 
-Only a delivery out for delivery MUST be able to become delivered, failed or canceled. Delivered stores a delivery instant, which defaults to now, MUST NOT be after now, and MUST NOT be before the out-for-delivery date. Failed stores a reason. Delivered, failed and canceled are final: any later status change, including a repeat of the same one, MUST answer 409 `courier_delivery_final`. When two changes race, exactly one MUST succeed.
+Only a delivery out for delivery MUST be able to become delivered, failed or canceled. Delivered stores a delivery instant, which defaults to now, MUST NOT be after now, and MUST NOT be before the minute of the out-for-delivery date. A delivery instant inside that minute but before the exact departure MUST be stored as the departure instant. Failed stores a reason. Delivered, failed and canceled are final: any later status change, including a repeat of the same one, MUST answer 409 `courier_delivery_final`. When two changes race, exactly one MUST succeed.
 
 #### Scenario: Mark delivered
 
@@ -125,6 +125,16 @@ Only a delivery out for delivery MUST be able to become delivered, failed or can
 
 - **WHEN** an operator marks a delivered delivery delivered again
 - **THEN** the API returns 409 and the delivered date is unchanged
+
+#### Scenario: Delivered in the minute the box left
+
+- **WHEN** the box left at 03:32:40 and the operator marks it delivered at 03:32
+- **THEN** the status is delivered and the delivered date is 03:32:40
+
+#### Scenario: Delivered before the minute the box left
+
+- **WHEN** the box left at 03:32:40 and the delivered date given is 03:31
+- **THEN** the API returns 422 and the status is unchanged
 
 ### Requirement: Details can be corrected while not canceled
 
