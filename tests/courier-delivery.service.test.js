@@ -344,6 +344,19 @@ describe('Status moves only forward', () => {
     expect(repository.rows[0].delivered_at).toEqual(new Date('2026-11-04T13:30:00Z'));
   });
 
+  test('the minute the box left is accepted and stored as the departure', async () => {
+    const leftAt = new Date('2026-11-04T12:00:40Z');
+    const { service, repository } = setup({ seed: [{ ...onTheRoad()[0], out_for_delivery_at: leftAt }] });
+    await service.markDelivered(1, { delivered_at: '2026-11-04T12:00:00Z' }, actor);
+    expect(repository.rows[0]).toMatchObject({ status: 'delivered', delivered_at: leftAt });
+  });
+
+  test('the minute before the box left returns 422', async () => {
+    const { service, repository } = setup({ seed: [{ ...onTheRoad()[0], out_for_delivery_at: new Date('2026-11-04T12:00:40Z') }] });
+    expect(await code(service.markDelivered(1, { delivered_at: '2026-11-04T11:59:00Z' }, actor))).toMatchObject({ status: 422, details: { field: 'delivered_at' } });
+    expect(repository.rows[0].status).toBe('out_for_delivery');
+  });
+
   test.each([['2026-11-05T10:00:00Z', 'future'], ['2026-11-04T11:00:00Z', 'before departure'], ['not a date', 'invalid']])('delivered date %p (%s) returns 422', async (deliveredAt) => {
     const { service, repository } = setup({ seed: onTheRoad() });
     expect(await code(service.markDelivered(1, { delivered_at: deliveredAt }, actor))).toMatchObject({ status: 422, details: { field: 'delivered_at' } });

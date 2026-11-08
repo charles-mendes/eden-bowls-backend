@@ -250,10 +250,12 @@ class CourierDeliveryService {
     const at = new Date(String(value));
     if (Number.isNaN(at.getTime())) throw invalidField('delivered_at', 'delivered_at must be a date and time.');
     if (at.getTime() > now.getTime()) throw invalidField('delivered_at', 'The delivery cannot be in the future.');
-    if (at.getTime() < toTime(row.out_for_delivery_at)) {
+    // The panel sends whole minutes, so the minute the box left counts as after it left.
+    const leftAt = toTime(row.out_for_delivery_at);
+    if (at.getTime() < Math.floor(leftAt / 60000) * 60000) {
       throw invalidField('delivered_at', 'The delivery cannot be before the box left.');
     }
-    return at;
+    return at.getTime() < leftAt ? new Date(leftAt) : at;
   }
 
   async markDelivered(id, body = {}, actor = {}) {
