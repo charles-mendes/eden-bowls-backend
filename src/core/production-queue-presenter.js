@@ -6,6 +6,7 @@ const {
 const { parseJsonColumn } = require('./stripe-subscription-map');
 const { canAccessMarket } = require('./admin-market-scope');
 const { parseWeightToGrams } = require('./plan-catalog-pricing');
+const { brazilAddressIssues } = require('./delivery-address-check');
 
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 
@@ -242,6 +243,9 @@ function presentProductionQueueItem(row, options = {}) {
     paymentLabel: PAYMENT_LABELS[row.paymentState] || null,
     // simplify-brazil-dispatch: the paid invoice of the cycle, so Expedir opens that order; null while unpaid.
     paidInvoiceId: row.paidInvoiceId ? String(row.paidInvoiceId) : null,
+    // keep-ready-orders-dispatchable: what the courier dispatch would refuse for the address, on a Brazil cycle
+    // (account `br`, address in Brazil, the rule of the Expedir link); null on any other. A read: it opens no problem.
+    courierIssues: stripeAccount === 'br' && country === 'BR' ? brazilAddressIssues(row.address) : null,
     preparationDay: row.preparationDay || null,
     deliveryDate: row.deliveryDate || null,
     note: row.note || row.production_note || null,

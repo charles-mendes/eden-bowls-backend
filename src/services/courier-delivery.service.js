@@ -431,7 +431,7 @@ class CourierDeliveryService {
 
   // The queue's groups as counts for Today, by the same rules and without the 200-row cut.
   async countQueue(actor = {}) {
-    const zero = { toDispatch: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: this.nfeRequired ? 0 : null };
+    const zero = { toDispatch: 0, addressLocked: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: this.nfeRequired ? 0 : null };
     let accounts = null;
     if (shouldEnforceMarketScope(actor)) {
       const scope = constrainMarketQuery(actor, {});
@@ -451,8 +451,10 @@ class CourierDeliveryService {
       stripeAccounts: accounts,
       readyOnly: true
     };
-    const [toDispatch, onTheRoadLong, failed, awaitingNfe] = await Promise.all([
+    const [toDispatch, addressLocked, onTheRoadLong, failed, awaitingNfe] = await Promise.all([
       this.ledgerRepository.countPaidCourierCyclesToDispatch(toDispatchQuery),
+      // keep-ready-orders-dispatchable: the same cycles whose address the dispatch would refuse, by its own rule.
+      this.countAddressLocked(toDispatchQuery),
       this.repository.countOnTheRoadSince(new Date(now.getTime() - LONG_ON_THE_ROAD_HOURS * 3600 * 1000), accounts),
       this.repository.countOpenFailures(accounts),
       // PM-25: the same cycles, without an authorized NF-e. Null while the lock is off.
@@ -460,7 +462,14 @@ class CourierDeliveryService {
         ? this.ledgerRepository.countPaidCourierCyclesToDispatch({ ...toDispatchQuery, nfeTableName: 'bling_nfe' })
         : Promise.resolve(null)
     ]);
-    return { toDispatch, onTheRoadLong, failed, awaitingNfe };
+    return { toDispatch, addressLocked, onTheRoadLong, failed, awaitingNfe };
+  }
+
+  // A read only: no address problem opens and no email goes out (delivery-address-issues).
+  async countAddressLocked(query) {
+    if (typeof this.ledgerRepository.listPaidCourierCycleAddresses !== 'function') return 0;
+    const addresses = await this.ledgerRepository.listPaidCourierCycleAddresses(query);
+    return addresses.filter((address) => brazilAddressIssues(address).length > 0).length;
   }
 
   presentQueueItem(cycle, row, contacts = new Map()) {

@@ -99,8 +99,12 @@ class AdminTodayService {
     const totals = emptyCounts();
     const presented = items.map((item) => {
       const market = marketOf(item);
-      byMarket[market][item.dueBucket] += 1;
-      totals[item.dueBucket] += 1;
+      // keep-ready-orders-dispatchable: overdue counts late kitchen work; a ready cycle kept past its day waits to
+      // leave and is counted by courierToDispatch.
+      if (!(item.dueBucket === 'overdue' && item.productionStatus === 'ready')) {
+        byMarket[market][item.dueBucket] += 1;
+        totals[item.dueBucket] += 1;
+      }
       const needsLabel = market === 'US' && item.paymentState === 'paid';
       const { paidInvoiceId, ...rest } = item;
       const presentedItem = {
@@ -147,7 +151,7 @@ class AdminTodayService {
     const us = markets.includes('US');
     const courier = brazil && this.courierDeliveryService
       ? this.courierDeliveryService.countQueue(actor)
-      : { toDispatch: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: this.courierDeliveryService && this.courierDeliveryService.nfeRequired ? 0 : null };
+      : { toDispatch: 0, addressLocked: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: this.courierDeliveryService && this.courierDeliveryService.nfeRequired ? 0 : null };
     const nfe = brazil && this.blingNfeRepository
       ? this.blingNfeRepository.countByStatuses(NFE_ACTION_STATUSES)
       : Object.fromEntries(NFE_ACTION_STATUSES.map((status) => [status, 0]));
@@ -167,6 +171,8 @@ class AdminTodayService {
       courierFailed: courierCounts.failed,
       // PM-25: part of courierToDispatch, waiting for an authorized NF-e; null while the fiscal lock is off.
       courierAwaitingNfe: courierCounts.awaitingNfe === undefined ? null : courierCounts.awaitingNfe,
+      // keep-ready-orders-dispatchable: part of courierToDispatch whose address the dispatch would refuse.
+      courierAddressLocked: courierCounts.addressLocked || 0,
       nfeMissingDocument: nfeCounts.blocked_missing_document,
       nfeRejected: nfeCounts.rejected,
       nfeError: nfeCounts.error,

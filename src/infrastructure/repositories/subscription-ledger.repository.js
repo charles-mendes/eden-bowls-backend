@@ -48,6 +48,8 @@ class SubscriptionLedgerRepository {
     this.usermetaTableName = options.usermetaTableName || 'wp_usermeta';
     this.chargedInvoicesTableName = options.chargedInvoicesTableName || 'subscription_charged_invoices';
     this.productionCyclesTableName = options.productionCyclesTableName || 'subscription_production_cycles';
+    // keep-ready-orders-dispatchable: the queue keeps a ready Brazil cycle until its box leaves.
+    this.courierTableName = options.courierTableName || 'courier_deliveries';
   }
 
   ensureDataSource() {
@@ -699,8 +701,9 @@ class SubscriptionLedgerRepository {
   }
 
   // A queue row is one production cycle. An unpaid cycle is the next renewal (for past_due, the renewal that
-  // failed) and waits for payment. A paid cycle stays until it is marked ready, whatever happens to renewals
-  // after it, so cancel_at_period_end only removes the renewals that would follow.
+  // failed) and waits for payment. A paid cycle stays until it is marked ready (a ready Brazil cycle until its box
+  // leaves, see queueMembership), whatever happens to renewals after it, so cancel_at_period_end only removes the
+  // renewals that would follow.
   queueSourceSql() {
     const ledger = `\`${this.tableName}\``;
     const cycles = `\`${this.productionCyclesTableName}\``;
@@ -833,11 +836,10 @@ class SubscriptionLedgerRepository {
     });
   }
 
-  // How many paid Brazil cycles wait in "A despachar" (courier-delivery): the queue's rule, counted without its
-  // 200-row cut. An invoice with a delivery on the road, delivered or failed is not waiting.
-  // With nfeTableName (PM-25), only the cycles whose invoice has no authorized NF-e in the same Stripe account.
-  async countPaidCourierCyclesToDispatch({ deliveryFloor, deliveryCeiling = null, courierTableName = 'courier_deliveries', stripeAccounts = null, nfeTableName = null, readyOnly = false }) {
-    this.ensureDataSource();
+  // The "A despachar" filter (courier-delivery) shared by its count and the address read below, so the two never
+  // drift. Null when the scope allows no account. With nfeTableName (PM-25), only the cycles whose invoice has no
+  // authorized NF-e in the same Stripe account.
+  courierToDispatchWhere({ deliveryFloor, deliveryCeiling = null, courierTableName = 'courier_deliveries', stripeAccounts = null, nfeTableName = null, readyOnly = false }) {
     const range = this.deliveryRangeSql({ deliveryFloor, deliveryCeiling });
     const where = [
       "q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL",
@@ -853,12 +855,31 @@ class SubscriptionLedgerRepository {
     }
     const params = [...range.params];
     if (Array.isArray(stripeAccounts)) {
-      if (!stripeAccounts.length) return 0;
+      if (!stripeAccounts.length) return null;
       where.push(`q.stripe_account IN (${stripeAccounts.map(() => '?').join(', ')})`);
       params.push(...stripeAccounts);
     }
-    const rows = await this.dataSource.query(`SELECT COUNT(*) AS total FROM ${this.queueSourceSql()} WHERE ${where.join(' AND ')}`, params);
+    return { whereSql: where.join(' AND '), params };
+  }
+
+  // How many paid Brazil cycles wait in "A despachar" (courier-delivery): the queue's rule, counted without its
+  // 200-row cut. An invoice with a delivery on the road, delivered or failed is not waiting.
+  async countPaidCourierCyclesToDispatch(query) {
+    this.ensureDataSource();
+    const filter = this.courierToDispatchWhere(query);
+    if (!filter) return 0;
+    const rows = await this.dataSource.query(`SELECT COUNT(*) AS total FROM ${this.queueSourceSql()} WHERE ${filter.whereSql}`, filter.params);
     return Number((Array.isArray(rows) && rows[0] && rows[0].total) || 0);
+  }
+
+  // keep-ready-orders-dispatchable: the stored address of each cycle in that same count, for Today to count the
+  // ones the dispatch would refuse by the dispatch's own rule (brazilAddressIssues), not a copy of it in SQL.
+  async listPaidCourierCycleAddresses(query) {
+    this.ensureDataSource();
+    const filter = this.courierToDispatchWhere(query);
+    if (!filter) return [];
+    const rows = await this.dataSource.query(`SELECT q.address FROM ${this.queueSourceSql()} WHERE ${filter.whereSql}`, filter.params);
+    return (Array.isArray(rows) ? rows : []).map((row) => parseJsonColumn(row.address) || {});
   }
 
   // Subscriptions that ship from no market (shipment-market): not canceled, account and stored address country
@@ -976,13 +997,22 @@ class SubscriptionLedgerRepository {
   queueMembership({ startOfToday, startOfTomorrow, startOfDayAfterTomorrow, windowEndExclusive, overdueFloor, includeOverdue, account, stripeAccounts, productionStatus, due, q }) {
     // The overdue floor only drops unpaid cycles, which billing follows up. A paid cycle that was never prepared
     // stays in the queue however late it is: the customer paid and is still waiting.
+    // keep-ready-orders-dispatchable: a ready Brazil cycle (the courier's market) stays past its day, within the
+    // floor, until a delivery is on the road, delivered or failed, so the operator still finds Expedir.
     const where = [
       `(
         (q.due_at >= ? AND q.due_at < ?)
         OR (
           ? AND q.due_at < ?
-          AND q.production_status <> 'ready'
-          AND (q.due_at >= ? OR q.payment_state = 'paid')
+          AND (
+            (q.production_status <> 'ready' AND (q.due_at >= ? OR q.payment_state = 'paid'))
+            OR (
+              q.production_status = 'ready' AND q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL
+              AND q.due_at >= ?
+              AND ${shipmentMarketSql('BR')}
+              AND ${this.courierOpenSql(this.courierTableName)}
+            )
+          )
         )
       )`
     ];
@@ -991,6 +1021,7 @@ class SubscriptionLedgerRepository {
       windowEndExclusive,
       includeOverdue ? 1 : 0,
       startOfToday,
+      overdueFloor,
       overdueFloor
     ];
 

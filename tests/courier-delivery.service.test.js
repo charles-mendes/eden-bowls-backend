@@ -113,7 +113,11 @@ function setup({ subscription = brSubscription(), invoice = paidInvoice(), produ
       .slice(0, limit || undefined)),
     countPaidCourierCyclesToDispatch: jest.fn(async ({ deliveryFloor, deliveryCeiling, readyOnly }) => cycles
       .filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor && (!deliveryCeiling || (cycle.deliveryDate || '') <= deliveryCeiling))
-      .filter((cycle) => !readyOnly || cycle.productionStatus === 'ready').length)
+      .filter((cycle) => !readyOnly || cycle.productionStatus === 'ready').length),
+    listPaidCourierCycleAddresses: jest.fn(async ({ deliveryFloor, deliveryCeiling, readyOnly }) => cycles
+      .filter((cycle) => (cycle.deliveryDate || '') >= deliveryFloor && (!deliveryCeiling || (cycle.deliveryDate || '') <= deliveryCeiling))
+      .filter((cycle) => !readyOnly || cycle.productionStatus === 'ready')
+      .map((cycle) => cycle.address || {}))
   };
   const logger = { error: jest.fn(), warn() {}, info() {} };
   const service = new CourierDeliveryService({ repository, adminBillingService, ledgerRepository, profileRepository, auditService, transactionalMailer, addressIssueService, nfeRepository, requireAuthorizedNfe: nfeRequired, logger, now: () => NOW });
@@ -823,7 +827,7 @@ describe('Today counts of the courier queue', () => {
     repository.countOnTheRoadSince = jest.fn().mockResolvedValue(2);
     repository.countOpenFailures = jest.fn().mockResolvedValue(1);
 
-    await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 230, onTheRoadLong: 2, failed: 1, awaitingNfe: null });
+    await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 230, addressLocked: 0, onTheRoadLong: 2, failed: 1, awaitingNfe: null });
     expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', courierTableName: 'courier_deliveries', stripeAccounts: ['br', 'us'], readyOnly: true });
     expect(repository.countOnTheRoadSince.mock.calls[0][0]).toEqual(new Date(NOW.getTime() - 24 * 3600 * 1000));
   });
@@ -835,7 +839,7 @@ describe('Today counts of the courier queue', () => {
     repository.countOnTheRoadSince = jest.fn().mockResolvedValue(0);
     repository.countOpenFailures = jest.fn().mockResolvedValue(0);
 
-    await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 3, onTheRoadLong: 0, failed: 0, awaitingNfe: 2 });
+    await expect(service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 3, addressLocked: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: 2 });
     expect(ledgerRepository.countPaidCourierCyclesToDispatch).toHaveBeenCalledWith(expect.objectContaining({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', nfeTableName: 'bling_nfe', readyOnly: true }));
   });
 
@@ -848,12 +852,30 @@ describe('Today counts of the courier queue', () => {
     const on = setup({ nfeRequired: true, notes: [], cycles });
     on.repository.countOnTheRoadSince = jest.fn().mockResolvedValue(0);
     on.repository.countOpenFailures = jest.fn().mockResolvedValue(0);
-    await expect(on.service.countQueue({ roles: ['admin'] })).resolves.toEqual({ toDispatch: 1, onTheRoadLong: 0, failed: 0, awaitingNfe: 1 });
+    await expect(on.service.countQueue({ roles: ['admin'] })).resolves.toMatchObject({ toDispatch: 1, onTheRoadLong: 0, failed: 0, awaitingNfe: 1 });
 
     const off = setup({ cycles });
     off.repository.countOnTheRoadSince = jest.fn().mockResolvedValue(0);
     off.repository.countOpenFailures = jest.fn().mockResolvedValue(0);
     await expect(off.service.countQueue({ roles: ['admin'] })).resolves.toMatchObject({ toDispatch: 1, awaitingNfe: null });
+  });
+
+  // keep-ready-orders-dispatchable: the to-dispatch cycles the dispatch would refuse for the address, read only.
+  test('counts the cycles to dispatch held by the address, by the dispatch rule and without opening a problem', async () => {
+    const full = { country: 'BR', street: 'Rua A', number: '10', neighborhood: 'Centro', city: 'Curitiba', state: 'PR', zipcode: '80000-000', recipient_name: 'Ana' };
+    const cycles = [
+      { paidInvoiceId: 'in_ok', deliveryDate: '2026-11-05', productionStatus: 'ready', address: full },
+      { paidInvoiceId: 'in_no_name', deliveryDate: '2026-11-05', productionStatus: 'ready', address: { ...full, recipient_name: '' } },
+      { paidInvoiceId: 'in_no_number', deliveryDate: '2026-11-04', productionStatus: 'ready', address: { ...full, number: '' } },
+      { paidInvoiceId: 'in_kitchen', deliveryDate: '2026-11-05', productionStatus: 'in_production', address: { ...full, recipient_name: '' } }
+    ];
+    const { service, repository, ledgerRepository, addressIssueService } = setup({ cycles });
+    repository.countOnTheRoadSince = jest.fn().mockResolvedValue(0);
+    repository.countOpenFailures = jest.fn().mockResolvedValue(0);
+
+    await expect(service.countQueue({ roles: ['admin'] })).resolves.toMatchObject({ toDispatch: 3, addressLocked: 2 });
+    expect(ledgerRepository.listPaidCourierCycleAddresses).toHaveBeenCalledWith(expect.objectContaining({ deliveryFloor: '2026-10-05', deliveryCeiling: '2026-11-05', readyOnly: true }));
+    expect(addressIssueService.report).not.toHaveBeenCalled();
   });
 
   test('with the lock on a US-only operator counts 0 waiting', async () => {
@@ -864,7 +886,7 @@ describe('Today counts of the courier queue', () => {
   test('a US-only operator counts nothing', async () => {
     const { service, ledgerRepository } = setup();
     ledgerRepository.countPaidCourierCyclesToDispatch = jest.fn();
-    await expect(service.countQueue({ roles: ['operator'], markets: ['US'], permissions: [] })).resolves.toEqual({ toDispatch: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: null });
+    await expect(service.countQueue({ roles: ['operator'], markets: ['US'], permissions: [] })).resolves.toEqual({ toDispatch: 0, addressLocked: 0, onTheRoadLong: 0, failed: 0, awaitingNfe: null });
     expect(ledgerRepository.countPaidCourierCyclesToDispatch).not.toHaveBeenCalled();
   });
 });

@@ -269,7 +269,7 @@ async function bootstrap() {
   const customerContactsRepository = new CustomerContactsRepository(dataSource);
   const deliveryAddressIssuesRepository = new DeliveryAddressIssuesRepository(dataSource);
   const stripeAccounts = createStripeAccountsFromEnv(env, { logger });
-  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
+  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource, { courierTableName: courierDeliveryRepository.tableName });
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const deliveryCalendar = new DeliveryClosedDaysRepository(dataSource);
   // One delivery rule for the checkout estimate, the order confirmation email, and the production queue.

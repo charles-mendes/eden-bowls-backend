@@ -59,7 +59,7 @@ describe('AdminTodayService', () => {
       rows: [
         row({ id: 1 }),
         row({ id: 2, stripeAccount: 'br', paidInvoiceId: null, address: { city: 'Curitiba', country: 'BR' }, dueAt: '2026-10-08 15:00:00' }),
-        row({ id: 3, dueAt: '2026-10-05 15:00:00' })
+        row({ id: 3, dueAt: '2026-10-05 15:00:00', productionStatus: 'to_prepare' })
       ]
     });
 
@@ -180,7 +180,7 @@ describe('AdminTodayService', () => {
 
     expect(result.data.truncated).toBe(true);
     expect(result.data.fulfillment).toEqual({
-      courierToDispatch: 230, courierOnTheRoadLong: 2, courierFailed: 1, courierAwaitingNfe: null,
+      courierToDispatch: 230, courierOnTheRoadLong: 2, courierFailed: 1, courierAwaitingNfe: null, courierAddressLocked: 0,
       nfeMissingDocument: 0, nfeRejected: 1, nfeError: 3,
       upsUnresolved: 4, upsLabelsWithoutPickup: 0, blingConnected: true,
       addressIssues: { BR: { open: 0, stale: 0 }, US: { open: 0, stale: 0 } },
@@ -249,6 +249,33 @@ describe('AdminTodayService', () => {
 
     const off = await service({ rows: [], courierCounts: { toDispatch: 3, onTheRoadLong: 0, failed: 0, awaitingNfe: null } }).service.overview({}, adminActor);
     expect(off.data.fulfillment.courierAwaitingNfe).toBeNull();
+  });
+
+  // keep-ready-orders-dispatchable: part of "a despachar" held by the address, whatever the open problems.
+  test('reports the orders to dispatch held by the address, and 0 outside Brazil', async () => {
+    const held = await service({ rows: [], courierCounts: { toDispatch: 3, addressLocked: 2, onTheRoadLong: 0, failed: 0 } }).service.overview({}, brOperator);
+    expect(held.data.fulfillment).toMatchObject({ courierToDispatch: 3, courierAddressLocked: 2 });
+    expect(held.data.fulfillment.addressIssues.BR).toEqual({ open: 0, stale: 0 });
+
+    const usOperator = { roles: ['operator'], markets: ['US'], permissions: ['production.read'] };
+    const us = await service({ rows: [], courierCounts: { toDispatch: 3, addressLocked: 2, onTheRoadLong: 0, failed: 0 } }).service.overview({}, usOperator);
+    expect(us.data.fulfillment.courierAddressLocked).toBe(0);
+  });
+
+  // keep-ready-orders-dispatchable: overdue is late kitchen work; the ready one waits in "a despachar".
+  test('a ready cycle kept past its day is not counted overdue', async () => {
+    const { service: today } = service({
+      rows: [
+        brRow({ id: 1, dueAt: '2026-09-13 15:00:00', productionStatus: 'ready' }),
+        brRow({ id: 2, dueAt: '2026-10-05 15:00:00', productionStatus: 'to_prepare', paidInvoiceId: 'in_2' })
+      ]
+    });
+
+    const result = await today.overview({ timezone: 'America/Sao_Paulo' }, adminActor);
+
+    expect(result.data.totals.overdue).toBe(1);
+    expect(result.data.byMarket.BR.overdue).toBe(1);
+    expect(result.data.items.map((item) => item.id)).toEqual(expect.arrayContaining([1, 2]));
   });
 
   test('with the lock on, the US on screen counts 0 waiting for the NF-e', async () => {

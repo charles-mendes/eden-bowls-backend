@@ -435,4 +435,63 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     await expect(repository.countPaidCourierCyclesToDispatch(range)).resolves.toBe(4);
     await expect(repository.countPaidCourierCyclesToDispatch({ ...range, nfeTableName: nfeTable })).resolves.toBe(3);
   });
+  // keep-ready-orders-dispatchable: June 2026 rows, so no other test's range or window reads them.
+  test('keeps a ready Brazil cycle past its day until its box leaves, within the floor', async () => {
+    await dataSource.query(`CREATE TABLE IF NOT EXISTS \`${courierTable}\` (
+      id bigint unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      stripe_invoice_id varchar(191) NOT NULL,
+      status varchar(32) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+    const subscription = async (id, account, country) => (await dataSource.query(
+      `INSERT INTO \`${ledgerTable}\` (user_id, customer_email, stripe_subscription_id, stripe_customer_id, stripe_account, status, current_period_start, current_period_end, address)
+       VALUES (7, 'keep@edenbowls.com', ?, 'cus_keep', ?, 'active', '2026-06-01 08:00:00', '2026-07-01 08:00:00', ?)`,
+      [id, account, JSON.stringify({ country })]
+    )).insertId;
+    const brazil = await subscription('sub_keep_br', 'br', 'BR');
+    const us = await subscription('sub_keep_us', 'us', 'US');
+    const cycle = (subscriptionId, status, invoice, day) => dataSource.query(
+      `INSERT INTO \`${cycleTable}\` (subscription_id, period_end, status, paid_at, paid_invoice_id, preparation_day, delivery_date) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [subscriptionId, `${day} 08:00:00`, status, `${day} 07:00:00`, invoice, day, day]
+    );
+    await cycle(brazil, 'ready', 'in_keep_wait', '2026-06-06');
+    await cycle(brazil, 'ready', 'in_keep_road', '2026-06-07');
+    await cycle(brazil, 'ready', 'in_keep_old', '2026-05-30');
+    await cycle(brazil, 'in_production', 'in_keep_kitchen', '2026-05-01');
+    await cycle(us, 'ready', 'in_keep_us', '2026-06-08');
+    await dataSource.query(`INSERT INTO \`${courierTable}\` (stripe_invoice_id, status) VALUES ('in_keep_road', 'out_for_delivery')`);
+
+    const keeping = new SubscriptionLedgerRepository(dataSource, {
+      tableName: ledgerTable,
+      usermetaTableName: usermetaTable,
+      productionCyclesTableName: cycleTable,
+      courierTableName: courierTable
+    });
+    const result = await keeping.listQueue({
+      startOfToday: '2026-06-30 03:00:00',
+      windowEndExclusive: '2026-07-07 03:00:00',
+      overdueFloor: '2026-05-31 03:00:00',
+      includeOverdue: true,
+      offset: 0,
+      perPage: 200
+    });
+
+    const mine = result.items
+      // The unpaid renewals of these subscriptions sit in the window; only the paid cycles matter here.
+      .filter((item) => ['sub_keep_br', 'sub_keep_us'].includes(item.stripeSubscriptionId) && item.paidInvoiceId)
+      .map((item) => item.paidInvoiceId)
+      .sort();
+    // Waiting ready stays; on the road, past the floor and US leave; the paid one still in the kitchen stays.
+    expect(mine).toEqual(['in_keep_kitchen', 'in_keep_wait']);
+
+    await dataSource.query(`INSERT INTO \`${courierTable}\` (stripe_invoice_id, status) VALUES ('in_keep_wait', 'delivered')`);
+    const after = await keeping.listQueue({
+      startOfToday: '2026-06-30 03:00:00',
+      windowEndExclusive: '2026-07-07 03:00:00',
+      overdueFloor: '2026-05-31 03:00:00',
+      includeOverdue: true,
+      offset: 0,
+      perPage: 200
+    });
+    expect(after.items.map((item) => item.paidInvoiceId)).not.toContain('in_keep_wait');
+  });
 });

@@ -91,6 +91,34 @@ describe('AdminProductionService', () => {
     expect(canceled.productionRepository.upsert).not.toHaveBeenCalled();
   });
 
+  // keep-ready-orders-dispatchable (delivery-address-issues): marking ready is not an event; the row shows the lock.
+  test('marking ready a Brazil cycle with no recipient name opens no address problem and sends no email', async () => {
+    const addressIssueService = { report: jest.fn(), latestFor: jest.fn() };
+    const transactionalMailer = { notifyDeliveryAddressIssue: jest.fn(), notifyShipped: jest.fn() };
+    const address = { country: 'BR', city: 'Curitiba', street: 'Rua A', number: '10', neighborhood: 'Centro', state: 'PR', postal_code: '80000-000' };
+    const service = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository: {
+        findById: jest.fn().mockResolvedValue(ledgerRow({ address })),
+        findQueueRowById: jest.fn().mockResolvedValue(queueItem({ address, productionStatus: 'ready' }))
+      },
+      productionRepository: {
+        findBySubscriptionAndPeriodEnd: jest.fn().mockResolvedValue({ status: 'in_production', paidAt: '2026-09-18T12:00:00.000Z' }),
+        upsert: jest.fn().mockResolvedValue({ status: 'ready' })
+      },
+      auditService: { record: jest.fn() },
+      addressIssueService,
+      transactionalMailer
+    });
+
+    const result = await service.updateStatus(42, { status: 'ready', periodEnd: '2026-09-20T08:00:00.000Z' }, { userId: 7 });
+
+    expect(result.productionStatus).toBe('ready');
+    expect(result.courierIssues).toEqual(['recipient_name_missing']);
+    expect(addressIssueService.report).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyDeliveryAddressIssue).not.toHaveBeenCalled();
+  });
+
   test('does not send a shipped letter when production status changes', async () => {
     const notifyShipped = jest.fn();
     const service = new AdminProductionService({
@@ -134,6 +162,25 @@ describe('AdminProductionService', () => {
     expect(result.total).toBe(1);
     expect(result.items[0].productionStatus).toBe('to_prepare');
     expect(result.metrics).toEqual({ today: 1, tomorrow: 0, upcoming: 1, overdue: 0 });
+  });
+
+  // keep-ready-orders-dispatchable: a ready cycle kept past its day waits to leave; it is not late kitchen work.
+  test('overdue metric counts only late cycles not ready', async () => {
+    const service = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository: {
+        listQueue: jest.fn().mockResolvedValue({ total: 0, items: [] }),
+        listQueueMetricRows: jest.fn().mockResolvedValue([
+          { due_at: '2026-09-10T15:00:00.000Z', production_status: 'ready' },
+          { due_at: '2026-09-11T15:00:00.000Z', production_status: 'to_prepare' },
+          { due_at: '2026-09-20T15:00:00.000Z', production_status: 'ready' }
+        ])
+      }
+    });
+
+    const result = await service.listQueue({ windowDays: 7, includeOverdue: true }, { page: 1, perPage: 20, offset: 0 });
+
+    expect(result.metrics).toEqual({ today: 1, tomorrow: 0, upcoming: 0, overdue: 1 });
   });
 
   test('names queue recipes from the current catalog, and still lists when the names fail to load', async () => {

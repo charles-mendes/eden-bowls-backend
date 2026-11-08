@@ -89,6 +89,11 @@ function bucketMetrics(rows, { timezone, now, includeOverdue }) {
     if (bucket === 'overdue' && !includeOverdue) {
       continue;
     }
+    // keep-ready-orders-dispatchable: overdue counts late kitchen work. A ready cycle the queue keeps past its day
+    // is waiting to leave and is counted by the courier's "a despachar".
+    if (bucket === 'overdue' && item.productionStatus === 'ready') {
+      continue;
+    }
     metrics[bucket] += 1;
   }
   return metrics;

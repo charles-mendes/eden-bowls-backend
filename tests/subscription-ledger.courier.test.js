@@ -70,6 +70,34 @@ describe('SubscriptionLedgerRepository courier queries', () => {
     expect(query.mock.calls[1][0]).not.toContain('bling_nfe');
   });
 
+  // keep-ready-orders-dispatchable: the addresses of the same cycles the count reads, for Today's address lock.
+  test('listPaidCourierCycleAddresses reads the addresses of the cycles the to-dispatch count reads', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce([{ total: 2 }])
+      .mockResolvedValueOnce([{ address: '{"country":"BR","number":"10"}' }, { address: null }]);
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+    const range = { deliveryFloor: '2026-10-09', deliveryCeiling: '2026-11-09', stripeAccounts: ['br'], readyOnly: true };
+
+    await repository.countPaidCourierCyclesToDispatch(range);
+    const addresses = await repository.listPaidCourierCycleAddresses(range);
+
+    const [countSql, countParams] = query.mock.calls[0];
+    const [addressSql, addressParams] = query.mock.calls[1];
+    expect(addressSql.startsWith('SELECT q.address FROM')).toBe(true);
+    expect(addressSql.slice(addressSql.indexOf(' WHERE '))).toBe(countSql.slice(countSql.indexOf(' WHERE ')));
+    expect(addressParams).toEqual(countParams);
+    expect(addresses).toEqual([{ country: 'BR', number: '10' }, {}]);
+  });
+
+  test('listPaidCourierCycleAddresses reads nothing when the scope allows no account', async () => {
+    const query = jest.fn();
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+
+    await expect(repository.listPaidCourierCycleAddresses({ deliveryFloor: '2026-10-09', stripeAccounts: [] })).resolves.toEqual([]);
+    await expect(repository.countPaidCourierCyclesToDispatch({ deliveryFloor: '2026-10-09', stripeAccounts: [] })).resolves.toBe(0);
+    expect(query).not.toHaveBeenCalled();
+  });
+
   test('listPaidCyclesByInvoiceIds has no floor and skips an empty list', async () => {
     const query = jest.fn().mockResolvedValue([paidRow]);
     const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });

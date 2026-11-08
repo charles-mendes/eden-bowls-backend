@@ -1,4 +1,5 @@
 const { shipmentMarket } = require('../core/shipment-market');
+const { brazilAddressIssues } = require('../core/delivery-address-check');
 const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { ledgerStripeAccount, parseStripeAccountInput } = require('../core/stripe-account');
@@ -130,6 +131,11 @@ class AdminBillingService {
     }
 
     const subscription = presentSubscription(item, this.secretFor(item), actor);
+    if (detail) {
+      // keep-ready-orders-dispatchable: what the courier dispatch would refuse for this address, before anyone
+      // fills the dispatch; null outside the Brazil shipping market. A read: it opens no problem and sends no email.
+      subscription.courier_issues = subscription.shipment_market === 'BR' ? brazilAddressIssues(item.address) : null;
+    }
     if (detail && this.addressIssueService) {
       subscription.address_issue = await this.addressIssueService.latestFor(item.id);
     }

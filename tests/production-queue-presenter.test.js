@@ -43,6 +43,15 @@ describe('presentProductionQueueItem', () => {
     expect(presentProductionQueueItem(baseRow()).paidInvoiceId).toBeNull();
   });
 
+  // keep-ready-orders-dispatchable: the courier lock shows on the queue row before anyone clicks Expedir.
+  test('lists what the courier dispatch would refuse on a Brazil cycle, and null elsewhere', () => {
+    const full = { country: 'BR', city: 'Curitiba', street: 'Rua A', number: '10', neighborhood: 'Centro', state: 'PR', postal_code: '80000-000', recipient_name: 'Ana Costa' };
+    expect(presentProductionQueueItem(baseRow({ address: full })).courierIssues).toEqual([]);
+    expect(presentProductionQueueItem(baseRow({ address: { ...full, recipient_name: '' } })).courierIssues).toEqual(['recipient_name_missing']);
+    expect(presentProductionQueueItem(baseRow({ stripeAccount: 'us', address: { country: 'US', city: 'Miami' } })).courierIssues).toBeNull();
+    expect(presentProductionQueueItem(baseRow({ stripeAccount: 'us', address: full })).courierIssues).toBeNull();
+  });
+
   test('flattens catalog line items into mix, packs, and compact lineItems', () => {
     const item = presentProductionQueueItem(baseRow(), {
       timezone: 'America/Sao_Paulo',

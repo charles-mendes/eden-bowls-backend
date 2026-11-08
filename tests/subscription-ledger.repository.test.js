@@ -220,7 +220,42 @@ describe('SubscriptionLedgerRepository', () => {
     });
     const [sql, params] = query.mock.calls[0];
     expect(sql).toContain("AND (q.due_at >= ? OR q.payment_state = 'paid')");
-    expect(params).toEqual(['2026-09-20 03:00:00', '2026-09-27 03:00:00', 1, '2026-09-20 03:00:00', '2026-08-21 03:00:00']);
+    expect(params).toEqual(['2026-09-20 03:00:00', '2026-09-27 03:00:00', 1, '2026-09-20 03:00:00', '2026-08-21 03:00:00', '2026-08-21 03:00:00']);
+  });
+
+  // keep-ready-orders-dispatchable: a ready Brazil cycle past its day stays until its box leaves, within the floor.
+  test('keeps a ready Brazil cycle past its day until a courier delivery is registered', async () => {
+    const query = jest.fn().mockResolvedValueOnce([{ total: 0 }]).mockResolvedValueOnce([]);
+    await new SubscriptionLedgerRepository({ isInitialized: true, query }, { courierTableName: 'wp_courier_deliveries' }).listQueue({
+      startOfToday: '2026-09-20 03:00:00',
+      windowEndExclusive: '2026-09-27 03:00:00',
+      overdueFloor: '2026-08-21 03:00:00',
+      includeOverdue: true,
+      offset: 0,
+      perPage: 20
+    });
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("q.production_status <> 'ready' AND (q.due_at >= ? OR q.payment_state = 'paid')");
+    expect(sql).toContain("q.production_status = 'ready' AND q.payment_state = 'paid' AND q.paid_invoice_id IS NOT NULL");
+    expect(sql).toContain("q.stripe_account = 'br'");
+    expect(sql).toContain("= 'BR'");
+    expect(sql).toContain("NOT EXISTS (SELECT 1 FROM `wp_courier_deliveries` cd WHERE");
+    expect(sql).toContain("cd.status IN ('out_for_delivery', 'delivered', 'failed')");
+    // The second floor is the ready branch's: a ready cycle older than 30 days leaves the queue.
+    expect(params.slice(3, 6)).toEqual(['2026-09-20 03:00:00', '2026-08-21 03:00:00', '2026-08-21 03:00:00']);
+  });
+
+  test('uses courier_deliveries when no courier table is given', async () => {
+    const query = jest.fn().mockResolvedValueOnce([{ total: 0 }]).mockResolvedValueOnce([]);
+    await new SubscriptionLedgerRepository({ isInitialized: true, query }).listQueue({
+      startOfToday: '2026-09-20 03:00:00',
+      windowEndExclusive: '2026-09-27 03:00:00',
+      overdueFloor: '2026-08-21 03:00:00',
+      includeOverdue: true,
+      offset: 0,
+      perPage: 20
+    });
+    expect(query.mock.calls[0][0]).toContain('FROM `courier_deliveries` cd');
   });
 
   test('counts paid cycles not ready past the floor, in the actor markets', async () => {
