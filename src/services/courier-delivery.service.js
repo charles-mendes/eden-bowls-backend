@@ -75,6 +75,25 @@ function parsePreparo(value) {
   throw new HttpError(400, 'preparo must be prontos or todos.', { code: 'invalid_preparo' });
 }
 
+// The freight the customer paid at checkout, read from the subscription's snapshot for the dispatch dialog. Only
+// what the dialog shows: never the quote token nor the whole snapshot. Dispatching never recalculates it.
+function customerShippingOf(shipping) {
+  if (!shipping || typeof shipping !== 'object' || Array.isArray(shipping)) return null;
+  const numberOf = (raw) => {
+    if (raw == null || raw === '') return null;
+    const number = Number(raw);
+    return Number.isFinite(number) ? number : null;
+  };
+  const cost = numberOf(shipping.cost);
+  const label = String(shipping.label == null ? '' : shipping.label).trim();
+  return {
+    label: label || null,
+    amount: cost != null ? cost : numberOf(shipping.total),
+    currency: String(shipping.currency || 'BRL').toUpperCase(),
+    distance_km: numberOf(shipping.distance)
+  };
+}
+
 class CourierDeliveryService {
   constructor(options = {}) {
     this.repository = options.repository || null;
@@ -516,6 +535,7 @@ class CourierDeliveryService {
       delivery_date: cycle ? cycle.deliveryDate || null : null,
       production_status: cycle ? cycle.productionStatus : null,
       subscription_status: cycle ? cycle.status : null,
+      customer_shipping: customerShippingOf(cycle ? cycle.shipping : null),
       delivery: row ? this.present(row) : null,
       // What the dispatch check would refuse, for the rows that can still be dispatched.
       ...(groupCanDispatch(row) ? { issues: cycle ? brazilAddressIssues(cycle.address) : [] } : {})

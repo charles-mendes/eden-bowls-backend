@@ -788,6 +788,26 @@ describe('The queue lists Brazil delivery work in four groups', () => {
     expect(data).toMatchObject({ to_dispatch: [], out_for_delivery: [], failed: [], delivered: [], truncated: false, later: 0, next_from: null });
     expect(ledgerRepository.listPaidCourierCycles).not.toHaveBeenCalled();
   });
+
+  // The freight the customer paid at checkout comes from the subscription's snapshot, never recalculated.
+  test('each row carries the customer freight from the checkout snapshot, without the quote token', async () => {
+    const shippingFee = require('../src/core/shipping-fee');
+    const fee = jest.spyOn(shippingFee, 'applyShippingFee');
+    const { service } = setup({ cycles: [
+      cycle('in_cost', '2026-11-05', { shipping: { label: 'Entrega Eden Bowl', cost: 18.5, total: 99, distance: 12.4, quote_token: 'secret' } }),
+      cycle('in_total', '2026-11-05', { shipping: { total: '21.30' } }),
+      cycle('in_empty', '2026-11-05', { shipping: { label: 'Entrega Eden Bowl' } }),
+      cycle('in_none', '2026-11-05', { shipping: null })
+    ] });
+    const { data } = await service.listQueue(actor);
+    const byInvoice = new Map(data.to_dispatch.map((item) => [item.invoice_id, item.customer_shipping]));
+    expect(byInvoice.get('in_cost')).toEqual({ label: 'Entrega Eden Bowl', amount: 18.5, currency: 'BRL', distance_km: 12.4 });
+    expect(byInvoice.get('in_total')).toEqual({ label: null, amount: 21.3, currency: 'BRL', distance_km: null });
+    expect(byInvoice.get('in_empty')).toEqual({ label: 'Entrega Eden Bowl', amount: null, currency: 'BRL', distance_km: null });
+    expect(byInvoice.get('in_none')).toBeNull();
+    expect(fee).not.toHaveBeenCalled();
+    fee.mockRestore();
+  });
 });
 
 describe('listForSubscription', () => {
