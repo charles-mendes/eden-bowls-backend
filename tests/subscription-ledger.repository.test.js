@@ -424,3 +424,55 @@ describe('SubscriptionLedgerRepository', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('SubscriptionLedgerRepository.updateCheckoutReference with an owner', () => {
+  const repositoryWith = (query) => new SubscriptionLedgerRepository({ isInitialized: true, query });
+
+  test('patches only the checkout of that subscription, in one statement', async () => {
+    const query = jest.fn().mockResolvedValue({ affectedRows: 1 });
+    const applied = await repositoryWith(query).updateCheckoutReference(7, {
+      payment_state: 'paid',
+      stripe_subscription_id: 'sub_b',
+      stripe_invoice_id: undefined
+    }, { subscriptionId: 'sub_b' });
+
+    expect(applied).toBe(true);
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('SET `checkout_reference` = JSON_SET(`checkout_reference`, \'$.payment_state\', CAST(? AS JSON), \'$.stripe_subscription_id\', CAST(? AS JSON))');
+    expect(sql).toContain("WHERE `user_id` = ? AND (JSON_UNQUOTE(JSON_EXTRACT(`checkout_reference`, '$.stripe_subscription_id')) = ?)");
+    expect(params).toEqual(['"paid"', '"sub_b"', 7, 'sub_b']);
+  });
+
+  test('accepts the subscription or the payment intent, leaving an empty id out', async () => {
+    const query = jest.fn().mockResolvedValue({ affectedRows: 0 });
+    const both = repositoryWith(query);
+    await both.updateCheckoutReference(7, { payment_state: 'failed' }, { subscriptionId: 'sub_a', paymentIntentId: 'pi_a' });
+    expect(query.mock.calls[0][0]).toContain(
+      "(JSON_UNQUOTE(JSON_EXTRACT(`checkout_reference`, '$.stripe_subscription_id')) = ? OR JSON_UNQUOTE(JSON_EXTRACT(`checkout_reference`, '$.stripe_payment_intent_id')) = ?)"
+    );
+    expect(query.mock.calls[0][1]).toEqual(['"failed"', 7, 'sub_a', 'pi_a']);
+
+    query.mockClear();
+    const applied = await both.updateCheckoutReference(7, { payment_state: 'failed' }, { subscriptionId: '', paymentIntentId: 'pi_a' });
+    expect(applied).toBe(false);
+    expect(query.mock.calls[0][0]).not.toContain('$.stripe_subscription_id');
+    expect(query.mock.calls[0][1]).toEqual(['"failed"', 7, 'pi_a']);
+  });
+
+  test('an owner with no id writes nothing', async () => {
+    const query = jest.fn();
+    const applied = await repositoryWith(query).updateCheckoutReference(7, { payment_state: 'paid' }, { subscriptionId: ' ', paymentIntentId: undefined });
+    expect(applied).toBe(false);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  test('without an owner the patch keeps merging as before', async () => {
+    const query = jest.fn()
+      .mockResolvedValueOnce([{ checkout_reference: JSON.stringify({ order_key: 'sub_sub_a', payment_state: 'pending' }) }])
+      .mockResolvedValueOnce({ affectedRows: 1 });
+    const next = await repositoryWith(query).updateCheckoutReference(7, { payment_state: 'paid' });
+    expect(next).toEqual({ order_key: 'sub_sub_a', payment_state: 'paid' });
+    expect(query.mock.calls[1][0]).toBe('UPDATE `onboarding_user_state` SET `checkout_reference` = ? WHERE `user_id` = ?');
+  });
+});

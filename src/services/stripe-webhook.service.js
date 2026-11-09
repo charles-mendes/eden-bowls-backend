@@ -412,11 +412,13 @@ class StripeWebhookService {
       } : {})
     });
 
+    // Only the checkout that created this subscription takes its payment: the invoice of an older
+    // subscription of the same customer must not rewrite the customer's latest checkout.
     await this.ledgerRepository.updateCheckoutReference(context.userId, {
       payment_state: 'paid',
       stripe_subscription_id: subscriptionId,
       stripe_invoice_id: invoice.id || undefined
-    });
+    }, { subscriptionId });
 
     const nfeFailure = await this.recordNfe({ invoice, runtime, userId: context.userId, subscriptionId });
 
@@ -726,10 +728,14 @@ class StripeWebhookService {
       return;
     }
 
+    // The failure reaches the checkout only when it is that checkout's payment intent or subscription.
     await this.ledgerRepository.updateCheckoutReference(userId, {
       payment_state: 'failed',
       stripe_payment_intent_id: paymentIntentId.startsWith('pi_') ? paymentIntentId : undefined,
       stripe_payment_intent_status: String(object.status || 'canceled')
+    }, {
+      subscriptionId: subscriptionId.startsWith('sub_') ? subscriptionId : '',
+      paymentIntentId: paymentIntentId.startsWith('pi_') ? paymentIntentId : ''
     });
   }
 

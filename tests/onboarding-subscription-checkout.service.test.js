@@ -500,6 +500,101 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(stripeBilling.createOnboardingSubscription.mock.calls[0][0].name).toBe('Jane Doe');
   });
 
+  // checkout-reference-webhook-guard: a paid invoice of another subscription, between the checkout and its retry.
+  test.each([
+    ['guarded: the patch lands only on the checkout of that subscription', true, 'sub_b'],
+    ['unguarded merge, as before the guard: the retry would hand back the other subscription', false, 'sub_a']
+  ])('a retry after an older subscription is charged (%s)', async (_label, guarded, expected) => {
+    const { StripeWebhookService } = require('../src/services/stripe-webhook.service');
+    const lockStore = createCheckoutLockStore();
+    const settledBilling = (createOnboardingSubscription) => ({
+      automaticTaxEnabled: true,
+      createOnboardingSubscription,
+      retrievePaymentIntent: jest.fn().mockResolvedValue({ status: 'succeeded', client_secret: 'secret_b' }),
+      resolvePaymentState: jest.fn().mockReturnValue('paid')
+    });
+    const first = buildService({
+      lockStore,
+      stripeBilling: settledBilling(jest.fn().mockResolvedValue({
+        customerId: 'cus_1',
+        subscription: { id: 'sub_b', status: 'active' },
+        checkout: {
+          order_id: 0,
+          order_key: 'sub_sub_b',
+          payment_state: 'paid',
+          stripe_subscription_id: 'sub_b',
+          stripe_payment_intent_id: 'pi_b',
+          stripe_payment_intent_status: 'succeeded',
+          stripe_subscription_status: 'active',
+          status: 'active'
+        }
+      }))
+    });
+    await first.service.checkout({ userId: 7, payload });
+    let stored = first.repository.checkout.mock.calls[0][1].checkout;
+
+    // invoice.paid of subscription A reaches the webhook; the ledger mock applies the owner rule like the repository.
+    const webhookBilling = {
+      constructEvent: jest.fn().mockReturnValue({
+        id: 'evt_a_paid',
+        type: 'invoice.paid',
+        data: { object: { id: 'in_a7', customer: 'cus_1', subscription: 'sub_a' } }
+      }),
+      retrieveSubscription: jest.fn().mockResolvedValue({ id: 'sub_a', status: 'trialing', customer: 'cus_1', metadata: { eden_env: 'qa' } }),
+      addShippingInvoiceItem: jest.fn().mockResolvedValue({})
+    };
+    const webhook = new StripeWebhookService({
+      stripeBilling: webhookBilling,
+      webhookSecret: 'whsec_test',
+      eventsRepository: {
+        insertIfNew: jest.fn().mockResolvedValue({ inserted: true }),
+        markProcessed: jest.fn().mockResolvedValue(undefined),
+        scheduleRetry: jest.fn(),
+        markFailed: jest.fn()
+      },
+      ledgerRepository: {
+        findByStripeSubscriptionId: jest.fn().mockResolvedValue({ userId: 7, stripeSubscriptionId: 'sub_a', stripeAccount: 'us', status: 'trialing' }),
+        findUserStateBySubscriptionId: jest.fn().mockResolvedValue(null),
+        findUserStateByPaymentIntentId: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({}),
+        updateCheckoutReference: jest.fn(async (_userId, patch, owner) => {
+          if (guarded && !(owner && owner.subscriptionId && owner.subscriptionId === stored.stripe_subscription_id)) {
+            return false;
+          }
+          stored = { ...stored, ...patch };
+          return true;
+        })
+      },
+      customerStore: { findUserIdByCustomerId: jest.fn().mockResolvedValue(null) },
+      shippingProductId: 'prod_ship',
+      logger: { error() {}, warn() {}, info() {} }
+    });
+    const previousRuntime = process.env.EDEN_RUNTIME;
+    process.env.EDEN_RUNTIME = 'qa';
+    try {
+      await webhook.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+    } finally {
+      if (previousRuntime === undefined) delete process.env.EDEN_RUNTIME;
+      else process.env.EDEN_RUNTIME = previousRuntime;
+    }
+
+    const createAgain = jest.fn();
+    const second = buildService({
+      lockStore,
+      stripeBilling: settledBilling(createAgain),
+      repository: {
+        ...first.repository,
+        getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, checkoutReference: stored }),
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout)
+      }
+    });
+    const retried = await second.service.checkout({ userId: 7, payload });
+
+    expect(retried.data.reused).toBe(true);
+    expect(retried.data.stripe_subscription_id).toBe(expected);
+    expect(createAgain).not.toHaveBeenCalled();
+  });
+
   test('reuses an incomplete subscription with the same fingerprint', async () => {
     const lockStore = createCheckoutLockStore();
     const first = buildService({ lockStore });

@@ -28,6 +28,16 @@ function compact(object = {}) {
   );
 }
 
+function affectedRows(result) {
+  if (result && typeof result.affectedRows === 'number') {
+    return result.affectedRows;
+  }
+  if (Array.isArray(result) && result[0] && typeof result[0].affectedRows === 'number') {
+    return result[0].affectedRows;
+  }
+  return 0;
+}
+
 function jsonOrNull(value) {
   if (value === undefined) {
     return undefined;
@@ -292,8 +302,13 @@ class SubscriptionLedgerRepository {
     }
   }
 
-  async updateCheckoutReference(userId, patch = {}) {
+  // With an owner, the patch lands only on the checkout of that subscription or payment intent,
+  // in one statement, so a newer checkout written meanwhile is never patched with another attempt.
+  async updateCheckoutReference(userId, patch = {}, owner = null) {
     this.ensureDataSource();
+    if (owner) {
+      return this.updateOwnedCheckoutReference(userId, compact(patch), owner);
+    }
     const rows = await this.dataSource.query(
       `SELECT \`checkout_reference\` FROM \`${this.userStateTableName}\` WHERE \`user_id\` = ? LIMIT 1`,
       [userId]
@@ -305,6 +320,29 @@ class SubscriptionLedgerRepository {
       [JSON.stringify(next), userId]
     );
     return next;
+  }
+
+  async updateOwnedCheckoutReference(userId, patch, owner) {
+    // An empty id never owns a checkout: only the ids the event actually carried count.
+    const owners = [
+      ['stripe_subscription_id', String(owner.subscriptionId || '').trim()],
+      ['stripe_payment_intent_id', String(owner.paymentIntentId || '').trim()]
+    ].filter(([, id]) => id);
+    const entries = Object.entries(patch).filter(([key]) => /^[A-Za-z0-9_]+$/.test(key));
+    if (!owners.length || !entries.length) {
+      return false;
+    }
+
+    // Each value goes in as JSON, so a null stays a null key instead of removing it.
+    const setters = entries.map(([key]) => `'$.${key}', CAST(? AS JSON)`).join(', ');
+    const conditions = owners
+      .map(([key]) => `JSON_UNQUOTE(JSON_EXTRACT(\`checkout_reference\`, '$.${key}')) = ?`)
+      .join(' OR ');
+    const result = await this.dataSource.query(
+      `UPDATE \`${this.userStateTableName}\` SET \`checkout_reference\` = JSON_SET(\`checkout_reference\`, ${setters}) WHERE \`user_id\` = ? AND (${conditions})`,
+      [...entries.map(([, value]) => JSON.stringify(value)), userId, ...owners.map(([, id]) => id)]
+    );
+    return affectedRows(result) > 0;
   }
 
   periodValue(value) {
