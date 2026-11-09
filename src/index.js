@@ -916,6 +916,9 @@ async function bootstrap() {
     }),
     auditService: adminAuditService,
     ledgerRepository: subscriptionLedgerRepository,
+    paidCyclesService: subscriptionPaidCyclesService,
+    nfeRepository: blingNfeRepository,
+    logger,
     adminEmails: env.ADMIN_EMAILS,
     adminAppUrl: env.ADMIN_APP_URL
   });

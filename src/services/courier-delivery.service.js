@@ -9,6 +9,7 @@ const { presentProductionQueueItem, recipientDisplayName, accountNameOf, shownNa
 const { shipmentMarket } = require('../core/shipment-market');
 const { brazilAddressIssues } = require('../core/delivery-address-check');
 const { resolveDeliveryRange, dayAfter } = require('../core/delivery-range');
+const { checkoutShippingOf } = require('../core/checkout-shipping');
 
 const TIMEZONE = 'America/Sao_Paulo';
 const DISPATCH_FLOOR_DAYS = 30;
@@ -75,23 +76,12 @@ function parsePreparo(value) {
   throw new HttpError(400, 'preparo must be prontos or todos.', { code: 'invalid_preparo' });
 }
 
-// The freight the customer paid at checkout, read from the subscription's snapshot for the dispatch dialog. Only
-// what the dialog shows: never the quote token nor the whole snapshot. Dispatching never recalculates it.
+// The freight the customer paid at checkout, for the dispatch dialog.
 function customerShippingOf(shipping) {
-  if (!shipping || typeof shipping !== 'object' || Array.isArray(shipping)) return null;
-  const numberOf = (raw) => {
-    if (raw == null || raw === '') return null;
-    const number = Number(raw);
-    return Number.isFinite(number) ? number : null;
-  };
-  const cost = numberOf(shipping.cost);
-  const label = String(shipping.label == null ? '' : shipping.label).trim();
-  return {
-    label: label || null,
-    amount: cost != null ? cost : numberOf(shipping.total),
-    currency: String(shipping.currency || 'BRL').toUpperCase(),
-    distance_km: numberOf(shipping.distance)
-  };
+  const value = checkoutShippingOf(shipping);
+  if (!value) return null;
+  const { distanceKm, ...rest } = value;
+  return { ...rest, distance_km: distanceKm };
 }
 
 class CourierDeliveryService {

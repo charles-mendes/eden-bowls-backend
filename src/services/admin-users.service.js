@@ -1,6 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const { AUTH_ERROR } = require('../api/contracts/auth-errors');
 const { parseCpf, parseFiscalName } = require('../core/tax-document');
+const { checkoutShippingOf } = require('../core/checkout-shipping');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { generateTemporaryPassword } = require('../core/temporary-password');
@@ -27,6 +28,33 @@ function canReadFiscalData(actor) {
   return Array.isArray(actor.permissions) && actor.permissions.includes('users.delivery.write');
 }
 
+function hasPermission(actor, permission) {
+  return Array.isArray(actor.permissions) && actor.permissions.includes(permission);
+}
+
+const BR_ACCOUNT = 'br';
+// Who sees the latest cycle at all: one of the screens it links to.
+const LATEST_CYCLE_PERMISSIONS = ['production.read', 'shipping.read', 'nfe.read'];
+
+// The delivery of a cycle as the customer detail shows it: the courier attempt wins over a UPS label.
+function presentCycleDelivery(view) {
+  if (view.courierDelivery) return { kind: 'courier', ...view.courierDelivery };
+  if (view.upsShipment) return { kind: 'ups', ...view.upsShipment };
+  return null;
+}
+
+function presentNfe(note) {
+  if (!note) return null;
+  return {
+    id: note.id,
+    number: note.nfeNumber || null,
+    series: note.nfeSeries || null,
+    status: note.status,
+    lastError: note.lastError || null,
+    emailStatus: note.emailStatus || null
+  };
+}
+
 // Why the operator corrected a copy of the customer's data. Optional; kept only in the audit event.
 function parseCorrectionReason(value) {
   if (value === undefined || value === null) return null;
@@ -46,6 +74,9 @@ class AdminUsersService {
     this.inviteMailer = options.inviteMailer || null;
     this.auditService = options.auditService || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.paidCyclesService = options.paidCyclesService || null;
+    this.nfeRepository = options.nfeRepository || null;
+    this.logger = options.logger || null;
     this.adminEmails = parseAdminEmails(options.adminEmails);
     this.adminAppUrl = String(options.adminAppUrl || 'http://localhost:5174').replace(/\/+$/, '');
     this.inviteTtlSeconds = Number(options.inviteTtlSeconds || INVITE_TTL_SECONDS);
@@ -201,6 +232,92 @@ class AdminUsersService {
     };
   }
 
+  // The customer's subscriptions with their contract and, for who reads an operation screen, the latest paid
+  // cycle (admin-customer-subscriptions). Each block follows the permission of the screen it comes from.
+  async presentSubscriptions(userId, rows, actor) {
+    const canReadBilling = hasPermission(actor, 'billing.subscribers.read');
+    const items = rows.map((item) => ({
+      id: String(item.id),
+      stripeSubscriptionId: item.stripeSubscriptionId,
+      stripeAccount: item.stripeAccount,
+      status: item.status,
+      currentPeriodEnd: item.currentPeriodEnd,
+      cancelAtPeriodEnd: item.cancelAtPeriodEnd,
+      planLabel: item.planLabel,
+      createdAt: item.createdAt || null,
+      subscriptionTermMonths: item.subscriptionTermMonths == null ? null : item.subscriptionTermMonths,
+      chargedDeliveries: item.chargedDeliveries == null ? null : item.chargedDeliveries,
+      autoRenew: item.autoRenew == null ? null : item.autoRenew,
+      ...(canReadBilling ? {
+        paymentMethod: { brand: item.paymentMethodBrand || null, last4: item.paymentMethodLast4 || null },
+        checkoutShipping: this.presentCheckoutShipping(item.shipping)
+      } : {})
+    }));
+
+    if (!items.length || !LATEST_CYCLE_PERMISSIONS.some((permission) => hasPermission(actor, permission))) {
+      return items;
+    }
+
+    let cycles;
+    try {
+      cycles = await this.latestCycles(rows, actor);
+    } catch (error) {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn({ userId: String(userId), code: (error && error.code) || 'latest_cycle_failed' }, 'Customer detail without the latest cycles.');
+      }
+      return items.map((item) => ({ ...item, latestCycleUnavailable: true }));
+    }
+    return items.map((item) => ({ ...item, latestCycle: cycles.get(item.id) || null }));
+  }
+
+  presentCheckoutShipping(shipping) {
+    const value = checkoutShippingOf(shipping);
+    if (!value) return null;
+    return { label: value.label, amount: value.amount, currency: value.currency };
+  }
+
+  // The latest paid cycle of each subscription, keyed by subscription id. NF-e only for Brazil subscriptions.
+  async latestCycles(rows, actor) {
+    if (!this.paidCyclesService) {
+      throw new HttpError(503, 'Paid cycles are not available.');
+    }
+    const views = await this.paidCyclesService.latestBySubscriptions(rows);
+    const canReadNfe = hasPermission(actor, 'nfe.read');
+    const brazilPairs = rows
+      .filter((row) => String(row.stripeAccount || '').toLowerCase() === BR_ACCOUNT)
+      .map((row) => views.get(String(row.id)))
+      .filter(Boolean)
+      .map((view) => ({ stripeAccount: BR_ACCOUNT, stripeInvoiceId: view.invoiceId }));
+    let notes = [];
+    if (canReadNfe && brazilPairs.length) {
+      if (!this.nfeRepository) {
+        throw new HttpError(503, 'NF-e records are not available.');
+      }
+      notes = await this.nfeRepository.listByStripeInvoices(brazilPairs);
+    }
+    const noteByInvoice = new Map(notes.filter(Boolean).map((note) => [String(note.stripeInvoiceId), note]));
+
+    const result = new Map();
+    for (const row of rows) {
+      const view = views.get(String(row.id));
+      if (!view) {
+        result.set(String(row.id), null);
+        continue;
+      }
+      const isBrazil = String(row.stripeAccount || '').toLowerCase() === BR_ACCOUNT;
+      result.set(String(row.id), {
+        invoiceId: view.invoiceId,
+        paidAt: view.paidAt,
+        preparationDay: view.preparationDay,
+        deliveryDate: view.deliveryDate,
+        ...(hasPermission(actor, 'production.read') ? { production: { status: view.productionStatus, note: view.productionNote } } : {}),
+        ...(hasPermission(actor, 'shipping.read') ? { delivery: presentCycleDelivery(view) } : {}),
+        ...(canReadNfe && isBrazil ? { nfe: presentNfe(noteByInvoice.get(String(view.invoiceId))) } : {})
+      });
+    }
+    return result;
+  }
+
   async getById(userId, actor = {}) {
     const user = await this.usersRepository.findUserById(userId);
     if (!user) {
@@ -217,15 +334,7 @@ class AdminUsersService {
       }
     }
 
-    const subscriptions = (await this.scopedSubscriptions(userId, actor)).map((item) => ({
-      id: String(item.id),
-      stripeSubscriptionId: item.stripeSubscriptionId,
-      stripeAccount: item.stripeAccount,
-      status: item.status,
-      currentPeriodEnd: item.currentPeriodEnd,
-      cancelAtPeriodEnd: item.cancelAtPeriodEnd,
-      planLabel: item.planLabel
-    }));
+    const subscriptions = await this.presentSubscriptions(user.id, await this.scopedSubscriptions(userId, actor), actor);
 
     return {
       id: String(user.id),
