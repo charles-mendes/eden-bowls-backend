@@ -35,4 +35,4 @@
 - [x] 4.1 `npx jest --findRelatedTests src/services/admin-users.service.js src/services/subscription-paid-cycles.service.js src/services/courier-delivery.service.js` passa
 - [x] 4.2 `npx jest --runTestsByPath tests/api-routes-manifest.test.js` passa sem mudar `docs/api-routes.json`, confirmando que não há rota nova
 - [ ] 4.3 Checagem manual, não automatizada: escolher no backend local um cliente com assinatura BR paga (o usuário 5, se tiver uma). Com um admin, conferir que `GET /api/v1/admin/users/:userId` devolve `latestCycle` com produção, entrega e NF-e
-- [ ] 4.4 Abrir a change irmã em `eden-bowls-admin` para as colunas e o bloco "Último ciclo" em `UserDetailPage.tsx`, apontando para este formato
+- [x] 4.4 Abrir a change irmã em `eden-bowls-admin` para as colunas e o bloco "Último ciclo" em `UserDetailPage.tsx`, apontando para este formato
