@@ -3,6 +3,7 @@ const { publishedParametersFor } = require('../infrastructure/repositories/onboa
 const { buildSimplifiedRecommendation } = require('../core/simplified-consumption');
 const { planPackagingFor } = require('../infrastructure/repositories/onboarding-recommendation.repository');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
+const { petSubscriptions } = require('../core/subscription-pet-link');
 const {
   constrainMarketQuery,
   assertRecordMarket,
@@ -267,7 +268,14 @@ class AdminOnboardingService {
       })),
       pets: checkout.pets.map((pet, index) => ({
         ...pet,
-        simplified: simplified && simplified.pets ? simplified.pets[index] : null
+        simplified: simplified && simplified.pets ? simplified.pets[index] : null,
+        // The subscriptions that still own the pet, newest first (admin-customer-subscriptions).
+        subscriptions: petSubscriptions(pet.id, scopedSubscriptions).map((item) => ({
+          id: String(item.id),
+          stripeSubscriptionId: item.stripeSubscriptionId,
+          status: item.status,
+          planLabel: item.planLabel
+        }))
       })),
       recurrence: checkout.recurrence,
       planSelection: checkout.planSelection,

@@ -243,3 +243,30 @@ describe('customer detail subscriptions: alerts', () => {
   });
 });
 
+
+describe('customer detail subscriptions: pets', () => {
+  const twoPets = {
+    pets: [
+      { pet_id: 'rex', pet_name: 'Rex', enabled: true },
+      { pet_id: 'luna', pet_name: 'Luna', enabled: true }
+    ]
+  };
+
+  test('an active subscription lists its two pets', async () => {
+    const [item] = await subscriptionsFor({ rows: [ledgerRow({ planSelection: twoPets })] }, ['users.read']);
+    expect(item.pets).toEqual([{ id: 'rex', name: 'Rex' }, { id: 'luna', name: 'Luna' }]);
+  });
+
+  test('a canceled subscription lists no pet', async () => {
+    const [item] = await subscriptionsFor({ rows: [ledgerRow({ status: 'canceled', planSelection: twoPets })] }, ['users.read']);
+    expect(item.pets).toEqual([]);
+  });
+
+  test('pets stay when the latest cycles cannot be read', async () => {
+    const { service, paidCyclesService } = build({ rows: [ledgerRow({ planSelection: twoPets })] });
+    paidCyclesService.latestBySubscriptions.mockRejectedValue(new Error('db down'));
+    const [item] = (await service.getById('8', { permissions: permissionsForRoles(['operator']) })).subscriptions;
+    expect(item.latestCycleUnavailable).toBe(true);
+    expect(item.pets).toEqual([{ id: 'rex', name: 'Rex' }, { id: 'luna', name: 'Luna' }]);
+  });
+});

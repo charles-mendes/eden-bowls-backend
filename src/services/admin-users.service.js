@@ -3,6 +3,7 @@ const { AUTH_ERROR } = require('../api/contracts/auth-errors');
 const { parseCpf, parseFiscalName } = require('../core/tax-document');
 const { checkoutShippingOf } = require('../core/checkout-shipping');
 const { subscriptionAlerts } = require('../core/customer-subscription-alerts');
+const { ownedPets } = require('../core/subscription-pet-link');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { generateTemporaryPassword } = require('../core/temporary-password');
@@ -249,6 +250,7 @@ class AdminUsersService {
       subscriptionTermMonths: item.subscriptionTermMonths == null ? null : item.subscriptionTermMonths,
       chargedDeliveries: item.chargedDeliveries == null ? null : item.chargedDeliveries,
       autoRenew: item.autoRenew == null ? null : item.autoRenew,
+      pets: ownedPets(item),
       ...(canReadBilling ? {
         paymentMethod: { brand: item.paymentMethodBrand || null, last4: item.paymentMethodLast4 || null },
         checkoutShipping: this.presentCheckoutShipping(item.shipping)
