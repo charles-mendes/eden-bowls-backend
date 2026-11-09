@@ -44,7 +44,9 @@ function build({ rows = [ledgerRow()], views = { 11: cycleView() }, notes = [] }
   };
   const nfeRepository = { listByStripeInvoices: jest.fn(async () => notes) };
   const logger = { warn: jest.fn() };
-  const service = new AdminUsersService({ usersRepository, paidCyclesService, nfeRepository, logger, adminEmails: [] });
+  // 2026-11-09 15:00 UTC: two days after the fixture cycle was paid (seconds, as nowProvider returns).
+  const nowProvider = () => Date.parse('2026-11-09T15:00:00.000Z') / 1000;
+  const service = new AdminUsersService({ usersRepository, paidCyclesService, nfeRepository, logger, nowProvider, adminEmails: [] });
   service.assertCustomerInScope = jest.fn();
   service.scopedSubscriptions = jest.fn().mockResolvedValue(rows);
   return { service, paidCyclesService, nfeRepository, logger };
@@ -194,3 +196,50 @@ describe('customer detail subscriptions: latest cycle', () => {
     expect(logger.warn).toHaveBeenCalledWith({ userId: '8', code: 'ECONNRESET' }, expect.any(String));
   });
 });
+
+describe('customer detail subscriptions: alerts', () => {
+  const authorized = { id: 3, stripeInvoiceId: 'in_br', nfeNumber: '123', nfeSeries: '1', status: 'authorized', lastError: null, emailStatus: 'sent' };
+  const delivered = { id: 5, status: 'delivered', outForDeliveryAt: null, deliveredAt: '2026-11-10T15:00:00.000Z', failedAt: null };
+
+  test('a subscription without problems carries alerts: []', async () => {
+    const [item] = await subscriptionsFor({
+      views: { 11: cycleView({ courierDelivery: delivered }) },
+      notes: [authorized]
+    }, permissionsForRoles(['operator']));
+    expect(item.alerts).toEqual([]);
+  });
+
+  test('an operator sees nfe_problem for a rejected note', async () => {
+    const [item] = await subscriptionsFor({
+      views: { 11: cycleView({ courierDelivery: delivered }) },
+      notes: [{ ...authorized, nfeNumber: null, status: 'rejected', lastError: 'CPF inválido' }]
+    }, permissionsForRoles(['operator']));
+    expect(item.alerts).toEqual([{ code: 'nfe_problem', nfeId: 3, status: 'rejected', lastError: 'CPF inválido' }]);
+  });
+
+  test('an actor without nfe.read gets no NF-e alert for a rejected note (synthetic actor)', async () => {
+    const [item] = await subscriptionsFor({
+      views: { 11: cycleView({ courierDelivery: delivered }) },
+      notes: [{ ...authorized, status: 'rejected', lastError: 'CPF inválido' }]
+    }, ['users.read', 'production.read', 'shipping.read']);
+    expect(item.alerts).toEqual([]);
+  });
+
+  test('with latestCycleUnavailable only pending_change is computed', async () => {
+    const { service, nfeRepository } = build({
+      rows: [ledgerRow({ editPending: { invoice_id: 'in_next' } })],
+      notes: []
+    });
+    nfeRepository.listByStripeInvoices.mockRejectedValue(new Error('db down'));
+    const [item] = (await service.getById('8', { permissions: permissionsForRoles(['operator']) })).subscriptions;
+    expect(item.latestCycleUnavailable).toBe(true);
+    expect(item.alerts).toEqual([{ code: 'pending_change', kinds: ['edit'] }]);
+  });
+
+  test('users.read alone still gets pending_change', async () => {
+    const [item] = await subscriptionsFor({ rows: [ledgerRow({ pendingDeliveryChanges: { charge_move: { trial_end: 1 } } })] }, ['users.read']);
+    expect(item).not.toHaveProperty('latestCycle');
+    expect(item.alerts).toEqual([{ code: 'pending_change', kinds: ['delivery'] }]);
+  });
+});
+

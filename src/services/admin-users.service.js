@@ -2,6 +2,7 @@ const { HttpError } = require('../core/http-error');
 const { AUTH_ERROR } = require('../api/contracts/auth-errors');
 const { parseCpf, parseFiscalName } = require('../core/tax-document');
 const { checkoutShippingOf } = require('../core/checkout-shipping');
+const { subscriptionAlerts } = require('../core/customer-subscription-alerts');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { generateTemporaryPassword } = require('../core/temporary-password');
@@ -254,6 +255,13 @@ class AdminUsersService {
       } : {})
     }));
 
+    const withCycles = await this.attachLatestCycles(userId, rows, items, actor);
+    // Alerts read the item as the actor sees it, so a block hidden by permission raises nothing.
+    const now = new Date(this.nowProvider() * 1000);
+    return withCycles.map((item, index) => ({ ...item, alerts: subscriptionAlerts({ item, row: rows[index], now }) }));
+  }
+
+  async attachLatestCycles(userId, rows, items, actor) {
     if (!items.length || !LATEST_CYCLE_PERMISSIONS.some((permission) => hasPermission(actor, permission))) {
       return items;
     }
