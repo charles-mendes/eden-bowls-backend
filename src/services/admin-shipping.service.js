@@ -44,6 +44,42 @@ function assertUsMaxTransitDays(us) {
   }
 }
 
+const MIN_US_DRY_ICE_KG = 0.1;
+// Above 2.5 kg per package UPS asks for a Dangerous Goods agreement on domestic air (ups-dry-ice).
+const MAX_US_DRY_ICE_KG = 2.5;
+const KG_PER_LB = 0.45359237;
+const DEFAULT_PACKAGE = { weight_lb: 10, dry_ice_kg: 0.5 };
+
+function hasOneDecimalAtMost(value) {
+  return Math.abs(value * 10 - Math.round(value * 10)) < 1e-9;
+}
+
+function pick(value, fallback) {
+  return value == null || value === '' ? fallback : value;
+}
+
+// UPS refuses a dry ice weight above the package weight, so the check runs on the merged package.
+async function assertUsDryIce(us, repository) {
+  const incoming = us && us.package;
+  if (!incoming || (pick(incoming.dry_ice_kg, null) == null && pick(incoming.weight_lb, null) == null)) {
+    return;
+  }
+  const current = (await repository.get())?.us?.package || {};
+  const dryIceKg = Number(pick(incoming.dry_ice_kg, pick(current.dry_ice_kg, DEFAULT_PACKAGE.dry_ice_kg)));
+  const weightLb = Number(pick(incoming.weight_lb, pick(current.weight_lb, DEFAULT_PACKAGE.weight_lb)));
+  const valid = Number.isFinite(dryIceKg)
+    && dryIceKg >= MIN_US_DRY_ICE_KG
+    && dryIceKg <= MAX_US_DRY_ICE_KG
+    && hasOneDecimalAtMost(dryIceKg)
+    && Number.isFinite(weightLb)
+    && dryIceKg <= weightLb * KG_PER_LB;
+  if (!valid) {
+    throw new HttpError(422, `US dry ice per box must be from ${MIN_US_DRY_ICE_KG} to ${MAX_US_DRY_ICE_KG} kg, with one decimal place, and no heavier than the package.`, {
+      code: 'invalid_dry_ice_kg'
+    });
+  }
+}
+
 class AdminShippingService {
   constructor(options = {}) {
     this.shippingService = options.shippingService || null;
@@ -161,6 +197,7 @@ class AdminShippingService {
   async saveSettings(payload = {}, actor = {}) {
     this.ensureRepository();
     assertUsMaxTransitDays(payload.us);
+    await assertUsDryIce(payload.us, this.repository);
     const scoped = await this.resolveHeadquarters(this.scopedPayload(payload, actor));
     const settings = await this.repository.save(scoped);
     this.applyToShippingService(settings);

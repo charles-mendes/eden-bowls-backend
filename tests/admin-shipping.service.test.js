@@ -53,6 +53,88 @@ describe('AdminShippingService', () => {
     expect(repository.save).toHaveBeenCalledWith({ us: { max_transit_days: 10 } });
   });
 
+  describe('US dry ice weight per box', () => {
+    const stored = { us: { package: { weight_lb: 10, length_in: 12, width_in: 12, height_in: 12, dry_ice_kg: 0.5 } } };
+
+    function setup(current = stored) {
+      const repository = { get: jest.fn().mockResolvedValue(current), save: jest.fn() };
+      const shippingService = { settings: current };
+      return { repository, shippingService, service: new AdminShippingService({ repository, shippingService }) };
+    }
+
+    test.each([
+      ['Above the limit', 3],
+      ['Zero is refused', 0],
+      ['Two decimal places', 0.55],
+      ['not a number', 'half']
+    ])('%s: dry_ice_kg %j is refused with 422 and nothing is stored', async (_name, dryIceKg) => {
+      const { repository, shippingService, service } = setup();
+
+      await expect(service.saveSettings({ us: { package: { dry_ice_kg: dryIceKg } } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'invalid_dry_ice_kg' }
+      });
+      expect(repository.save).not.toHaveBeenCalled();
+      expect(shippingService.settings.us.package.dry_ice_kg).toBe(0.5);
+    });
+
+    test('Heavier than the package: 0.5 kg with a 1 lb package is refused', async () => {
+      const { repository, service } = setup({ us: { package: { ...stored.us.package, weight_lb: 1 } } });
+
+      await expect(service.saveSettings({ us: { package: { dry_ice_kg: 0.5 } } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'invalid_dry_ice_kg' }
+      });
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    test('lowering the package weight below the stored dry ice is refused', async () => {
+      const { repository, service } = setup();
+
+      await expect(service.saveSettings({ us: { package: { weight_lb: 1 } } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'invalid_dry_ice_kg' }
+      });
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+
+    test('Operator changes the weight: a saved 1.2 is returned by GET', async () => {
+      let current = stored;
+      const repository = {
+        get: jest.fn(async () => current),
+        save: jest.fn(async (payload) => {
+          current = { us: { package: { ...current.us.package, ...payload.us.package } } };
+          return current;
+        })
+      };
+      const service = new AdminShippingService({ repository, shippingService: { settings: null } });
+
+      await service.saveSettings({ us: { package: { dry_ice_kg: 1.2 } } });
+      const result = await service.getSettings();
+
+      expect(repository.save).toHaveBeenCalledWith({ us: { package: { dry_ice_kg: 1.2 } } });
+      expect(result.data.settings.us.package.dry_ice_kg).toBe(1.2);
+    });
+
+    test('accepts the limits 0.1 and 2.5', async () => {
+      for (const dryIceKg of [0.1, 2.5]) {
+        const { repository, service } = setup();
+        repository.save.mockImplementation(async (payload) => payload);
+        await service.saveSettings({ us: { package: { dry_ice_kg: dryIceKg } } });
+        expect(repository.save).toHaveBeenCalled();
+      }
+    });
+
+    test('a payload without package fields does not read the stored settings', async () => {
+      const { repository, service } = setup();
+      repository.save.mockImplementation(async (payload) => payload);
+
+      await service.saveSettings({ us: { cost: 14 } });
+
+      expect(repository.get).not.toHaveBeenCalled();
+    });
+  });
+
   test('throws 503 when the repository is missing', async () => {
     const service = new AdminShippingService({});
 
@@ -134,7 +216,7 @@ describe('AdminShippingService › US simulation', () => {
   const us = {
     quote_mode: 'ups',
     ship_from: { street: '100 Main St', city: 'Miami', state: 'FL', zipcode: '33101' },
-    package: { weight_lb: 10 },
+    package: { weight_lb: 10, dry_ice_kg: 0.5 },
     allowed_service_codes: ['03']
   };
 
@@ -169,7 +251,8 @@ describe('AdminShippingService › US simulation', () => {
     ]);
     expect(upsSandboxClient.rate).toHaveBeenCalledWith(expect.objectContaining({
       withTransit: true,
-      shipTo: expect.objectContaining({ city: 'San Francisco', state: 'CA', zipcode: '94105' })
+      shipTo: expect.objectContaining({ city: 'San Francisco', state: 'CA', zipcode: '94105' }),
+      package: expect.objectContaining({ dry_ice_kg: 0.5 })
     }));
     expect(result.data.ups.rates).toEqual([
       { service_code: '03', label: 'UPS Ground', amount: 14.1, currency: 'USD', delivery_days: 3, allowed: true },

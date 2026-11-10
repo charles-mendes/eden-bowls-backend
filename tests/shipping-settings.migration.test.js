@@ -1,5 +1,6 @@
 const { CreateShippingSettingsTables1700000000010 } = require('../src/infrastructure/migrations/1700000000010-create-shipping-settings-tables');
 const { AddUsMaxTransitDays1700000000047 } = require('../src/infrastructure/migrations/1700000000047-add-us-max-transit-days');
+const { AddUsDryIceKg1700000000069 } = require('../src/infrastructure/migrations/1700000000069-add-us-dry-ice-kg');
 
 describe('CreateShippingSettingsTables1700000000010', () => {
   test('creates BR and US shipping settings tables and seeds defaults', async () => {
@@ -63,5 +64,31 @@ describe('AddUsMaxTransitDays1700000000047', () => {
     const queryRunner = runner({ hasColumn: true });
     await new AddUsMaxTransitDays1700000000047().down(queryRunner);
     expect(queryRunner.query).toHaveBeenCalledWith('ALTER TABLE `shipping_us_settings` DROP COLUMN `max_transit_days`');
+  });
+});
+
+describe('AddUsDryIceKg1700000000069', () => {
+  function runner({ hasColumn }) {
+    return {
+      hasTable: jest.fn().mockResolvedValue(true),
+      hasColumn: jest.fn().mockResolvedValue(hasColumn),
+      query: jest.fn().mockResolvedValue(undefined)
+    };
+  }
+
+  test('adds package_dry_ice_kg with 0.5 as the value after deploy, once', async () => {
+    const first = runner({ hasColumn: false });
+    await new AddUsDryIceKg1700000000069().up(first);
+    expect(first.query).toHaveBeenCalledWith('ALTER TABLE `shipping_us_settings` ADD COLUMN `package_dry_ice_kg` DECIMAL(3,1) NOT NULL DEFAULT 0.5');
+
+    const again = runner({ hasColumn: true });
+    await new AddUsDryIceKg1700000000069().up(again);
+    expect(again.query).not.toHaveBeenCalled();
+  });
+
+  test('down drops the column', async () => {
+    const queryRunner = runner({ hasColumn: true });
+    await new AddUsDryIceKg1700000000069().down(queryRunner);
+    expect(queryRunner.query).toHaveBeenCalledWith('ALTER TABLE `shipping_us_settings` DROP COLUMN `package_dry_ice_kg`');
   });
 });

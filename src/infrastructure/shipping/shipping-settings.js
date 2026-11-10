@@ -48,7 +48,9 @@ const DEFAULT_SETTINGS = {
       weight_lb: 10,
       length_in: 12,
       width_in: 12,
-      height_in: 12
+      height_in: 12,
+      // Dry ice in each box, declared to UPS as UN1845 on labels and quotes (ups-dry-ice).
+      dry_ice_kg: 0.5
     },
     allowed_service_codes: ['03'],
     // A US address whose UPS transit is longer than this is outside the delivery area.
@@ -129,7 +131,8 @@ function mergePackage(base = {}, overlay = {}) {
     weight_lb: toNumber(overlay.weight_lb, toNumber(base.weight_lb, 10)),
     length_in: toNumber(overlay.length_in, toNumber(base.length_in, 12)),
     width_in: toNumber(overlay.width_in, toNumber(base.width_in, 12)),
-    height_in: toNumber(overlay.height_in, toNumber(base.height_in, 12))
+    height_in: toNumber(overlay.height_in, toNumber(base.height_in, 12)),
+    dry_ice_kg: toNumber(overlay.dry_ice_kg, toNumber(base.dry_ice_kg, DEFAULT_SETTINGS.us.package.dry_ice_kg))
   };
 }
 
@@ -295,7 +298,8 @@ function usFromRow(row) {
       weight_lb: toNumber(row.package_weight_lb, DEFAULT_SETTINGS.us.package.weight_lb),
       length_in: toNumber(row.package_length_in, DEFAULT_SETTINGS.us.package.length_in),
       width_in: toNumber(row.package_width_in, DEFAULT_SETTINGS.us.package.width_in),
-      height_in: toNumber(row.package_height_in, DEFAULT_SETTINGS.us.package.height_in)
+      height_in: toNumber(row.package_height_in, DEFAULT_SETTINGS.us.package.height_in),
+      dry_ice_kg: toNumber(row.package_dry_ice_kg, DEFAULT_SETTINGS.us.package.dry_ice_kg)
     },
     allowed_service_codes: parseServiceCodes(row.allowed_service_codes, DEFAULT_SETTINGS.us.allowed_service_codes),
     max_transit_days: toNumber(row.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days)
@@ -357,7 +361,8 @@ function usToParams(us) {
     us.package?.height_in ?? 12,
     JSON.stringify(parseServiceCodes(us.allowed_service_codes, ['03'])),
     toNumber(us.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days),
-    String(us.ship_from?.phone || '').slice(0, 32)
+    String(us.ship_from?.phone || '').slice(0, 32),
+    toNumber(us.package?.dry_ice_kg, DEFAULT_SETTINGS.us.package.dry_ice_kg)
   ];
 }
 

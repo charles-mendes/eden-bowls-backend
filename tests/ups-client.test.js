@@ -415,3 +415,70 @@ describe('UPS pickup', () => {
     expect(body.ShipmentRequest.Shipment.Shipper.Phone).toEqual({ Number: '3055550100' });
   });
 });
+
+describe('UPS dry ice declaration', () => {
+  const DRY_ICE = {
+    DryIce: {
+      RegulationSet: 'CFR',
+      DryIceWeight: { UnitOfMeasurement: { Code: '00', Description: 'Kilograms' }, Weight: '0.5' }
+    }
+  };
+  const parties = {
+    shipFrom: { zipcode: '33431', state: 'FL' },
+    shipTo: { zipcode: '10001', state: 'NY' },
+    package: { weight_lb: 10, length_in: 12, width_in: 12, height_in: 12, dry_ice_kg: 0.5 }
+  };
+
+  function upsWithRates() {
+    const rated = () => jsonResponse(200, {
+      RateResponse: { RatedShipment: [{ Service: { Code: '03' }, TotalCharges: { MonetaryValue: '22.65', CurrencyCode: 'USD' } }] }
+    });
+    return fakeUps({
+      '/api/rating/v2403/Shop': rated,
+      '/api/rating/v2403/Shoptimeintransit': rated,
+      '/api/shipments/v2409/ship': () => jsonResponse(200, {
+        ShipmentResponse: { ShipmentResults: { ShipmentIdentificationNumber: '1ZDRY', PackageResults: { TrackingNumber: '1ZDRY' } } }
+      })
+    });
+  }
+
+  const bodyOf = (calls, path) => JSON.parse(calls.find((call) => new URL(call.url).pathname.endsWith(path)).init.body);
+
+  test('Label with the deploy value: 0.5 kg under CFR on the package, service 03', async () => {
+    const { fetchImpl, calls } = upsWithRates();
+    const ups = clientFromEnv(envFor('local'), fetchImpl);
+
+    await ups.createShipment({ ...parties, serviceCode: '03' });
+
+    const shipment = bodyOf(calls, '/ship').ShipmentRequest.Shipment;
+    expect(shipment.Service).toMatchObject({ Code: '03' });
+    expect(shipment.Package.PackageServiceOptions).toEqual(DRY_ICE);
+    expect(shipment.Package.Packaging).toMatchObject({ Code: '02' });
+    expect(shipment.Package.PackagingType).toBeUndefined();
+  });
+
+  test('Shop and Shoptimeintransit rate requests carry the same block', async () => {
+    const { fetchImpl, calls } = upsWithRates();
+    const ups = clientFromEnv(envFor('local'), fetchImpl);
+
+    await ups.rate(parties);
+    await ups.rate({ ...parties, withTransit: true, pickupDate: new Date('2026-11-10T12:00:00Z') });
+
+    expect(bodyOf(calls, '/rating/v2403/Shop').RateRequest.Shipment.Package.PackageServiceOptions).toEqual(DRY_ICE);
+    const transit = bodyOf(calls, '/Shoptimeintransit').RateRequest.Shipment;
+    expect(transit.Package.PackageServiceOptions).toEqual(DRY_ICE);
+    expect(transit.ShipmentTotalWeight).toEqual({ UnitOfMeasurement: { Code: 'LBS', Description: 'Pounds' }, Weight: '10' });
+  });
+
+  test('sends the weight with one decimal place and no medical or audit flag', () => {
+    const block = client().buildPackage({ weight_lb: 10, dry_ice_kg: 2 }).PackageServiceOptions.DryIce;
+
+    expect(block.DryIceWeight.Weight).toBe('2.0');
+    expect(block).not.toHaveProperty('MedicalUseIndicator');
+    expect(block).not.toHaveProperty('AuditRequired');
+  });
+
+  test('a package without dry ice sends no service options', () => {
+    expect(client().buildPackage({ weight_lb: 10 })).not.toHaveProperty('PackageServiceOptions');
+  });
+});

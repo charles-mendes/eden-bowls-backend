@@ -251,6 +251,7 @@ class UpsClient {
   }
 
   buildPackage(pkg = {}) {
+    const dryIceKg = Number(pkg.dry_ice_kg);
     return {
       PackagingType: { Code: '02', Description: 'Customer Supplied Package' },
       Dimensions: {
@@ -262,7 +263,20 @@ class UpsClient {
       PackageWeight: {
         UnitOfMeasurement: { Code: 'LBS', Description: 'Pounds' },
         Weight: String(Number(pkg.weight_lb || pkg.weight || 10))
-      }
+      },
+      // Dry ice as a refrigerant (UN1845) under the US DOT rules. Rating needs the unit Description;
+      // Shipping accepts it. Not medical, so no MedicalUseIndicator (ups-dry-ice).
+      ...(dryIceKg > 0 ? {
+        PackageServiceOptions: {
+          DryIce: {
+            RegulationSet: 'CFR',
+            DryIceWeight: {
+              UnitOfMeasurement: { Code: '00', Description: 'Kilograms' },
+              Weight: dryIceKg.toFixed(1)
+            }
+          }
+        }
+      } : {})
     };
   }
 

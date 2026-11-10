@@ -86,7 +86,7 @@ describe('ShippingService US calculate', () => {
           quote_mode: 'ups',
           fallback_enabled: true,
           ship_from: { name: 'WH', street: '1 St', city: 'NY', state: 'NY', zipcode: '10001', country: 'US' },
-          package: { weight_lb: 10, length_in: 12, width_in: 12, height_in: 12 },
+          package: { weight_lb: 10, length_in: 12, width_in: 12, height_in: 12, dry_ice_kg: 0.5 },
           allowed_service_codes: ['03']
         }
       },
@@ -97,7 +97,10 @@ describe('ShippingService US calculate', () => {
     expect(result.data.source).toBe('ups');
     expect(result.data.shipping).toBe(19.25);
     expect(result.data.rate_id).toBe('ups:03');
-    expect(upsClient.rate).toHaveBeenCalled();
+    // Checkout quote: the stored package, dry ice included, reaches UPS (ups-dry-ice).
+    expect(upsClient.rate).toHaveBeenCalledWith(expect.objectContaining({
+      package: expect.objectContaining({ weight_lb: 10, dry_ice_kg: 0.5 })
+    }));
   });
 
   test('falls back when UPS times out and fallback is enabled', async () => {

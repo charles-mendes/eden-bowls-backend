@@ -52,7 +52,8 @@ const shippingSettingsSchema = z.object({
       weight_lb: optionalNumber,
       length_in: optionalNumber,
       width_in: optionalNumber,
-      height_in: optionalNumber
+      height_in: optionalNumber,
+      dry_ice_kg: optionalNumber
     }).optional(),
     allowed_service_codes: z.union([z.array(z.string()), z.string()]).optional(),
     max_transit_days: optionalNumber

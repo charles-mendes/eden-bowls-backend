@@ -140,6 +140,18 @@ describe('UpsShipmentService label guards', () => {
     expect(service.upsClient.createShipment.mock.calls[0][0].shipTo.name).toBe('João Lima');
   });
 
+  test('the label request carries the stored package with its dry ice weight', async () => {
+    const { service } = buildService();
+    service.shippingService.settings.us.package = { weight_lb: 10, length_in: 12, width_in: 12, height_in: 12, dry_ice_kg: 0.5 };
+
+    await create(service);
+
+    expect(service.upsClient.createShipment.mock.calls[0][0]).toMatchObject({
+      package: { weight_lb: 10, dry_ice_kg: 0.5 },
+      serviceCode: '03'
+    });
+  });
+
   test('prints the account name when the address has none', async () => {
     const { service } = buildService({
       addressName: '',

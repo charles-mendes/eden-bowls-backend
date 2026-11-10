@@ -259,6 +259,13 @@ function buildShippingUsSettingsEntitySchema(tableName = 'shipping_us_settings')
         scale: 2,
         default: 12
       },
+      packageDryIceKg: {
+        name: 'package_dry_ice_kg',
+        type: 'decimal',
+        precision: 3,
+        scale: 1,
+        default: 0.5
+      },
       allowedServiceCodes: {
         name: 'allowed_service_codes',
         type: 'text',

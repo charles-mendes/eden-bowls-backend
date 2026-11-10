@@ -52,7 +52,8 @@ const US_COLUMNS = [
   'package_height_in',
   'allowed_service_codes',
   'max_transit_days',
-  'ship_from_phone'
+  'ship_from_phone',
+  'package_dry_ice_kg'
 ];
 
 class ShippingSettingsRepository {
