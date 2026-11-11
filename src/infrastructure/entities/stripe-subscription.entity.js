@@ -100,6 +100,11 @@ function buildStripeSubscriptionEntitySchema(tableName = 'stripe_subscriptions')
         type: 'json',
         nullable: true
       },
+      checkoutSnapshot: {
+        name: 'checkout_snapshot',
+        type: 'json',
+        nullable: true
+      },
       subscriptionTermMonths: {
         name: 'subscription_term_months',
         type: 'tinyint',

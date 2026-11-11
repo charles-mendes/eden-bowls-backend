@@ -149,6 +149,61 @@ describe('AdminOnboardingService.csv', () => {
     });
   });
 
+  test('checkout-history: one checkout per subscription, newest purchase first, complete or partial', async () => {
+    const snapshot = {
+      version: 1,
+      source: 'checkout',
+      captured_at: '2026-11-01T10:00:00.000Z',
+      checkout_reference: { stripe_subscription_id: 'sub_new', stripe_promotion_code_id: 'promo_1', total: 99 },
+      plan_selection: { catalog_pricing: { line_items: [{ sku: 'A' }] } },
+      pets_snapshot: { pet_ids: ['7'] },
+      address: { city: 'São Paulo' },
+      shipping: { cost: 10 },
+      recurrence: { frequency: 'monthly' },
+      subscription_term_months: 6
+    };
+    const service = new AdminOnboardingService({
+      repository: {
+        getCheckout: jest.fn().mockResolvedValue({
+          userId: '91', market: 'BR', checkoutReference: { stripe_subscription_id: 'sub_new' }, planSelection: null, address: null, pets: []
+        })
+      },
+      ledgerRepository: {
+        // listByUserId orders by updated_at: the old one was touched by a webhook last.
+        listByUserId: jest.fn().mockResolvedValue([
+          { id: 1, stripeSubscriptionId: 'sub_old', stripeAccount: 'br', status: 'active', createdAt: '2026-01-05 10:00:00', updatedAt: '2026-11-10 10:00:00', planSelection: { catalog_pricing: { line_items: [{ sku: 'B' }] } }, address: { city: 'Rio' }, checkoutSnapshot: null },
+          { id: 2, stripeSubscriptionId: 'sub_new', stripeAccount: 'br', status: 'incomplete', createdAt: '2026-11-01 10:00:00', updatedAt: '2026-11-01 10:00:00', planSelection: { edited: true }, checkoutSnapshot: snapshot }
+        ])
+      }
+    });
+
+    const { checkouts } = await service.getByUserId('91', { roles: ['operator'], markets: ['BR'] });
+
+    expect(checkouts.map((item) => item.stripeSubscriptionId)).toEqual(['sub_new', 'sub_old']);
+    expect(checkouts[0]).toMatchObject({
+      subscriptionId: '2',
+      completeness: 'complete',
+      source: 'checkout',
+      capturedAt: '2026-11-01T10:00:00.000Z',
+      planSelection: snapshot.plan_selection,
+      lineItems: [{ sku: 'A' }],
+      recurrence: { frequency: 'monthly' },
+      subscriptionTermMonths: 6,
+      discount: { promotionCodeId: 'promo_1' },
+      checkoutReference: snapshot.checkout_reference
+    });
+    expect(checkouts[1]).toMatchObject({
+      subscriptionId: '1',
+      completeness: 'partial',
+      source: 'ledger',
+      lineItems: [{ sku: 'B' }],
+      address: { city: 'Rio' },
+      recurrence: null,
+      discount: null,
+      checkoutReference: null
+    });
+  });
+
   describe('pets carry the subscriptions that own them', () => {
     const plan = (...ids) => ({ pets: ids.map((id) => ({ pet_id: id, enabled: true })) });
 

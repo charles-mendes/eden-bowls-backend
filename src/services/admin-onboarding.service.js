@@ -10,6 +10,65 @@ const {
   shouldEnforceMarketScope
 } = require('../core/admin-market-scope');
 
+function presentDiscount(reference) {
+  if (!reference) {
+    return { eligibilityReason: 'Não aplicável / inelegível' };
+  }
+  return {
+    promotionCodeId: reference.stripe_promotion_code_id || null,
+    percent: reference.discount_percent || null,
+    duration: reference.discount_duration || null,
+    amountPaid: reference.stripe_amount_paid || null,
+    eligibilityReason: reference.discount_eligibility && reference.discount_eligibility.reason
+      ? reference.discount_eligibility.reason
+      : (reference.stripe_promotion_code_id ? null : 'Não aplicável / inelegível')
+  };
+}
+
+function lineItemsOf(planSelection) {
+  return planSelection && planSelection.catalog_pricing
+    ? planSelection.catalog_pricing.line_items || []
+    : [];
+}
+
+function createdTime(item) {
+  const time = item.createdAt ? new Date(item.createdAt).getTime() : NaN;
+  return Number.isFinite(time) ? time : 0;
+}
+
+// checkout-history: one entry per subscription, newest purchase first. A subscription created before
+// the snapshot existed shows what its ledger row still holds, which may reflect later edits.
+function presentCheckoutHistory(subscriptions) {
+  return [...subscriptions]
+    .sort((left, right) => (createdTime(right) - createdTime(left)) || (Number(right.id) - Number(left.id)))
+    .map((item) => {
+      const snapshot = item.checkoutSnapshot && typeof item.checkoutSnapshot === 'object' ? item.checkoutSnapshot : null;
+      const planSelection = snapshot ? snapshot.plan_selection : item.planSelection;
+      const reference = snapshot ? snapshot.checkout_reference : null;
+      return {
+        subscriptionId: String(item.id),
+        stripeSubscriptionId: item.stripeSubscriptionId,
+        status: item.status,
+        planLabel: item.planLabel,
+        createdAt: item.createdAt,
+        completeness: snapshot ? 'complete' : 'partial',
+        source: snapshot ? snapshot.source || 'checkout' : 'ledger',
+        capturedAt: snapshot ? snapshot.captured_at || null : null,
+        planSelection: planSelection || null,
+        petsSnapshot: (snapshot ? snapshot.pets_snapshot : item.petsSnapshot) || null,
+        address: (snapshot ? snapshot.address : item.address) || null,
+        shipping: (snapshot ? snapshot.shipping : item.shipping) || null,
+        recurrence: snapshot ? snapshot.recurrence || null : null,
+        subscriptionTermMonths: snapshot && snapshot.subscription_term_months != null
+          ? snapshot.subscription_term_months
+          : item.subscriptionTermMonths,
+        lineItems: lineItemsOf(planSelection),
+        discount: reference ? presentDiscount(reference) : null,
+        checkoutReference: reference
+      };
+    });
+}
+
 const STRIPE_STATUS_LABELS = {
   mixed: 'Misto',
   unlinked: 'Não vinculado',
@@ -281,21 +340,11 @@ class AdminOnboardingService {
       planSelection: checkout.planSelection,
       address: checkout.address,
       shipping: checkout.shipping,
-      discount: checkout.checkoutReference ? {
-        promotionCodeId: checkout.checkoutReference.stripe_promotion_code_id || null,
-        percent: checkout.checkoutReference.discount_percent || null,
-        duration: checkout.checkoutReference.discount_duration || null,
-        amountPaid: checkout.checkoutReference.stripe_amount_paid || null,
-        eligibilityReason: checkout.checkoutReference.discount_eligibility
-          && checkout.checkoutReference.discount_eligibility.reason
-          ? checkout.checkoutReference.discount_eligibility.reason
-          : (checkout.checkoutReference.stripe_promotion_code_id ? null : 'Não aplicável / inelegível')
-      } : { eligibilityReason: 'Não aplicável / inelegível' },
-      lineItems: checkout.planSelection && checkout.planSelection.catalog_pricing
-        ? checkout.planSelection.catalog_pricing.line_items || []
-        : [],
+      discount: presentDiscount(checkout.checkoutReference),
+      lineItems: lineItemsOf(checkout.planSelection),
       checkoutReference: checkout.checkoutReference,
       paymentReference: checkout.paymentReference,
+      checkouts: presentCheckoutHistory(scopedSubscriptions),
       simplified
     };
   }

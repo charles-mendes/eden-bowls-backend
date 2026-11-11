@@ -85,6 +85,31 @@ describe('SubscriptionLedgerRepository', () => {
     expect(lifecycleParams(query).canceledAt).toBeNull();
   });
 
+  test('checkout-history: the checkout snapshot is written once and never overwritten', async () => {
+    const { query, repository } = upsertRepository();
+    const snapshot = { version: 1, source: 'checkout', checkout_reference: { stripe_subscription_id: 'sub_123' } };
+    await repository.upsert({ ...base, status: 'incomplete', checkoutSnapshot: snapshot });
+    const call = query.mock.calls.find(([sql]) => sql.includes('INSERT INTO'));
+
+    expect(call[1][22]).toBe(JSON.stringify(snapshot));
+    expect(call[0]).toContain('`checkout_snapshot` = COALESCE(`checkout_snapshot`, VALUES(`checkout_snapshot`))');
+  });
+
+  test('checkout-history: a webhook upsert sends no snapshot even when the row has one', async () => {
+    const { query, repository } = upsertRepository({
+      id: 1,
+      user_id: 7,
+      stripe_subscription_id: 'sub_123',
+      stripe_customer_id: 'cus_1',
+      status: 'incomplete',
+      checkout_snapshot: JSON.stringify({ version: 1, source: 'checkout' })
+    });
+    await repository.upsert({ ...base, status: 'active' });
+    const call = query.mock.calls.find(([sql]) => sql.includes('INSERT INTO'));
+
+    expect(call[1][22]).toBeNull();
+  });
+
   test('a canceled row stores Stripe ended_at and keeps the first stored date', async () => {
     const { query, repository } = upsertRepository();
     await repository.upsert({ ...base, status: 'canceled', endedAt: 1791640800 });

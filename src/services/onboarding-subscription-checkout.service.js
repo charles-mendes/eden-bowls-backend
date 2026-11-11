@@ -13,6 +13,7 @@ const { resolveStripeAccountFromCountry } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const { applyFirstPurchaseDiscount } = require('../core/first-purchase-discount');
 const { buildPetsSnapshot, extractSubscriptionPeriod } = require('../core/stripe-subscription-map');
+const { buildCheckoutSnapshot } = require('../core/checkout-snapshot');
 const {
   buildCheckoutFingerprint,
   buildSubscriptionCreateIdempotencyKey,
@@ -688,6 +689,19 @@ class OnboardingSubscriptionCheckoutService {
     const existing = await this.ledgerRepository.listByUserId(userId);
     const period = extractSubscriptionPeriod(created.subscription || {});
     const firstItem = Array.isArray(items) ? items[0] : null;
+    const petsSnapshot = buildPetsSnapshot(nextPlanSelection, context.pets);
+    const subscriptionTermMonths = Number.isFinite(termMonths) ? termMonths : null;
+    // checkout-history: built from what this request sends, not from the onboarding row, which still
+    // holds the previous purchase until persistCheckout runs.
+    const checkoutSnapshot = buildCheckoutSnapshot({
+      checkoutReference: checkout,
+      planSelection: nextPlanSelection,
+      petsSnapshot,
+      address: context.address || {},
+      shipping: context.shipping || {},
+      recurrence: context.recurrence || null,
+      subscriptionTermMonths
+    });
     await this.ledgerRepository.upsert({
       userId,
       customerEmail: email,
@@ -700,11 +714,12 @@ class OnboardingSubscriptionCheckoutService {
       currentPeriodStart: period.start,
       currentPeriodEnd: period.end,
       cancelAtPeriodEnd: Boolean(created.subscription && created.subscription.cancel_at_period_end),
-      petsSnapshot: buildPetsSnapshot(nextPlanSelection, context.pets),
+      petsSnapshot,
       planSelection: nextPlanSelection,
       shipping: context.shipping || {},
       address: context.address || {},
-      subscriptionTermMonths: Number.isFinite(termMonths) ? termMonths : null
+      subscriptionTermMonths,
+      checkoutSnapshot
     });
   }
 

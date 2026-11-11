@@ -94,6 +94,7 @@ class SubscriptionLedgerRepository {
       shipping: parseJsonColumn(row.shipping),
       address: parseJsonColumn(row.address),
       subscriptionTermMonths: row.subscription_term_months == null ? null : Number(row.subscription_term_months),
+      checkoutSnapshot: parseJsonColumn(row.checkout_snapshot),
       editPaymentPending: Boolean(Number(row.edit_payment_pending)),
       editPending: parseJsonColumn(row.edit_pending),
       chargedDeliveries: row.charged_deliveries == null ? null : Number(row.charged_deliveries),
@@ -425,7 +426,9 @@ class SubscriptionLedgerRepository {
       next.subscriptionTermMonths == null ? null : Number(next.subscriptionTermMonths),
       next.editPaymentPending ? 1 : 0,
       jsonOrNull(next.editPending) || null,
-      ...this.lifecycleDates(next.status, input.endedAt)
+      ...this.lifecycleDates(next.status, input.endedAt),
+      // checkout-history: only the checkout that creates the row sends it; everyone else sends NULL.
+      jsonOrNull(input.checkoutSnapshot) || null
     ];
 
     await this.dataSource.query(
@@ -434,8 +437,8 @@ class SubscriptionLedgerRepository {
         \`stripe_account\`, \`status\`, \`plan_label\`, \`stripe_price_id\`, \`current_period_start\`, \`current_period_end\`,
         \`cancel_at_period_end\`, \`payment_method_last4\`, \`payment_method_brand\`,
         \`pets_snapshot\`, \`plan_selection\`, \`shipping\`, \`address\`, \`subscription_term_months\`,
-        \`edit_payment_pending\`, \`edit_pending\`, \`activated_at\`, \`canceled_at\`
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        \`edit_payment_pending\`, \`edit_pending\`, \`activated_at\`, \`canceled_at\`, \`checkout_snapshot\`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         \`user_id\` = VALUES(\`user_id\`),
         \`customer_email\` = VALUES(\`customer_email\`),
@@ -458,7 +461,8 @@ class SubscriptionLedgerRepository {
         \`edit_pending\` = VALUES(\`edit_pending\`),
         \`activated_at\` = COALESCE(\`activated_at\`, VALUES(\`activated_at\`)),
         \`canceled_at_approximate\` = IF(VALUES(\`status\`) = 'canceled', \`canceled_at_approximate\`, 0),
-        \`canceled_at\` = IF(VALUES(\`status\`) = 'canceled', COALESCE(\`canceled_at\`, VALUES(\`canceled_at\`)), NULL)`,
+        \`canceled_at\` = IF(VALUES(\`status\`) = 'canceled', COALESCE(\`canceled_at\`, VALUES(\`canceled_at\`)), NULL),
+        \`checkout_snapshot\` = COALESCE(\`checkout_snapshot\`, VALUES(\`checkout_snapshot\`))`,
       params
     );
 

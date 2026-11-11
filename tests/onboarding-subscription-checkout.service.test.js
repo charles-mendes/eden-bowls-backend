@@ -451,6 +451,38 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     }));
   });
 
+  test('checkout-history: the ledger row carries the checkout of this request, before the onboarding row is rewritten', async () => {
+    const order = [];
+    const ledgerRepository = {
+      listByUserId: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn(async () => { order.push('ledger'); return {}; })
+    };
+    const { service, repository } = buildService();
+    const persist = repository.checkout.getMockImplementation();
+    repository.checkout.mockImplementation(async (...args) => {
+      order.push('onboarding');
+      return persist ? persist(...args) : args[1].checkout;
+    });
+    service.ledgerRepository = ledgerRepository;
+
+    await service.checkout({ userId: 7, payload });
+
+    const { checkoutSnapshot, petsSnapshot, planSelection, shipping, address } = ledgerRepository.upsert.mock.calls[0][0];
+    expect(order).toEqual(['ledger', 'onboarding']);
+    expect(checkoutSnapshot).toMatchObject({
+      version: 1,
+      source: 'checkout',
+      checkout_reference: { stripe_subscription_id: 'sub_123' },
+      pets_snapshot: petsSnapshot,
+      plan_selection: planSelection,
+      shipping,
+      address
+    });
+    expect(checkoutSnapshot.captured_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(checkoutSnapshot.checkout_reference).not.toHaveProperty('stripe_client_secret');
+    expect(repository.checkout.mock.calls[0][1].checkout.stripe_subscription_id).toBe('sub_123');
+  });
+
   test.each([
     ['missing', { country: 'US', street: '1 Market St', zipcode: '94105', state: 'CA', city: 'San Francisco' }],
     ['invalid', { ...US_ADDRESS, recipient_name: 'a@b' }]
