@@ -1,6 +1,7 @@
 const { HttpError } = require('../core/http-error');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { mapRatedShipments, pickRate } = require('../infrastructure/shipping/ups-client');
+const { BOX_KEYS, DEFAULT_SETTINGS, mergeBoxes } = require('../infrastructure/shipping/shipping-settings');
 
 const BR_ADDRESS_FIELDS = ['street', 'number', 'complement', 'neighborhood', 'city', 'state', 'zipcode'];
 const US_ADDRESS_FIELDS = ['street', 'street2', 'city', 'state', 'zipcode'];
@@ -48,7 +49,7 @@ const MIN_US_DRY_ICE_KG = 0.1;
 // Above 2.5 kg per package UPS asks for a Dangerous Goods agreement on domestic air (ups-dry-ice).
 const MAX_US_DRY_ICE_KG = 2.5;
 const KG_PER_LB = 0.45359237;
-const DEFAULT_PACKAGE = { weight_lb: 10, dry_ice_kg: 0.5 };
+const DEFAULT_PACKAGE = DEFAULT_SETTINGS.us.package;
 
 function hasOneDecimalAtMost(value) {
   return Math.abs(value * 10 - Math.round(value * 10)) < 1e-9;
@@ -76,6 +77,35 @@ async function assertUsDryIce(us, repository) {
   if (!valid) {
     throw new HttpError(422, `US dry ice per box must be from ${MIN_US_DRY_ICE_KG} to ${MAX_US_DRY_ICE_KG} kg, with one decimal place, and no heavier than the package.`, {
       code: 'invalid_dry_ice_kg'
+    });
+  }
+}
+
+const MAX_BOX_SIDE_IN = 108;
+const MIN_BOX_EMPTY_KG = 0.1;
+const MAX_BOX_EMPTY_KG = 10;
+const MAX_BOX_PACKS = 100;
+
+// The boxes are checked merged with the stored ones, since the Starter must hold fewer packs than the monthly.
+async function assertUsBoxes(us, repository) {
+  const incoming = us && us.boxes;
+  if (!incoming) {
+    return;
+  }
+  const current = (await repository.get())?.us?.boxes || {};
+  const merged = mergeBoxes(current, incoming);
+  const raw = (key, field) => pick(incoming[key]?.[field], merged[key][field]);
+  const valid = BOX_KEYS.every((key) => {
+    const sides = ['length_in', 'width_in', 'height_in'].map((field) => Number(raw(key, field)));
+    const emptyKg = Number(raw(key, 'empty_weight_kg'));
+    const maxPacks = Number(raw(key, 'max_packs'));
+    return sides.every((side) => Number.isFinite(side) && side > 0 && side <= MAX_BOX_SIDE_IN)
+      && Number.isFinite(emptyKg) && emptyKg >= MIN_BOX_EMPTY_KG && emptyKg <= MAX_BOX_EMPTY_KG
+      && Number.isInteger(maxPacks) && maxPacks >= 1 && maxPacks <= MAX_BOX_PACKS;
+  }) && Number(raw('starter', 'max_packs')) < Number(raw('monthly', 'max_packs'));
+  if (!valid) {
+    throw new HttpError(422, `Shipping boxes need sides above 0 and up to ${MAX_BOX_SIDE_IN} in, an empty weight from ${MIN_BOX_EMPTY_KG} to ${MAX_BOX_EMPTY_KG} kg, whole max packs from 1 to ${MAX_BOX_PACKS}, and a Starter that holds fewer packs than the monthly box.`, {
+      code: 'invalid_shipping_box'
     });
   }
 }
@@ -198,6 +228,7 @@ class AdminShippingService {
     this.ensureRepository();
     assertUsMaxTransitDays(payload.us);
     await assertUsDryIce(payload.us, this.repository);
+    await assertUsBoxes(payload.us, this.repository);
     const scoped = await this.resolveHeadquarters(this.scopedPayload(payload, actor));
     const settings = await this.repository.save(scoped);
     this.applyToShippingService(settings);

@@ -207,7 +207,8 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.upsShipmentService) {
         throw new HttpError(503, 'UPS shipment service is not available.');
       }
-      const label = await dependencies.upsShipmentService.getLabel(request.params.id, request.adminIdentity);
+      // shipping-boxes: `?package=N` returns box N's label.
+      const label = await dependencies.upsShipmentService.getLabel(request.params.id, request.adminIdentity, request.query.package);
       return {
         binary: true,
         buffer: label.buffer,

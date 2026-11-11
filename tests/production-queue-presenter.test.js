@@ -245,3 +245,51 @@ describe('presentProductionQueueItem recipient', () => {
     expect(item.displayName).not.toBe('Carla Dias');
   });
 });
+
+describe('presentProductionQueueItem boxes', () => {
+  const lines = (...items) => ({ planSelection: { catalog_pricing: { currency: 'USD', line_items: items } } });
+
+  test('Production queue item: 45 packs give two monthly boxes of 30 and 15', () => {
+    const item = presentProductionQueueItem(baseRow({
+      stripeAccount: 'us',
+      address: { country: 'US', city: 'Miami' },
+      ...lines(
+        { flavor: 'beef', flavor_label: 'Beef', quantity: 25, pack_size_grams: 500, pet_name: 'Rex' },
+        { flavor: 'chicken', flavor_label: 'Chicken', quantity: 20, pack_size_grams: 500, pet_name: 'Max' }
+      )
+    }));
+
+    expect(item.boxes).toEqual([
+      { key: 'monthly', label: 'Caixa mensal', pack_count: 30, weight_kg: 17 },
+      { key: 'monthly', label: 'Caixa mensal', pack_count: 15, weight_kg: 9.5 }
+    ]);
+  });
+
+  test('a BR box has no dry ice', () => {
+    const item = presentProductionQueueItem(baseRow(lines({ flavor: 'frango', flavor_label: 'Frango', quantity: 10, pack_size_grams: 300 })));
+
+    expect(item.boxes).toEqual([{ key: 'starter', label: 'Starter Box', pack_count: 10, weight_kg: 4 }]);
+  });
+
+  test('uses the saved boxes', () => {
+    const shippingSettings = { us: { package: { dry_ice_kg: 0.5 }, boxes: {
+      starter: { label: 'Starter Box', length_in: 14, width_in: 12, height_in: 8, empty_weight_kg: 1, max_packs: 10 },
+      monthly: { label: 'Caixa mensal', length_in: 18, width_in: 14, height_in: 12, empty_weight_kg: 1.7, max_packs: 30 }
+    } } };
+    const item = presentProductionQueueItem(baseRow(lines({ flavor: 'frango', quantity: 12, pack_size_grams: 300 })), { shippingSettings });
+
+    expect(item.boxes).toEqual([{ key: 'monthly', label: 'Caixa mensal', pack_count: 12, weight_kg: 5.3 }]);
+  });
+
+  test('unsized lines stay out of the boxes and are reported', () => {
+    const onUnsizedLines = jest.fn();
+    const item = presentProductionQueueItem(baseRow(lines(
+      { flavor: 'frango', flavor_label: 'Frango', quantity: 4, pack_size_grams: 300 },
+      { flavor: 'peixe', flavor_label: 'Peixe', quantity: 2 }
+    )), { onUnsizedLines });
+
+    expect(item.boxes).toEqual([{ key: 'starter', label: 'Starter Box', pack_count: 4, weight_kg: 2.2 }]);
+    expect(onUnsizedLines).toHaveBeenCalledWith([expect.objectContaining({ flavorKey: 'peixe', quantity: 2, subscriptionId: 'sub_123' })]);
+  });
+});
+

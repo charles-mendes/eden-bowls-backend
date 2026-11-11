@@ -620,6 +620,17 @@ describe('The queue lists Brazil delivery work in four groups', () => {
     expect(data.to_dispatch[0].items).toEqual([{ flavor: 'Frango', quantity: 4, pack_size: expect.any(String) }]);
   });
 
+  test('Courier delivery item: a BR cycle with 12 packs carries one monthly box without dry ice', async () => {
+    const { service } = setup({
+      cycles: [cycle('in_new', '2026-11-05', {
+        planSelection: { catalog_pricing: { line_items: [{ flavor: 'frango', flavor_label: 'Frango', quantity: 12, pack_size_label: '300 g', pack_size_grams: 300 }] } }
+      })]
+    });
+    const { data } = await service.listQueue(actor);
+    // 12 × 300 g + 1.5 kg empty, no dry ice.
+    expect(data.to_dispatch[0].boxes).toEqual([{ key: 'monthly', label: 'Caixa mensal', pack_count: 12, weight_kg: 5.1 }]);
+  });
+
   test('to-dispatch rows carry the address problem, and reading the queue opens none', async () => {
     const address = { country: 'BR', city: 'São Paulo', state: 'SP', neighborhood: 'Pinheiros', postal_code: '05422-000', recipient_name: 'João Lima' };
     const issue = { id: 3, codes: ['address_street_missing', 'address_number_missing'], email_sent_at: '2026-11-03T12:00:00.000Z' };

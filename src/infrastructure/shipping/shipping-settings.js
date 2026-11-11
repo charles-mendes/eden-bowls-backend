@@ -44,13 +44,19 @@ const DEFAULT_SETTINGS = {
       country: 'US',
       phone: ''
     },
+    // The checkout quote prices the monthly box at full weight until free shipping is decided (shipping-boxes).
     package: {
-      weight_lb: 10,
-      length_in: 12,
-      width_in: 12,
+      weight_lb: 37.5,
+      length_in: 18,
+      width_in: 14,
       height_in: 12,
       // Dry ice in each box, declared to UPS as UN1845 on labels and quotes (ups-dry-ice).
       dry_ice_kg: 0.5
+    },
+    // Boxes of the box plan (shipping-boxes). `max_packs` counts packs of any size; BR uses it to count boxes.
+    boxes: {
+      starter: { label: 'Starter Box', length_in: 14, width_in: 12, height_in: 8, empty_weight_kg: 1.0, max_packs: 10 },
+      monthly: { label: 'Caixa mensal', length_in: 18, width_in: 14, height_in: 12, empty_weight_kg: 1.5, max_packs: 30 }
     },
     allowed_service_codes: ['03'],
     // A US address whose UPS transit is longer than this is outside the delivery area.
@@ -127,13 +133,51 @@ function mergeShipFrom(base = {}, overlay = {}) {
 }
 
 function mergePackage(base = {}, overlay = {}) {
+  const defaults = DEFAULT_SETTINGS.us.package;
   return {
-    weight_lb: toNumber(overlay.weight_lb, toNumber(base.weight_lb, 10)),
-    length_in: toNumber(overlay.length_in, toNumber(base.length_in, 12)),
-    width_in: toNumber(overlay.width_in, toNumber(base.width_in, 12)),
-    height_in: toNumber(overlay.height_in, toNumber(base.height_in, 12)),
-    dry_ice_kg: toNumber(overlay.dry_ice_kg, toNumber(base.dry_ice_kg, DEFAULT_SETTINGS.us.package.dry_ice_kg))
+    weight_lb: toNumber(overlay.weight_lb, toNumber(base.weight_lb, defaults.weight_lb)),
+    length_in: toNumber(overlay.length_in, toNumber(base.length_in, defaults.length_in)),
+    width_in: toNumber(overlay.width_in, toNumber(base.width_in, defaults.width_in)),
+    height_in: toNumber(overlay.height_in, toNumber(base.height_in, defaults.height_in)),
+    dry_ice_kg: toNumber(overlay.dry_ice_kg, toNumber(base.dry_ice_kg, defaults.dry_ice_kg))
   };
+}
+
+const BOX_KEYS = ['starter', 'monthly'];
+const BOX_NUMBER_FIELDS = ['length_in', 'width_in', 'height_in', 'empty_weight_kg', 'max_packs'];
+
+function mergeBox(key, base = {}, overlay = {}) {
+  const defaults = DEFAULT_SETTINGS.us.boxes[key];
+  const box = { label: String(overlay.label || base.label || defaults.label) };
+  for (const field of BOX_NUMBER_FIELDS) {
+    box[field] = toNumber(overlay[field], toNumber(base[field], defaults[field]));
+  }
+  return box;
+}
+
+function mergeBoxes(base = {}, overlay = {}) {
+  return Object.fromEntries(BOX_KEYS.map((key) => [key, mergeBox(key, (base || {})[key], (overlay || {})[key])]));
+}
+
+function boxesFromRows(rows) {
+  if (!Array.isArray(rows)) {
+    return {};
+  }
+  return Object.fromEntries(rows.filter((row) => BOX_KEYS.includes(row.key)).map((row) => [row.key, {
+    label: row.label,
+    length_in: row.length_in,
+    width_in: row.width_in,
+    height_in: row.height_in,
+    empty_weight_kg: row.empty_weight_kg,
+    max_packs: row.max_packs
+  }]));
+}
+
+function boxesToParams(boxes) {
+  return BOX_KEYS.map((key) => {
+    const box = mergeBox(key, {}, (boxes || {})[key]);
+    return [key, box.label, box.length_in, box.width_in, box.height_in, box.empty_weight_kg, box.max_packs];
+  });
 }
 
 function mergeSettings(base, overlay) {
@@ -186,6 +230,7 @@ function mergeSettings(base, overlay) {
         : toBoolean(fileUs.fallback_enabled, true),
       ship_from: mergeShipFrom(baseUs.ship_from || DEFAULT_SETTINGS.us.ship_from, fileUs.ship_from || {}),
       package: mergePackage(baseUs.package || DEFAULT_SETTINGS.us.package, fileUs.package || {}),
+      boxes: mergeBoxes(baseUs.boxes || DEFAULT_SETTINGS.us.boxes, fileUs.boxes || {}),
       allowed_service_codes: parseServiceCodes(
         fileUs.allowed_service_codes,
         parseServiceCodes(baseUs.allowed_service_codes, ['03'])
@@ -230,6 +275,9 @@ function nextSettings(currentInput = {}, payload = {}) {
       package: nextUs.package
         ? mergePackage(current.us.package, nextUs.package)
         : current.us.package,
+      boxes: nextUs.boxes
+        ? mergeBoxes(current.us.boxes, nextUs.boxes)
+        : current.us.boxes,
       allowed_service_codes: nextUs.allowed_service_codes == null
         ? current.us.allowed_service_codes
         : parseServiceCodes(nextUs.allowed_service_codes, current.us.allowed_service_codes)
@@ -306,10 +354,10 @@ function usFromRow(row) {
   };
 }
 
-function settingsFromRows(brRow, usRow) {
+function settingsFromRows(brRow, usRow, boxRows) {
   return mergeSettings(DEFAULT_SETTINGS, {
     br: brFromRow(brRow),
-    us: usFromRow(usRow)
+    us: { ...usFromRow(usRow), boxes: boxesFromRows(boxRows) }
   });
 }
 
@@ -355,10 +403,10 @@ function usToParams(us) {
     us.ship_from?.state || '',
     us.ship_from?.zipcode || '',
     String(us.ship_from?.country || 'US').toUpperCase(),
-    us.package?.weight_lb ?? 10,
-    us.package?.length_in ?? 12,
-    us.package?.width_in ?? 12,
-    us.package?.height_in ?? 12,
+    us.package?.weight_lb ?? DEFAULT_SETTINGS.us.package.weight_lb,
+    us.package?.length_in ?? DEFAULT_SETTINGS.us.package.length_in,
+    us.package?.width_in ?? DEFAULT_SETTINGS.us.package.width_in,
+    us.package?.height_in ?? DEFAULT_SETTINGS.us.package.height_in,
     JSON.stringify(parseServiceCodes(us.allowed_service_codes, ['03'])),
     toNumber(us.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days),
     String(us.ship_from?.phone || '').slice(0, 32),
@@ -371,9 +419,12 @@ function loadShippingSettings() {
 }
 
 module.exports = {
+  BOX_KEYS,
   DEFAULT_SETTINGS,
+  boxesToParams,
   brToParams,
   loadShippingSettings,
+  mergeBoxes,
   mergeSettings,
   nextSettings,
   parseServiceCodes,

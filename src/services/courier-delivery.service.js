@@ -97,6 +97,8 @@ class CourierDeliveryService {
     this.auditService = options.auditService || null;
     this.transactionalMailer = options.transactionalMailer || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
+    // The live shipping settings, for the boxes of each cycle (shipping-boxes).
+    this.shippingSettings = options.shippingSettings || (() => null);
     this.now = options.now || (() => new Date());
   }
 
@@ -486,7 +488,10 @@ class CourierDeliveryService {
   presentQueueItem(cycle, row, contacts = new Map(), actor = {}) {
     const address = addressOf(cycle ? cycle.address : null);
     const contact = (cycle && contacts.get(String(cycle.userId))) || {};
-    const lineItems = cycle ? presentProductionQueueItem(cycle).lineItems : [];
+    // The item is built here, so the presenter's boxes are copied next to its line items (shipping-boxes).
+    const presented = cycle ? presentProductionQueueItem(cycle, { shippingSettings: this.shippingSettings() }) : null;
+    const lineItems = presented ? presented.lineItems : [];
+    const boxes = presented ? presented.boxes : [];
     // A live profile read: only when the profile is in the actor's markets (admin-market-scope).
     const accountName = cycle && canAccessMarket(actor, cycle.profileMarket) ? accountNameOf(cycle.accountDisplayName) : null;
     const shown = shownName(address, { accountName, email: cycle && cycle.customerEmail });
@@ -522,6 +527,7 @@ class CourierDeliveryService {
       delivery_instructions: contact.deliveryInstructions || null,
       delivery_instructions_source: 'profile',
       items: lineItems.map((line) => ({ flavor: line.flavor, quantity: line.quantity, pack_size: line.packSize || null })),
+      boxes,
       delivery_date: cycle ? cycle.deliveryDate || null : null,
       production_status: cycle ? cycle.productionStatus : null,
       subscription_status: cycle ? cycle.status : null,

@@ -376,11 +376,16 @@ class UpsClient {
     return { status, candidates };
   }
 
-  async createShipment({ shipFrom, shipTo, package: pkg, serviceCode }) {
+  // One shipment with one UPS package per box (shipping-boxes); a single `package` is still one package.
+  async createShipment({ shipFrom, shipTo, package: pkg, packages, serviceCode }) {
     this.ensureCanShip();
     const code = String(serviceCode || '03').trim() || '03';
+    const boxes = Array.isArray(packages) && packages.length > 0 ? packages : [pkg];
     // Rating calls this field PackagingType; Shipping refuses that name and wants Packaging.
-    const { PackagingType: packaging, ...packageBody } = this.buildPackage(pkg);
+    const packageEntries = boxes.map((box) => {
+      const { PackagingType: packaging, ...packageBody } = this.buildPackage(box);
+      return { ...packageBody, Packaging: packaging, Description: 'Eden Bowls' };
+    });
     const body = {
       ShipmentRequest: {
         Request: {
@@ -400,11 +405,7 @@ class UpsClient {
             }
           },
           Service: { Code: code, Description: serviceLabel(code) },
-          Package: {
-            ...packageBody,
-            Packaging: packaging,
-            Description: 'Eden Bowls'
-          }
+          Package: packageEntries.length === 1 ? packageEntries[0] : packageEntries
         },
         LabelSpecification: {
           LabelImageFormat: { Code: 'GIF', Description: 'GIF' },
@@ -420,8 +421,8 @@ class UpsClient {
     });
 
     const results = response?.ShipmentResponse?.ShipmentResults || response?.ShipmentResults || {};
-    const packageResults = results.PackageResults;
-    const firstPackage = Array.isArray(packageResults) ? packageResults[0] : packageResults;
+    const packageResults = [].concat(results.PackageResults || []);
+    const firstPackage = packageResults[0];
     const trackingNumber = String(
       firstPackage?.TrackingNumber
       || results.ShipmentIdentificationNumber
@@ -445,12 +446,19 @@ class UpsClient {
       });
     }
 
+    // UPS answers the packages in the order they were sent.
+    const packageLabels = packageResults.map((result) => ({
+      trackingNumber: String(result?.TrackingNumber || '').trim(),
+      labelBase64: String(result?.ShippingLabel?.GraphicImage || result?.ShippingLabel?.HTMLImage || '').trim()
+    }));
+
     return {
       upsShipmentId: shipmentId,
       trackingNumber,
       serviceCode: code,
       labelFormat: 'GIF',
       labelBase64,
+      packages: packageLabels.length > 0 ? packageLabels : [{ trackingNumber, labelBase64 }],
       monetaryValue: Number.isFinite(monetaryValue) ? monetaryValue : null,
       currency: String(results?.ShipmentCharges?.TotalCharges?.CurrencyCode || 'USD'),
       raw: response
@@ -459,10 +467,14 @@ class UpsClient {
 
   // UPS on-demand pickup (ups-pickup). One call per request: a timeout is never retried here, and the 401 retry is
   // off, as in createShipment, so UPS never gets a second pickup for the same boxes.
-  async createPickup({ pickupDate, readyTime, closeTime, packageCount, shipFrom = {}, serviceCode, weightLb }) {
+  // `totalWeightLb` is the weight of every box together (shipping-boxes); `packageCount` is the number of boxes.
+  async createPickup({ pickupDate, readyTime, closeTime, packageCount, shipFrom = {}, serviceCode, totalWeightLb }) {
     this.ensureCanShip();
     const count = Number(packageCount);
-    const weight = Number(weightLb) > 0 ? Number(weightLb) : 10;
+    if (!(Number(totalWeightLb) > 0)) {
+      throw new HttpError(400, 'Pickup total weight is required.', { code: 'invalid_pickup_weight' });
+    }
+    const weight = Number(totalWeightLb);
     const code = String(serviceCode || '03').trim() || '03';
     const body = {
       PickupCreationRequest: {
@@ -492,7 +504,7 @@ class UpsClient {
           DestinationCountryCode: 'US',
           ContainerCode: '01'
         }],
-        TotalWeight: { Weight: String(Math.round(weight * count * 10) / 10), UnitOfMeasurement: 'LBS' },
+        TotalWeight: { Weight: String(Math.round(weight * 10) / 10), UnitOfMeasurement: 'LBS' },
         OverweightIndicator: 'N',
         PaymentMethod: '01'
       }

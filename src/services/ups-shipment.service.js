@@ -10,6 +10,10 @@ const { isChargedDeliveryInvoice } = require('../core/contract-deliveries');
 const { invoiceReadinessReasons } = require('../core/dispatch-readiness');
 const { resolveDeliveryRange, dayAfter } = require('../core/delivery-range');
 const { effectivePickupStatus } = require('../core/ups-pickup-status');
+const { presentProductionQueueItem } = require('../core/production-queue-presenter');
+const { cyclePacks } = require('../core/pack-stock');
+const { planBoxes } = require('../core/shipping-boxes');
+const { DEFAULT_SETTINGS } = require('../infrastructure/shipping/shipping-settings');
 
 // The checkout recipient first (delivery-recipient); older subscriptions keep the name keys they may carry.
 function addressRecipient(address = {}) {
@@ -128,6 +132,15 @@ class UpsShipmentService {
       service_code: shipment.service_code,
       label_format: shipment.label_format,
       has_label: Boolean(shipment.label_path),
+      // shipping-boxes: one entry per box; a label bought before boxes has none.
+      packages: (shipment.packages || []).map((pkg) => ({
+        sequence: pkg.sequence,
+        box_key: pkg.box_key,
+        pack_count: pkg.pack_count,
+        weight_lb: pkg.weight_lb,
+        tracking_number: pkg.tracking_number,
+        has_label: Boolean(pkg.label_path)
+      })),
       quoted_shipping_cost: shipment.quoted_shipping_cost,
       ups_monetary_value: shipment.ups_monetary_value,
       status: shipment.status,
@@ -135,6 +148,54 @@ class UpsShipmentService {
       created_at: shipment.created_at,
       updated_at: shipment.updated_at
     };
+  }
+
+  // shipping-boxes: the package rows of each shipment, read for the page at once.
+  async withPackages(shipments) {
+    const list = shipments.filter(Boolean);
+    if (!list.length || typeof this.repository.listPackagesByShipmentIds !== 'function') {
+      return shipments;
+    }
+    const rows = await this.repository.listPackagesByShipmentIds(list.map((shipment) => shipment.id));
+    for (const shipment of list) {
+      shipment.packages = rows.filter((row) => row.shipment_id === Number(shipment.id));
+    }
+    return shipments;
+  }
+
+  // The boxes of the invoice's cycle, from the packs the kitchen separates (shipping-boxes). Unsized lines are
+  // logged and left out, as in the stock separation.
+  async boxPlanForInvoice(invoiceId, settings) {
+    if (!this.ledgerRepository || typeof this.ledgerRepository.listPaidCyclesByInvoiceIds !== 'function') {
+      return [];
+    }
+    const [cycle = null] = await this.ledgerRepository.listPaidCyclesByInvoiceIds([invoiceId]);
+    if (!cycle) {
+      return [];
+    }
+    const { lineItems } = presentProductionQueueItem(cycle);
+    const { packs, unsized } = cyclePacks({ subscriptionId: cycle.stripeSubscriptionId, periodEnd: cycle.cyclePeriodEnd, lineItems });
+    for (const line of unsized) {
+      this.logger.warn({ event: 'boxes.unsized_line', subscriptionId: line.subscriptionId, invoiceId, label: line.label }, 'boxes.unsized_line');
+    }
+    const dryIceKg = Number((settings.package || {}).dry_ice_kg);
+    return planBoxes({
+      packs,
+      boxes: settings.boxes || DEFAULT_SETTINGS.us.boxes,
+      dryIceKg: Number.isFinite(dryIceKg) ? dryIceKg : DEFAULT_SETTINGS.us.package.dry_ice_kg
+    });
+  }
+
+  async writeLabel(invoiceId, format, base64, shipmentId) {
+    if (!base64 || !this.labelStorage) {
+      return null;
+    }
+    try {
+      return await this.labelStorage.write({ invoiceId, format: format || 'gif', buffer: Buffer.from(base64, 'base64') });
+    } catch (error) {
+      this.logger.error({ shipmentId, code: error && error.code }, 'UPS label file could not be stored.');
+      return null;
+    }
   }
 
   async requireSubscriptionInScope(subscriptionId, actor) {
@@ -167,7 +228,7 @@ class UpsShipmentService {
   async listForSubscription(subscriptionId, actor = {}) {
     this.ensureRepository();
     const subscription = await this.requireSubscriptionInScope(subscriptionId, actor);
-    const items = await this.repository.listBySubscriptionId(subscriptionId);
+    const items = await this.withPackages(await this.repository.listBySubscriptionId(subscriptionId));
     return {
       success: true,
       data: {
@@ -212,7 +273,7 @@ class UpsShipmentService {
     const readyPage = cycles.slice(0, QUEUE_LIMIT);
     const seen = new Set(readyPage.map((cycle) => cycle.paidInvoiceId));
     const page = [...readyPage, ...atWork.filter((cycle) => !seen.has(cycle.paidInvoiceId))];
-    const shipments = await this.repository.listActiveByInvoiceIds(page.map((cycle) => cycle.paidInvoiceId));
+    const shipments = await this.withPackages(await this.repository.listActiveByInvoiceIds(page.map((cycle) => cycle.paidInvoiceId)));
     const byInvoice = new Map(shipments.map((shipment) => [shipment.stripe_invoice_id, shipment]));
     const configured = Boolean(this.upsClient && this.upsClient.isConfigured());
     const data = {
@@ -326,6 +387,9 @@ class UpsShipmentService {
       ? settings.allowed_service_codes[0]
       : '03';
 
+    // shipping-boxes: one UPS package per box; a cycle without sized packs ships the settings package.
+    const plan = await this.boxPlanForInvoice(invoice, settings);
+
     const pending = await this.repository.insertPending({
       subscriptionId: String(subscription.id || subscriptionId),
       invoiceId: invoice,
@@ -347,6 +411,7 @@ class UpsShipmentService {
         shipFrom,
         shipTo,
         package: settings.package,
+        ...(plan.length ? { packages: plan } : {}),
         serviceCode
       });
     } catch (error) {
@@ -376,16 +441,22 @@ class UpsShipmentService {
       return { success: true, data: { shipment: this.present(recovered), reused: true } };
     }
 
-    let labelPath = null;
-    if (created.labelBase64 && this.labelStorage) {
-      try {
-        labelPath = await this.labelStorage.write({
-          invoiceId: invoice,
-          format: created.labelFormat || 'gif',
-          buffer: Buffer.from(created.labelBase64, 'base64')
+    const labelPath = await this.writeLabel(invoice, created.labelFormat, created.labelBase64, pending.id);
+    // The first package's label is the shipment's; the others get a file each.
+    const packageRows = [];
+    if (plan.length) {
+      const results = Array.isArray(created.packages) ? created.packages : [];
+      for (const [index, box] of plan.entries()) {
+        const result = results[index] || {};
+        packageRows.push({
+          sequence: index + 1,
+          boxKey: box.key,
+          packCount: box.pack_count,
+          weightLb: box.weight_lb,
+          dryIceKg: box.dry_ice_kg || null,
+          trackingNumber: result.trackingNumber || (index === 0 ? created.trackingNumber : null),
+          labelPath: index === 0 ? labelPath : await this.writeLabel(invoice, created.labelFormat, result.labelBase64, pending.id)
         });
-      } catch (error) {
-        this.logger.error({ shipmentId: pending.id, code: error && error.code }, 'UPS label file could not be stored.');
       }
     }
 
@@ -408,6 +479,25 @@ class UpsShipmentService {
         code: error && error.code
       }, 'UPS bought a label that could not be saved.');
       throw error;
+    }
+
+    if (packageRows.length && typeof this.repository.insertPackages === 'function') {
+      try {
+        await this.repository.insertPackages(pending.id, packageRows);
+      } catch (error) {
+        this.logger.error({ shipmentId: pending.id, code: error && error.code }, 'UPS package rows could not be saved.');
+        throw error;
+      }
+      if (saved) saved.packages = packageRows.map((row) => ({
+        shipment_id: pending.id,
+        sequence: row.sequence,
+        box_key: row.boxKey,
+        pack_count: row.packCount,
+        weight_lb: row.weightLb,
+        dry_ice_kg: row.dryIceKg,
+        tracking_number: row.trackingNumber,
+        label_path: row.labelPath
+      }));
     }
 
     await this.auditPurchase(actor, subscription, saved, invoice, reasons);
@@ -553,12 +643,30 @@ class UpsShipmentService {
     return mailed;
   }
 
-  async getLabel(shipmentId, actor = {}) {
+  // `packageNumber` (1-based) picks one box's label; without it, or on a label bought before boxes, the first.
+  async getLabel(shipmentId, actor = {}, packageNumber = null) {
     const shipment = await this.requireShipmentInScope(shipmentId, actor);
-    if (!shipment.label_path || !this.labelStorage) {
-      throw new HttpError(404, 'Label file not found.', { code: 'label_not_found' });
+    const notFound = () => new HttpError(404, 'Label file not found.', { code: 'label_not_found' });
+    let labelPath = shipment.label_path;
+    if (packageNumber != null && packageNumber !== '') {
+      const sequence = Number(packageNumber);
+      if (!Number.isInteger(sequence) || sequence < 1) {
+        throw notFound();
+      }
+      await this.withPackages([shipment]);
+      const packages = shipment.packages || [];
+      if (packages.length) {
+        const found = packages.find((pkg) => pkg.sequence === sequence);
+        if (!found) throw notFound();
+        labelPath = found.label_path;
+      } else if (sequence !== 1) {
+        throw notFound();
+      }
     }
-    const buffer = await this.labelStorage.read(shipment.label_path);
+    if (!labelPath || !this.labelStorage) {
+      throw notFound();
+    }
+    const buffer = await this.labelStorage.read(labelPath);
     if (!buffer) {
       throw new HttpError(404, 'Label file not found.', { code: 'label_not_found' });
     }
@@ -568,7 +676,7 @@ class UpsShipmentService {
       contentType: String(shipment.label_format || '').toUpperCase() === 'PDF'
         ? 'application/pdf'
         : 'image/gif',
-      filename: shipment.label_path
+      filename: labelPath
     };
   }
 
@@ -595,6 +703,7 @@ class UpsShipmentService {
     this.ensureUps();
     await this.upsClient.voidShipment(shipment.ups_shipment_id);
     const voided = await this.repository.markVoided(shipment.id);
+    await this.withPackages([voided]);
     return { success: true, data: { shipment: this.present(voided) } };
   }
 
@@ -606,6 +715,7 @@ class UpsShipmentService {
     }
     const raw = await this.upsClient.track(shipment.tracking_number);
     const { shipment: updated } = await this.recordTracking(shipment, raw);
+    await this.withPackages([updated]);
     return { success: true, data: { shipment: this.present(updated) } };
   }
 }

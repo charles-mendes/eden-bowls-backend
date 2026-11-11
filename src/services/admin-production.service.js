@@ -72,6 +72,21 @@ function stockMoveFor(fromStatus, toStatus) {
   return null;
 }
 
+// A line without a pack size stays out of the boxes, as it stays out of the stock separation.
+function warnUnsizedBoxLines(logger, lines) {
+  if (!logger || typeof logger.warn !== 'function') {
+    return;
+  }
+  for (const line of lines) {
+    logger.warn({
+      event: 'boxes.unsized_line',
+      subscriptionId: line.subscriptionId,
+      periodEnd: line.periodEnd || null,
+      label: line.label
+    }, 'boxes.unsized_line');
+  }
+}
+
 function emptyMetrics() {
   return { today: 0, tomorrow: 0, upcoming: 0, overdue: 0 };
 }
@@ -133,6 +148,9 @@ class AdminProductionService {
     this.recipeNamesRepository = options.recipeNamesRepository || null;
     this.packStock = options.packStock || null;
     this.now = options.now || (() => new Date());
+    // The live shipping settings, for the boxes of each cycle (shipping-boxes).
+    this.shippingSettings = options.shippingSettings || (() => null);
+    this.logger = options.logger || null;
   }
 
   // Coverage is extra information: without stock storage, or if it fails, the queue lists as before.
@@ -167,7 +185,9 @@ class AdminProductionService {
       timezone,
       now: this.now(),
       actor,
-      recipeNames
+      recipeNames,
+      shippingSettings: this.shippingSettings(),
+      onUnsizedLines: (lines) => warnUnsizedBoxLines(this.logger, lines)
     });
   }
 

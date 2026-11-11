@@ -7,6 +7,9 @@ const { parseJsonColumn } = require('./stripe-subscription-map');
 const { canAccessMarket } = require('./admin-market-scope');
 const { parseWeightToGrams } = require('./plan-catalog-pricing');
 const { brazilAddressIssues } = require('./delivery-address-check');
+const { cyclePacks } = require('./pack-stock');
+const { planBoxes } = require('./shipping-boxes');
+const { DEFAULT_SETTINGS } = require('../infrastructure/shipping/shipping-settings');
 
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 
@@ -214,6 +217,23 @@ function shownName(address, { accountName, email } = {}) {
   return { name: String(email || ''), source: 'email' };
 }
 
+// The cycle's boxes (shipping-boxes), from the packs the kitchen separates. Dry ice goes only in a US box.
+function boxesFor(row, lineItems, { stripeAccount, country, shippingSettings, onUnsizedLines }) {
+  const us = (shippingSettings && shippingSettings.us) || DEFAULT_SETTINGS.us;
+  const { packs, unsized } = cyclePacks({
+    subscriptionId: String(row.stripeSubscriptionId || row.stripe_subscription_id || row.id || ''),
+    periodEnd: row.cyclePeriodEnd || row.currentPeriodEnd || row.current_period_end || null,
+    lineItems
+  });
+  if (unsized.length && typeof onUnsizedLines === 'function') {
+    onUnsizedLines(unsized);
+  }
+  const isUs = stripeAccount !== 'br' && country !== 'BR';
+  const dryIceKg = isUs ? Number((us.package || DEFAULT_SETTINGS.us.package).dry_ice_kg) || 0 : 0;
+  return planBoxes({ packs, boxes: us.boxes || DEFAULT_SETTINGS.us.boxes, dryIceKg })
+    .map((box) => ({ key: box.key, label: box.label, pack_count: box.pack_count, weight_kg: box.weight_kg }));
+}
+
 function presentProductionQueueItem(row, options = {}) {
   const timezone = options.timezone || DEFAULT_TIMEZONE;
   const now = options.now || new Date();
@@ -278,7 +298,13 @@ function presentProductionQueueItem(row, options = {}) {
     stripeAccount,
     customerProfileInScope,
     dense: lineItems.length > 3 || packSizeLabel === 'misto',
-    lineItems
+    lineItems,
+    boxes: boxesFor(row, lineItems, {
+      stripeAccount,
+      country,
+      shippingSettings: options.shippingSettings,
+      onUnsizedLines: options.onUnsizedLines
+    })
   };
 }
 

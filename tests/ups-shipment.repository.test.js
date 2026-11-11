@@ -160,3 +160,32 @@ describe('AddUpsShipmentsActiveInvoiceUnique1700000000030', () => {
     expect(query.mock.calls[0][0]).toContain("`status` = 'created' AND `pickup_id` IS NULL AND `in_transit_at` IS NULL AND `out_for_delivery_at` IS NULL");
   });
 });
+
+describe('UpsShipmentRepository packages', () => {
+  test('inserts one row per package in sequence', async () => {
+    const query = jest.fn().mockResolvedValue({ affectedRows: 2 });
+
+    await repositoryWith(query).insertPackages(9, [
+      { sequence: 1, boxKey: 'monthly', packCount: 30, weightLb: 37.5, dryIceKg: 0.5, trackingNumber: '1ZBOX1', labelPath: 'label-1.gif' },
+      { sequence: 2, boxKey: 'monthly', packCount: 15, weightLb: 21, dryIceKg: 0.5, trackingNumber: '1ZBOX2', labelPath: 'label-2.gif' }
+    ]);
+
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain('INSERT INTO `ups_shipment_packages`');
+    expect(sql).toContain('VALUES (?, ?, ?, ?, ?, ?, ?, ?), (?, ?, ?, ?, ?, ?, ?, ?)');
+    expect(params).toEqual([9, 1, 'monthly', 30, 37.5, 0.5, '1ZBOX1', 'label-1.gif', 9, 2, 'monthly', 15, 21, 0.5, '1ZBOX2', 'label-2.gif']);
+  });
+
+  test('lists the packages of several shipments in order, nothing for no ids', async () => {
+    const query = jest.fn().mockResolvedValue([{ shipment_id: '9', sequence: '1', box_key: 'starter', pack_count: '8', weight_lb: '9.9', dry_ice_kg: '0.5', tracking_number: '1Z', label_path: null }]);
+    const repository = repositoryWith(query);
+
+    expect(await repository.listPackagesByShipmentIds([])).toEqual([]);
+    expect(query).not.toHaveBeenCalled();
+    expect(await repository.listPackagesByShipmentIds([9, 9, 4])).toEqual([
+      { shipment_id: 9, sequence: 1, box_key: 'starter', pack_count: 8, weight_lb: 9.9, dry_ice_kg: 0.5, tracking_number: '1Z', label_path: null }
+    ]);
+    expect(query.mock.calls[0][1]).toEqual([9, 4]);
+    expect(query.mock.calls[0][0]).toContain('ORDER BY `shipment_id`, `sequence`');
+  });
+});

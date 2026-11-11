@@ -804,6 +804,7 @@ async function bootstrap() {
   });
   const upsPickupService = new UpsPickupService({
     repository: upsPickupRepository,
+    shipmentRepository: upsShipmentRepository,
     upsClient,
     shippingService,
     calendar: deliveryCalendar,
@@ -836,6 +837,7 @@ async function bootstrap() {
     auditService: adminAuditService,
     transactionalMailer,
     addressIssueService,
+    shippingSettings: () => shippingService.settings,
     logger
   });
   const adminCatalogRepository = new AdminCatalogRepository(dataSource, {
@@ -886,7 +888,9 @@ async function bootstrap() {
     productionRepository: subscriptionProductionRepository,
     auditService: adminAuditService,
     customerDeliveriesService,
-    packStockService: adminPackStockService
+    packStockService: adminPackStockService,
+    shippingSettings: () => shippingService.settings,
+    logger
   });
   const adminReportsService = new AdminReportsService({
     repository: new AdminReportsRepository(dataSource),

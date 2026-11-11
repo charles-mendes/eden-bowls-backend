@@ -8,6 +8,57 @@ class UpsShipmentRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
     this.tableName = options.tableName || 'ups_shipments';
+    this.packagesTableName = options.packagesTableName || 'ups_shipment_packages';
+  }
+
+  mapPackageRow(row) {
+    return {
+      shipment_id: Number(row.shipment_id),
+      sequence: Number(row.sequence),
+      box_key: row.box_key || null,
+      pack_count: Number(row.pack_count) || 0,
+      weight_lb: row.weight_lb == null ? null : Number(row.weight_lb),
+      dry_ice_kg: row.dry_ice_kg == null ? null : Number(row.dry_ice_kg),
+      tracking_number: row.tracking_number || null,
+      label_path: row.label_path || null
+    };
+  }
+
+  // One row per UPS package of a label (shipping-boxes), sequence from 1 in the order UPS was sent them.
+  async insertPackages(shipmentId, packages = []) {
+    this.ensureDataSource();
+    if (!packages.length) {
+      return;
+    }
+    const params = packages.flatMap((pkg) => [
+      Number(shipmentId),
+      Number(pkg.sequence),
+      pkg.boxKey || null,
+      Number(pkg.packCount) || 0,
+      Number(pkg.weightLb),
+      pkg.dryIceKg == null ? null : Number(pkg.dryIceKg),
+      pkg.trackingNumber || null,
+      pkg.labelPath || null
+    ]);
+    await this.dataSource.query(
+      `INSERT INTO \`${this.packagesTableName}\` (
+        \`shipment_id\`, \`sequence\`, \`box_key\`, \`pack_count\`, \`weight_lb\`, \`dry_ice_kg\`, \`tracking_number\`, \`label_path\`
+      ) VALUES ${packages.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`,
+      params
+    );
+  }
+
+  async listPackagesByShipmentIds(shipmentIds = []) {
+    this.ensureDataSource();
+    const ids = [...new Set((shipmentIds || []).map(Number).filter((id) => id > 0))];
+    if (!ids.length) {
+      return [];
+    }
+    const rows = await this.dataSource.query(
+      `SELECT * FROM \`${this.packagesTableName}\` WHERE \`shipment_id\` IN (${ids.map(() => '?').join(', ')}) ORDER BY \`shipment_id\`, \`sequence\``,
+      ids
+    );
+    return (Array.isArray(rows) ? rows : []).map((row) => this.mapPackageRow(row));
   }
 
   ensureDataSource() {

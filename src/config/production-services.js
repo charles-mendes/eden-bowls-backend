@@ -3,7 +3,7 @@ const { AdminPackStockService } = require('../services/admin-pack-stock.service'
 
 // The production queue moves the charge when the kitchen blocks a cycle before preparation, so it needs the
 // delivery calendar (the customer deliveries service). index.js and the wiring test both build it here.
-function createAdminProductionService({ ledgerRepository, productionRepository, auditService, customerDeliveriesService, recipeNamesRepository, packStockService, now }) {
+function createAdminProductionService({ ledgerRepository, productionRepository, auditService, customerDeliveriesService, recipeNamesRepository, packStockService, shippingSettings, logger, now }) {
   return new AdminProductionService({
     ledgerRepository,
     productionRepository,
@@ -11,6 +11,8 @@ function createAdminProductionService({ ledgerRepository, productionRepository, 
     recipeNamesRepository,
     deliverySchedule: customerDeliveriesService,
     packStock: packStockService || null,
+    ...(shippingSettings ? { shippingSettings } : {}),
+    ...(logger ? { logger } : {}),
     ...(now ? { now } : {})
   });
 }

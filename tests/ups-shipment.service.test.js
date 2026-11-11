@@ -152,6 +152,96 @@ describe('UpsShipmentService label guards', () => {
     });
   });
 
+  test('Two boxes: one UPS call with two packages, two package rows and one active shipment', async () => {
+    const usCycle = {
+      paidInvoiceId: 'in_1',
+      productionStatus: 'ready',
+      stripeSubscriptionId: 'sub_123',
+      stripeAccount: 'us',
+      planSelection: { catalog_pricing: { line_items: [
+        { flavor: 'beef', flavor_label: 'Beef', quantity: 25, pack_size_grams: 500 },
+        { flavor: 'chicken', flavor_label: 'Chicken', quantity: 20, pack_size_grams: 500 }
+      ] } }
+    };
+    const repository = {
+      findActiveByInvoiceId: jest.fn().mockResolvedValue(null),
+      insertPending: jest.fn().mockResolvedValue({ id: 9 }),
+      findByUpsShipmentId: jest.fn().mockResolvedValue(null),
+      markCreated: jest.fn().mockResolvedValue({ id: 9, tracking_number: '1ZBOX1', status: 'created', label_path: 'label-1.gif' }),
+      insertPackages: jest.fn().mockResolvedValue(undefined),
+      deletePending: jest.fn(),
+      markUnknown: jest.fn()
+    };
+    const labelStorage = { write: jest.fn().mockResolvedValueOnce('label-1.gif').mockResolvedValueOnce('label-2.gif') };
+    const upsClient = {
+      isConfigured: () => true,
+      createShipment: jest.fn().mockResolvedValue({
+        upsShipmentId: '1ZSHIP', trackingNumber: '1ZBOX1', serviceCode: '03', labelFormat: 'GIF', labelBase64: 'R0lGMQ==',
+        packages: [{ trackingNumber: '1ZBOX1', labelBase64: 'R0lGMQ==' }, { trackingNumber: '1ZBOX2', labelBase64: 'R0lGMg==' }]
+      })
+    };
+    const { service } = buildService({
+      repository,
+      upsClient,
+      labelStorage,
+      ledgerRepository: { listPaidCyclesByInvoiceIds: jest.fn().mockResolvedValue([usCycle]), findById: jest.fn() }
+    });
+    service.shippingService.settings.us.package = { weight_lb: 37.5, length_in: 18, width_in: 14, height_in: 12, dry_ice_kg: 0.5 };
+
+    const result = await create(service);
+
+    expect(upsClient.createShipment).toHaveBeenCalledTimes(1);
+    const { packages } = upsClient.createShipment.mock.calls[0][0];
+    expect(packages.map((box) => [box.key, box.pack_count, box.weight_lb, box.dry_ice_kg])).toEqual([
+      ['monthly', 30, 37.5, 0.5],
+      ['monthly', 15, 21, 0.5]
+    ]);
+    expect(packages[0]).toMatchObject({ length_in: 18, width_in: 14, height_in: 12 });
+    expect(repository.insertPending).toHaveBeenCalledTimes(1);
+    expect(repository.markCreated).toHaveBeenCalledWith(9, expect.objectContaining({ trackingNumber: '1ZBOX1', labelPath: 'label-1.gif' }));
+    expect(repository.insertPackages).toHaveBeenCalledWith(9, [
+      { sequence: 1, boxKey: 'monthly', packCount: 30, weightLb: 37.5, dryIceKg: 0.5, trackingNumber: '1ZBOX1', labelPath: 'label-1.gif' },
+      { sequence: 2, boxKey: 'monthly', packCount: 15, weightLb: 21, dryIceKg: 0.5, trackingNumber: '1ZBOX2', labelPath: 'label-2.gif' }
+    ]);
+    expect(result.data.shipment.packages).toEqual([
+      { sequence: 1, box_key: 'monthly', pack_count: 30, weight_lb: 37.5, tracking_number: '1ZBOX1', has_label: true },
+      { sequence: 2, box_key: 'monthly', pack_count: 15, weight_lb: 21, tracking_number: '1ZBOX2', has_label: true }
+    ]);
+  });
+
+  test('Cycle without sized packs: the settings package is the one package', async () => {
+    const repository = {
+      findActiveByInvoiceId: jest.fn().mockResolvedValue(null),
+      insertPending: jest.fn().mockResolvedValue({ id: 9 }),
+      findByUpsShipmentId: jest.fn().mockResolvedValue(null),
+      markCreated: jest.fn().mockResolvedValue({ id: 9, tracking_number: '1Z1', status: 'created' }),
+      insertPackages: jest.fn(),
+      deletePending: jest.fn(),
+      markUnknown: jest.fn()
+    };
+    const logger = { error: jest.fn(), warn: jest.fn(), info: jest.fn() };
+    const { service } = buildService({
+      repository,
+      logger,
+      ledgerRepository: {
+        listPaidCyclesByInvoiceIds: jest.fn().mockResolvedValue([{
+          paidInvoiceId: 'in_1', productionStatus: 'ready', stripeSubscriptionId: 'sub_123',
+          planSelection: { catalog_pricing: { line_items: [{ flavor: 'beef', flavor_label: 'Beef', quantity: 4 }] } }
+        }]),
+        findById: jest.fn()
+      }
+    });
+    service.shippingService.settings.us.package = { weight_lb: 37.5, length_in: 18, width_in: 14, height_in: 12, dry_ice_kg: 0.5 };
+
+    await create(service);
+
+    const request = service.upsClient.createShipment.mock.calls[0][0];
+    expect(request.packages).toBeUndefined();
+    expect(request.package).toMatchObject({ weight_lb: 37.5, length_in: 18 });
+    expect(repository.insertPackages).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'boxes.unsized_line', invoiceId: 'in_1' }), 'boxes.unsized_line');
+  });
+
   test('prints the account name when the address has none', async () => {
     const { service } = buildService({
       addressName: '',

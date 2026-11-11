@@ -32,6 +32,7 @@ function setup(overrides = {}) {
     upsClient,
     auditService,
     calendar,
+    shipmentRepository: overrides.shipmentRepository,
     shippingService: { settings: { us: { ship_from: overrides.shipFrom || shipFrom, package: { weight_lb: 10 }, allowed_service_codes: ['03'] } } },
     now: () => overrides.now || MONDAY
   });
@@ -65,9 +66,34 @@ describe('UpsPickupService.request', () => {
 
     expect(repository.reserve).toHaveBeenCalledWith(expect.objectContaining({ pickupDate: '2026-11-09', packageCount: 8, shipmentIds: eight, requestedBy: 'ops@edenbowls.com' }));
     expect(upsClient.createPickup).toHaveBeenCalledTimes(1);
-    expect(upsClient.createPickup).toHaveBeenCalledWith(expect.objectContaining({ packageCount: 8, shipFrom, serviceCode: '03', weightLb: 10 }));
+    expect(upsClient.createPickup).toHaveBeenCalledWith(expect.objectContaining({ packageCount: 8, shipFrom, serviceCode: '03', totalWeightLb: 80 }));
     expect(result.data.pickup).toMatchObject({ status: 'requested', prn: '2929602E9CP' });
     expect(auditService.record).toHaveBeenCalledWith(expect.objectContaining({ action: 'ups_pickup.request', metadata: expect.objectContaining({ pickupId: 9, prn: '2929602E9CP' }) }));
+  });
+
+  test('Two labels with three boxes: UPS receives the 67.6 lb of the packages, with 3 boxes', async () => {
+    const shipmentRepository = {
+      listPackagesByShipmentIds: jest.fn().mockResolvedValue([
+        { shipment_id: 1, sequence: 1, weight_lb: 37.5 },
+        { shipment_id: 1, sequence: 2, weight_lb: 20.2 },
+        { shipment_id: 2, sequence: 1, weight_lb: 9.9 }
+      ])
+    };
+    const { service, upsClient } = setup({ shipmentRepository });
+
+    await service.request({ actor: admin, body: body({ package_count: 3, shipment_ids: [1, 2] }) });
+
+    expect(shipmentRepository.listPackagesByShipmentIds).toHaveBeenCalledWith([1, 2]);
+    expect(upsClient.createPickup).toHaveBeenCalledWith(expect.objectContaining({ packageCount: 3, totalWeightLb: 67.6 }));
+  });
+
+  test('a label bought before boxes counts as one settings package', async () => {
+    const shipmentRepository = { listPackagesByShipmentIds: jest.fn().mockResolvedValue([{ shipment_id: 1, sequence: 1, weight_lb: 37.5 }]) };
+    const { service, upsClient } = setup({ shipmentRepository });
+
+    await service.request({ actor: admin, body: body({ package_count: 2, shipment_ids: [1, 2] }) });
+
+    expect(upsClient.createPickup).toHaveBeenCalledWith(expect.objectContaining({ packageCount: 2, totalWeightLb: 47.5 }));
   });
 
   test('a count different from the labels is kept', async () => {

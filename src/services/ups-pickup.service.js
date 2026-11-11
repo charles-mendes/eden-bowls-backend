@@ -1,3 +1,4 @@
+const { DEFAULT_SETTINGS } = require('../infrastructure/shipping/shipping-settings');
 const { HttpError } = require('../core/http-error');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { TIMEZONE_US, addCalendarDays, dateKey, flagOn, localDate, parseDateKey, weekday } = require('../core/delivery-closed-days');
@@ -62,6 +63,8 @@ class UpsPickupService {
     this.upsClient = options.upsClient || null;
     this.shippingService = options.shippingService || null;
     this.calendar = options.calendar || null;
+    // The label packages (shipping-boxes), for the pickup weight.
+    this.shipmentRepository = options.shipmentRepository || null;
     this.auditService = options.auditService || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.now = options.now || (() => new Date());
@@ -129,6 +132,19 @@ class UpsPickupService {
     return { ids: [...new Set(ids)], count, readyTime, closeTime, pickupDate, settings, shipFrom };
   }
 
+  // shipping-boxes: the weight of every box of the labels; a label without package rows is one settings package.
+  async totalWeightLb(shipmentIds, settings) {
+    const fallback = Number((settings.package || {}).weight_lb) || DEFAULT_SETTINGS.us.package.weight_lb;
+    const rows = this.shipmentRepository && typeof this.shipmentRepository.listPackagesByShipmentIds === 'function'
+      ? await this.shipmentRepository.listPackagesByShipmentIds(shipmentIds)
+      : [];
+    const total = shipmentIds.reduce((sum, id) => {
+      const packages = rows.filter((row) => row.shipment_id === Number(id));
+      return sum + (packages.length ? packages.reduce((part, row) => part + Number(row.weight_lb || 0), 0) : fallback);
+    }, 0);
+    return Math.round(total * 10) / 10;
+  }
+
   async request({ actor = {}, body = {} } = {}) {
     this.ensureRepository();
     this.ensureUps();
@@ -152,6 +168,7 @@ class UpsPickupService {
     }
     const { pickup } = reserved;
     const codes = Array.isArray(input.settings.allowed_service_codes) ? input.settings.allowed_service_codes : [];
+    const totalWeightLb = await this.totalWeightLb(input.ids, input.settings);
 
     let created;
     try {
@@ -162,7 +179,7 @@ class UpsPickupService {
         packageCount: input.count,
         shipFrom: input.shipFrom,
         serviceCode: codes[0] || '03',
-        weightLb: input.settings.package && input.settings.package.weight_lb
+        totalWeightLb
       });
     } catch (error) {
       if (upsRejectedShipment(error)) {

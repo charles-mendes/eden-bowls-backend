@@ -272,4 +272,48 @@ describe('AdminShippingService › US simulation', () => {
 
     expect(result.data.ups.steps).toEqual([expect.objectContaining({ key: 'oauth', status: 'error' })]);
   });
+
+  describe('US boxes', () => {
+    const stored = {
+      us: {
+        package: { weight_lb: 37.5, length_in: 18, width_in: 14, height_in: 12, dry_ice_kg: 0.5 },
+        boxes: {
+          starter: { label: 'Starter Box', length_in: 14, width_in: 12, height_in: 8, empty_weight_kg: 1, max_packs: 10 },
+          monthly: { label: 'Caixa mensal', length_in: 18, width_in: 14, height_in: 12, empty_weight_kg: 1.5, max_packs: 30 }
+        }
+      }
+    };
+
+    function setup() {
+      const repository = { get: jest.fn().mockResolvedValue(stored), save: jest.fn(async () => stored) };
+      return { repository, service: new AdminShippingService({ repository, shippingService: { settings: stored } }) };
+    }
+
+    test('Operator records the weighed box: 1.7 kg empty is saved', async () => {
+      const { repository, service } = setup();
+
+      await service.saveSettings({ us: { boxes: { monthly: { empty_weight_kg: 1.7 } } } });
+
+      expect(repository.save).toHaveBeenCalledWith({ us: { boxes: { monthly: { empty_weight_kg: 1.7 } } } });
+    });
+
+    test.each([
+      ['Starter not smaller than the monthly', { starter: { max_packs: 30 } }],
+      ['zero side', { starter: { height_in: 0 } }],
+      ['side above 108 in', { monthly: { length_in: 109 } }],
+      ['empty weight below 0.1 kg', { monthly: { empty_weight_kg: 0.05 } }],
+      ['empty weight above 10 kg', { starter: { empty_weight_kg: 11 } }],
+      ['fractional max packs', { monthly: { max_packs: 30.5 } }],
+      ['max packs above 100', { monthly: { max_packs: 101 } }],
+      ['not a number', { monthly: { width_in: 'wide' } }]
+    ])('%s: answers 422 invalid_shipping_box and stores nothing', async (_name, boxes) => {
+      const { repository, service } = setup();
+
+      await expect(service.saveSettings({ us: { boxes } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'invalid_shipping_box' }
+      });
+      expect(repository.save).not.toHaveBeenCalled();
+    });
+  });
 });
