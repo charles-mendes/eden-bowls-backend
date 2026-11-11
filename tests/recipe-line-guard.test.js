@@ -172,7 +172,7 @@ describe('subscription checkout checks the saved plan', () => {
     return { service, stripeBilling, repository };
   }
 
-  const payload = { paymentMethodId: 'pm_123', billing: { first_name: 'Jane', last_name: 'Doe' }, legal_consent: { accepted: true } };
+  const payload = { paymentMethodId: 'pm_123', billing: { first_name: 'Jane', last_name: 'Doe' }, legal_consent: { accepted: true }, renewal_consent: { accepted: true } };
 
   test('a puppy with an adult recipe is refused and no subscription is created', async () => {
     const { service, stripeBilling, repository } = checkoutFor([petWith(DOGS.puppy, ['beef'])]);

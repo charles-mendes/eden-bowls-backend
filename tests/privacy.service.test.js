@@ -157,13 +157,33 @@ describe('PrivacyService', () => {
     test('Checkout with a version the store loaded before a publication', async () => {
       const { service, repository } = createService({ options: { legalDocuments } });
 
-      await service.recordCheckoutConsents({ userId: 77, market: 'BR', privacyVersion: '2026-09-13', termsVersion: '2026-09-13', ipHash: 'abc', userAgent: 'jest' });
+      await service.recordCheckoutConsents({ userId: 77, market: 'BR', privacyVersion: '2026-09-13', termsVersion: '2026-09-13', renewalVersion: '2026-11-10', ipHash: 'abc', userAgent: 'jest' });
 
-      expect(repository.insertConsent).toHaveBeenCalledTimes(2);
-      expect(repository.insertConsent.mock.calls.map(([input]) => [input.consentType, input.status, input.documentVersion, input.source, input.ipHash])).toEqual([
-        ['privacy_policy', 'granted', '2026-09-13', 'checkout', 'abc'],
-        ['terms', 'granted', '2026-09-13', 'checkout', 'abc']
+      expect(repository.insertConsent).toHaveBeenCalledTimes(3);
+      expect(repository.insertConsent.mock.calls.map(([input]) => [input.consentType, input.status, input.documentVersion, input.source, input.ipHash, input.userAgent])).toEqual([
+        ['privacy_policy', 'granted', '2026-09-13', 'checkout', 'abc', 'jest'],
+        ['terms', 'granted', '2026-09-13', 'checkout', 'abc', 'jest'],
+        ['auto_renewal', 'granted', '2026-11-10', 'checkout', 'abc', 'jest']
       ]);
+    });
+
+    test('Accepted checkout without a renewal version records checkout-v1 after the terms', async () => {
+      const { service, repository } = createService({ options: { legalDocuments } });
+
+      await service.recordCheckoutConsents({ userId: 77, market: 'US', privacyVersion: '2026-09-13', termsVersion: '2026-09-13' });
+
+      expect(repository.insertConsent.mock.calls.map(([input]) => input.consentType)).toEqual(['privacy_policy', 'terms', 'auto_renewal']);
+      expect(repository.insertConsent.mock.calls[2][0]).toMatchObject({ consentType: 'auto_renewal', documentVersion: 'checkout-v1', source: 'checkout' });
+    });
+
+    test('a renewal version unknown to the legal documents is recorded as sent', async () => {
+      const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+      const { service, repository } = createService({ options: { legalDocuments, logger } });
+
+      await service.recordCheckoutConsents({ userId: 77, market: 'US', privacyVersion: '2026-09-13', termsVersion: '2026-09-13', renewalVersion: '2030-01-01' });
+
+      expect(repository.insertConsent.mock.calls[2][0].documentVersion).toBe('2030-01-01');
+      expect(logger.warn).not.toHaveBeenCalled();
     });
 
     test('Checkout with an unknown version', async () => {

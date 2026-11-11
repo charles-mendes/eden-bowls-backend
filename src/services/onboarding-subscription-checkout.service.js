@@ -138,12 +138,14 @@ class OnboardingSubscriptionCheckoutService {
       throw new HttpError(503, 'The consent trail is not available.', { code: 'legal_consent_unavailable' });
     }
     const consent = payload.legal_consent || {};
+    const renewal = payload.renewal_consent || {};
     try {
       await this.privacyService.recordCheckoutConsents({
         userId,
         market,
         privacyVersion: consent.privacy_version,
         termsVersion: consent.terms_version,
+        renewalVersion: renewal.version,
         ipHash: requestContext.ipHash,
         userAgent: requestContext.userAgent
       });
@@ -164,6 +166,12 @@ class OnboardingSubscriptionCheckoutService {
     if (!payload.legal_consent || payload.legal_consent.accepted !== true) {
       throw new HttpError(422, 'Accepting the Terms of Service and Privacy Policy is required.', {
         code: 'legal_consent_required'
+      });
+    }
+
+    if (!payload.renewal_consent || payload.renewal_consent.accepted !== true) {
+      throw new HttpError(422, 'Accepting the automatic renewal is required.', {
+        code: 'renewal_consent_required'
       });
     }
 

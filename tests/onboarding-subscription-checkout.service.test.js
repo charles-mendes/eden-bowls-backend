@@ -119,7 +119,8 @@ const payload = {
   billing: { first_name: 'Jane', last_name: 'Doe' },
   tax_document: '529.982.247-25',
   fiscal_name: 'Jane Doe',
-  legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' }
+  legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' },
+  renewal_consent: { accepted: true, version: '2026-11-10' }
 };
 
 describe('OnboardingSubscriptionCheckoutService', () => {
@@ -151,7 +152,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('rejects checkout without a Stripe payment method', async () => {
     const { service, stripeBilling } = buildService();
 
-    await expect(service.checkout({ userId: 7, payload: { legal_consent: { accepted: true } } })).rejects.toMatchObject({
+    await expect(service.checkout({ userId: 7, payload: { legal_consent: { accepted: true }, renewal_consent: { accepted: true } } })).rejects.toMatchObject({
       statusCode: 422,
       details: { code: 'invalid_payment_method' }
     });
@@ -319,6 +320,31 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
     });
 
+    test.each([
+      ['Renewal box not ticked', { accepted: false }],
+      ['Old client without the field', undefined]
+    ])('%s: 422 renewal_consent_required, nothing recorded and no Stripe call', async (_name, renewal) => {
+      const { service, authService, privacyService, stripeBilling } = buildService();
+
+      await expect(service.checkout({ userId: 7, payload: { ...payload, renewal_consent: renewal } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'renewal_consent_required' }
+      });
+      expect(authService.assertCriticalOperationAllowed).not.toHaveBeenCalled();
+      expect(privacyService.recordCheckoutConsents).not.toHaveBeenCalled();
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    });
+
+    test('Both boxes missing: 422 legal_consent_required, as before', async () => {
+      const { service, stripeBilling } = buildService();
+      const { legal_consent: _legal, renewal_consent: _renewal, ...bare } = payload;
+
+      await expect(service.checkout({ userId: 7, payload: bare })).rejects.toMatchObject({
+        details: { code: 'legal_consent_required' }
+      });
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    });
+
     test('Accepted checkout: privacy and terms recorded for the delivery market before the subscription', async () => {
       const { service, privacyService, stripeBilling } = buildService();
 
@@ -329,6 +355,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
         market: 'US',
         privacyVersion: '2026-10-22',
         termsVersion: '2026-10-22',
+        renewalVersion: '2026-11-10',
         ipHash: 'hash',
         userAgent: 'jest-agent'
       });

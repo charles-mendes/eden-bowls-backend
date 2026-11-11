@@ -52,6 +52,9 @@ function presentOwnRequest(row) {
   };
 }
 
+// The version an automatic renewal consent records when the store sends none (checkout-renewal-consent).
+const DEFAULT_RENEWAL_VERSION = 'checkout-v1';
+
 class PrivacyService {
   constructor(options = {}) {
     this.repository = options.repository;
@@ -152,10 +155,20 @@ class PrivacyService {
     });
   }
 
-  // The box ticked at checkout: privacy policy and terms only, the checkout does not ask about marketing.
-  async recordCheckoutConsents({ userId, market, privacyVersion, termsVersion, ipHash, userAgent }) {
+  // The boxes ticked at checkout: privacy policy and terms, then the automatic renewal (checkout-renewal-consent).
+  // The renewal text is checkout copy, not a published legal document, so its version is recorded as sent.
+  // The checkout does not ask about marketing.
+  async recordCheckoutConsents({ userId, market, privacyVersion, termsVersion, renewalVersion, ipHash, userAgent }) {
     const context = { ipHash: ipHash || '', userAgent: userAgent || '' };
     await this.recordLegalConsents({ userId, privacyVersion, termsVersion, market, source: 'checkout', context });
+    await this.recordConsent({
+      userId,
+      consentType: 'auto_renewal',
+      status: 'granted',
+      documentVersion: String(renewalVersion || '').trim() || DEFAULT_RENEWAL_VERSION,
+      source: 'checkout',
+      ...context
+    });
   }
 
   async listConsents({ userId }) {

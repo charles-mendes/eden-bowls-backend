@@ -17,12 +17,20 @@ const legalConsentSchema = z.object({
   privacy_version: z.string().trim().max(32).optional()
 });
 
+// The box "I agree to the automatic renewal of the plan" and the version of the renewal text the store showed
+// (checkout-renewal-consent). Only a literal true passes, as with legal_consent.
+const renewalConsentSchema = z.object({
+  accepted: z.unknown().optional(),
+  version: z.string().trim().max(32).optional()
+});
+
 const checkoutPayloadSchema = z.object({
   payment_method_id: z.string().trim().optional(),
   paymentMethodId: z.string().trim().optional(),
   billing: billingSchema.optional(),
   attempt_id: z.string().trim().min(1).max(128).optional(),
   legal_consent: legalConsentSchema.optional(),
+  renewal_consent: renewalConsentSchema.optional(),
   tax_document: z.string().trim().max(32).optional(),
   fiscal_name: z.string().trim().optional()
 });
@@ -30,6 +38,13 @@ const checkoutPayloadSchema = z.object({
 function legalConsentRequired(issues) {
   return new HttpError(422, 'Accepting the Terms of Service and Privacy Policy is required.', {
     code: 'legal_consent_required',
+    ...(issues ? { issues } : {})
+  });
+}
+
+function renewalConsentRequired(issues) {
+  return new HttpError(422, 'Accepting the automatic renewal is required.', {
+    code: 'renewal_consent_required',
     ...(issues ? { issues } : {})
   });
 }
@@ -43,6 +58,11 @@ function parseOnboardingSubscriptionCheckoutInput(payload = {}, headers = {}) {
       if (error.issues.some((issue) => issue.path[0] === 'legal_consent')) {
         throw legalConsentRequired(error.issues);
       }
+      if (error.issues.some((issue) => issue.path[0] === 'renewal_consent')) {
+        // A client without either box keeps getting legal_consent_required first.
+        if ((payload || {}).legal_consent?.accepted !== true) throw legalConsentRequired();
+        throw renewalConsentRequired(error.issues);
+      }
       throw new HttpError(422, 'Invalid checkout payload.', {
         code: 'invalid_payment_method',
         issues: error.issues
@@ -55,6 +75,11 @@ function parseOnboardingSubscriptionCheckoutInput(payload = {}, headers = {}) {
   const consent = parsed.legal_consent || {};
   if (consent.accepted !== true) {
     throw legalConsentRequired();
+  }
+  // After legal_consent, so a client without either box gets the answer it got before (checkout-renewal-consent).
+  const renewal = parsed.renewal_consent || {};
+  if (renewal.accepted !== true) {
+    throw renewalConsentRequired();
   }
 
   const paymentMethodId = String(parsed.payment_method_id || parsed.paymentMethodId || '').trim();
@@ -78,6 +103,10 @@ function parseOnboardingSubscriptionCheckoutInput(payload = {}, headers = {}) {
       accepted: true,
       terms_version: consent.terms_version || undefined,
       privacy_version: consent.privacy_version || undefined
+    },
+    renewal_consent: {
+      accepted: true,
+      version: renewal.version || undefined
     }
   };
 }

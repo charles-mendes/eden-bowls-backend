@@ -3,6 +3,8 @@ const crypto = require('crypto');
 const CONSENT_TYPES = [
   'privacy_policy',
   'terms',
+  // The automatic renewal accepted at checkout (checkout-renewal-consent).
+  'auto_renewal',
   'marketing_email',
   'analytics',
   'ads',

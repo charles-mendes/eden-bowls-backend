@@ -18,7 +18,8 @@ describe('onboarding subscription checkout routes', () => {
       billing: { first_name: 'Jane', last_name: 'Doe', email: 'jane@example.com' },
       paymentMethodId: 'pm_123',
       checkout_mode: 'subscription_first',
-      legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' }
+      legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' },
+      renewal_consent: { accepted: true, version: '2026-11-10' }
     };
     const onboardingSubscriptionCheckoutService = {
       checkout: jest.fn().mockResolvedValue({
@@ -45,7 +46,8 @@ describe('onboarding subscription checkout routes', () => {
         paymentMethodId: 'pm_123',
         billing: { first_name: 'Jane', last_name: 'Doe', email: 'jane@example.com' },
         attempt_id: undefined,
-        legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' }
+        legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' },
+        renewal_consent: { accepted: true, version: '2026-11-10' }
       },
       requestContext: { ipHash: 'hash', userAgent: 'jest-agent' }
     });
@@ -59,7 +61,7 @@ describe('onboarding subscription checkout routes', () => {
     const response = await request(app)
       .post('/api/v1/onboarding/subscription/checkout')
       .set('Authorization', `Bearer ${issueAccessToken(7)}`)
-      .send({ billing: { first_name: 'Jane' }, legal_consent: { accepted: true } });
+      .send({ billing: { first_name: 'Jane' }, legal_consent: { accepted: true }, renewal_consent: { accepted: true } });
 
     expect(response.status).toBe(422);
     expect(response.body.details.code).toBe('invalid_payment_method');
@@ -92,6 +94,34 @@ describe('onboarding subscription checkout routes', () => {
 
     test('without a payment method either, the missing consent answers first', async () => {
       const { response } = await post({ payment_method_id: undefined });
+      expect(response.body.details.code).toBe('legal_consent_required');
+    });
+  });
+
+  describe('Checkout requires accepting automatic renewal', () => {
+    async function post(body) {
+      const onboardingSubscriptionCheckoutService = { checkout: jest.fn() };
+      const app = createApp({ onboardingSubscriptionCheckoutService, corsOrigins, jwt });
+      const response = await request(app)
+        .post('/api/v1/onboarding/subscription/checkout')
+        .set('Authorization', `Bearer ${issueAccessToken(7)}`)
+        .send({ payment_method_id: 'pm_123', legal_consent: { accepted: true }, ...body });
+      return { response, onboardingSubscriptionCheckoutService };
+    }
+
+    test.each([
+      ['Renewal box not ticked', { renewal_consent: { accepted: false } }],
+      ['Old client without the field', {}]
+    ])('%s: 422 renewal_consent_required and the service is not called', async (_name, body) => {
+      const { response, onboardingSubscriptionCheckoutService } = await post(body);
+
+      expect(response.status).toBe(422);
+      expect(response.body.details.code).toBe('renewal_consent_required');
+      expect(onboardingSubscriptionCheckoutService.checkout).not.toHaveBeenCalled();
+    });
+
+    test('Both boxes missing: 422 legal_consent_required, as before', async () => {
+      const { response } = await post({ legal_consent: undefined });
       expect(response.body.details.code).toBe('legal_consent_required');
     });
   });
