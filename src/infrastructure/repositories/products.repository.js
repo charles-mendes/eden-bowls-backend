@@ -18,6 +18,7 @@ class ProductsRepository {
     this.dataSource = dataSource;
     this.nowProvider = typeof options.nowProvider === 'function' ? options.nowProvider : () => new Date();
     this.priceZonePolicyRepository = options.priceZonePolicyRepository || null;
+    this.planSettingsRepository = options.planSettingsRepository || null;
     this.tableNames = {
       posts: options.postsTableName || 'wp_posts',
       postmeta: options.postmetaTableName || 'wp_postmeta',
@@ -40,6 +41,9 @@ class ProductsRepository {
 
       const productRows = await this.findProducts(categorySlug, country);
       const zoneId = await this.findZoneIdByCountryCurrency(country, currency);
+      // Every product of a market shows the market's plan days (plan-settings); the product meta is only read
+      // where no plan settings repository is wired.
+      const planSettings = this.planSettingsRepository ? await this.planSettingsRepository.read(country) : null;
       const products = [];
 
       for (const productRow of productRows) {
@@ -63,7 +67,7 @@ class ProductsRepository {
           slug: String(productRow.slug || ''),
           country,
           currency,
-          days: this.toPositiveInt(productRow.days),
+          days: planSettings ? planSettings.planDays : this.toPositiveInt(productRow.days),
           tags,
           starting_price: Number(startingPrice.toFixed(2)),
           variations: productVariations
@@ -428,47 +432,38 @@ class ProductsRepository {
     return '';
   }
 
-  // Packaging of the market's plan product (plan-packaging): the pack sizes of its active variations, its plan
-  // days and its large-pack limit. Fields it cannot read stay empty, so the recommendation falls back on each.
+  // Packaging of a market (plan-packaging): the pack sizes of the active variations of every published product of
+  // the market, and the plan days and large-pack limit of the market's plan settings (plan-settings). Fields it
+  // cannot read stay empty, so the recommendation falls back on each.
   async findPlanPackaging(country) {
     this.ensureDataSourceReady();
+    const market = String(country || '').trim().toUpperCase();
+    const settings = this.planSettingsRepository ? await this.planSettingsRepository.read(market) : null;
+    let weights = [];
     try {
-      const products = await this.dataSource.query([
-        'SELECT p.ID AS id, pm_days.meta_value AS days, pm_limit.meta_value AS large_pack_limit',
-        `FROM \`${this.tableNames.posts}\` p`,
-        `INNER JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
-        `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
-        `LEFT JOIN \`${this.tableNames.postmeta}\` pm_limit ON pm_limit.post_id = p.ID AND pm_limit.meta_key = '_cmpb_large_pack_limit'`,
-        "WHERE p.post_type = 'product'",
-        "AND p.post_status = 'publish'",
-        'AND UPPER(COALESCE(pm_country.meta_value, "")) = ?',
-        'ORDER BY p.menu_order ASC, p.ID ASC',
-        'LIMIT 1'
-      ].join(' '), [String(country || '').trim().toUpperCase()]);
-      const product = Array.isArray(products) ? products[0] : null;
-      if (!product) {
-        return null;
-      }
-      const weights = await this.dataSource.query([
+      weights = await this.dataSource.query([
         'SELECT vm.meta_value AS weight',
         `FROM \`${this.tableNames.posts}\` v`,
+        `INNER JOIN \`${this.tableNames.posts}\` p ON p.ID = v.post_parent`,
+        `INNER JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
         `INNER JOIN \`${this.tableNames.postmeta}\` vm ON vm.post_id = v.ID`,
         `AND vm.meta_key IN (${WEIGHT_META_KEYS.map(() => '?').join(', ')})`,
         "WHERE v.post_type = 'product_variation'",
         "AND v.post_status = 'publish'",
-        'AND v.post_parent = ?'
-      ].join(' '), [...WEIGHT_META_KEYS, product.id]);
-      return {
-        packSizesGrams: (Array.isArray(weights) ? weights : []).map((row) => packGramsFromWeight(row.weight)).filter((grams) => grams > 0),
-        planDays: this.toPositiveInt(product.days),
-        largePackLimit: this.toPositiveInt(product.large_pack_limit)
-      };
+        "AND p.post_type = 'product'",
+        "AND p.post_status = 'publish'",
+        'AND UPPER(COALESCE(pm_country.meta_value, "")) = ?'
+      ].join(' '), [...WEIGHT_META_KEYS, market]);
     } catch (error) {
-      if (this.isCatalogMissingError(error)) {
-        return null;
+      if (!this.isCatalogMissingError(error)) {
+        throw error;
       }
-      throw error;
     }
+    return {
+      packSizesGrams: (Array.isArray(weights) ? weights : []).map((row) => packGramsFromWeight(row.weight)).filter((grams) => grams > 0),
+      planDays: settings ? settings.planDays : null,
+      largePackLimit: settings ? settings.largePackLimit : null
+    };
   }
 
   async findZoneIdByCountryCurrency(country, currency) {

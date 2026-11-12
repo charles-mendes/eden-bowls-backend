@@ -91,6 +91,7 @@ const { AddUsDryIceKg1700000000069 } = require('./migrations/1700000000069-add-u
 const { CreateShippingBoxes1700000000070 } = require('./migrations/1700000000070-create-shipping-boxes');
 const { AddSubscriptionCheckoutSnapshot1700000000071 } = require('./migrations/1700000000071-add-subscription-checkout-snapshot');
 const { CloseAddressIssuesOfEndedSubscriptions1700000000072 } = require('./migrations/1700000000072-close-address-issues-of-ended-subscriptions');
+const { CreatePlanSettings1700000000073 } = require('./migrations/1700000000073-create-plan-settings');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -207,7 +208,8 @@ function buildDataSourceOptions(env) {
       AddUsDryIceKg1700000000069,
       CreateShippingBoxes1700000000070,
       AddSubscriptionCheckoutSnapshot1700000000071,
-      CloseAddressIssuesOfEndedSubscriptions1700000000072
+      CloseAddressIssuesOfEndedSubscriptions1700000000072,
+      CreatePlanSettings1700000000073
     ],
     synchronize: false,
     logging: false,

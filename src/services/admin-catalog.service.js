@@ -1,7 +1,6 @@
 const { HttpError } = require('../core/http-error');
 const { labelCompleteness, normalizeRecipeMarket, parseRecipeKey } = require('../core/recipe-content');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
-const { MAX_LARGE_PACK_LIMIT } = require('../core/simplified-consumption');
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
@@ -18,19 +17,6 @@ const {
 } = require('../core/flavors');
 
 // Small packs a month above which a pet gets the large pack (plan-packaging); null keeps the stored value.
-function parseLargePackLimit(value) {
-  if (value == null || value === '') {
-    return null;
-  }
-  const limit = Number(value);
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LARGE_PACK_LIMIT) {
-    throw new HttpError(422, `Large pack limit must be a whole number from 1 to ${MAX_LARGE_PACK_LIMIT}.`, {
-      code: 'product_large_pack_limit_invalid'
-    });
-  }
-  return limit;
-}
-
 function requiredCurrency(country) {
   if (country === 'US') {
     return 'usd';
@@ -353,16 +339,11 @@ class AdminCatalogService {
       throw new HttpError(422, 'Plan country must be BR or US.', { code: 'product_country_not_configured' });
     }
 
-    const days = Number(payload.planDays);
-    if (!Number.isFinite(days) || days <= 0) {
-      throw new HttpError(422, 'Plan days must be greater than zero.', { code: 'product_days_not_configured' });
-    }
-
+    // Plan days and the large-pack limit belong to the market's plan settings (plan-settings); a product ignores them.
     const productId = await this.repository.createProduct({
       name,
       slug: payload.slug,
-      planCountry: country,
-      planDays: days
+      planCountry: country
     });
 
     if (this.stripeAccounts || this.stripeBilling) {
@@ -473,7 +454,6 @@ class AdminCatalogService {
 
   async patchProduct(productId, payload = {}, actor = {}) {
     const product = await this.getProduct(productId, actor);
-    const largePackLimit = parseLargePackLimit(payload.largePackLimit);
 
     if (payload.planCountry) {
       const country = String(payload.planCountry).trim().toUpperCase();
@@ -481,18 +461,6 @@ class AdminCatalogService {
         throw new HttpError(422, 'Plan country must be BR or US.', { code: 'product_country_not_configured' });
       }
       await this.repository.upsertPostMeta(product.id, '_cmpb_plan_country', country);
-    }
-
-    if (payload.planDays != null) {
-      const days = Number(payload.planDays);
-      if (!Number.isFinite(days) || days <= 0) {
-        throw new HttpError(422, 'Plan days must be greater than zero.', { code: 'product_days_not_configured' });
-      }
-      await this.repository.upsertPostMeta(product.id, '_cmpb_plan_days', String(days));
-    }
-
-    if (largePackLimit != null) {
-      await this.repository.upsertPostMeta(product.id, '_cmpb_large_pack_limit', String(largePackLimit));
     }
 
     if (Array.isArray(payload.variants)) {
@@ -515,8 +483,8 @@ class AdminCatalogService {
 
     if (payload.active === true && !product.active) {
       const draft = await this.getProduct(productId);
-      if (!draft.planCountry || !draft.planDays) {
-        throw new HttpError(422, 'Plan country and days are required before publishing.', {
+      if (!draft.planCountry) {
+        throw new HttpError(422, 'Plan country is required before publishing.', {
           code: 'product_incomplete'
         });
       }

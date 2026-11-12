@@ -144,6 +144,8 @@ const { LifeStageService } = require('./services/life-stage.service');
 const { LifeStageSettingsService } = require('./services/life-stage-settings.service');
 const { CompanyProfilesRepository } = require('./infrastructure/repositories/company-profiles.repository');
 const { CompanyProfileService } = require('./services/company-profile.service');
+const { PlanSettingsRepository } = require('./infrastructure/repositories/plan-settings.repository');
+const { PlanSettingsService } = require('./services/plan-settings.service');
 const { startCompanyDirectory } = require('./core/email/company-directory');
 const { LegalDocumentsRepository } = require('./infrastructure/repositories/legal-documents.repository');
 const { LegalDocumentsService } = require('./services/legal-documents.service');
@@ -226,7 +228,9 @@ async function bootstrap() {
   const priceZonePolicyRepository = new PriceZonePolicyRepository(dataSource, {
     tableName: env.PRICE_ZONE_POLICY_TABLE_NAME
   });
+  const planSettingsRepository = new PlanSettingsRepository(dataSource);
   const productsRepository = new ProductsRepository(dataSource, {
+    planSettingsRepository,
     postsTableName: env.WP_POSTS_TABLE_NAME,
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
     termsTableName: env.WP_TERMS_TABLE_NAME,
@@ -748,6 +752,11 @@ async function bootstrap() {
     auditRepository: new AdminAuditRepository(dataSource),
     dataSource
   });
+  const planSettingsService = new PlanSettingsService({
+    repository: planSettingsRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
+    dataSource
+  });
   // Same repository as lifeStageService, so a save clears the cache this process evaluates with.
   const lifeStageSettingsService = new LifeStageSettingsService({
     repository: lifeStageLimitsRepository,
@@ -985,6 +994,7 @@ async function bootstrap() {
     nutritionParametersService,
     lifeStageSettingsService,
     companyProfileService,
+    planSettingsService,
     legalDocumentsService,
     automatedEmailSettingsService,
     adminShippingService,

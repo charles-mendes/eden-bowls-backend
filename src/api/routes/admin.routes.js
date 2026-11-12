@@ -570,6 +570,34 @@ function registerAdminRoutes(app, dependencies = {}) {
     ));
   });
 
+  // Plan settings of one market (plan-settings): plan days and large-pack limit of the recommendation.
+  function requirePlanSettingsService() {
+    if (!dependencies.planSettingsService) {
+      throw new HttpError(503, 'Plan settings service is not available.');
+    }
+    return dependencies.planSettingsService;
+  }
+
+  function planSettingsMarket(request) {
+    const market = (request.marketQuery || {}).market;
+    if (!market) {
+      throw new HttpError(400, 'Choose one market.', { code: 'market_required' });
+    }
+    return market;
+  }
+
+  app.get('/api/v1/admin/catalog/plan-settings', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requirePlanSettingsService().read(planSettingsMarket(request)));
+  });
+
+  app.put('/api/v1/admin/catalog/plan-settings', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requirePlanSettingsService().update(
+      planSettingsMarket(request),
+      request.body || {},
+      request.adminIdentity
+    ));
+  });
+
   app.get('/api/v1/admin/catalog/pricing', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminCatalogService) {

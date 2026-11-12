@@ -97,6 +97,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/catalog/plan-settings"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/plan-settings"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/catalog/pricing"
   },
   {

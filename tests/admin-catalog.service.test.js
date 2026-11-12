@@ -80,39 +80,62 @@ describe('AdminCatalogService', () => {
     ]);
   });
 
-  describe('large-pack limit (plan-packaging)', () => {
-    function serviceWith() {
+  describe('plan values leave the product (plan-settings)', () => {
+    function serviceWith(product = { id: '100', active: true, planCountry: 'BR', variants: [] }) {
       const repository = {
-        getProduct: jest.fn().mockResolvedValue({ id: '100', active: true, planCountry: 'BR', planDays: 30, largePackLimit: 8, variants: [] }),
-        upsertPostMeta: jest.fn()
+        getProduct: jest.fn().mockResolvedValue(product),
+        upsertPostMeta: jest.fn(),
+        updatePostStatus: jest.fn()
       };
       return { service: new AdminCatalogService({ repository }), repository };
     }
 
-    test('saves the limit in the product meta', async () => {
+    test('Plan days sent to a product are ignored', async () => {
       const { service, repository } = serviceWith();
 
-      await service.patchProduct('100', { largePackLimit: 4 });
+      const product = await service.patchProduct('100', { planDays: 15, largePackLimit: 4 });
 
-      expect(repository.upsertPostMeta).toHaveBeenCalledWith('100', '_cmpb_large_pack_limit', '4');
+      expect(repository.upsertPostMeta).not.toHaveBeenCalled();
+      expect(product).not.toHaveProperty('planDays');
+      expect(product).not.toHaveProperty('largePackLimit');
     });
 
-    test.each([0, 61, 2.5, 'many'])('refuses %j with 422 before writing anything', async (largePackLimit) => {
+    test('invalid plan values are ignored instead of refused', async () => {
       const { service, repository } = serviceWith();
-
-      await expect(service.patchProduct('100', { planDays: 28, largePackLimit })).rejects.toMatchObject({
-        statusCode: 422,
-        details: { code: 'product_large_pack_limit_invalid' }
-      });
+      await expect(service.patchProduct('100', { planDays: 0, largePackLimit: 61 })).resolves.toBeTruthy();
       expect(repository.upsertPostMeta).not.toHaveBeenCalled();
     });
 
-    test('the product detail returns the stored limit, and 8 without the meta', () => {
-      const repository = new AdminCatalogRepository({ isInitialized: true, query: jest.fn() });
-      const row = { id: 100, name: 'Plano', slug: 'plano', status: 'publish', planCountry: 'BR', planDays: '30' };
+    test('publishing needs only the market', async () => {
+      const { service, repository } = serviceWith({ id: '100', active: false, planCountry: 'BR', variants: [] });
+      service.sync = jest.fn();
+      await service.patchProduct('100', { active: true });
+      expect(repository.updatePostStatus).toHaveBeenCalledWith('100', 'publish');
+    });
 
-      expect(repository.mapProduct(row, []).largePackLimit).toBe(8);
-      expect(repository.mapProduct({ ...row, largePackLimit: '4' }, []).largePackLimit).toBe(4);
+    test('publishing without a market is refused', async () => {
+      const { service, repository } = serviceWith({ id: '100', active: false, planCountry: null, variants: [] });
+      await expect(service.patchProduct('100', { active: true })).rejects.toMatchObject({
+        statusCode: 422, details: { code: 'product_incomplete' }
+      });
+      expect(repository.updatePostStatus).not.toHaveBeenCalled();
+    });
+
+    test('Create a product without plan days', async () => {
+      const repository = {
+        createProduct: jest.fn().mockResolvedValue('300'),
+        getProduct: jest.fn().mockResolvedValue({ id: '300', active: false, planCountry: 'BR', variants: [] })
+      };
+      const product = await new AdminCatalogService({ repository }).createProduct({ name: 'Receita nova', planCountry: 'BR' });
+      expect(repository.createProduct).toHaveBeenCalledWith({ name: 'Receita nova', slug: undefined, planCountry: 'BR' });
+      expect(product).toMatchObject({ id: '300', active: false });
+    });
+
+    test('the product detail has no plan values', () => {
+      const repository = new AdminCatalogRepository({ isInitialized: true, query: jest.fn() });
+      const mapped = repository.mapProduct({ id: 100, name: 'Plano', slug: 'plano', status: 'publish', planCountry: 'BR', planDays: '30', largePackLimit: '4' }, []);
+      expect(mapped).not.toHaveProperty('planDays');
+      expect(mapped).not.toHaveProperty('largePackLimit');
     });
   });
 
@@ -422,8 +445,7 @@ describe('AdminCatalogService', () => {
     expect(repository.createProduct).toHaveBeenCalledWith({
       name: 'Plano novo',
       slug: undefined,
-      planCountry: 'BR',
-      planDays: 30
+      planCountry: 'BR'
     });
     expect(stripeBilling.createCatalogProduct).toHaveBeenCalledWith({
       name: 'Plano novo',

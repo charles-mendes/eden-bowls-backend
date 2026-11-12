@@ -50,7 +50,6 @@ describe('AdminCatalogRepository', () => {
       id: '10',
       slug: 'plano-28',
       planCountry: 'BR',
-      planDays: 28,
       variants: [
         expect.objectContaining({
           id: '21',

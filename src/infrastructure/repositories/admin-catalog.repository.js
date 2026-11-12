@@ -10,7 +10,6 @@ const {
   flavorKeyFromLabel,
   parseFlavorAliases
 } = require('../../core/flavors');
-const { LARGE_PACK_THRESHOLD } = require('../../core/simplified-consumption');
 
 const FINAL_IMAGE_READY_META = '_final_image_ready';
 const LABEL_DATA_READY_META = '_label_data_ready';
@@ -171,12 +170,10 @@ class AdminCatalogRepository {
       const rows = await this.dataSource.query(
         [
           'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.created_at AS createdAt,',
-          'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays, pm_limit.meta_value AS largePackLimit,',
+          'pm_country.meta_value AS planCountry,',
           'pm_stripe.meta_value AS stripeProductId',
           `FROM \`${this.tableNames.posts}\` p`,
           `LEFT JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
-          `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
-          `LEFT JOIN \`${this.tableNames.postmeta}\` pm_limit ON pm_limit.post_id = p.ID AND pm_limit.meta_key = '_cmpb_large_pack_limit'`,
           `LEFT JOIN \`${this.tableNames.postmeta}\` pm_stripe ON pm_stripe.post_id = p.ID AND pm_stripe.meta_key = '_stripe_product_id'`,
           `WHERE ${where.join(' AND ')}`,
           'ORDER BY p.created_at DESC',
@@ -210,12 +207,10 @@ class AdminCatalogRepository {
     const rows = await this.dataSource.query(
       [
         'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.created_at AS createdAt,',
-        'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays, pm_limit.meta_value AS largePackLimit,',
+        'pm_country.meta_value AS planCountry,',
         'pm_stripe.meta_value AS stripeProductId',
         `FROM \`${this.tableNames.posts}\` p`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
-        `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
-        `LEFT JOIN \`${this.tableNames.postmeta}\` pm_limit ON pm_limit.post_id = p.ID AND pm_limit.meta_key = '_cmpb_large_pack_limit'`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` pm_stripe ON pm_stripe.post_id = p.ID AND pm_stripe.meta_key = '_stripe_product_id'`,
         "WHERE p.post_type = 'product' AND p.ID = ?",
         'LIMIT 1'
@@ -304,8 +299,6 @@ class AdminCatalogRepository {
 
   mapProduct(row, variations) {
     const country = String(row.planCountry || '').trim().toUpperCase();
-    const days = Number(row.planDays || 0);
-    const largePackLimit = Number(row.largePackLimit || 0);
     const currency = country === 'US' ? 'USD' : country === 'BR' ? 'BRL' : '';
 
     return {
@@ -316,9 +309,6 @@ class AdminCatalogRepository {
       active: row.status === 'publish',
       status: row.status,
       planCountry: country || null,
-      planDays: days > 0 ? days : null,
-      // Small packs a month above which a pet gets the large pack (plan-packaging).
-      largePackLimit: Number.isInteger(largePackLimit) && largePackLimit > 0 ? largePackLimit : LARGE_PACK_THRESHOLD,
       stripeProductId: String(row.stripeProductId || '').trim() || null,
       createdAt: row.createdAt,
       category: { namePt: 'Planos', nameEn: 'Plans' },
@@ -516,7 +506,7 @@ class AdminCatalogRepository {
     return Number(Array.isArray(rows) && rows[0] ? rows[0].nextId : 1);
   }
 
-  async createProduct({ name, slug, planCountry, planDays }) {
+  async createProduct({ name, slug, planCountry }) {
     this.ensureDataSource();
     const id = await this.nextPostId();
     const title = String(name || '').trim();
@@ -531,7 +521,6 @@ class AdminCatalogRepository {
       [id, title, postName]
     );
     await this.upsertPostMeta(id, '_cmpb_plan_country', planCountry);
-    await this.upsertPostMeta(id, '_cmpb_plan_days', String(planDays));
     return String(id);
   }
 
