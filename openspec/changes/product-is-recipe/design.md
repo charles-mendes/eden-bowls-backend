@@ -35,7 +35,9 @@
 
 ## Risks / Trade-offs
 
-- [Data the precheck refuses (no key, slug ≠ key via aliases such as `chicken`→`turkey`, unregistered key)] → Migration aborts listing ids/SKUs; operator fixes in the current admin and reruns. No silent rewrite of `_flavor_slug`.
+- [Data the precheck refuses (no key, slug ≠ key via aliases such as `chicken`→`turkey`, product without market)] → Migration aborts listing ids/SKUs; operator fixes in the current admin and reruns. No silent rewrite of `_flavor_slug`.
+- [Keys used but never registered] → Migration 044 seeded the puppy and senior variations in both markets without registering the US recipes, so every environment has them. The split registers such a key as migration 040 did (first variation's flavor label and life stage) and logs it, instead of aborting every deploy.
+- [Faithful rollback] → The split keeps the plan product posts, metas and terms, each variation's parent and flavor metas, the created products and the registered recipes in `catalog_split_backup`; `down` restores from it and drops it. The table also marks the split as done.
 - [Variations of one recipe with different short labels or aliases] → Take the first variation's value (by `menu_order`, then id), log the others, rewrite the copies. [Variation life stage different from `recipe_contents.life_stage`] → The recipe value wins (it already drives `saveVariants` today), the variation meta is rewritten and logged; the store reads the variation meta, so this is the only visible change and it fixes data that was already inconsistent.
 - [Old panel build calling removed routes during deploy] → Panel and backend deploy together; QA only (not in production).
 - [Product rename now changes the store flavor label of all its variations] → Intended; the registration migration already named recipes after the flavor label, so the deploy itself changes no label.

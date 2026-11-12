@@ -10,6 +10,7 @@ const {
   parseFlavorAliases
 } = require('../../core/flavors');
 const { packGramsFromWeight } = require('../../core/plan-catalog-pricing');
+const { PERIOD_DAYS } = require('../../core/simplified-consumption');
 
 const WEIGHT_META_KEYS = ['attribute_pa_weight', 'attribute_weight', 'attribute_gram', 'attribute_peso'];
 
@@ -41,8 +42,8 @@ class ProductsRepository {
 
       const productRows = await this.findProducts(categorySlug, country);
       const zoneId = await this.findZoneIdByCountryCurrency(country, currency);
-      // Every product of a market shows the market's plan days (plan-settings); the product meta is only read
-      // where no plan settings repository is wired.
+      // Every product of a market shows the market's plan days (plan-settings); the plan default without the
+      // plan settings repository.
       const planSettings = this.planSettingsRepository ? await this.planSettingsRepository.read(country) : null;
       const products = [];
 
@@ -67,7 +68,7 @@ class ProductsRepository {
           slug: String(productRow.slug || ''),
           country,
           currency,
-          days: planSettings ? planSettings.planDays : this.toPositiveInt(productRow.days),
+          days: planSettings ? planSettings.planDays : PERIOD_DAYS,
           tags,
           starting_price: Number(startingPrice.toFixed(2)),
           variations: productVariations
@@ -133,13 +134,12 @@ class ProductsRepository {
 
   async findProducts(categorySlug, country) {
     const sql = [
-      'SELECT DISTINCT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.menu_order AS menu_order, pm_country.meta_value AS country, pm_days.meta_value AS days',
+      'SELECT DISTINCT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.menu_order AS menu_order, pm_country.meta_value AS country',
       `FROM \`${this.tableNames.posts}\` p`,
       `INNER JOIN \`${this.tableNames.termRelationships}\` tr ON tr.object_id = p.ID`,
       `INNER JOIN \`${this.tableNames.termTaxonomy}\` tt ON tt.term_taxonomy_id = tr.term_taxonomy_id`,
       `INNER JOIN \`${this.tableNames.terms}\` t ON t.term_id = tt.term_id`,
       `LEFT JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
-      `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
       "WHERE p.post_type = 'product'",
       "AND p.post_status = 'publish'",
       "AND tt.taxonomy = 'product_cat'",

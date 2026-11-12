@@ -2,10 +2,10 @@
 
 ## 1. Schema and split migration
 
-- [ ] 1.1 Confirm `plan-settings-per-market` is applied (no product reads of `_cmpb_plan_days` / `_cmpb_large_pack_limit`); verify with `rg "_cmpb_plan_days|_cmpb_large_pack_limit" src` showing only migrations.
-- [ ] 1.2 Migration `…074-add-recipe-content-product`: nullable `product_id` (unique), `flavor_aliases`, `short_label` on `recipe_contents`; verify with a migration unit test (up/down).
-- [ ] 1.3 Migration `…075-split-plan-products` precheck: abort listing id and SKU for variations without `_recipe_key`, with `_flavor_slug` ≠ `_recipe_key`, or with an unregistered key; verify with `tests/split-plan-products.migration.test.js` cases for each refusal and "no change on abort".
-- [ ] 1.4 Same migration split: product per (market, key) with name, market, `product_cat` and tags, status, `menu_order`; move variations (`post_parent`); `_stripe_lookup_product_id`; content `product_id` / aliases / short label (first variation by `menu_order`, then id); rewrite variation copies incl. life stage from the recipe and log divergences; draft products for content without variations; delete the emptied plan product; `product_id` NOT NULL; `down` restores; verify with the migration test (split, divergent short label / life stage logged and migration completes, recipe without variations, ids kept, rollback) and an integration run with `RUN_DB_INTEGRATION_TESTS=true` on that file.
+- [x] 1.1 Confirm `plan-settings-per-market` is applied (no product reads of `_cmpb_plan_days` / `_cmpb_large_pack_limit`); verify with `rg "_cmpb_plan_days|_cmpb_large_pack_limit" src` showing only migrations.
+- [x] 1.2 Migration `…074-add-recipe-content-product`: nullable `product_id` (unique), `flavor_aliases`, `short_label` on `recipe_contents`; verify with a migration unit test (up/down).
+- [x] 1.3 Migration `…075-split-plan-products` precheck: abort listing id and SKU for variations without `_recipe_key`, with `_flavor_slug` ≠ `_recipe_key`, or under a product without market; register used but unregistered keys; verify with `tests/split-plan-products.migration.test.js` cases for each refusal and "no change on abort".
+- [x] 1.4 Same migration split: product per (market, key) with name, market, `product_cat` and tags, status, `menu_order`; move variations (`post_parent`); `_stripe_lookup_product_id`; content `product_id` / aliases / short label (first variation by `menu_order`, then id); rewrite variation copies incl. life stage from the recipe and log divergences; draft products for content without variations; delete the emptied plan product; `product_id` NOT NULL; `down` restores; verify with the migration test (split, divergent short label / life stage logged and migration completes, recipe without variations, ids kept, rollback) and an integration run with `RUN_DB_INTEGRATION_TESTS=true` on that file.
 
 ## 2. Content repository and service by product
 

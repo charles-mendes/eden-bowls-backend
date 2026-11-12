@@ -87,16 +87,21 @@ The deploy MUST create, for each recipe key used by the variations of a market, 
 
 ### Requirement: Deploy stops on ambiguous variations
 
-Before changing anything, the deploy MUST check every variation of the plan products and MUST stop without changes, listing each offending variation id and SKU, when a variation has no recipe key, when its flavor slug differs from its recipe key, or when its recipe key is not registered in its market.
+Before changing anything, the deploy MUST check every variation of the plan products and MUST stop without changes, listing each offending variation id and SKU, when a variation has no recipe key, when its flavor slug (the stored slug, else the key of its flavor label) differs from its recipe key, or when its product has no market. A recipe key used by variations but not registered in its market MUST be registered by the deploy, named after the flavor label of its first variation (by menu order, then id) with that variation's life stage, and logged.
 
 #### Scenario: Flavor slug differs from the recipe
 
 - **WHEN** the migration runs and a BR variation has flavor slug `chicken` and recipe key `turkey`
 - **THEN** the migration fails naming that variation and the catalog is unchanged
 
+#### Scenario: Seeded recipe never registered
+
+- **WHEN** the migration runs and the US variations with recipe key `senior-beef` exist but US has no `senior-beef` recipe
+- **THEN** US gets a `senior-beef` product named after the first variation's flavor label, with both variations, and the registration is logged
+
 ### Requirement: Deploy settles diverging flavor copies without stopping
 
-When variations of the same recipe key disagree on aliases or short label, the deploy MUST take the value of the first variation (by menu order, then id) for the product, log the others with variation id and SKU, and continue. The product's life stage MUST be the one stored on the recipe; a variation whose life stage differs MUST be rewritten to it and logged. After the deploy every variation MUST report its product's aliases, short label and life stage.
+When variations of the same recipe key disagree on aliases or short label, the deploy MUST take the value of the first variation that has one (by menu order, then id) for the product, log the other filled values that differ with variation id and SKU, and continue; an empty value does not count as a disagreement. The product's life stage MUST be the one stored on the recipe; a variation whose life stage differs MUST be rewritten to it and logged. After the deploy every variation MUST report its product's aliases, short label and life stage.
 
 #### Scenario: Different short labels
 
