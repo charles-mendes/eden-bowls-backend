@@ -501,6 +501,10 @@ class UpsShipmentService {
     }
 
     await this.auditPurchase(actor, subscription, saved, invoice, reasons);
+    // close-address-issues-when-subscription-ends: the last box of an ended subscription left. Only logs its errors.
+    if (this.addressIssueService && typeof this.addressIssueService.closeIfEnded === 'function') {
+      await this.addressIssueService.closeIfEnded(subscription.id || subscriptionId);
+    }
     // The shipped letter waits for the first tracking read that shows the box moving (recordTracking).
     return { success: true, data: { shipment: this.present(saved), reused: false } };
   }

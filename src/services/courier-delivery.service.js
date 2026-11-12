@@ -238,6 +238,10 @@ class CourierDeliveryService {
 
     await this.audit(actor, 'courier_delivery.dispatch', subscription, row, { confirmedNotReady: reasons.length > 0 ? reasons.map((reason) => reason.code) : undefined });
     await this.notify('notifyCourierOutForDelivery', subscription, row);
+    // close-address-issues-when-subscription-ends: the last box of an ended subscription left. Only logs its errors.
+    if (this.addressIssueService && typeof this.addressIssueService.closeIfEnded === 'function') {
+      await this.addressIssueService.closeIfEnded(subscription.id || subscriptionId);
+    }
     return { success: true, data: { delivery: this.present(row) } };
   }
 

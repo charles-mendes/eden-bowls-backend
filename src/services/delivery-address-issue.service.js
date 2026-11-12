@@ -181,6 +181,18 @@ class DeliveryAddressIssueService {
     }
   }
 
+  // close-address-issues-when-subscription-ends: after the subscription changed in Stripe or a box left, closes its
+  // open problem as `ended` when it is canceled with no paid box left to ship. No email; errors are only logged.
+  async closeIfEnded(subscriptionId) {
+    if (!this.repository || typeof this.repository.closeEnded !== 'function' || subscriptionId == null) return 0;
+    try {
+      return await this.repository.closeEnded({ subscriptionId, now: this.now() });
+    } catch (error) {
+      this.logger.error({ subscriptionId, message: error && error.message }, 'Address problem of an ended subscription not closed.');
+      return 0;
+    }
+  }
+
   // Ledger id → `address_issue` for a page of rows, in one query. A read never opens a problem.
   async latestForSubscriptions(subscriptionIds = []) {
     if (!this.repository || subscriptionIds.length === 0) return new Map();

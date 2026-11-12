@@ -439,6 +439,20 @@ describe('UpsShipmentService.createForSubscription', () => {
     expect(auditService.record.mock.calls[0][0].metadata).not.toHaveProperty('confirmedNotReady');
   });
 
+  // close-address-issues-when-subscription-ends
+  test('a created label checks the ended rule; a refused purchase does not', async () => {
+    const addressIssueService = { report: jest.fn(), closeIfEnded: jest.fn().mockResolvedValue(0) };
+    const { service } = buildService({ addressIssueService });
+    await service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} });
+    expect(addressIssueService.closeIfEnded).toHaveBeenCalledTimes(1);
+
+    const refused = { report: jest.fn(), closeIfEnded: jest.fn() };
+    const usAddress = { name: 'Ana Costa', line1: 'PO Box 12', city: 'Miami', state: 'FL', postal_code: '33101', country: 'US' };
+    const other = buildService({ address: usAddress, stripeAccount: 'us', addressIssueService: refused });
+    await expect(other.service.createForSubscription({ subscriptionId: '1', invoiceId: 'in_1', actor: {} })).rejects.toBeTruthy();
+    expect(refused.closeIfEnded).not.toHaveBeenCalled();
+  });
+
   test('an invoice that already has a label is reused without confirmation', async () => {
     const { service } = buildService({
       productionStatus: 'in_production',

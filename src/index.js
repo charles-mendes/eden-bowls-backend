@@ -267,7 +267,7 @@ async function bootstrap() {
   const upsPickupRepository = new UpsPickupRepository(dataSource);
   const courierDeliveryRepository = new CourierDeliveryRepository(dataSource);
   const customerContactsRepository = new CustomerContactsRepository(dataSource);
-  const deliveryAddressIssuesRepository = new DeliveryAddressIssuesRepository(dataSource);
+  const deliveryAddressIssuesRepository = new DeliveryAddressIssuesRepository(dataSource, { courierTableName: courierDeliveryRepository.tableName, upsTableName: upsShipmentRepository.tableName });
   const stripeAccounts = createStripeAccountsFromEnv(env, { logger });
   const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource, { courierTableName: courierDeliveryRepository.tableName, usersTableName: env.WP_USERS_TABLE_NAME });
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);

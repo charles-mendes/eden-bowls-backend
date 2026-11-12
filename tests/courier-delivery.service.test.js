@@ -93,7 +93,7 @@ function setup({ subscription = brSubscription(), invoice = paidInvoice(), produ
     findByStripeInvoice: jest.fn(async (account, invoiceId) => notes.find((note) => note.stripeAccount === account && note.stripeInvoiceId === invoiceId) || null),
     listByStripeInvoices: jest.fn(async (pairs) => notes.filter((note) => pairs.some((pair) => pair.stripeAccount === note.stripeAccount && pair.stripeInvoiceId === note.stripeInvoiceId)))
   } : null;
-  const addressIssueService = { report: jest.fn(async () => null), latestForSubscriptions: jest.fn(async () => issues) };
+  const addressIssueService = { report: jest.fn(async () => null), latestForSubscriptions: jest.fn(async () => issues), closeIfEnded: jest.fn(async () => 0) };
   const repository = memoryRepository(seed);
   const auditService = { record: jest.fn() };
   const transactionalMailer = mailer || { notifyCourierOutForDelivery: jest.fn(), notifyCourierDelivered: jest.fn() };
@@ -156,6 +156,17 @@ describe('Only a paid Brazil delivery can get a courier record', () => {
     const fine = setup();
     await fine.service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor });
     expect(fine.addressIssueService.report).not.toHaveBeenCalled();
+  });
+
+  // close-address-issues-when-subscription-ends
+  test('a dispatch that goes out checks the ended rule; a refused one does not', async () => {
+    const fine = setup();
+    await fine.service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor });
+    expect(fine.addressIssueService.closeIfEnded).toHaveBeenCalledWith('42');
+
+    const locked = setup({ subscription: brSubscription({ address: { ...brSubscription().address, number: '' } }) });
+    await code(locked.service.dispatch({ subscriptionId: '42', body: dispatchBody(), actor }));
+    expect(locked.addressIssueService.closeIfEnded).not.toHaveBeenCalled();
   });
 
   test('US subscription gets courier_country_not_supported', async () => {

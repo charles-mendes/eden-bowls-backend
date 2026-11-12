@@ -36,8 +36,13 @@ function isDuplicate(error) {
 
 // Address problems of subscriptions (delivery-address-issues). `subscription_id` is the ledger id.
 class DeliveryAddressIssuesRepository {
-  constructor(dataSource) {
+  constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
+    // close-address-issues-when-subscription-ends: the tables the "ended" rule reads, with the ledger's defaults.
+    this.ledgerTableName = options.ledgerTableName || 'stripe_subscriptions';
+    this.productionCyclesTableName = options.productionCyclesTableName || 'subscription_production_cycles';
+    this.courierTableName = options.courierTableName || 'courier_deliveries';
+    this.upsTableName = options.upsTableName || 'ups_shipments';
   }
 
   async findOpen(subscriptionId) {
@@ -74,6 +79,36 @@ class DeliveryAddressIssuesRepository {
       [toMysqlDateTime(now), resolvedBy, id]
     );
     return Number(result && result.affectedRows) > 0;
+  }
+
+  // close-address-issues-when-subscription-ends: closes as `ended` the open problems of canceled subscriptions
+  // (the ledger stores Stripe's incomplete_expired as canceled) with no paid cycle whose box has not left. A box has
+  // left with a courier delivery on the road or delivered, or a UPS label created or delivered (as in the market
+  // exceptions list). No date floor. One subscription (ledger id) or, with null, all. Returns how many closed.
+  async closeEnded({ subscriptionId = null, now = new Date() } = {}) {
+    const same = (left, right) => `${left} COLLATE utf8mb4_unicode_ci = ${right} COLLATE utf8mb4_unicode_ci`;
+    const where = [
+      'i.`open_key` IS NOT NULL',
+      "s.`status` = 'canceled'",
+      `NOT EXISTS (SELECT 1 FROM \`${this.productionCyclesTableName}\` c
+        WHERE c.subscription_id = s.id AND c.paid_at IS NOT NULL AND c.paid_invoice_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM \`${this.courierTableName}\` cd WHERE ${same('cd.stripe_invoice_id', 'c.paid_invoice_id')} AND cd.status IN ('out_for_delivery', 'delivered'))
+          AND NOT EXISTS (SELECT 1 FROM \`${this.upsTableName}\` us WHERE ${same('us.stripe_invoice_id', 'c.paid_invoice_id')} AND us.status IN ('created', 'delivered')))`
+    ];
+    const params = [toMysqlDateTime(now)];
+    if (subscriptionId != null) {
+      const id = Number(subscriptionId);
+      if (!Number.isSafeInteger(id) || id <= 0) return 0;
+      where.push('i.`subscription_id` = ?');
+      params.push(id);
+    }
+    const result = await this.dataSource.query(
+      `UPDATE \`${TABLE}\` i JOIN \`${this.ledgerTableName}\` s ON s.id = i.subscription_id
+       SET i.\`open_key\` = NULL, i.\`resolved_at\` = ?, i.\`resolved_by\` = 'ended'
+       WHERE ${where.join(' AND ')}`,
+      params
+    );
+    return Number(result && result.affectedRows) || 0;
   }
 
   async updateCodes(id, codes) {

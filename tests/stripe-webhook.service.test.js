@@ -36,6 +36,7 @@ function buildService(overrides = {}) {
       logger: overrides.logger || { error() {}, warn() {}, info() {} },
       transactionalMailer: overrides.transactionalMailer || null,
       customerInvoices: overrides.customerInvoices || null,
+      addressIssueService: overrides.addressIssueService || null,
       withTimeout: overrides.withTimeout
     }),
     stripeBilling,
@@ -1210,6 +1211,42 @@ describe('StripeWebhookService', () => {
       status: 'canceled',
       endedAt: 1791640800
     }));
+  });
+
+  // close-address-issues-when-subscription-ends
+  test('a deleted subscription checks its address problem against the ledger id', async () => {
+    const addressIssueService = { closeIfEnded: jest.fn().mockResolvedValue(1) };
+    const { service, stripeBilling, ledgerRepository } = buildService({
+      addressIssueService,
+      transactionalMailer: { notifyCancelled: jest.fn(), hasSentClaim: jest.fn().mockResolvedValue(true) }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ id: 179, userId: 7, stripeSubscriptionId: 'sub_123' });
+    ledgerRepository.upsert.mockResolvedValue({ id: 179, status: 'canceled', stripeSubscriptionId: 'sub_123' });
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.deleted',
+      subscriptionFixture({ status: 'canceled' }),
+      {}
+    ));
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(addressIssueService.closeIfEnded).toHaveBeenCalledWith(179);
+  });
+
+  test('a deleted subscription without the address problem service still goes through', async () => {
+    const { service, stripeBilling, ledgerRepository } = buildService({
+      transactionalMailer: { notifyCancelled: jest.fn(), hasSentClaim: jest.fn().mockResolvedValue(true) }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ id: 179, userId: 7, stripeSubscriptionId: 'sub_123' });
+    ledgerRepository.upsert.mockResolvedValue({ id: 179 });
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.deleted',
+      subscriptionFixture({ status: 'canceled' }),
+      {}
+    ));
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' })).resolves.toEqual({ received: true });
+    expect(ledgerRepository.upsert).toHaveBeenCalled();
   });
 
   test('returns 200 and keeps the event pending when dispatch throws', async () => {

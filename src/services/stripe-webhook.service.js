@@ -781,7 +781,7 @@ class StripeWebhookService {
       ? subscription.items.data[0]
       : null;
 
-    await this.ledgerRepository.upsert({
+    const saved = await this.ledgerRepository.upsert({
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(subscription.customer || (context.ledger && context.ledger.stripeCustomerId) || ''),
@@ -798,6 +798,12 @@ class StripeWebhookService {
     });
 
     await this.discardPendingAfterFailedCharge(subscription, subscriptionId);
+
+    // close-address-issues-when-subscription-ends: an ended subscription with no paid box left closes its problem.
+    // Only logs its own errors.
+    if (this.addressIssueService && saved && saved.id) {
+      await this.addressIssueService.closeIfEnded(saved.id);
+    }
 
     await this.notifySubscriptionTransition({
       subscription,

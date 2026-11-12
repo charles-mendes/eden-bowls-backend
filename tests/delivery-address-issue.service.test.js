@@ -211,3 +211,29 @@ describe('latestForSubscriptions', () => {
     expect(presentAddressIssue(null)).toBeNull();
   });
 });
+
+// close-address-issues-when-subscription-ends
+describe('closeIfEnded', () => {
+  test('asks the repository to close the subscription as ended, without an email', async () => {
+    const { service, repository, mailer } = build();
+    repository.closeEnded = jest.fn(async () => 1);
+    await expect(service.closeIfEnded(179)).resolves.toBe(1);
+    expect(repository.closeEnded).toHaveBeenCalledWith({ subscriptionId: 179, now: NOW });
+    expect(mailer.notifyDeliveryAddressIssue).not.toHaveBeenCalled();
+  });
+
+  test('a repository error is logged and never thrown', async () => {
+    const { service, repository, logger } = build();
+    repository.closeEnded = jest.fn(async () => { throw new Error('db down'); });
+    await expect(service.closeIfEnded(179)).resolves.toBe(0);
+    expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: 179, message: 'db down' }), expect.any(String));
+  });
+
+  test('no repository rule or no id: nothing to do', async () => {
+    const { service, repository } = build();
+    await expect(service.closeIfEnded(179)).resolves.toBe(0);
+    repository.closeEnded = jest.fn();
+    await expect(service.closeIfEnded(null)).resolves.toBe(0);
+    expect(repository.closeEnded).not.toHaveBeenCalled();
+  });
+});
