@@ -263,6 +263,37 @@ describe('SubscriptionLedgerRepository', () => {
     expect(all.params).toHaveLength(today.params.length - 2);
   });
 
+  // queue-overdue-filter-matches-metric: due=overdue lists what the overdue metric counts.
+  test('the overdue filter leaves out ready cycles unless ready is asked for', async () => {
+    const bounds = {
+      startOfToday: '2026-09-20 03:00:00',
+      startOfTomorrow: '2026-09-21 03:00:00',
+      startOfDayAfterTomorrow: '2026-09-22 03:00:00',
+      windowEndExclusive: '2026-09-27 03:00:00',
+      overdueFloor: '2026-08-21 03:00:00',
+      includeOverdue: true,
+      offset: 0,
+      perPage: 20
+    };
+    const sqlFor = async (input) => {
+      const query = jest.fn().mockResolvedValueOnce([{ total: 0 }]).mockResolvedValueOnce([]);
+      await new SubscriptionLedgerRepository({ isInitialized: true, query }).listQueue({ ...bounds, ...input });
+      const [countSql] = query.mock.calls[0];
+      const [listSql] = query.mock.calls[1];
+      return { countSql, listSql };
+    };
+    const clause = "AND q.production_status <> 'ready'";
+
+    const overdue = await sqlFor({ due: 'overdue' });
+    expect(overdue.countSql).toContain(clause);
+    expect(overdue.listSql).toContain(clause);
+    const overdueReady = await sqlFor({ due: 'overdue', productionStatus: 'ready' });
+    expect(overdueReady.listSql).not.toContain(clause);
+    expect(overdueReady.listSql).toContain('q.production_status = ?');
+    expect((await sqlFor({})).listSql).not.toContain(clause);
+    expect((await sqlFor({ due: 'today' })).listSql).not.toContain(clause);
+  });
+
   // Unpaid cycles stop at the overdue floor; a paid cycle not ready stays however late it is.
   test('keeps paid overdue cycles below the floor and drops unpaid ones', async () => {
     const query = jest.fn().mockResolvedValueOnce([{ total: 0 }]).mockResolvedValueOnce([]);

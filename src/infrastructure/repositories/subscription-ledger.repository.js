@@ -1123,6 +1123,12 @@ class SubscriptionLedgerRepository {
       params.push(dueRange[1]);
     }
 
+    // queue-overdue-filter-matches-metric: the overdue filter lists what the overdue metric counts, the late
+    // kitchen work. A kept ready cycle shows without a due filter, or here only when `ready` is asked for.
+    if (due === 'overdue' && !productionStatus) {
+      where.push("q.production_status <> 'ready'");
+    }
+
     if (q) {
       const needle = `%${String(q).trim()}%`;
       // The name the queue shows comes from these address keys, in this order (production-queue-presenter).

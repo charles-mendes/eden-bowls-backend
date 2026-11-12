@@ -483,6 +483,25 @@ describeIntegration('SubscriptionLedgerRepository production queue integration (
     // Waiting ready stays; on the road, past the floor and US leave; the paid one still in the kitchen stays.
     expect(mine).toEqual(['in_keep_kitchen', 'in_keep_wait']);
 
+    // queue-overdue-filter-matches-metric: due=overdue lists the late kitchen work, ready only when asked for.
+    const keptBounds = {
+      startOfToday: '2026-06-30 03:00:00',
+      windowEndExclusive: '2026-07-07 03:00:00',
+      overdueFloor: '2026-05-31 03:00:00',
+      includeOverdue: true,
+      offset: 0,
+      perPage: 200
+    };
+    const paidOf = (items) => items
+      .filter((item) => ['sub_keep_br', 'sub_keep_us'].includes(item.stripeSubscriptionId) && item.paidInvoiceId)
+      .map((item) => item.paidInvoiceId)
+      .sort();
+    const overdueOnly = await keeping.listQueue({ ...keptBounds, due: 'overdue' });
+    expect(paidOf(overdueOnly.items)).toEqual(['in_keep_kitchen']);
+    expect(overdueOnly.items.every((item) => item.productionStatus !== 'ready')).toBe(true);
+    const overdueReady = await keeping.listQueue({ ...keptBounds, due: 'overdue', productionStatus: 'ready' });
+    expect(paidOf(overdueReady.items)).toEqual(['in_keep_wait']);
+
     await dataSource.query(`INSERT INTO \`${courierTable}\` (stripe_invoice_id, status) VALUES ('in_keep_wait', 'delivered')`);
     const after = await keeping.listQueue({
       startOfToday: '2026-06-30 03:00:00',
