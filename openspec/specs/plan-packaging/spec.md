@@ -8,21 +8,26 @@ Defines how the plan recommendation picks the pack size and the pack count for e
 
 ### Requirement: Pack sizes come from the market's active variations
 
-The recommendation MUST use as pack sizes the distinct weights of the active variations of the market's plan product, in grams. With one size, every pet MUST get that size. With two or more, the small pack MUST be the lightest and the large pack the heaviest. When the market has no active variation, the recommendation MUST use 300 g and 500 g, the values before this change.
+The recommendation MUST use as pack sizes the distinct weights, in grams, of the active variations of every published product of the market. With one size, every pet MUST get that size. With two or more, the small pack MUST be the lightest and the large pack the heaviest. When the market has no active variation, the recommendation MUST use 300 g and 500 g, the values before this change.
 
 #### Scenario: Catalog with 300 g and 500 g
 
-- **WHEN** the BR plan product has active variations of 300 g and 500 g
+- **WHEN** the BR products have active variations of 300 g and 500 g
 - **THEN** the recommendation offers 300 g and 500 g packs, as before the deploy
 
 #### Scenario: Operator adds a 1 kg variation
 
-- **WHEN** the BR plan product gains an active 1000 g variation besides 300 g and 500 g
+- **WHEN** a BR product gains an active 1000 g variation besides 300 g and 500 g
 - **THEN** the large pack of the recommendation is 1000 g and `package_sizes_grams` lists 300, 500 and 1000
 
-### Requirement: Plan period and large-pack limit come from the product
+#### Scenario: Weight only on a second product
 
-The monthly grams of the recommendation MUST use the plan days of the market's plan product (the value the admin edits in the product's "Plano" section) in place of a fixed 30. A pet MUST get the large pack when its monthly grams divided by the small pack size exceeds the product's large-pack limit. The large-pack limit MUST be an integer from 1 to 60, read and saved as `largePackLimit` in the product detail with `catalog.write`, and set to 8 on deploy. A value outside the range MUST be refused with HTTP 422.
+- **WHEN** BR has two published products, the first with active 300 g and 500 g variations and the second with an active 1000 g variation
+- **THEN** `package_sizes_grams` lists 300, 500 and 1000
+
+### Requirement: Plan period and large-pack limit come from the market's plan settings
+
+The monthly grams of the recommendation MUST use the plan days of the market's plan settings in place of a fixed 30. A pet MUST get the large pack when its monthly grams divided by the small pack size exceeds the large-pack limit of the market's plan settings.
 
 #### Scenario: Values after deploy
 
@@ -31,5 +36,5 @@ The monthly grams of the recommendation MUST use the plan days of the market's p
 
 #### Scenario: Lower large-pack limit
 
-- **WHEN** an operator sets the BR product's large-pack limit to 4 and a pet needs 1,500 g per month
+- **WHEN** an operator sets the BR large-pack limit to 4 and a pet needs 1,500 g per month
 - **THEN** the pet gets the large pack, because 1,500 / 300 = 5 exceeds 4
