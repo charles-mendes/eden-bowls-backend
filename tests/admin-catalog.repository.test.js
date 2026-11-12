@@ -169,6 +169,24 @@ describe('AdminCatalogRepository', () => {
     expect(dataSource.query.mock.calls[1][1]).toEqual([3001]);
   });
 
+  test('creates a product after every existing one in the store order', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([{ nextId: 2042 }])
+        .mockResolvedValueOnce([{ nextOrder: 17 }])
+        .mockResolvedValue([])
+    };
+    const repository = new AdminCatalogRepository(dataSource);
+
+    await expect(repository.createProduct({ name: 'Cordeiro', slug: 'lamb-br', planCountry: 'BR' })).resolves.toBe('2042');
+
+    expect(dataSource.query.mock.calls[1][0]).toContain("MAX(`menu_order`)");
+    expect(dataSource.query.mock.calls[1][0]).toContain("`post_type` = 'product'");
+    const insert = dataSource.query.mock.calls.find((call) => String(call[0]).startsWith('INSERT INTO `wp_posts`'));
+    expect(insert[1]).toEqual([2042, 'Cordeiro', 'lamb-br', 17]);
+  });
+
   test('creates a variation and stores the flavor attribute', async () => {
     const dataSource = {
       isInitialized: true,

@@ -512,13 +512,19 @@ class AdminCatalogRepository {
     const title = String(name || '').trim();
     const postName = slugify(slug || title || `product-${id}`);
 
+    // A new product goes after every existing one, so it lands last in the store flavor order.
+    const orderRows = await this.dataSource.query(
+      `SELECT COALESCE(MAX(\`menu_order\`), 0) + 1 AS nextOrder FROM \`${this.tableNames.posts}\` WHERE \`post_type\` = 'product'`
+    );
+    const menuOrder = Number(Array.isArray(orderRows) && orderRows[0] ? orderRows[0].nextOrder : 1) || 1;
+
     await this.dataSource.query(
       [
         `INSERT INTO \`${this.tableNames.posts}\``,
         '(`ID`, `post_parent`, `post_type`, `post_status`, `post_title`, `post_name`, `menu_order`)',
-        "VALUES (?, 0, 'product', 'draft', ?, ?, 0)"
+        "VALUES (?, 0, 'product', 'draft', ?, ?, ?)"
       ].join(' '),
-      [id, title, postName]
+      [id, title, postName, menuOrder]
     );
     await this.upsertPostMeta(id, '_cmpb_plan_country', planCountry);
     return String(id);
