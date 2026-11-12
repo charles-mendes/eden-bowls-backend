@@ -852,7 +852,9 @@ async function bootstrap() {
   const adminCatalogRepository = new AdminCatalogRepository(dataSource, {
     postsTableName: env.WP_POSTS_TABLE_NAME,
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
-    termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
+    termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME,
+    termTaxonomyTableName: env.WP_TERM_TAXONOMY_TABLE_NAME,
+    termsTableName: env.WP_TERMS_TABLE_NAME
   });
   const recipeContentRepository = new RecipeContentRepository(dataSource);
   const adminCatalogService = new AdminCatalogService({
@@ -864,6 +866,7 @@ async function bootstrap() {
     syncRunsRepository: new CatalogSyncRunsRepository(dataSource),
     auditService: adminAuditService,
     recipeContentRepository,
+    recipeImageStorage,
     logger
   });
   const recipeContentService = new RecipeContentService({

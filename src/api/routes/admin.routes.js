@@ -427,7 +427,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.adminCatalogService) {
         throw new HttpError(503, 'Catalog service is not available.');
       }
-      return dependencies.adminCatalogService.createProduct(request.body || {});
+      return dependencies.adminCatalogService.createProduct(request.body || {}, request.adminIdentity);
     });
   });
 
@@ -489,83 +489,35 @@ function registerAdminRoutes(app, dependencies = {}) {
     return dependencies.recipeContentService;
   }
 
-  app.get('/api/v1/admin/catalog/recipe-content', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().list(request.query.market));
+  // Content of a product (recipe-content): name, life stage, aliases and short label go through the product PATCH.
+  app.put('/api/v1/admin/catalog/products/:productId/content/image', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().uploadImage(request.params.productId, request.body || {}, request.adminIdentity));
   });
 
-  app.post('/api/v1/admin/catalog/recipe-content', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().create(request.query.market, request.body || {}, request.adminIdentity));
+  app.delete('/api/v1/admin/catalog/products/:productId/content/image', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().removeImage(request.params.productId, request.adminIdentity));
   });
 
-  app.patch('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().update(
-      request.query.market,
-      request.params.flavorSlug,
-      request.body || {},
-      request.adminIdentity
-    ));
+  app.put('/api/v1/admin/catalog/products/:productId/content/plan-image', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().uploadPlanImage(request.params.productId, request.body || {}, request.adminIdentity));
   });
 
-  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().remove(
-      request.query.market,
-      request.params.flavorSlug,
-      request.adminIdentity
-    ));
+  app.delete('/api/v1/admin/catalog/products/:productId/content/plan-image', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().removePlanImage(request.params.productId, request.adminIdentity));
   });
 
-  app.get('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().get(request.query.market, request.params.flavorSlug));
-  });
-
-  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().uploadImage(
-      request.query.market,
-      request.params.flavorSlug,
-      request.body || {},
-      request.adminIdentity
-    ));
-  });
-
-  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().uploadPlanImage(
-      request.query.market,
-      request.params.flavorSlug,
-      request.body || {},
-      request.adminIdentity
-    ));
-  });
-
-  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().removePlanImage(
-      request.query.market,
-      request.params.flavorSlug,
-      request.adminIdentity
-    ));
-  });
-
-  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/label', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+  app.put('/api/v1/admin/catalog/products/:productId/content/label', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => requireRecipeContentService().saveLabel(
-      request.query.market,
-      request.params.flavorSlug,
+      request.params.productId,
       (request.body || {}).label,
       request.adminIdentity
     ));
   });
 
-  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/presentation', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+  app.put('/api/v1/admin/catalog/products/:productId/content/presentation', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => requireRecipeContentService().savePresentation(
-      request.query.market,
-      request.params.flavorSlug,
+      request.params.productId,
       (request.body || {}).presentation,
-      request.adminIdentity
-    ));
-  });
-
-  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug/image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().removeImage(
-      request.query.market,
-      request.params.flavorSlug,
       request.adminIdentity
     ));
   });

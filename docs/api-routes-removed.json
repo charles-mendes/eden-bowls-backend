@@ -1,1 +1,57 @@
-[]
+[
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/recipe-content",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/catalog/recipe-content",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/image",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/image",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/label",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/presentation",
+    "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  }
+]

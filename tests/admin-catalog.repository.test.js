@@ -284,25 +284,71 @@ describe('AdminCatalogRepository', () => {
     });
   });
 
-  test('lists the variations of one recipe in a market by their stored recipe key only', async () => {
+  test('lists the variations of one product, and every product of a market with its variations', async () => {
     const dataSource = {
       isInitialized: true,
       query: jest.fn().mockResolvedValue([
-        { variationId: 1001, name: 'Beef 300g', sku: '1001', productId: 100, productName: 'Flavors BR', market: 'BR', variationStatus: 'draft', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' },
-        { variationId: 1005, name: 'Beef 500g', sku: '1005', productId: 100, productName: 'Flavors BR', market: 'BR', variationStatus: 'publish', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' },
-        { variationId: 3000, name: 'Bovino', sku: '3000', productId: 300, productName: 'Plano antigo', market: 'BR', variationStatus: 'publish', productStatus: 'publish', flavorSlug: null, recipeKey: '', label: 'Bovino', shortLabel: null, lifeStage: 'adult' },
-        { variationId: 2001, name: 'Beef 300g', sku: '2001', productId: 200, productName: 'Flavors US', market: 'US', variationStatus: 'publish', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' }
+        { variationId: 1001, name: 'Beef 300g', sku: '1001', productId: 2025, productName: 'Bovino', market: 'BR', variationStatus: 'draft', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Bovino', shortLabel: null, lifeStage: 'adult' },
+        { variationId: 1005, name: 'Beef 500g', sku: '1005', productId: 2025, productName: 'Bovino', market: 'BR', variationStatus: 'publish', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Bovino', shortLabel: null, lifeStage: 'adult' },
+        { variationId: 1003, name: 'Porco 300g', sku: '1003', productId: 2029, productName: 'Porco', market: 'BR', variationStatus: 'publish', productStatus: 'publish', flavorSlug: 'pork', recipeKey: 'pork', label: 'Bovino', shortLabel: null, lifeStage: 'adult' },
+        { variationId: 2001, name: 'Beef 300g', sku: '2001', productId: 2026, productName: 'Beef', market: 'US', variationStatus: 'publish', productStatus: 'publish', flavorSlug: 'beef', recipeKey: 'beef', label: 'Beef', shortLabel: null, lifeStage: 'adult' }
       ])
     };
     const repository = new AdminCatalogRepository(dataSource);
 
-    expect(await repository.listRecipeVariations('br', 'beef')).toEqual([
-      { id: '1001', name: 'Beef 300g', sku: '1001', active: false, productId: '100', productName: 'Flavors BR' },
-      { id: '1005', name: 'Beef 500g', sku: '1005', active: true, productId: '100', productName: 'Flavors BR' }
+    // A flavor alias does not link a variation: the Porco variation labelled Bovino stays out of the beef product.
+    expect(await repository.listProductVariations('2025')).toEqual([
+      { id: '1001', name: 'Beef 300g', sku: '1001', active: false, productId: '2025', productName: 'Bovino' },
+      { id: '1005', name: 'Beef 500g', sku: '1005', active: true, productId: '2025', productName: 'Bovino' }
     ]);
-    const byKey = await repository.listMarketRecipeVariations('BR');
-    expect([...byKey.keys()]).toEqual(['beef']);
-    expect(dataSource.query.mock.calls[0][0]).toContain("vm.meta_key = '_recipe_key'");
+    const byProduct = await repository.listMarketProductVariations('br');
+    expect([...byProduct.keys()]).toEqual(['2025', '2029']);
+  });
+
+  test('puts a product in the flavors category', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValueOnce([{ id: 100 }]).mockResolvedValueOnce([]) };
+    const repository = new AdminCatalogRepository(dataSource);
+
+    await expect(repository.assignCategory('300', 'flavors')).resolves.toBe(true);
+
+    expect(dataSource.query.mock.calls[0][0]).toContain("tt.taxonomy = 'product_cat' AND t.slug = ?");
+    expect(dataSource.query.mock.calls[0][1]).toEqual(['flavors']);
+    expect(dataSource.query.mock.calls[1]).toEqual([expect.stringContaining('INSERT INTO `wp_term_relationships`'), [300, 100]]);
+  });
+
+  test('writes the flavor copies on every variation of a product', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValueOnce([{ id: 1001 }, { id: 1005 }]) };
+    const repository = new AdminCatalogRepository(dataSource);
+    repository.upsertPostMeta = jest.fn();
+
+    await repository.rewriteFlavorCopies('2025', { flavor: 'Bovino', flavorSlug: 'beef', flavorAliases: 'bovino,carne', lifeStage: 'adult', shortLabel: '' });
+
+    const written = repository.upsertPostMeta.mock.calls.filter(([id]) => id === 1005).map(([, key, value]) => [key, value]);
+    expect(written).toEqual([
+      ['attribute_pa_flavor', 'Bovino'], ['_flavor_slug', 'beef'], ['_recipe_key', 'beef'],
+      ['_flavor_aliases', 'bovino,carne'], ['_life_stage', 'adult'], ['_short_label', '']
+    ]);
+    expect(repository.upsertPostMeta.mock.calls.filter(([id]) => id === 1001)).toHaveLength(6);
+  });
+
+  test('stores, keeps or clears the weight of a variation and reads the Stripe lookup product', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    const repository = new AdminCatalogRepository(dataSource);
+    repository.upsertPostMeta = jest.fn();
+    repository.updatePost = jest.fn();
+
+    await repository.updateVariation({ id: '1001', weight: '300g' });
+    await repository.updateVariation({ id: '1002', weight: '' });
+    await repository.updateVariation({ id: '1003' });
+
+    const weights = repository.upsertPostMeta.mock.calls.filter(([, key]) => key === 'attribute_pa_weight');
+    expect(weights).toEqual([['1001', 'attribute_pa_weight', '300g'], ['1002', 'attribute_pa_weight', '']]);
+
+    dataSource.query.mockResolvedValueOnce([
+      { variationId: 1001, name: 'Bovino 300g', status: 'publish', meta_key: '_stripe_lookup_product_id', meta_value: '100' }
+    ]);
+    const [variation] = await repository.listVariations(2025, 'BR');
+    expect(variation.lookupProductId).toBe('100');
   });
 
   test('stores, keeps or clears the recipe key of a variation', async () => {

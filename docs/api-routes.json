@@ -129,55 +129,35 @@
   },
   {
     "method": "DELETE",
+    "path": "/api/v1/admin/catalog/products/:productId/content/image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/products/:productId/content/image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/products/:productId/content/label"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/v1/admin/catalog/products/:productId/content/plan-image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/products/:productId/content/plan-image"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/catalog/products/:productId/content/presentation"
+  },
+  {
+    "method": "DELETE",
     "path": "/api/v1/admin/catalog/products/:productId/variations/:variationId"
   },
   {
     "method": "POST",
     "path": "/api/v1/admin/catalog/products/:productId/variations/:variationId/activation"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v1/admin/catalog/recipe-content"
-  },
-  {
-    "method": "POST",
-    "path": "/api/v1/admin/catalog/recipe-content"
-  },
-  {
-    "method": "DELETE",
-    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug"
-  },
-  {
-    "method": "PATCH",
-    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug"
-  },
-  {
-    "method": "DELETE",
-    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/image"
-  },
-  {
-    "method": "PUT",
-    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/image"
-  },
-  {
-    "method": "PUT",
-    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/label"
-  },
-  {
-    "method": "DELETE",
-    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image"
-  },
-  {
-    "method": "PUT",
-    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image"
-  },
-  {
-    "method": "PUT",
-    "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/presentation"
   },
   {
     "method": "POST",

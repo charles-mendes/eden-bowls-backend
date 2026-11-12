@@ -17,6 +17,8 @@ const { RECIPE_KEY_META } = require('../../core/recipe-content');
 const { parseWeightToGrams } = require('../../core/plan-catalog-pricing');
 const { NCM_META_KEY, ORIGIN_META_KEY } = require('../../core/nfe');
 const SHORT_LABEL_META = '_short_label';
+const WEIGHT_META = 'attribute_pa_weight';
+const LOOKUP_PRODUCT_META = '_stripe_lookup_product_id';
 
 function flagMeta(value) {
   return value ? 'yes' : 'no';
@@ -128,7 +130,9 @@ class AdminCatalogRepository {
     this.tableNames = {
       posts: options.postsTableName || 'wp_posts',
       postmeta: options.postmetaTableName || 'wp_postmeta',
-      termRelationships: options.termRelationshipsTableName || 'wp_term_relationships'
+      termRelationships: options.termRelationshipsTableName || 'wp_term_relationships',
+      termTaxonomy: options.termTaxonomyTableName || 'wp_term_taxonomy',
+      terms: options.termsTableName || 'wp_terms'
     };
   }
 
@@ -138,10 +142,18 @@ class AdminCatalogRepository {
     }
   }
 
-  async listProducts({ search, market, markets, offset, perPage }) {
+  async listProducts({ search, market, markets, productIds, offset, perPage }) {
     this.ensureDataSource();
     const where = ["p.post_type = 'product'", "p.post_status IN ('publish', 'draft', 'private', 'pending')"];
     const params = [];
+
+    // A code filter resolves to product ids (catalog-products); an empty list matches nothing.
+    if (Array.isArray(productIds)) {
+      if (!productIds.length) {
+        return { total: 0, items: [] };
+      }
+      appendInFilter(where, params, 'p.ID', productIds.map(Number));
+    }
 
     if (search) {
       where.push('(p.post_title LIKE ? OR p.post_name LIKE ?)');
@@ -284,6 +296,8 @@ class AdminCatalogRepository {
         shortLabel: String(variation.meta[SHORT_LABEL_META] || '').trim() || null,
         recipeKey: String(variation.meta[RECIPE_KEY_META] || '').trim() || null,
         weight: weight || null,
+        // Product id of the Stripe price lookup key, kept by the deploy split for the variations it moved.
+        lookupProductId: String(variation.meta[LOOKUP_PRODUCT_META] || '').trim() || null,
         active: variation.status === 'publish',
         regularPrice: variationRegularPrice(variation.meta, zoneId),
         stripeProductId: stripeProductId || null,
@@ -420,41 +434,27 @@ class AdminCatalogRepository {
     ));
   }
 
-  // Variations of one recipe in a market, by content key (recipe-content).
-  async listRecipeVariations(market, recipeKey) {
-    const normalized = String(market || '').trim().toUpperCase();
+  // Variations of one product (recipe-content): the product is the recipe.
+  async listProductVariations(productId) {
+    const id = String(productId);
     return (await this.recipeVariationRows())
-      .filter((row) => row.market === normalized && row.recipeKey === recipeKey)
-      .map((row) => ({
-        id: row.variationId,
-        name: row.name,
-        sku: row.sku,
-        active: row.active,
-        productId: row.productId,
-        productName: row.productName
-      }));
+      .filter((row) => row.productId === id)
+      .map((row) => ({ id: row.variationId, name: row.name, sku: row.sku, active: row.active, productId: row.productId, productName: row.productName }));
   }
 
-  // Every variation of a recipe in a market follows the recipe's life stage (recipe-content).
-  async setRecipeLifeStage(market, recipeKey, lifeStage) {
-    for (const variation of await this.listRecipeVariations(market, recipeKey)) {
-      await this.upsertPostMeta(variation.id, LIFE_STAGE_META, lifeStage);
-    }
-  }
-
-  // Every recipe key of a market with the variations that use it (recipe-content).
-  async listMarketRecipeVariations(market) {
+  // Every product of a market with its variations, keyed by product id (recipe-content public list).
+  async listMarketProductVariations(market) {
     const normalized = String(market || '').trim().toUpperCase();
-    const byKey = new Map();
+    const byProduct = new Map();
     for (const row of await this.recipeVariationRows()) {
-      if (row.market !== normalized || !row.recipeKey) {
+      if (row.market !== normalized || !row.productId) {
         continue;
       }
-      const list = byKey.get(row.recipeKey) || [];
+      const list = byProduct.get(row.productId) || [];
       list.push({ id: row.variationId, name: row.name, sku: row.sku, active: row.active, productId: row.productId, productName: row.productName });
-      byKey.set(row.recipeKey, list);
+      byProduct.set(row.productId, list);
     }
-    return byKey;
+    return byProduct;
   }
 
   // Short and full recipe names per market and flavor key, for the production queue.
@@ -559,7 +559,7 @@ class AdminCatalogRepository {
   }
 
   // Every new variation starts inactive; the activation route publishes it after its checks.
-  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, ncm, origin, regularPrice, zoneId, menuOrder }) {
+  async createVariation({ productId, name, sku, weight, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, ncm, origin, regularPrice, zoneId, menuOrder }) {
     this.ensureDataSource();
     const id = await this.nextPostId();
     const title = String(name || '').trim();
@@ -577,6 +577,9 @@ class AdminCatalogRepository {
 
     if (code) {
       await this.upsertPostMeta(id, '_sku', code);
+    }
+    if (weight) {
+      await this.upsertPostMeta(id, WEIGHT_META, String(weight));
     }
     if (flavor != null) {
       await this.upsertPostMeta(id, 'attribute_pa_flavor', String(flavor).trim());
@@ -619,7 +622,7 @@ class AdminCatalogRepository {
     }
   }
 
-  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, ncm, origin, regularPrice, zoneId, priceChanged }) {
+  async updateVariation({ id, name, sku, weight, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, ncm, origin, regularPrice, zoneId, priceChanged }) {
     this.ensureDataSource();
     const title = name == null ? undefined : String(name).trim();
     const code = sku == null ? undefined : String(sku).trim();
@@ -632,6 +635,10 @@ class AdminCatalogRepository {
 
     if (code != null) {
       await this.upsertPostMeta(id, '_sku', code);
+    }
+    // Undefined keeps the stored weight; empty clears it.
+    if (weight !== undefined) {
+      await this.upsertPostMeta(id, WEIGHT_META, weight ? String(weight) : '');
     }
     if (flavor != null) {
       await this.upsertPostMeta(id, 'attribute_pa_flavor', String(flavor).trim());
@@ -661,6 +668,49 @@ class AdminCatalogRepository {
     await this.saveTaxMeta(id, { ncm, origin });
     if (regularPrice != null && priceChanged !== false) {
       await this.writeVariationPrice(id, regularPrice, zoneId);
+    }
+  }
+
+  // Puts a product in a store category (product_cat), as the store lists only `flavors` (catalog-products).
+  async assignCategory(productId, categorySlug) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      [
+        `SELECT tt.term_taxonomy_id AS id FROM \`${this.tableNames.termTaxonomy}\` tt`,
+        `INNER JOIN \`${this.tableNames.terms}\` t ON t.term_id = tt.term_id`,
+        "WHERE tt.taxonomy = 'product_cat' AND t.slug = ? LIMIT 1"
+      ].join(' '),
+      [categorySlug]
+    );
+    const termTaxonomyId = Array.isArray(rows) && rows[0] ? Number(rows[0].id) : null;
+    if (!termTaxonomyId) {
+      return false;
+    }
+    await this.dataSource.query(
+      `INSERT INTO \`${this.tableNames.termRelationships}\` (\`object_id\`, \`term_taxonomy_id\`) VALUES (?, ?)`,
+      [Number(productId), termTaxonomyId]
+    );
+    return true;
+  }
+
+  // Flavor fields every variation copies from its product (catalog-products); readers still read the copies.
+  async writeFlavorCopies(variationId, { flavor, flavorSlug, flavorAliases, lifeStage, shortLabel }) {
+    await this.upsertPostMeta(variationId, 'attribute_pa_flavor', String(flavor || ''));
+    await this.upsertPostMeta(variationId, FLAVOR_SLUG_META, String(flavorSlug || ''));
+    await this.upsertPostMeta(variationId, RECIPE_KEY_META, String(flavorSlug || ''));
+    await this.upsertPostMeta(variationId, FLAVOR_ALIASES_META, String(flavorAliases || ''));
+    await this.upsertPostMeta(variationId, LIFE_STAGE_META, String(lifeStage || 'adult'));
+    await this.upsertPostMeta(variationId, SHORT_LABEL_META, String(shortLabel || ''));
+  }
+
+  async rewriteFlavorCopies(productId, copies) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT \`ID\` AS id FROM \`${this.tableNames.posts}\` WHERE \`post_parent\` = ? AND \`post_type\` = 'product_variation'`,
+      [Number(productId)]
+    );
+    for (const row of Array.isArray(rows) ? rows : []) {
+      await this.writeFlavorCopies(Number(row.id), copies);
     }
   }
 
