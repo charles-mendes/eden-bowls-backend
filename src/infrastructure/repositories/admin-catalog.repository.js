@@ -512,9 +512,15 @@ class AdminCatalogRepository {
     const title = String(name || '').trim();
     const postName = slugify(slug || title || `product-${id}`);
 
-    // A new product goes after every existing one, so it lands last in the store flavor order.
+    // A new product goes after every product of its market, so it lands last in that store's flavor order.
     const orderRows = await this.dataSource.query(
-      `SELECT COALESCE(MAX(\`menu_order\`), 0) + 1 AS nextOrder FROM \`${this.tableNames.posts}\` WHERE \`post_type\` = 'product'`
+      [
+        'SELECT COALESCE(MAX(p.`menu_order`), 0) + 1 AS nextOrder',
+        `FROM \`${this.tableNames.posts}\` p`,
+        `INNER JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
+        "WHERE p.`post_type` = 'product' AND pm_country.meta_value = ?"
+      ].join(' '),
+      [planCountry]
     );
     const menuOrder = Number(Array.isArray(orderRows) && orderRows[0] ? orderRows[0].nextOrder : 1) || 1;
 
