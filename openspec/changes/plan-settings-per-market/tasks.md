@@ -22,8 +22,8 @@
 
 ## 5. Panel
 
-- [ ] 5.1 Apply the paired change `eden-bowls-admin/openspec/changes/plan-settings-per-market` (Plano screen, product page without plan values, `contract:sync`); verify its tasks are done before archiving this change.
+- [x] 5.1 Apply the paired change `eden-bowls-admin/openspec/changes/plan-settings-per-market` (Plano screen, product page without plan values, `contract:sync`); verify its tasks are done before archiving this change.
 
 ## 6. Integration check
 
-- [ ] 6.1 Run `npx jest --changedSince=main` in the backend and the panel's Vitest for the touched pages; locally, confirm a BR recommendation is the same before and after the migration.
+- [x] 6.1 Run `npx jest --changedSince=main` in the backend and the panel's Vitest for the touched pages; locally, confirm a BR recommendation is the same before and after the migration.
