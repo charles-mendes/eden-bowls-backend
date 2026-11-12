@@ -33,7 +33,7 @@
 
 ## 6. Panel
 
-- [ ] 6.1 Apply the paired change `eden-bowls-admin/openspec/changes/product-is-recipe` (create dialog, tabs, pack-only variation dialog, recipe screens removed, `contract:sync`); verify its tasks are done before archiving this change.
+- [x] 6.1 Apply the paired change `eden-bowls-admin/openspec/changes/product-is-recipe` (create dialog, tabs, pack-only variation dialog, recipe screens removed, `contract:sync`); verify its tasks are done before archiving this change.
 
 ## 7. Integration check
 
