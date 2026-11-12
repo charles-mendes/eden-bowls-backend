@@ -167,6 +167,7 @@ describe('ProductsRepository', () => {
 
     await expect(repository.listFlavorLabelsByCountry('BR')).resolves.toEqual(['Beef', 'Lamb']);
     expect(dataSource.query.mock.calls[0][0]).toContain('attribute_pa_flavor');
+    expect(dataSource.query.mock.calls[0][0]).toContain('ORDER BY MIN(p.menu_order) ASC');
     expect(dataSource.query.mock.calls[0][1]).toEqual(['BR']);
   });
 
@@ -183,6 +184,8 @@ describe('ProductsRepository', () => {
       { key: 'turkey', label: 'Frango', aliases: ['chicken', 'frango', 'peru'] }
     ]);
     expect(dataSource.query.mock.calls[0][0]).toContain('_flavor_slug');
+    // One product per recipe: the store order is the product order, then the variation order.
+    expect(dataSource.query.mock.calls[0][0]).toContain('ORDER BY MIN(p.menu_order) ASC, MIN(v.menu_order) ASC, MIN(v.ID) ASC');
   });
 
   test('returns an empty flavor list when catalog tables are missing', async () => {

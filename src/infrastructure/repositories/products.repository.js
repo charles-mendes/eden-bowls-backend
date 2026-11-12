@@ -323,7 +323,8 @@ class ProductsRepository {
         'AND UPPER(COALESCE(pm_country.meta_value, "")) = ?',
         'AND TRIM(COALESCE(vm.meta_value, "")) <> ""',
         'GROUP BY vm.meta_value',
-        'ORDER BY MIN(v.menu_order) ASC, MIN(v.ID) ASC'
+        // Each recipe is a product (catalog-products): products in their order, then their variations.
+        'ORDER BY MIN(p.menu_order) ASC, MIN(v.menu_order) ASC, MIN(v.ID) ASC'
       ].join(' ');
 
       const rows = await this.dataSource.query(sql, [String(country || '').trim().toUpperCase()]);
@@ -365,7 +366,8 @@ class ProductsRepository {
         'AND UPPER(COALESCE(pm_country.meta_value, "")) = ?',
         'AND TRIM(COALESCE(vm.meta_value, "")) <> ""',
         'GROUP BY COALESCE(NULLIF(TRIM(slug.meta_value), \'\'), vm.meta_value)',
-        'ORDER BY MIN(v.menu_order) ASC, MIN(v.ID) ASC'
+        // Each recipe is a product (catalog-products): products in their order, then their variations.
+        'ORDER BY MIN(p.menu_order) ASC, MIN(v.menu_order) ASC, MIN(v.ID) ASC'
       ].join(' ');
 
       const rows = await this.dataSource.query(sql, [String(country || '').trim().toUpperCase()]);

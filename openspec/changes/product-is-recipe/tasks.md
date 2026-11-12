@@ -28,8 +28,8 @@
 
 ## 5. Other backend readers
 
-- [ ] 5.1 `products.repository` flavor lists order by `p.menu_order`, then variation; verify with `tests/products.repository.test.js` and `tests/products.routes.test.js`.
-- [ ] 5.2 `admin-nutrition.service` / `recipe-energy.service` list recipes from the market's products with content; verify with `tests/admin-nutrition.service.test.js` and `tests/recipe-energy.service.test.js`.
+- [x] 5.1 `products.repository` flavor lists order by `p.menu_order`, then variation; verify with `tests/products.repository.test.js` and `tests/products.routes.test.js`.
+- [x] 5.2 `admin-nutrition.service` / `recipe-energy.service` list recipes from the market's products with content; verify with `tests/admin-nutrition.service.test.js` and `tests/recipe-energy.service.test.js`.
 
 ## 6. Panel
 
