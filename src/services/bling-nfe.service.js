@@ -798,9 +798,11 @@ class BlingNfeService {
   async detail(id, actor = {}) {
     const row = await this.requireRow(id, actor);
     const data = presentDetail(row);
+    const ledger = await this.findLedger(row.stripeSubscriptionId);
+    // The panel's own id of the subscription the note bills, so the note links to its order and not to a search.
+    data.subscription_id = ledger && ledger.id != null ? Number(ledger.id) : null;
     // delivery-address-issues: what the customer was told about the subscription of this note.
     if (this.addressIssueService) {
-      const ledger = await this.findLedger(row.stripeSubscriptionId);
       data.address_issue = ledger ? await this.addressIssueService.latestFor(ledger.id) : null;
     }
     return { success: true, data };

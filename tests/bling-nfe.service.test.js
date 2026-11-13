@@ -418,6 +418,21 @@ describe('detail', () => {
   });
 });
 
+describe('detail subscription_id', () => {
+  test('returns the panel id of the subscription the note bills', async () => {
+    const ledgerRepository = { findByStripeSubscriptionId: jest.fn(async () => ({ id: 12, stripeAccount: 'br', address: { country: 'BR' } })) };
+    const { service } = build({ ledgerRepository });
+    const { id } = await record(service);
+    expect((await service.detail(id)).data.subscription_id).toBe(12);
+  });
+
+  test('is null when no subscription is found', async () => {
+    const { service } = build();
+    const { id } = await record(service);
+    expect((await service.detail(id)).data.subscription_id).toBeNull();
+  });
+});
+
 describe('detail address_issue', () => {
   test('returns the problem of the note subscription', async () => {
     const issue = { id: 3, codes: ['fiscal_name_missing'], email_sent_at: '2026-11-03T12:00:00.000Z' };
