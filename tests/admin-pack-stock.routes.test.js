@@ -103,6 +103,24 @@ describe('admin pack stock routes', () => {
     expect(service.recordAdjustment).not.toHaveBeenCalled();
   });
 
+  test('a loss, expiry or sample adjustment cannot add packs', async () => {
+    const service = { recordAdjustment: jest.fn().mockResolvedValue({ onHand: 3 }) };
+    const send = (reason, quantity) => request(stockApp(service))
+      .post('/api/v1/admin/stock/adjustments')
+      .set('Authorization', `Bearer ${token()}`)
+      .send({ market: 'BR', flavorKey: 'frango', packSizeGrams: 300, quantity, reason, note: 'x' });
+
+    for (const reason of ['loss', 'expired', 'sample']) {
+      const response = await send(reason, 2);
+      expect(response.status).toBe(400);
+      expect(response.body.details.code).toBe('stock_adjustment_must_decrease');
+    }
+    expect(service.recordAdjustment).not.toHaveBeenCalled();
+    expect((await send('loss', -2)).status).toBe(200);
+    expect((await send('other', 2)).status).toBe(200);
+    expect(service.recordAdjustment).toHaveBeenCalledTimes(2);
+  });
+
   test('records a count of zero and refuses a negative one', async () => {
     const service = { recordCount: jest.fn().mockResolvedValue({ onHand: 0 }) };
     const send = (countedQuantity) => request(stockApp(service))

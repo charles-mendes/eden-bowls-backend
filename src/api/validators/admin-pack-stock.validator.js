@@ -5,6 +5,8 @@ const WINDOW_DAYS = [7, 14, 30];
 const MOVEMENT_TYPES = ['production', 'separation', 'separation_reversal', 'adjustment'];
 const ADJUSTMENT_REASONS = ['loss', 'expired', 'count', 'sample', 'other'];
 const MAX_QUANTITY = 10000;
+// Loss, expiry and samples take packs out; only `other` may add.
+const OUTGOING_REASONS = ['loss', 'expired', 'sample'];
 
 const itemKeySchema = {
   market: z.string().trim().min(1).optional(),
@@ -85,6 +87,9 @@ function parseStockAdjustment(body) {
   const data = parse(adjustmentSchema, body);
   if (data.reason === 'other' && !data.note) {
     throw new HttpError(400, 'A note is required when the reason is other.', { code: 'stock_adjustment_note_required' });
+  }
+  if (OUTGOING_REASONS.includes(data.reason) && data.quantity > 0) {
+    throw new HttpError(400, 'Loss, expiry and sample adjustments must take packs out.', { code: 'stock_adjustment_must_decrease' });
   }
   return { ...data, note: data.note || null };
 }
