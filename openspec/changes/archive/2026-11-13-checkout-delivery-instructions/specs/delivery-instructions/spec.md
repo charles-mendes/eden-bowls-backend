@@ -164,12 +164,17 @@ The answer MUST report the source as `subscription` or `profile`, or carry `null
 
 ### Requirement: UPS receives the ship-to phone and no free-text instructions until confirmed
 
-A UPS label request MUST send the ship-to phone from the subscription address. When the address has none, it MUST send the account phone. With neither, it MUST send no phone, as today. The digits MUST be cut to the 15 UPS accepts. A UPS label request MUST NOT send the delivery instructions in any field until a field for them is confirmed against the UPS Shipping API schema and accepted on CIE. The UPS rate request MUST NOT change.
+A UPS label request MUST send the ship-to phone from the subscription address. When the address has none, it MUST send the account phone. The number MUST follow the UPS layout for a US ship-to: 10 digits (area code and 7-digit number), after removing a leading country code 1. A number that does not give 10 digits MUST NOT be sent. With no usable number, the request MUST send no phone, as today. A UPS label request MUST NOT send the delivery instructions in any field until a field for them is confirmed against the UPS Shipping API schema and accepted on CIE. The UPS rate request MUST NOT change.
 
 #### Scenario: Phone from the account
 
 - **WHEN** an operator buys a label for a US subscription whose address has no phone and whose account phone is "+1 (212) 555-0100"
-- **THEN** the label request carries the ship-to phone "12125550100"
+- **THEN** the label request carries the ship-to phone "2125550100"
+
+#### Scenario: Phone that does not fit the US layout
+
+- **WHEN** the only phone on file is "+55 11 98888-7777"
+- **THEN** the label request carries no ship-to phone
 
 #### Scenario: Instructions are not sent
 
