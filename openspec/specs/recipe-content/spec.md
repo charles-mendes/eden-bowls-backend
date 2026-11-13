@@ -28,12 +28,17 @@ Recipe content (name, life stage, image, plan image, label and presentation) MUS
 
 ### Requirement: Recipe image must match the store banner size
 
-The API MUST accept a recipe image only as PNG, JPEG or WebP whose decoded size is exactly 1024 × 636 pixels and whose upload is at most 5 MB. Any other type, size or weight MUST be refused with HTTP 422 `recipe_image_invalid`, with `details` stating what was received and what is expected. A refused upload MUST leave the current image unchanged. An accepted image MUST be served as WebP at the same size.
+The API MUST accept a recipe image only as PNG, JPEG or WebP of at most 5 MB whose decoded size is 1024 × 636 pixels or close to it: covering 1024 × 636 must need at most 25% of enlargement and cut off at most 15% of the scaled width or height. An accepted image MUST be resized to cover 1024 × 636 and centre-cropped to exactly that size, without distortion, and served as WebP. Any other type, size or weight MUST be refused with HTTP 422 `recipe_image_invalid`, with `details` stating what was received and what is expected. A refused upload MUST leave the current image unchanged.
+
+#### Scenario: Close size is resized
+
+- **WHEN** an operator uploads a 1024 × 576 PNG
+- **THEN** the API stores a 1024 × 636 WebP, enlarged and centre-cropped
 
 #### Scenario: Wrong dimensions
 
-- **WHEN** an operator uploads a 1200 × 800 PNG
-- **THEN** the API returns 422 `recipe_image_invalid` with `details.width` 1200, `details.height` 800, `details.expectedWidth` 1024 and `details.expectedHeight` 636
+- **WHEN** an operator uploads an 800 × 800 PNG
+- **THEN** the API returns 422 `recipe_image_invalid` with `details.width` 800, `details.height` 800, `details.expectedWidth` 1024, `details.expectedHeight` 636, `details.maxUpscale` 1.25 and `details.maxCrop` 0.15
 - **AND** the current image is kept
 
 #### Scenario: Unsupported type

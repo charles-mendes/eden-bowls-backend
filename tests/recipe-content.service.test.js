@@ -148,9 +148,9 @@ describe('RecipeContentService', () => {
   });
 
   test('a refused image keeps the current one', async () => {
-    const refusal = Object.assign(new Error('Image must be 1024 x 636 pixels.'), {
+    const refusal = Object.assign(new Error('Image must be 1024 x 636 pixels, or close enough to be resized to it.'), {
       statusCode: 422,
-      details: { code: 'recipe_image_invalid', reason: 'dimensions', width: 1200, height: 800, expectedWidth: 1024, expectedHeight: 636 }
+      details: { code: 'recipe_image_invalid', reason: 'dimensions', width: 800, height: 800, expectedWidth: 1024, expectedHeight: 636 }
     });
     const stored = { productId: '500', imageUrl: '/recipe-images/old.webp' };
     const { service, repository, imageStorage, rows } = setup({ stored, processImage: jest.fn().mockRejectedValue(refusal) });
