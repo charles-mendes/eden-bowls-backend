@@ -576,7 +576,8 @@ describe('ProfileService', () => {
           { stripeSubscriptionId: 'sub_incomplete', status: 'incomplete' },
           { stripeSubscriptionId: 'sub_done', status: 'cancelled' }
         ]),
-        redactCustomerEmailForUser: jest.fn().mockResolvedValue(undefined)
+        redactCustomerEmailForUser: jest.fn().mockResolvedValue(undefined),
+        clearDeliveryInstructionsForUser: jest.fn().mockResolvedValue(1)
       },
       stripeBilling: {
         cancelSubscriptionImmediately: jest.fn().mockResolvedValue({ status: 'canceled' }),
@@ -597,6 +598,8 @@ describe('ProfileService', () => {
     expect(leftover.stripeBilling.anonymizeCustomer).toHaveBeenCalledWith('cus_br');
     expect(leftover.stripeBilling.anonymizeCustomer).toHaveBeenCalledWith('cus_us');
     expect(leftover.ledgerRepository.redactCustomerEmailForUser).toHaveBeenCalledWith(77);
+    // delivery-instructions: erasure leaves no instructions on the subscription addresses.
+    expect(leftover.ledgerRepository.clearDeliveryInstructionsForUser).toHaveBeenCalledWith(77);
     expect(leftover.refreshTokenRepository.revokeAllForUser).toHaveBeenCalledWith(77, 'account_deleted', expect.any(String));
     expect(leftover.repository.softDeletePetsByUserId).toHaveBeenCalled();
     expect(leftover.repository.hardDeletePetsByUserId).toHaveBeenCalledWith(77);

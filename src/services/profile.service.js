@@ -689,6 +689,9 @@ class ProfileService {
     if (this.ledgerRepository && typeof this.ledgerRepository.redactCustomerEmailForUser === 'function') {
       await this.ledgerRepository.redactCustomerEmailForUser(userId);
     }
+    if (this.ledgerRepository && typeof this.ledgerRepository.clearDeliveryInstructionsForUser === 'function') {
+      await this.ledgerRepository.clearDeliveryInstructionsForUser(userId);
+    }
 
     if (this.quotesRepository && typeof this.quotesRepository.deleteByUserId === 'function') {
       await this.quotesRepository.deleteByUserId(userId);

@@ -234,6 +234,25 @@ describe('SubscriptionLedgerRepository', () => {
     expect(params).toEqual(['Ana Costa', 200]);
   });
 
+  test('erasure removes the delivery instructions from every subscription address of the user', async () => {
+    const query = jest.fn().mockResolvedValue({ affectedRows: 2 });
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+    expect(await repository.clearDeliveryInstructionsForUser(77)).toBe(2);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("JSON_REMOVE(`address`, '$.delivery_instructions')");
+    expect(params).toEqual([77]);
+  });
+
+  test('sets only the delivery instructions key of one subscription address', async () => {
+    const query = jest.fn().mockResolvedValue({ affectedRows: 1 });
+    const repository = new SubscriptionLedgerRepository({ isInitialized: true, query });
+    expect(await repository.setAddressDeliveryInstructions(200, 'Portão lateral')).toBe(true);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("JSON_SET(COALESCE(`address`, JSON_OBJECT()), '$.delivery_instructions', ?)");
+    expect(sql).toContain('WHERE `id` = ?');
+    expect(params).toEqual(['Portão lateral', 200]);
+  });
+
   test('narrows the queue to one civil-day due bucket', async () => {
     const bounds = {
       startOfToday: '2026-09-20 03:00:00',

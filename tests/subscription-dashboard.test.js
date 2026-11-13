@@ -99,7 +99,8 @@ describe('subscription dashboard delivery address', () => {
         city: 'São Paulo',
         state: 'SP',
         zipcode: '01305-000',
-        recipient_name: 'João Lima'
+        recipient_name: 'João Lima',
+        delivery_instructions: 'Portão azul'
       }
     });
 
@@ -112,7 +113,8 @@ describe('subscription dashboard delivery address', () => {
       city: 'São Paulo',
       state: 'SP',
       zipcode: '01305-000',
-      recipient_name: 'João Lima'
+      recipient_name: 'João Lima',
+      delivery_instructions: 'Portão azul'
     });
   });
 
@@ -127,7 +129,8 @@ describe('subscription dashboard delivery address', () => {
       street: '1 Market St',
       city: 'San Francisco',
       state: 'CA',
-      zipcode: '94105'
+      zipcode: '94105',
+      delivery_instructions: ''
     });
   });
 });

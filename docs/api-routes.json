@@ -48,6 +48,10 @@
     "path": "/api/v1/admin/billing/subscriptions/:id/customer-invoices"
   },
   {
+    "method": "PATCH",
+    "path": "/api/v1/admin/billing/subscriptions/:id/delivery-instructions"
+  },
+  {
     "method": "GET",
     "path": "/api/v1/admin/billing/subscriptions/:id/nfe"
   },

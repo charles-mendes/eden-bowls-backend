@@ -1,6 +1,7 @@
 const { z } = require('zod');
 const { HttpError } = require('../../core/http-error');
 const { parseRecipientNameInput } = require('../../core/recipient-name');
+const { parseDeliveryInstructionsInput } = require('../../core/delivery-instructions');
 
 const editPetSchema = z.object({
   pet_id: z.string().trim().max(64).optional(),
@@ -23,7 +24,9 @@ const editAddressSchema = z.object({
   neighborhood: z.string().trim().max(120).optional(),
   complement: z.string().trim().max(120).optional(),
   number: z.string().trim().max(32).optional(),
-  recipient_name: z.string().optional()
+  recipient_name: z.string().optional(),
+  // The rule runs after Zod (withDeliveryInstructions), so its 422 keeps the field instead of `invalid_plan`.
+  delivery_instructions: z.unknown().optional()
 }).passthrough();
 
 const editShippingSchema = z.object({
@@ -77,12 +80,25 @@ function withRecipientName(parsed) {
   return { ...parsed, address: { ...parsed.address, recipient_name: parseRecipientNameInput(parsed.address.recipient_name) } };
 }
 
+// Same pattern for the delivery instructions (delivery-instructions): absent stays absent, '' clears.
+function withDeliveryInstructions(parsed) {
+  if (!parsed.address || parsed.address.delivery_instructions === undefined) return parsed;
+  return {
+    ...parsed,
+    address: { ...parsed.address, delivery_instructions: parseDeliveryInstructionsInput(parsed.address.delivery_instructions) }
+  };
+}
+
+function parseAddressRules(parsed) {
+  return withDeliveryInstructions(withRecipientName(parsed));
+}
+
 function parseSubscriptionsEditPreviewInput(payload = {}) {
-  return withRecipientName(wrapZod(() => subscriptionsEditPayloadSchema.parse(payload || {})));
+  return parseAddressRules(wrapZod(() => subscriptionsEditPayloadSchema.parse(payload || {})));
 }
 
 function parseSubscriptionsEditCommitInput(payload = {}) {
-  const parsed = withRecipientName(wrapZod(() => subscriptionsEditPayloadSchema.parse(payload || {})));
+  const parsed = parseAddressRules(wrapZod(() => subscriptionsEditPayloadSchema.parse(payload || {})));
   const hash = String(parsed.expected_current_hash || '').trim();
   if (!hash) {
     throw new HttpError(422, 'expected_current_hash is required.', {

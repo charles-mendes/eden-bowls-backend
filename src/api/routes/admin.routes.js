@@ -763,6 +763,16 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  // delivery-instructions: sets or clears the instructions of one subscription, nothing else of the address.
+  app.patch('/api/v1/admin/billing/subscriptions/:id/delivery-instructions', requirePermission('users.delivery.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminBillingService) {
+        throw new HttpError(503, 'Billing service is not available.');
+      }
+      return dependencies.adminBillingService.updateDeliveryInstructions(request.params.id, request.body || {}, request.adminIdentity);
+    });
+  });
+
   app.get('/api/v1/admin/billing/metrics', requirePermission('billing.subscribers.read', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminBillingService) {

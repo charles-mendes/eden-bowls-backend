@@ -8,7 +8,7 @@ const cycle = (id, invoice, extra = {}) => ({
   deliveryDate: '2026-11-05', address, userId: 7, ...extra
 });
 
-function queueService({ cycles, atWork = [], later = 0, shipments = [], configured = true, addressIssueService, pickupRepository }) {
+function queueService({ cycles, atWork = [], later = 0, shipments = [], configured = true, addressIssueService, pickupRepository, profileRepository }) {
   const listPaidLabelCycles = jest.fn().mockResolvedValue(cycles);
   const listLabelCyclesWithActiveShipment = jest.fn().mockResolvedValue(atWork);
   const countPaidLabelCyclesWithoutShipment = jest.fn().mockResolvedValue(later);
@@ -19,6 +19,7 @@ function queueService({ cycles, atWork = [], later = 0, shipments = [], configur
     shippingService: { settings: { us: { ship_from: { zipcode: '33101' } } } },
     addressIssueService,
     pickupRepository,
+    profileRepository,
     now: () => new Date('2026-11-03T12:00:00Z')
   });
   return { service, listPaidLabelCycles, listLabelCyclesWithActiveShipment, countPaidLabelCyclesWithoutShipment };
@@ -220,5 +221,38 @@ describe('UpsShipmentService.listLabelQueue', () => {
       { id: 33, pickup_date: '2026-11-03', status: 'unknown', prn: null }
     ]);
     expect(data.created[0]).not.toHaveProperty('pickup_id');
+  });
+});
+
+describe('label queue delivery instructions (delivery-instructions)', () => {
+  const profileRepository = {
+    listDeliveryContacts: jest.fn(async () => new Map([['7', {
+      phone: null, deliveryInstructions: 'Ring twice', profileAddress: { country: 'US', zipcode: '33101', street: '1 main st', number: '' }
+    }]])),
+    findUserById: jest.fn(async () => null)
+  };
+
+  test('Order with instructions: the subscription text with its source', async () => {
+    const { service } = queueService({
+      cycles: [cycle(1, 'in_1', { address: { ...address, delivery_instructions: 'Leave at back door' } })],
+      profileRepository
+    });
+    const { data } = await service.listLabelQueue();
+    expect(data.ready[0]).toMatchObject({ delivery_instructions: 'Leave at back door', delivery_instructions_source: 'subscription' });
+  });
+
+  test('the profile text at the same place, none at another place', async () => {
+    const { service } = queueService({
+      cycles: [
+        cycle(1, 'in_1'),
+        cycle(2, 'in_2', { address: { ...address, line1: '9 Ocean Dr', postal_code: '33139' } })
+      ],
+      profileRepository
+    });
+    const { data } = await service.listLabelQueue();
+    expect(data.ready.map((item) => [item.delivery_instructions, item.delivery_instructions_source])).toEqual([
+      ['Ring twice', 'profile'],
+      [null, null]
+    ]);
   });
 });

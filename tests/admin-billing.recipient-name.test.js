@@ -105,3 +105,32 @@ describe('subscription detail carries the account name only for a profile in sco
     await expect(service.getSubscription('200', brOperator, { detail: true })).resolves.toMatchObject({ account_name: null, name_source: 'email' });
   });
 });
+
+describe('subscription detail carries the delivery instructions with their source', () => {
+  test('the subscription text comes first', async () => {
+    const { service, profileRepository } = build({ row: { address: { ...address, delivery_instructions: 'Portão verde' } } });
+    profileRepository.getAddress = jest.fn(async () => ({ exists: true, address: { ...address, delivery_instructions: 'Interfone 12' } }));
+    await expect(service.getSubscription('200', brOperator, { detail: true }))
+      .resolves.toMatchObject({ delivery_instructions: 'Portão verde', delivery_instructions_source: 'subscription' });
+  });
+
+  test('the profile text only for the same place', async () => {
+    const same = build();
+    same.profileRepository.getAddress = jest.fn(async () => ({ exists: true, address: { ...address, delivery_instructions: 'Interfone 12' } }));
+    await expect(same.service.getSubscription('200', brOperator, { detail: true }))
+      .resolves.toMatchObject({ delivery_instructions: 'Interfone 12', delivery_instructions_source: 'profile' });
+
+    const other = build();
+    other.profileRepository.getAddress = jest.fn(async () => ({ exists: true, address: { ...address, number: '99', delivery_instructions: 'Interfone 12' } }));
+    await expect(other.service.getSubscription('200', brOperator, { detail: true }))
+      .resolves.toMatchObject({ delivery_instructions: null, delivery_instructions_source: null });
+  });
+
+  test('a profile in another market is not read', async () => {
+    const { service, profileRepository } = build({ row: { profileMarket: 'US' } });
+    profileRepository.getAddress = jest.fn();
+    await expect(service.getSubscription('200', brOperator, { detail: true }))
+      .resolves.toMatchObject({ delivery_instructions: null, delivery_instructions_source: null });
+    expect(profileRepository.getAddress).not.toHaveBeenCalled();
+  });
+});

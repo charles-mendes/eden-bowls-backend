@@ -14,6 +14,7 @@ const { presentProductionQueueItem } = require('../core/production-queue-present
 const { cyclePacks } = require('../core/pack-stock');
 const { planBoxes } = require('../core/shipping-boxes');
 const { DEFAULT_SETTINGS } = require('../infrastructure/shipping/shipping-settings');
+const { resolveDeliveryInstructions } = require('../core/delivery-instructions');
 
 // The checkout recipient first (delivery-recipient); older subscriptions keep the name keys they may carry.
 function addressRecipient(address = {}) {
@@ -31,6 +32,14 @@ function normalizeShipTo(address = {}) {
     country: String(address.country || 'US').toUpperCase(),
     phone: address.phone || address.phone_number || ''
   };
+}
+
+// The UPS layout for a US ship-to phone: area code and 7-digit number. A leading country code 1 is dropped;
+// anything else that is not 10 digits is not sent (delivery-instructions).
+function usShipToPhone(value) {
+  let digits = String(value || '').replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1);
+  return digits.length === 10 ? digits : '';
 }
 
 const LABEL_IMAGE_KEYS = new Set(['GraphicImage', 'GraphicImagePart', 'HTMLImage']);
@@ -276,6 +285,7 @@ class UpsShipmentService {
     const shipments = await this.withPackages(await this.repository.listActiveByInvoiceIds(page.map((cycle) => cycle.paidInvoiceId)));
     const byInvoice = new Map(shipments.map((shipment) => [shipment.stripe_invoice_id, shipment]));
     const configured = Boolean(this.upsClient && this.upsClient.isConfigured());
+    const contacts = await this.deliveryContacts(page);
     const data = {
       ...empty,
       truncated,
@@ -289,6 +299,7 @@ class UpsShipmentService {
         continue;
       }
       const { shipTo, issues } = await this.inspectLabel(cycle);
+      const instructions = this.instructionsFor(cycle, contacts);
       const item = {
         subscription_id: String(cycle.id),
         stripe_subscription_id: cycle.stripeSubscriptionId,
@@ -299,6 +310,9 @@ class UpsShipmentService {
         production_status: cycle.productionStatus,
         subscription_status: cycle.status,
         delivery_date: cycle.deliveryDate || null,
+        // delivery-instructions: for whoever packs the box; the UPS request never carries them.
+        delivery_instructions: instructions.text,
+        delivery_instructions_source: instructions.source,
         shipment: shipment ? this.present(shipment) : null
       };
       if (!shipment) {
@@ -317,6 +331,20 @@ class UpsShipmentService {
       for (const item of data.ready) item.address_issue = latest.get(Number(item.subscription_id)) || null;
     }
     return { success: true, data };
+  }
+
+  // The profile copy of the instructions of every row at once; without the profile repository there is none.
+  async deliveryContacts(cycles) {
+    if (!this.profileRepository || typeof this.profileRepository.listDeliveryContacts !== 'function') return new Map();
+    const userIds = cycles.map((cycle) => (cycle.user && cycle.user.id) || cycle.userId).filter(Boolean);
+    return userIds.length ? this.profileRepository.listDeliveryContacts(userIds) : new Map();
+  }
+
+  instructionsFor(cycle, contacts) {
+    const userId = (cycle.user && cycle.user.id) || cycle.userId;
+    const contact = (userId && contacts.get(String(userId))) || {};
+    const profileAddress = contact.profileAddress ? { ...contact.profileAddress, delivery_instructions: contact.deliveryInstructions } : null;
+    return resolveDeliveryInstructions(cycle.address || {}, profileAddress);
   }
 
   // ups-pickup: each created label carries its active pickup (requested or unknown), read for the page at once.
@@ -404,6 +432,8 @@ class UpsShipmentService {
       }
       throw new HttpError(409, 'Another UPS shipment request for this invoice is in progress.', { code: 'ups_shipment_in_progress' });
     }
+
+    shipTo.phone = await this.resolveShipToPhone(subscription, shipTo.phone);
 
     let created;
     try {
@@ -556,6 +586,17 @@ class UpsShipmentService {
     const user = this.profileRepository ? await this.profileRepository.findUserById(userId) : null;
     const name = String((user && user.displayName) || '').trim();
     return name.includes('@') ? '' : name;
+  }
+
+  // The subscription address phone, else the account phone, in the US layout. Read only when buying a label,
+  // so the queue does not read one profile per order.
+  async resolveShipToPhone(subscription, addressPhone) {
+    const fromAddress = usShipToPhone(addressPhone);
+    if (fromAddress) return fromAddress;
+    const userId = (subscription.user && subscription.user.id) || subscription.userId;
+    if (!userId || !this.profileRepository) return '';
+    const user = await this.profileRepository.findUserById(userId);
+    return usShipToPhone(user && user.phone);
   }
 
   // Everything that stops a label before UPS is called, so the panel can warn ahead of the click.
@@ -727,6 +768,7 @@ class UpsShipmentService {
 module.exports = {
   UpsShipmentService,
   normalizeShipTo,
+  usShipToPhone,
   upsRejectedShipment,
   withoutLabelImages
 };

@@ -610,8 +610,11 @@ describe('The queue lists Brazil delivery work in four groups', () => {
     expect(data.to_dispatch).toEqual([]);
   });
 
-  test('A row carries the full subscription address, the phone, the profile instructions and the items', async () => {
-    const profileRepository = { listDeliveryContacts: jest.fn(async () => new Map([['10', { phone: '+55 11 98888-7777', deliveryInstructions: 'Interfone 12' }]])) };
+  // delivery-instructions: the profile text only for a subscription at the same place.
+  const HARMONIA_PROFILE = { country: 'BR', zipcode: '05435000', street: 'rua harmonia', number: '45' };
+
+  test('A row carries the full subscription address, the phone, the profile instructions at the same place and the items', async () => {
+    const profileRepository = { listDeliveryContacts: jest.fn(async () => new Map([['10', { phone: '+55 11 98888-7777', deliveryInstructions: 'Interfone 12', profileAddress: HARMONIA_PROFILE }]])) };
     const { service } = setup({
       profileRepository,
       cycles: [cycle('in_new', '2026-11-05', {
@@ -629,6 +632,32 @@ describe('The queue lists Brazil delivery work in four groups', () => {
       delivery_instructions_source: 'profile'
     });
     expect(data.to_dispatch[0].items).toEqual([{ flavor: 'Frango', quantity: 4, pack_size: expect.any(String) }]);
+  });
+
+  test('Complete row: the subscription instructions win over the profile', async () => {
+    const profileRepository = { listDeliveryContacts: jest.fn(async () => new Map([['10', { phone: null, deliveryInstructions: 'Interfone 12', profileAddress: HARMONIA_PROFILE }]])) };
+    const { service } = setup({
+      profileRepository,
+      cycles: [cycle('in_new', '2026-11-05', {
+        userId: '10',
+        address: { country: 'BR', street: 'Rua Harmonia', number: '45', neighborhood: 'Vila Madalena', city: 'São Paulo', state: 'SP', postal_code: '05435-000', recipient_name: 'João Lima', delivery_instructions: 'Portão verde' }
+      })]
+    });
+    const { data } = await service.listQueue(actor);
+    expect(data.to_dispatch[0]).toMatchObject({ delivery_instructions: 'Portão verde', delivery_instructions_source: 'subscription' });
+  });
+
+  test('Gift at another place: the profile instructions are not shown', async () => {
+    const profileRepository = { listDeliveryContacts: jest.fn(async () => new Map([['10', { phone: null, deliveryInstructions: 'Interfone 12', profileAddress: HARMONIA_PROFILE }]])) };
+    const { service } = setup({
+      profileRepository,
+      cycles: [cycle('in_new', '2026-11-05', {
+        userId: '10',
+        address: { country: 'BR', street: 'Rua Augusta', number: '500', neighborhood: 'Consolação', city: 'São Paulo', state: 'SP', postal_code: '01305-000', recipient_name: 'Avó Maria' }
+      })]
+    });
+    const { data } = await service.listQueue(actor);
+    expect(data.to_dispatch[0]).toMatchObject({ delivery_instructions: null, delivery_instructions_source: null });
   });
 
   test('Courier delivery item: a BR cycle with 12 packs carries one monthly box without dry ice', async () => {
@@ -656,7 +685,7 @@ describe('The queue lists Brazil delivery work in four groups', () => {
     const address = { country: 'BR', city: 'São Paulo', state: 'SP', neighborhood: 'Pinheiros', postal_code: '05422-000', recipient_name: 'João Lima' };
     const { service } = setup({ profileRepository: { listDeliveryContacts: jest.fn(async () => new Map()) }, cycles: [cycle('in_new', '2026-11-05', { userId: '10', address })] });
     const { data } = await service.listQueue(actor);
-    expect(data.to_dispatch[0]).toMatchObject({ phone: null, delivery_instructions: null, address: { street: null, number: null, city: 'São Paulo' } });
+    expect(data.to_dispatch[0]).toMatchObject({ phone: null, delivery_instructions: null, delivery_instructions_source: null, address: { street: null, number: null, city: 'São Paulo' } });
     expect(data.to_dispatch[0].issues).toEqual(['address_street_missing', 'address_number_missing']);
   });
 

@@ -140,6 +140,47 @@ describe('UpsShipmentService label guards', () => {
     expect(service.upsClient.createShipment.mock.calls[0][0].shipTo.name).toBe('João Lima');
   });
 
+  describe('ship-to phone (delivery-instructions)', () => {
+    async function withAddress(service, extra) {
+      const subscription = await service.adminBillingService.getSubscription();
+      service.adminBillingService.getSubscription.mockResolvedValue({ ...subscription, address: { ...subscription.address, ...extra } });
+    }
+
+    test('Phone from the account: the US layout of 10 digits', async () => {
+      const { service } = buildService({
+        profileRepository: { findUserById: jest.fn().mockResolvedValue({ displayName: 'Ana Costa', phone: '+1 (212) 555-0100' }) }
+      });
+      await withAddress(service, { phone: '', recipient_name: 'Ana Costa' });
+      await create(service);
+      expect(service.upsClient.createShipment.mock.calls[0][0].shipTo.phone).toBe('2125550100');
+    });
+
+    test('the subscription address phone comes first', async () => {
+      const findUserById = jest.fn().mockResolvedValue({ phone: '+1 212 555 0100' });
+      const { service } = buildService({ profileRepository: { findUserById } });
+      await withAddress(service, { phone: '(415) 555-0199', recipient_name: 'Ana Costa' });
+      await create(service);
+      expect(service.upsClient.createShipment.mock.calls[0][0].shipTo.phone).toBe('4155550199');
+      expect(findUserById).not.toHaveBeenCalled();
+    });
+
+    test('Phone that does not fit the US layout is not sent', async () => {
+      const { service } = buildService({
+        profileRepository: { findUserById: jest.fn().mockResolvedValue({ phone: '+55 11 98888-7777' }) }
+      });
+      await withAddress(service, { phone: '', recipient_name: 'Ana Costa' });
+      await create(service);
+      expect(service.upsClient.createShipment.mock.calls[0][0].shipTo.phone).toBe('');
+    });
+
+    test('Instructions are not sent: the label request carries no copy of the text', async () => {
+      const { service } = buildService();
+      await withAddress(service, { delivery_instructions: 'Leave at back door', recipient_name: 'Ana Costa' });
+      await create(service);
+      expect(JSON.stringify(service.upsClient.createShipment.mock.calls[0][0])).not.toContain('back door');
+    });
+  });
+
   test('the label request carries the stored package with its dry ice weight', async () => {
     const { service } = buildService();
     service.shippingService.settings.us.package = { weight_lb: 10, length_in: 12, width_in: 12, height_in: 12, dry_ice_kg: 0.5 };

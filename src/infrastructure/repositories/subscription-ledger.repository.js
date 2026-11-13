@@ -161,6 +161,27 @@ class SubscriptionLedgerRepository {
     }
   }
 
+  // delivery-instructions: the customer's free text leaves every subscription address on erasure.
+  async clearDeliveryInstructionsForUser(userId) {
+    this.ensureDataSource();
+    const normalizedUserId = Number(userId);
+    if (!Number.isSafeInteger(normalizedUserId) || normalizedUserId < 1) {
+      return 0;
+    }
+    try {
+      const result = await this.dataSource.query(
+        `UPDATE \`${this.tableName}\` SET \`address\` = JSON_REMOVE(\`address\`, '$.delivery_instructions') WHERE \`user_id\` = ? AND JSON_CONTAINS_PATH(\`address\`, 'one', '$.delivery_instructions')`,
+        [normalizedUserId]
+      );
+      return Number(result && result.affectedRows || 0);
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return 0;
+      }
+      throw error;
+    }
+  }
+
   async findByStripeSubscriptionId(subscriptionId) {
     this.ensureDataSource();
     const id = String(subscriptionId || '').trim();
@@ -588,6 +609,20 @@ class SubscriptionLedgerRepository {
         "WHERE `id` = ? AND COALESCE(TRIM(JSON_UNQUOTE(JSON_EXTRACT(`address`, '$.recipient_name'))), '') = ''"
       ].join(' '),
       [name, Number(id)]
+    );
+    return Number(result && result.affectedRows) === 1;
+  }
+
+  // delivery-instructions: sets or clears only this key of one subscription address.
+  async setAddressDeliveryInstructions(id, text) {
+    this.ensureDataSource();
+    const result = await this.dataSource.query(
+      [
+        `UPDATE \`${this.tableName}\``,
+        "SET `address` = JSON_SET(COALESCE(`address`, JSON_OBJECT()), '$.delivery_instructions', ?)",
+        'WHERE `id` = ?'
+      ].join(' '),
+      [String(text || ''), Number(id)]
     );
     return Number(result && result.affectedRows) === 1;
   }

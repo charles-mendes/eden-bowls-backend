@@ -131,6 +131,32 @@ Arquivo existe mas runtime usa MySQL + defaults em código.
 
 ---
 
+## 10. Instruções de entrega na etiqueta UPS — ABERTO (teste manual em CIE)
+
+Change `checkout-delivery-instructions`. O cliente escreve instruções de entrega no checkout (BR e US). No Brasil o entregador lê na fila do painel. Nos EUA a etiqueta **não** leva o texto; a fila de etiquetas mostra para quem embala.
+
+**Conferido no schema oficial** (`UPS-API/api-documentation`, `Shipping.yaml`, endpoint `/api/shipments/v2409/ship`, 2026-11-13):
+
+| Campo | O que o schema diz | Serve para instrução ao motorista? |
+|---|---|---|
+| `ShipTo` | `Name`, `AttentionName`, `Phone`, `FaxNumber`, `EMailAddress`, `Address`, `LocationID`, `TaxIdentificationNumber`. Nenhum campo de instrução. | Não existe |
+| `LabelSpecification.Instruction` | Código `01`/`02` de "EXCHANGE-LIKE ITEM ONLY" / "EXCHANGE-DRIVER INSTRUCTIONS INSIDE". | Só envio de troca |
+| `PackageServiceOptions.HandlingInstructions` | Instrução de manuseio do UPS Premier. | Só UPS Premier (saúde) |
+| `Package.ReferenceNumber` | Até 5 por pacote, `Value` com até 35 caracteres, válido em US/US. Texto do remetente, sai na etiqueta. | Possível, mas é referência do remetente |
+| `ShipTo.Phone.Number` | Obrigatório só em Next Day Air Early e envio internacional. Nos EUA: código de área + 7 dígitos (10 dígitos), com ramal opcional de 4. | — |
+
+**Decisão desta change:** enviar só `ShipTo.Phone` (endereço da assinatura, depois `billing_phone` da conta, normalizado para 10 dígitos; sem número válido, nada é enviado). O texto da instrução não vai para a UPS.
+
+**Teste manual em CIE (pessoa com acesso, a IA não tem):**
+
+1. Comprar uma etiqueta Ground US/US com `Package.ReferenceNumber: [{ Value: "LEAVE AT BACK DOOR" }]`.
+2. Ver se o texto sai na etiqueta GIF e onde. Repetir com 35 caracteres e com acento ("PORTÃO") para ver o que a UPS faz.
+3. Comprar uma etiqueta com `ShipTo.Phone.Number` de 10 dígitos e confirmar que não há aviso.
+
+Se o texto sair legível, abrir uma change separada para mandar a instrução em ASCII, cortada em 35 caracteres. Mesmo assim, o motorista não tem obrigação de ler a referência; o aviso do checkout dos EUA continua.
+
+---
+
 ## Checklist antes de `quote_mode=ups` em produção
 
 - [ ] Conta UPS do cliente + Account Number no env de produção

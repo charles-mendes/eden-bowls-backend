@@ -126,7 +126,17 @@ class ProfileRepository {
     for (const row of Array.isArray(states) ? states : []) {
       const address = parseJsonColumn(row.address) || {};
       const instructions = String(address.delivery_instructions || '').trim();
-      if (instructions) entry(row.user_id).deliveryInstructions = instructions;
+      if (instructions) {
+        const contact = entry(row.user_id);
+        contact.deliveryInstructions = instructions;
+        // Only the place: the courier shows the profile text only for a subscription at the same place.
+        contact.profileAddress = {
+          country: address.country || '',
+          zipcode: address.zipcode || address.postal_code || '',
+          street: address.street || address.address_line1 || '',
+          number: address.number || ''
+        };
+      }
     }
     return contacts;
   }

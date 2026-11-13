@@ -508,6 +508,40 @@ describe('SubscriptionsEditCommitRepository', () => {
       }));
     });
 
+    test('a street change without the instructions keeps the stored ones', async () => {
+      const storedAddress = { country: 'US', postal_code: '94105', recipient_name: 'Ana Costa', delivery_instructions: 'Portão azul' };
+      const storedHash = buildCurrentHash({
+        items: [{ price: 'price_abc', quantity: 1 }], termMonths: 1, address: storedAddress, shipping: { cost: 12.9 }
+      });
+      const repository = buildRepo({ ledgerRow: { address: storedAddress } });
+      await repository.commit(7, 'sub_123', {
+        ...addressPayload, expected_current_hash: storedHash, address: { ...US_EDIT_ADDRESS, line1: '2 Market St' }, shipping: signedShipping()
+      });
+
+      expect(repository.ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        address: expect.objectContaining({ line1: '2 Market St', delivery_instructions: 'Portão azul' })
+      }));
+    });
+
+    test('an instructions-only change saves them without prorating or moving the charge', async () => {
+      const storedAddress = { ...US_EDIT_ADDRESS, delivery_instructions: 'Portão azul' };
+      const storedHash = buildCurrentHash({
+        items: [{ price: 'price_abc', quantity: 1 }], termMonths: 1, address: storedAddress, shipping: { cost: 12.9 }
+      });
+      const repository = buildRepo({ ledgerRow: { address: storedAddress } });
+      const result = await repository.commit(7, 'sub_123', {
+        ...addressPayload, expected_current_hash: storedHash,
+        address: { ...US_EDIT_ADDRESS, delivery_instructions: 'Deixar com o porteiro' }, shipping: signedShipping()
+      });
+
+      expect(repository.stripeBilling.previewProration).not.toHaveBeenCalled();
+      expect(repository.stripeBilling.updateSubscriptionItems.mock.calls[0][0].prorationBehavior).toBe('none');
+      expect(result.edit_payment_pending).toBe(false);
+      expect(repository.ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+        address: expect.objectContaining({ delivery_instructions: 'Deixar com o porteiro', recipient_name: 'Ana Costa' })
+      }));
+    });
+
     test('a new recipient replaces the stored one', async () => {
       const storedAddress = { country: 'US', postal_code: '94105', recipient_name: 'João Lima' };
       const storedHash = buildCurrentHash({

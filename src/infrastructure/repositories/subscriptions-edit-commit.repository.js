@@ -41,6 +41,13 @@ function withStoredRecipient(address, storedAddress) {
   return stored ? { ...address, recipient_name: stored } : address;
 }
 
+// Same for the delivery instructions (delivery-instructions): omitted keeps the stored text, '' clears it.
+function withStoredInstructions(address, storedAddress) {
+  if (!address || address.delivery_instructions !== undefined) return address;
+  const stored = storedAddress && typeof storedAddress === 'object' ? storedAddress.delivery_instructions : undefined;
+  return stored ? { ...address, delivery_instructions: stored } : address;
+}
+
 class SubscriptionsEditCommitRepository {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository || null;
@@ -219,7 +226,7 @@ class SubscriptionsEditCommitRepository {
     };
     const nextPets = buildPetsSnapshot(nextPlanSelection);
     const savedAddress = payload.address
-      ? addressWithTransit(withStoredRecipient(payload.address, row.address), shipping)
+      ? addressWithTransit(withStoredInstructions(withStoredRecipient(payload.address, row.address), row.address), shipping)
       : row.address;
 
     // Before the term is saved: a failure here leaves the old term, and saving again repeats both steps safely.

@@ -179,7 +179,9 @@ function addressFields(address, market) {
     state: text(address.state),
     zipcode: text(address.zipcode, address.postal_code, address.postalCode),
     // Who receives this subscription's box (delivery-recipient); empty on subscriptions from before the field.
-    recipient_name: text(address.recipient_name)
+    recipient_name: text(address.recipient_name),
+    // This subscription's own instructions (delivery-instructions); the customer edits these, never the profile copy.
+    delivery_instructions: text(address.delivery_instructions)
   };
 }
 

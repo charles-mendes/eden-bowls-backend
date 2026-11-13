@@ -477,6 +477,19 @@ describe('UPS pickup', () => {
     const body = JSON.parse(calls.find((item) => item.url.includes('/ship')).init.body);
     expect(body.ShipmentRequest.Shipment.Shipper.Phone).toEqual({ Number: '3055550100' });
   });
+
+  test('a label buy carries the ship-to phone, and none when it is empty (delivery-instructions)', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/shipments/v2409/ship': () => jsonResponse(200, {
+        ShipmentResponse: { ShipmentResults: { ShipmentIdentificationNumber: '1ZSHIP', PackageResults: { TrackingNumber: '1ZSHIP' } } }
+      })
+    });
+    await client({ fetchImpl }).createShipment({ shipFrom, shipTo: { zipcode: '10001', phone: '2125550100' }, package: {} });
+    await client({ fetchImpl }).createShipment({ shipFrom, shipTo: { zipcode: '10001', phone: '' }, package: {} });
+    const bodies = calls.filter((item) => item.url.includes('/ship')).map((item) => JSON.parse(item.init.body));
+    expect(bodies[0].ShipmentRequest.Shipment.ShipTo.Phone).toEqual({ Number: '2125550100' });
+    expect(bodies[1].ShipmentRequest.Shipment.ShipTo).not.toHaveProperty('Phone');
+  });
 });
 
 describe('UPS dry ice declaration', () => {

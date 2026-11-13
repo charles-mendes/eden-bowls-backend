@@ -1,6 +1,7 @@
 const { shipmentMarket } = require('../core/shipment-market');
 const { addressField, brazilAddressIssues } = require('../core/delivery-address-check');
 const { parseRecipientNameInput } = require('../core/recipient-name');
+const { parseDeliveryInstructionsInput, resolveDeliveryInstructions } = require('../core/delivery-instructions');
 const { accountNameOf, shownName } = require('../core/production-queue-presenter');
 const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
@@ -146,11 +147,26 @@ class AdminBillingService {
       const shown = shownName(item.address, { accountName, email: item.customerEmail });
       subscription.account_name = accountName;
       subscription.name_source = shown.source;
+      // delivery-instructions: the subscription's own text, else the profile's when it is the same place.
+      const profileAddress = subscription.customerProfileInScope ? await this.profileAddressFor(item.userId) : null;
+      const instructions = resolveDeliveryInstructions(item.address, profileAddress);
+      subscription.delivery_instructions = instructions.text;
+      subscription.delivery_instructions_source = instructions.source;
     }
     if (detail && this.addressIssueService) {
       subscription.address_issue = await this.addressIssueService.latestFor(item.id);
     }
     return subscription;
+  }
+
+  async profileAddressFor(userId) {
+    if (!userId || !this.profileRepository || typeof this.profileRepository.getAddress !== 'function') return null;
+    try {
+      const record = await this.profileRepository.getAddress(userId);
+      return record && record.exists ? record.address : null;
+    } catch {
+      return null;
+    }
   }
 
   async accountNameFor(userId) {
@@ -199,6 +215,37 @@ class AdminBillingService {
         subscription_id: String(item.id),
         recipient_name: name,
         courier_issues: market.market === 'BR' ? brazilAddressIssues(address) : null
+      }
+    };
+  }
+
+  // delivery-instructions: an operator sets or clears the instructions of one subscription, nothing else.
+  async updateDeliveryInstructions(id, body = {}, actor = {}) {
+    const raw = body ? body.delivery_instructions : undefined;
+    const text = parseDeliveryInstructionsInput(raw === undefined ? '' : raw);
+    const item = await this.ledgerRepository.findById(id);
+    if (!item) {
+      throw new HttpError(404, 'Subscription not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertStripeAccountMarket(actor, ledgerStripeAccount(item));
+    }
+    // findById already proved the row; the same text again may report no changed row, which is still a success.
+    await this.ledgerRepository.setAddressDeliveryInstructions(item.id, text);
+    if (this.auditService && typeof this.auditService.record === 'function') {
+      await this.auditService.record({
+        action: 'billing.subscriptions.delivery_instructions.update',
+        actor,
+        targetUserId: item.userId || null,
+        targetEmail: item.customerEmail || null,
+        metadata: { subscriptionId: String(item.id), fields: ['delivery_instructions'], cleared: !text }
+      });
+    }
+    return {
+      success: true,
+      data: {
+        subscription_id: String(item.id),
+        delivery_instructions: text || null
       }
     };
   }

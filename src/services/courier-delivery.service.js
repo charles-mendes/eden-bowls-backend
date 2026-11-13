@@ -10,6 +10,7 @@ const { shipmentMarket } = require('../core/shipment-market');
 const { brazilAddressIssues } = require('../core/delivery-address-check');
 const { resolveDeliveryRange, dayAfter } = require('../core/delivery-range');
 const { checkoutShippingOf } = require('../core/checkout-shipping');
+const { resolveDeliveryInstructions } = require('../core/delivery-instructions');
 
 const TIMEZONE = 'America/Sao_Paulo';
 const DISPATCH_FLOOR_DAYS = 30;
@@ -499,6 +500,8 @@ class CourierDeliveryService {
     // A live profile read: only when the profile is in the actor's markets (admin-market-scope).
     const accountName = cycle && canAccessMarket(actor, cycle.profileMarket) ? accountNameOf(cycle.accountDisplayName) : null;
     const shown = shownName(address, { accountName, email: cycle && cycle.customerEmail });
+    const profileAddress = contact.profileAddress ? { ...contact.profileAddress, delivery_instructions: contact.deliveryInstructions } : null;
+    const instructions = resolveDeliveryInstructions(address, profileAddress);
     const value = (...keys) => {
       for (const key of keys) {
         const text = String(address[key] == null ? '' : address[key]).trim();
@@ -527,9 +530,9 @@ class CourierDeliveryService {
         zipcode: value('postal_code', 'zipcode', 'zipCode')
       },
       phone: contact.phone || null,
-      // A copy kept in the customer's profile, not in the subscription address.
-      delivery_instructions: contact.deliveryInstructions || null,
-      delivery_instructions_source: 'profile',
+      // delivery-instructions: the subscription's own text, else the profile's when it is the same place.
+      delivery_instructions: instructions.text,
+      delivery_instructions_source: instructions.source,
       items: lineItems.map((line) => ({ flavor: line.flavor, quantity: line.quantity, pack_size: line.packSize || null })),
       boxes,
       delivery_date: cycle ? cycle.deliveryDate || null : null,
