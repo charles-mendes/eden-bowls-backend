@@ -325,6 +325,9 @@ class StripeWebhookService {
       type: event && event.type,
       eventId: event && event.id,
       stripe_account: extra.stripe_account,
+      ...(extra.stored_account ? { stored_account: extra.stored_account } : {}),
+      ...(extra.subscription_id ? { subscription_id: extra.subscription_id } : {}),
+      ...(extra.invoice_id ? { invoice_id: extra.invoice_id } : {}),
       reason
     }, 'Stripe webhook ignored.');
   }
@@ -367,12 +370,24 @@ class StripeWebhookService {
       return;
     }
 
+    const existing = context.ledger || await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
+    // The checkout stored the account from the address. A paid invoice delivered on the other account's endpoint
+    // (one sandbox behind both, or a row stored wrong) writes nothing, before the contract or the ledger.
+    if (existing && existing.stripeAccount && runtime.account && existing.stripeAccount !== runtime.account) {
+      this.warnIgnored(event, 'account_mismatch', {
+        stripe_account: runtime.account,
+        stored_account: existing.stripeAccount,
+        subscription_id: subscriptionId,
+        invoice_id: invoice.id
+      });
+      return;
+    }
+
     const period = extractSubscriptionPeriod(subscription || {});
     const card = this.cardFromSubscription(subscription);
     const item = subscription && subscription.items && Array.isArray(subscription.items.data)
       ? subscription.items.data[0]
       : null;
-    const existing = context.ledger || await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
     const promotedPending = existing
       && existing.editPaymentPending
       && existing.editPending

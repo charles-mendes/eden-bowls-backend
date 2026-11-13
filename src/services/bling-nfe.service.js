@@ -141,6 +141,17 @@ function blingProblems(row) {
     .map((field) => ({ element: String(field.element || ''), message: String(field.message) }));
 }
 
+// The subscription page's list: the summary plus what keeps the note from leaving, with the detail's rules, so the
+// page says what to fix without opening the note. The payloads stay on the detail.
+function presentSubscriptionItem(row) {
+  return {
+    ...presentSummary(row),
+    stripe_invoice_id: row.stripeInvoiceId,
+    missing_fields: Array.isArray(row.missingFields) ? row.missingFields : [],
+    bling_problems: blingProblems(row)
+  };
+}
+
 function presentSummary(row) {
   return {
     id: row.id,
@@ -906,7 +917,7 @@ class BlingNfeService {
       assertStripeAccountMarket(actor, ledgerStripeAccount(item));
     }
     const rows = await this.repository.listBySubscription(item.stripeSubscriptionId);
-    return { success: true, data: { items: rows.map(presentSummary) } };
+    return { success: true, data: { items: rows.map(presentSubscriptionItem) } };
   }
 
   async connectionStatus() {

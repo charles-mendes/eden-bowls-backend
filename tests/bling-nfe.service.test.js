@@ -760,3 +760,55 @@ describe('product taxes', () => {
     expect(line).toMatchObject({ code: 'EDEN-3001', ncm: '23091000', origin: 2 });
   });
 });
+
+describe('listForSubscription (subscription-detail-workflow)', () => {
+  function arrangeList() {
+    const repository = memoryRepository();
+    repository.listBySubscription = jest.fn(async (subscriptionId) => [...repository.rows.values()].filter((row) => row.stripeSubscriptionId === subscriptionId));
+    const ledgerRepository = { findById: jest.fn(async () => ({ id: 12, stripeSubscriptionId: 'sub_1', stripeAccount: 'br' })) };
+    return { ...build({ repository, ledgerRepository }), repository };
+  }
+
+  test('a note blocked for a missing fiscal name says so, with its invoice', async () => {
+    const { service, repository } = arrangeList();
+    const { id } = await record(service);
+    Object.assign(repository.rows.get(id), { status: 'blocked_missing_document', missingFields: ['fiscal_name'] });
+
+    const { data } = await service.listForSubscription('12', {});
+
+    expect(data.items[0]).toMatchObject({
+      id,
+      stripe_invoice_id: paidInvoice.id,
+      missing_fields: ['fiscal_name'],
+      bling_problems: []
+    });
+    expect(data.items[0]).not.toHaveProperty('request_payload');
+    expect(data.items[0]).not.toHaveProperty('response_payload');
+  });
+
+  test('a note Bling refused lists the fields Bling named, as the detail does', async () => {
+    const fields = [{ element: 'itens[0].unidadeTributavel', message: 'Há informações obrigatórias faltando na nota' }];
+    const { service, repository } = arrangeList();
+    const { id } = await record(service);
+    Object.assign(repository.rows.get(id), { status: 'error', responsePayload: { error_detail: { fields } } });
+
+    const { data } = await service.listForSubscription('12', {});
+
+    expect(data.items[0].bling_problems).toEqual(fields);
+    expect(data.items[0].bling_problems).toEqual((await service.detail(id)).data.bling_problems);
+  });
+
+  test('an authorized note has nothing to fix', async () => {
+    const { service, repository } = arrangeList();
+    const { id } = await record(service);
+    Object.assign(repository.rows.get(id), {
+      status: 'authorized',
+      missingFields: null,
+      responsePayload: { error_detail: { fields: [{ element: 'x', message: 'y' }] } }
+    });
+
+    const { data } = await service.listForSubscription('12', {});
+
+    expect(data.items[0]).toMatchObject({ missing_fields: [], bling_problems: [] });
+  });
+});
