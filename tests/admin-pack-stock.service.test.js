@@ -83,6 +83,20 @@ describe('AdminPackStockService', () => {
     expect(repository.applyCount).not.toHaveBeenCalled();
   });
 
+  it('lists the variations on sale without weight, empty when the catalog cannot tell', async () => {
+    const missing = [{ productId: '2035', productName: 'Frango e Porco', variationId: '2013', name: 'Frango e Porco', sku: '1003' }];
+    const { service } = build();
+    service.catalogRepository.listVariationsWithoutWeight = jest.fn().mockResolvedValue(missing);
+
+    const result = await service.overview({ market: 'BR' }, { markets: ['BR'] });
+
+    expect(service.catalogRepository.listVariationsWithoutWeight).toHaveBeenCalledWith('BR');
+    expect(result.variationsWithoutWeight).toEqual(missing);
+
+    service.catalogRepository.listVariationsWithoutWeight = jest.fn().mockRejectedValue(new Error('down'));
+    expect((await service.overview({ market: 'BR' }, { markets: ['BR'] })).variationsWithoutWeight).toEqual([]);
+  });
+
   it('keeps the overview working when the catalog fails', async () => {
     const { service } = build();
     service.catalogRepository.listRecipeCatalog = jest.fn().mockRejectedValue(new Error('down'));

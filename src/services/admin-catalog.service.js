@@ -91,6 +91,14 @@ function parseShortLabel(value) {
   return shortLabel;
 }
 
+// A payload with only the id and a weight, for a variation stored without weight.
+function fillsMissingWeight(item, current) {
+  const keys = Object.keys(item).filter((key) => item[key] !== undefined);
+  return keys.every((key) => key === 'id' || key === 'weight')
+    && String(item.weight == null ? '' : item.weight).trim() !== ''
+    && !(gramsOf(current.weight) > 0);
+}
+
 // Pack weight as the store reads it (300g, 10.6oz). Undefined keeps the stored value; empty clears it.
 function parseVariationWeight(value) {
   if (value === undefined) {
@@ -695,12 +703,14 @@ class AdminCatalogService {
     }
     const copies = flavorCopies(content);
 
-    // A published product keeps its active variations as they are; only inactive ones change.
+    // A published product keeps its active variations as they are; only inactive ones change. The one exception
+    // is a missing weight: sent alone, it can be filled, since without it the pack stays out of the stock.
     if (product.active) {
       const locked = variants
-        .map((item) => (item && item.id != null ? existingById.get(String(item.id).trim()) : null))
-        .filter((current) => current && current.active)
-        .map((current) => String(current.id));
+        .filter((item) => item && item.id != null)
+        .map((item) => ({ item, current: existingById.get(String(item.id).trim()) }))
+        .filter(({ item, current }) => current && current.active && !fillsMissingWeight(item, current))
+        .map(({ current }) => String(current.id));
       if (locked.length > 0) {
         throw new HttpError(409, 'Active variations of a published product cannot be edited.', {
           code: 'variation_active_locked',

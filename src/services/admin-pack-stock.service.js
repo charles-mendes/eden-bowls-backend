@@ -95,19 +95,37 @@ class AdminPackStockService {
   async overview(query = {}, actor = {}) {
     const market = this.resolveMarket(actor, query.market);
     const windowDays = query.windowDays || 7;
-    const { overview, catalog } = await measureStockComputation('overview', async () => {
-      const [stockItems, cycles, catalogEntries] = await Promise.all([
+    const { overview, catalog, variationsWithoutWeight } = await measureStockComputation('overview', async () => {
+      const [stockItems, cycles, catalogEntries, withoutWeight] = await Promise.all([
         this.stockRepository.listItems(market),
         this.loadCycles({ markets: [market], windowDays }),
-        this.loadCatalog(market)
+        this.loadCatalog(market),
+        this.loadVariationsWithoutWeight(market)
       ]);
-      return { overview: buildOverview({ stockItems, cycles, catalog: catalogEntries }), catalog: catalogEntries, rowCount: cycles.length };
+      return {
+        overview: buildOverview({ stockItems, cycles, catalog: catalogEntries }),
+        catalog: catalogEntries,
+        variationsWithoutWeight: withoutWeight,
+        rowCount: cycles.length
+      };
     });
     this.warnUnsized(overview.unsizedLines);
-    return { market, windowDays, ...overview, catalog };
+    return { market, windowDays, ...overview, catalog, variationsWithoutWeight };
   }
 
-  // Names and sizes are extra information: without them the screen still lists by recipe key.
+  // Variations on sale with no weight stay out of the stock; the screen points to where the weight is filled.
+  async loadVariationsWithoutWeight(market) {
+    if (!this.catalogRepository || typeof this.catalogRepository.listVariationsWithoutWeight !== 'function') {
+      return [];
+    }
+    try {
+      return await this.catalogRepository.listVariationsWithoutWeight(market);
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  // Product names and sizes are extra information: without them the screen still lists by product code.
   async loadCatalog(market) {
     if (!this.catalogRepository || typeof this.catalogRepository.listRecipeCatalog !== 'function') {
       return [];
@@ -153,7 +171,7 @@ class AdminPackStockService {
     return paginatedEnvelope({ items: result.items, total: result.total, page: pagination.page, perPage: pagination.perPage });
   }
 
-  // The item exists, or the market's catalog has (or had) a variation with that recipe and grams.
+  // The item exists, or a product of the market has (or had) a variation with those grams.
   async resolveItemKey(body, actor) {
     const market = this.resolveMarket(actor, body.market);
     const key = { market, flavorKey: flavorKeyFromLabel(body.flavorKey), packSizeGrams: Number(body.packSizeGrams) };
@@ -164,7 +182,7 @@ class AdminPackStockService {
       ? await this.catalogRepository.listRecipeSizes(market)
       : new Set();
     if (!sizes.has(`${key.flavorKey}|${key.packSizeGrams}`)) {
-      throw new HttpError(422, 'This recipe and pack size are not sold in this market.', { code: 'stock_item_unknown' });
+      throw new HttpError(422, 'No product of this market has a variation with this pack size.', { code: 'stock_item_unknown' });
     }
     return key;
   }

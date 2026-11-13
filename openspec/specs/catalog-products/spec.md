@@ -117,3 +117,18 @@ When variations of the same recipe key disagree on aliases or short label, the d
 
 - **WHEN** the migration runs, the BR recipe `senior-beef` has life stage `senior` and one of its variations has `adult`
 - **THEN** that variation reports `senior` after the deploy and is logged
+
+### Requirement: Missing weight of an active variation can be filled
+
+An active variation of a published product MUST stay locked (`409 variation_active_locked`), except when the variation has no weight and the payload carries only its `id` and a non-empty `weight`. That weight MUST be validated like any other (format and unique per product) and nothing else of the variation MUST change.
+
+#### Scenario: Filling a missing weight
+
+- **WHEN** an operator sends `{ variants: [{ id: '2015', weight: '300g' }] }` for the active variation `2015` of a published product, stored without weight
+- **THEN** the weight is saved and the variation stays active with its price, SKU and Stripe ids unchanged
+
+#### Scenario: Changing an existing weight stays locked
+
+- **WHEN** the same variation already has `300g` and the payload sends `500g`, or sends the weight with a price
+- **THEN** the API responds `409` with code `variation_active_locked` and writes nothing
+

@@ -8,17 +8,31 @@ Lets the kitchen know how many ready packs exist per market, recipe and pack siz
 
 ### Requirement: Stock item identity
 
-A stock item SHALL be identified by market (`BR` or `US`), recipe key and pack size in whole grams. The system MUST accept a recipe and size only when the market's catalog has, or had, a variation with that recipe and size, or when the item already exists. Otherwise it MUST respond `422` with code `stock_item_unknown`.
+A stock item SHALL be identified by market (`BR` or `US`), product code (the `flavorKey`, unique per market) and pack size in whole grams. Since a product is one recipe and has at most one variation per weight, a stock item is one product variation. The system MUST accept a code and size only when a product of the market has, or had, a variation with that code and size, or when the item already exists. Otherwise it MUST respond `422` with code `stock_item_unknown`.
 
-#### Scenario: Known recipe and size
+The overview `catalog` MUST return one entry per product code and size of the market with `flavorKey`, `packSizeGrams`, `label` (the product name), `productId`, `variationId`, `sku` and `published`.
 
-- **WHEN** an operator records production for `BR`, recipe `frango`, `300` g, and the BR catalog has that variation
+#### Scenario: Known product and size
+
+- **WHEN** an operator records production for `BR`, product `frango`, `300` g, and that BR product has a 300 g variation
 - **THEN** the system accepts it and the item `BR / frango / 300` exists afterwards
 
 #### Scenario: Size not sold in the market
 
-- **WHEN** an operator records production for `BR`, recipe `frango`, `750` g, and no BR variation has that size
+- **WHEN** an operator records production for `BR`, product `frango`, `750` g, and no variation of that product has that size
 - **THEN** the system responds `422` with code `stock_item_unknown` and no movement is written
+
+The overview MUST also return `variationsWithoutWeight`: every variation on sale in the market (variation and product published) with no weight, as `productId`, `productName`, `lifeStage` (`adult`, `puppy` or `senior`), `variationId`, `name` and `sku`, sorted by product name. It MUST be empty when the catalog cannot be read.
+
+#### Scenario: Variation on sale without weight
+
+- **WHEN** BR variation `2013` of the published product `2035` "Frango e Porco" is active and has no weight
+- **THEN** the overview lists it in `variationsWithoutWeight` and no stock item has its code without a size from it
+
+#### Scenario: Catalog names the product
+
+- **WHEN** the BR product `2025` "Bovino" (code `beef`) has a 500 g variation `1005` with SKU `B500`
+- **THEN** the overview catalog has `{ flavorKey: 'beef', packSizeGrams: 500, label: 'Bovino', productId: '2025', variationId: '1005', sku: 'B500' }`
 
 ### Requirement: Balance equals the sum of movements
 

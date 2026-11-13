@@ -418,7 +418,8 @@ class AdminCatalogRepository {
     return sizes;
   }
 
-  // One entry per recipe and whole grams the market sells or sold, with its display name (pack-stock).
+  // One entry per product and whole grams the market sells or sold (pack-stock). The product is the recipe and
+  // has one variation per weight, so each entry is one variation, named after its product.
   async listRecipeCatalog(market) {
     const normalized = String(market || '').trim().toUpperCase();
     const entries = new Map();
@@ -428,16 +429,37 @@ class AdminCatalogRepository {
       }
       const id = `${row.key}|${row.packSizeGrams}`;
       const current = entries.get(id);
+      // Before the split a key could repeat a size on several variations; the published one names the entry.
+      const named = current && (current.published || !row.published) ? current : null;
       entries.set(id, {
         flavorKey: row.key,
         packSizeGrams: row.packSizeGrams,
-        label: (current && current.label) || row.shortLabel || row.label || row.key,
+        label: named ? named.label : (row.productName || row.label || row.key),
+        productId: named ? named.productId : row.productId,
+        variationId: named ? named.variationId : row.variationId,
+        sku: named ? named.sku : (row.sku || null),
         published: Boolean((current && current.published) || row.published)
       });
     }
     return [...entries.values()].sort((left, right) => (
       left.label.localeCompare(right.label) || left.packSizeGrams - right.packSizeGrams
     ));
+  }
+
+  // Variations on sale in the market with no weight: they have no pack size, so the stock cannot list them.
+  async listVariationsWithoutWeight(market) {
+    const normalized = String(market || '').trim().toUpperCase();
+    return (await this.recipeVariationRows())
+      .filter((row) => row.market === normalized && row.published && !row.packSizeGrams)
+      .map((row) => ({
+        productId: row.productId,
+        productName: row.productName || row.label || row.key,
+        lifeStage: row.lifeStage,
+        variationId: row.variationId,
+        name: row.name || null,
+        sku: row.sku || null
+      }))
+      .sort((left, right) => left.productName.localeCompare(right.productName) || Number(left.variationId) - Number(right.variationId));
   }
 
   // Variations of one product (recipe-content): the product is the recipe.

@@ -323,6 +323,30 @@ describe('AdminCatalogService variations of a published product', () => {
     expect(repository.createVariation).not.toHaveBeenCalled();
   });
 
+  test('fills the missing weight of an active variation, and nothing else', async () => {
+    const { service, repository } = serviceFor({ product: published('BR', [variant({ id: '1001', active: true, weight: '' })]) });
+
+    await service.patchProduct('100', { variants: [{ id: '1001', weight: '300g' }] }, actor);
+
+    expect(repository.updateVariation).toHaveBeenCalledTimes(1);
+    expect(repository.updateVariation.mock.calls[0][0]).toMatchObject({ id: '1001', weight: '300g', name: undefined, sku: undefined, regularPrice: null, ncm: undefined, finalImageReady: undefined });
+  });
+
+  test('keeps the lock when the weight already exists or other fields come along', async () => {
+    const withWeight = serviceFor({ product: published('BR', [variant({ id: '1001', active: true, weight: '300g' })]) });
+    await expect(withWeight.service.patchProduct('100', { variants: [{ id: '1001', weight: '500g' }] }, actor))
+      .rejects.toMatchObject({ details: { code: 'variation_active_locked' } });
+
+    const withPrice = serviceFor({ product: published('BR', [variant({ id: '1001', active: true, weight: '' })]) });
+    await expect(withPrice.service.patchProduct('100', { variants: [{ id: '1001', weight: '300g', regularPrice: 99 }] }, actor))
+      .rejects.toMatchObject({ details: { code: 'variation_active_locked' } });
+
+    const cleared = serviceFor({ product: published('BR', [variant({ id: '1001', active: true, weight: '' })]) });
+    await expect(cleared.service.patchProduct('100', { variants: [{ id: '1001', weight: '' }] }, actor))
+      .rejects.toMatchObject({ details: { code: 'variation_active_locked' } });
+    expect(cleared.repository.updateVariation).not.toHaveBeenCalled();
+  });
+
   test('saves an inactive variation and a new one, and audits flag changes only', async () => {
     const { service, repository, auditService } = serviceFor({
       product: published('US', [variant({ finalImageReady: false })])
