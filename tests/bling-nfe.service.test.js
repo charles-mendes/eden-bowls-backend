@@ -302,6 +302,28 @@ describe('runDue', () => {
     expect(repository.rows.get(id)).toMatchObject({ status: 'rejected', lastError: 'Rejeição 539', nextAttemptAt: null });
   });
 
+  test('keeps the fields Bling names when it refuses to send, and the detail returns them', async () => {
+    const fields = [{ element: 'itens[0].unidadeTributavel', message: 'Há informações obrigatórias faltando na nota' }];
+    const client = fakeClient({
+      sendNfe: jest.fn(async () => { throw new BlingApiError('Não foi possível emitir a nota fiscal', { status: 400, fields }); }),
+      getNfe: jest.fn(async () => ({ id: 40, situacao: 1 }))
+    });
+    const { service, repository } = build({ client });
+    const { id } = await record(service);
+    await service.runDue();
+    expect(repository.rows.get(id).status).toBe('error');
+    const { data } = await service.detail(id);
+    expect(data.bling_problems).toEqual(fields);
+  });
+
+  test('an authorized note shows no old Bling problem', async () => {
+    const { service, repository } = build();
+    const { id } = await record(service);
+    repository.rows.get(id).responsePayload = { error_detail: { fields: [{ element: 'x', message: 'y' }] } };
+    repository.rows.get(id).status = 'authorized';
+    expect((await service.detail(id)).data.bling_problems).toEqual([]);
+  });
+
   test('polls a submitted note until it resolves', async () => {
     const client = fakeClient({ getNfe: jest.fn(async () => ({ id: 40, situacao: 3 })) });
     const { service, repository } = build({ client });
@@ -669,6 +691,27 @@ describe('BlingClient', () => {
     const store = connection({ accessToken: 'a', refreshToken: 'r', accessExpiresAt: new Date(NOW.getTime() + 3600000), refreshedAt: NOW, needsAuthorization: false });
     const fetchImpl = jest.fn(async () => response(403, { error: { type: 'FORBIDDEN', message: 'Sem permissão', fields: [{ msg: 'escopo' }] } }));
     await expect(new BlingClient({ ...options, connection: store, fetchImpl }).sendNfe(1)).rejects.toMatchObject({ status: 403, message: 'Sem permissão · escopo' });
+  });
+
+  test('a validation error keeps which field each message is about, collection items included', async () => {
+    const store = connection({ accessToken: 'a', refreshToken: 'r', accessExpiresAt: new Date(NOW.getTime() + 3600000), refreshedAt: NOW, needsAuthorization: false });
+    const fetchImpl = jest.fn(async () => response(400, { error: {
+      type: 'VALIDATION_ERROR',
+      message: 'Não foi possível emitir a nota fiscal',
+      description: 'Verifique as informações e tente novamente.',
+      fields: [
+        { code: 1, msg: 'Há informações obrigatórias faltando na nota', element: 'itens', collection: [
+          { index: 0, element: 'itens[0].pesoBruto', msg: 'Informe o peso bruto' }
+        ] },
+        { code: 2, msg: 'Informe o telefone', element: 'contato.telefone', collection: [] }
+      ]
+    } }));
+    const error = await new BlingClient({ ...options, connection: store, fetchImpl }).sendNfe(1).catch((caught) => caught);
+    expect(error.fields).toEqual([
+      { element: 'itens[0].pesoBruto', message: 'Informe o peso bruto' },
+      { element: 'contato.telefone', message: 'Informe o telefone' }
+    ]);
+    expect(error.message).toBe('Não foi possível emitir a nota fiscal · Verifique as informações e tente novamente. · Informe o peso bruto · Informe o telefone');
   });
 
   test('the authorize URL carries a state that only its hash is stored for', async () => {

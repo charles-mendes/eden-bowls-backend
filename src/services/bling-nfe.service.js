@@ -27,6 +27,7 @@ const BASE_BACKOFF_MS = 5 * 60 * 1000;
 const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000;
 const POLL_GAP_MS = 2 * 60 * 1000;
 const MAX_ERROR_LENGTH = 1000;
+const MAX_ERROR_FIELDS = 20;
 const MAX_PAYLOAD_TEXT = 4000;
 const BLING_TIMEZONE = 'America/Sao_Paulo';
 const IMPORTED_PREFIX = 'bling:';
@@ -131,6 +132,15 @@ function canResendEmail(row) {
   return row.status === NFE_STATUS.AUTHORIZED && !isImported(row) && row.emailStatus !== NFE_EMAIL_STATUS.SENDING;
 }
 
+function blingProblems(row) {
+  if (![NFE_STATUS.ERROR, NFE_STATUS.REJECTED].includes(row.status)) return [];
+  const detail = row.responsePayload && row.responsePayload.error_detail;
+  const fields = detail && Array.isArray(detail.fields) ? detail.fields : [];
+  return fields
+    .filter((field) => field && field.message)
+    .map((field) => ({ element: String(field.element || ''), message: String(field.message) }));
+}
+
 function presentSummary(row) {
   return {
     id: row.id,
@@ -170,6 +180,8 @@ function presentDetail(row) {
     customer_address: row.customerAddress,
     // What keeps a blocked note from leaving: `tax_document`, `fiscal_name` (nfe-admin). Empty for older rows.
     missing_fields: Array.isArray(row.missingFields) ? row.missingFields : [],
+    // The fields Bling named on the last refusal; only while the note is still refused.
+    bling_problems: blingProblems(row),
     request_payload: row.requestPayload,
     response_payload: row.responsePayload,
     danfe_url: row.danfeUrl,
@@ -424,7 +436,16 @@ class BlingNfeService {
     return 1;
   }
 
+  // What Bling pointed at when it refused a step, so the panel can say which field to fix and where.
+  async saveErrorDetail(row, error) {
+    const fields = Array.isArray(error && error.fields) ? error.fields : [];
+    if (!fields.length) return;
+    row.responsePayload = { ...(row.responsePayload || {}), error_detail: { fields: fields.slice(0, MAX_ERROR_FIELDS) } };
+    await this.repository.update(row.id, { responsePayload: row.responsePayload });
+  }
+
   async recordFailure(row, error) {
+    await this.saveErrorDetail(row, error);
     const attempts = row.attempts + 1;
     // A 403 is a missing scope: only an operator changing the app can fix it, so the job stops here.
     const stop = (error && error.status === 403) || attempts >= MAX_ATTEMPTS;
@@ -706,6 +727,7 @@ class BlingNfeService {
       await this.client.sendNfe(nfeId);
     } catch (error) {
       if (error instanceof BlingNotConnectedError || error.status === 403) throw error;
+      await this.saveErrorDetail(row, error);
       // SEFAZ refuses through the same call: the note then reads as rejected and this message says why.
       const after = await this.client.getNfe(nfeId);
       if (Number(after && after.situacao) === BLING_SITUACAO.REJEITADA) {

@@ -14,11 +14,13 @@ const DEFAULT_ACCESS_TTL_SECONDS = 3600;
 const KEEP_ALIVE_MS = 7 * 24 * 60 * 60 * 1000;
 
 class BlingApiError extends Error {
-  constructor(message, { status = 0, type = '' } = {}) {
+  constructor(message, { status = 0, type = '', fields = [] } = {}) {
     super(message);
     this.name = 'BlingApiError';
     this.status = status;
     this.type = type;
+    // What Bling pointed at: [{ element, message }], one per field or per item of a field's collection.
+    this.fields = fields;
   }
 }
 
@@ -36,13 +38,30 @@ function hashState(state) {
   return crypto.createHash('sha256').update(String(state)).digest('hex');
 }
 
+// Bling names the field in `element` and lists the faulty items of a field in `collection`; the `msg` alone is often
+// the same generic sentence for every field, so both are kept.
+function errorFields(error) {
+  const out = [];
+  for (const field of Array.isArray(error && error.fields) ? error.fields : []) {
+    if (!field) continue;
+    const element = String(field.element || field.namespace || '').trim();
+    const items = Array.isArray(field.collection) ? field.collection.filter((item) => item && item.msg) : [];
+    if (items.length) {
+      for (const item of items) out.push({ element: String(item.element || element).trim(), message: String(item.msg).trim() });
+    } else if (field.msg) {
+      out.push({ element, message: String(field.msg).trim() });
+    }
+  }
+  return out;
+}
+
 function errorMessage(response) {
   const error = response.body && response.body.error;
   if (response.timeout) return 'Bling did not answer in time.';
   if (response.networkError) return 'Bling could not be reached.';
   if (!error) return `Bling answered ${response.status}.`;
-  const fields = Array.isArray(error.fields) ? error.fields.map((field) => field && field.msg).filter(Boolean) : [];
-  return [error.message, error.description, ...fields].filter(Boolean).join(' · ') || `Bling answered ${response.status}.`;
+  const messages = [...new Set(errorFields(error).map((field) => field.message))];
+  return [error.message, error.description, ...messages].filter(Boolean).join(' · ') || `Bling answered ${response.status}.`;
 }
 
 function queryString(query = {}) {
@@ -194,7 +213,7 @@ class BlingClient {
     }
     if (!response.ok) {
       const error = response.body && response.body.error;
-      throw new BlingApiError(errorMessage(response), { status: response.status, type: error && error.type });
+      throw new BlingApiError(errorMessage(response), { status: response.status, type: error && error.type, fields: errorFields(error) });
     }
     return response.body;
   }
