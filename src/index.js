@@ -89,10 +89,25 @@ const { DeliveryCalendarStripeSyncsRepository } = require('./infrastructure/repo
 const { UpsClient } = require('./infrastructure/shipping/ups-client');
 const { UpsShipmentRepository } = require('./infrastructure/repositories/ups-shipment.repository');
 const { UpsShipmentService } = require('./services/ups-shipment.service');
+const { UpsPickupService } = require('./services/ups-pickup.service');
+const { UpsPickupRepository } = require('./infrastructure/repositories/ups-pickup.repository');
+const { CourierDeliveryRepository } = require('./infrastructure/repositories/courier-delivery.repository');
+const { CourierDeliveryService } = require('./services/courier-delivery.service');
+const { MarketExceptionsService } = require('./services/market-exceptions.service');
+const { DeliveryAddressIssueService } = require('./services/delivery-address-issue.service');
+const { DeliveryAddressIssuesRepository } = require('./infrastructure/repositories/delivery-address-issues.repository');
+const { SubscriptionPaidCyclesService } = require('./services/subscription-paid-cycles.service');
+const { CustomerContactsService } = require('./services/customer-contacts.service');
+const { CustomerContactsRepository } = require('./infrastructure/repositories/customer-contacts.repository');
 const { LocalUpsLabelStorage } = require('./infrastructure/storage/local-ups-label-storage');
 const { LocalInvoiceStorage } = require('./infrastructure/storage/local-invoice-storage');
 const { CustomerInvoicesRepository } = require('./infrastructure/repositories/customer-invoices.repository');
 const { CustomerInvoicesService } = require('./services/customer-invoices.service');
+const { BlingClient } = require('./infrastructure/bling/bling-client');
+const { BlingConnectionRepository } = require('./infrastructure/repositories/bling-connection.repository');
+const { BlingNfeRepository } = require('./infrastructure/repositories/bling-nfe.repository');
+const { BlingNfeService } = require('./services/bling-nfe.service');
+const { BlingNfeEmailService } = require('./services/bling-nfe-email.service');
 const { renderInvoicePdf } = require('./infrastructure/invoices/invoice-pdf-renderer');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
@@ -129,11 +144,14 @@ const { LifeStageService } = require('./services/life-stage.service');
 const { LifeStageSettingsService } = require('./services/life-stage-settings.service');
 const { CompanyProfilesRepository } = require('./infrastructure/repositories/company-profiles.repository');
 const { CompanyProfileService } = require('./services/company-profile.service');
+const { PlanSettingsRepository } = require('./infrastructure/repositories/plan-settings.repository');
+const { PlanSettingsService } = require('./services/plan-settings.service');
 const { startCompanyDirectory } = require('./core/email/company-directory');
 const { LegalDocumentsRepository } = require('./infrastructure/repositories/legal-documents.repository');
 const { LegalDocumentsService } = require('./services/legal-documents.service');
 const { AutomatedEmailSettingsRepository } = require('./infrastructure/repositories/automated-email-settings.repository');
 const { AutomatedEmailSettingsService } = require('./services/automated-email-settings.service');
+const { PlanNoticesService } = require('./services/plan-notices.service');
 const { LifeStageChangeEmailService } = require('./services/life-stage-change-email.service');
 const { LifeStageNoticesService } = require('./services/life-stage-notices.service');
 const { LifeStageAnnouncementsRepository } = require('./infrastructure/repositories/life-stage-announcements.repository');
@@ -210,7 +228,9 @@ async function bootstrap() {
   const priceZonePolicyRepository = new PriceZonePolicyRepository(dataSource, {
     tableName: env.PRICE_ZONE_POLICY_TABLE_NAME
   });
+  const planSettingsRepository = new PlanSettingsRepository(dataSource);
   const productsRepository = new ProductsRepository(dataSource, {
+    planSettingsRepository,
     postsTableName: env.WP_POSTS_TABLE_NAME,
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
     termsTableName: env.WP_TERMS_TABLE_NAME,
@@ -248,8 +268,12 @@ async function bootstrap() {
   });
   const upsLabelStorage = new LocalUpsLabelStorage({ directory: env.UPS_LABEL_DIR });
   const upsShipmentRepository = new UpsShipmentRepository(dataSource);
+  const upsPickupRepository = new UpsPickupRepository(dataSource);
+  const courierDeliveryRepository = new CourierDeliveryRepository(dataSource);
+  const customerContactsRepository = new CustomerContactsRepository(dataSource);
+  const deliveryAddressIssuesRepository = new DeliveryAddressIssuesRepository(dataSource, { courierTableName: courierDeliveryRepository.tableName, upsTableName: upsShipmentRepository.tableName });
   const stripeAccounts = createStripeAccountsFromEnv(env, { logger });
-  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource);
+  const subscriptionLedgerRepository = new SubscriptionLedgerRepository(dataSource, { courierTableName: courierDeliveryRepository.tableName, usersTableName: env.WP_USERS_TABLE_NAME });
   const subscriptionProductionRepository = new SubscriptionProductionRepository(dataSource);
   const deliveryCalendar = new DeliveryClosedDaysRepository(dataSource);
   // One delivery rule for the checkout estimate, the order confirmation email, and the production queue.
@@ -442,9 +466,18 @@ async function bootstrap() {
     settings: automatedEmailSettingsRepository,
     logger
   });
+  const planNoticesService = new PlanNoticesService({
+    ledgerRepository: subscriptionLedgerRepository,
+    claimsRepository: subscriptionMailClaimsRepository,
+    settings: automatedEmailSettingsRepository,
+    mailer: transactionalMailer,
+    billingFor: (account) => resolveStripeBilling({ stripeAccounts, stripeBilling }, account),
+    logger
+  });
   // Eden Bowls invoice PDFs (EB-YYYY-NNNNNN): issued on invoice.paid, kept in INVOICE_PDF_DIR, emailed to the customer.
+  const customerInvoicesRepository = new CustomerInvoicesRepository(dataSource, { postmetaTableName: env.WP_POSTMETA_TABLE_NAME });
   const customerInvoicesService = new CustomerInvoicesService({
-    repository: new CustomerInvoicesRepository(dataSource, { postmetaTableName: env.WP_POSTMETA_TABLE_NAME }),
+    repository: customerInvoicesRepository,
     storage: new LocalInvoiceStorage({ directory: env.INVOICE_PDF_DIR }),
     renderPdf: renderInvoicePdf,
     mailer: otpMailer,
@@ -456,10 +489,55 @@ async function bootstrap() {
     emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
     logger
   });
+  const adminAuditService = new AdminAuditService({
+    repository: new AdminAuditRepository(dataSource),
+    logger
+  });
+  // NF-e through Bling: recorded on invoice.paid, emitted by the bling_nfe job. Without BLING_* nothing is emitted.
+  const blingNfeRepository = new BlingNfeRepository(dataSource, {
+    usersTableName: env.WP_USERS_TABLE_NAME,
+    usermetaTableName: env.WP_USERMETA_TABLE_NAME
+  });
+  const blingClient = new BlingClient({
+    clientId: env.BLING_CLIENT_ID,
+    clientSecret: env.BLING_CLIENT_SECRET,
+    redirectUri: env.BLING_REDIRECT_URI,
+    connection: new BlingConnectionRepository(dataSource, { clientSecret: env.BLING_CLIENT_SECRET })
+  });
+  // delivery-address-issues: opened by the payment, the NF-e, the courier and the label; closed by the store's save.
+  const addressIssueService = new DeliveryAddressIssueService({
+    repository: deliveryAddressIssuesRepository,
+    fiscalRepository: onboardingSubscriptionCheckoutRepository,
+    ledgerRepository: subscriptionLedgerRepository,
+    mailer: transactionalMailer,
+    logger
+  });
+  const blingNfeService = new BlingNfeService({
+    addressIssueService,
+    repository: blingNfeRepository,
+    client: blingClient,
+    emailService: new BlingNfeEmailService({
+      repository: blingNfeRepository,
+      client: blingClient,
+      mailer: otpMailer,
+      enabled: env.BLING_NFE_EMAIL_ENABLED,
+      emailAssetBaseUrl: env.EMAIL_ASSET_BASE_URL,
+      logger
+    }),
+    billingFor: (account) => resolveStripeBilling({ stripeAccounts, stripeBilling }, account),
+    variants: customerInvoicesRepository,
+    ledgerRepository: subscriptionLedgerRepository,
+    naturezaOperacaoId: env.BLING_NATUREZA_OPERACAO_ID,
+    adminAppUrl: env.ADMIN_APP_URL,
+    auditService: adminAuditService,
+    logger
+  });
   const stripeWebhookService = new StripeWebhookService({
+    addressIssueService,
     stripeAccounts,
     stripeBilling,
     customerInvoices: customerInvoicesService,
+    blingNfe: blingNfeService,
     webhookSecret: env.STRIPE_US_WEBHOOK_SECRET,
     eventsRepository: stripeWebhookEventsRepository,
     ledgerRepository: subscriptionLedgerRepository,
@@ -499,10 +577,13 @@ async function bootstrap() {
   const subscriptionsActionsService = new SubscriptionsActionsService(subscriptionsActionsRepository, { authService });
   const subscriptionsDetailRepository = new SubscriptionsDetailRepository({
     ledgerRepository: subscriptionLedgerRepository,
+    settingsRepository: automatedEmailSettingsRepository,
     stripeAccounts,
     stripeBilling,
     upsShipmentRepository,
-    productsRepository
+    courierDeliveryRepository,
+    productsRepository,
+    fiscalRepository: onboardingSubscriptionCheckoutRepository
   });
   const subscriptionsDetailService = new SubscriptionsDetailService(subscriptionsDetailRepository, {
     lifeStageService,
@@ -529,6 +610,9 @@ async function bootstrap() {
     resolveSubscriptionItems: (planSelection) => onboardingSubscriptionCheckoutRepository.resolveSubscriptionItems(planSelection),
     shippingQuoteSigner,
     transactionalMailer,
+    fiscalRepository: onboardingSubscriptionCheckoutRepository,
+    blingNfeService,
+    addressIssueService,
     logger
   });
   // A cycle enters the production queue when its invoice is paid.
@@ -549,7 +633,8 @@ async function bootstrap() {
     deliveryGuard: customerDeliveriesService
   });
   const subscriptionsRepository = new SubscriptionsRepository({
-    ledgerRepository: subscriptionLedgerRepository
+    ledgerRepository: subscriptionLedgerRepository,
+    settingsRepository: automatedEmailSettingsRepository
   });
   const subscriptionsService = new SubscriptionsService(subscriptionsRepository, {
     lifeStageService,
@@ -573,7 +658,9 @@ async function bootstrap() {
     publicBaseUrl: avatarPublicBaseUrl
   });
   const profileService = new ProfileService(profileRepository, {
+    deliveryAddressIssuesRepository,
     authService,
+    customerContactsRepository,
     ledgerRepository: subscriptionLedgerRepository,
     refreshTokenRepository: authRefreshTokenRepository,
     stripeAccounts,
@@ -597,7 +684,9 @@ async function bootstrap() {
     dataSource
   });
   const privacyService = new PrivacyService({
+    deliveryAddressIssuesRepository,
     repository: privacyRepository,
+    customerContactsRepository,
     legalDocuments: legalDocumentsService,
     profileService,
     profileRepository,
@@ -615,6 +704,7 @@ async function bootstrap() {
     logger
   });
   authService.privacyService = privacyService;
+  onboardingSubscriptionCheckoutService.privacyService = privacyService;
   profileService.privacyRepository = privacyRepository;
   const feedbackPhotoPublicDir = path.resolve(env.FEEDBACK_PHOTO_DIR);
   const feedbackPhotoPublicBaseUrl = env.FEEDBACK_PHOTO_PUBLIC_BASE_URL
@@ -662,6 +752,11 @@ async function bootstrap() {
     auditRepository: new AdminAuditRepository(dataSource),
     dataSource
   });
+  const planSettingsService = new PlanSettingsService({
+    repository: planSettingsRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
+    dataSource
+  });
   // Same repository as lifeStageService, so a save clears the cache this process evaluates with.
   const lifeStageSettingsService = new LifeStageSettingsService({
     repository: lifeStageLimitsRepository,
@@ -694,30 +789,72 @@ async function bootstrap() {
   });
   const adminBillingService = new AdminBillingService({
     ledgerRepository: subscriptionLedgerRepository,
+    addressIssueService,
     webhookEventsRepository: stripeWebhookEventsRepository,
     stripeAccounts,
     stripeBilling,
     profileRepository,
+    auditService: adminAuditService,
     secretKey: env.STRIPE_US_SECRET_KEY
   });
   const upsShipmentService = new UpsShipmentService({
     repository: upsShipmentRepository,
+    pickupRepository: upsPickupRepository,
     upsClient,
     labelStorage: upsLabelStorage,
     shippingService,
     adminBillingService,
     ledgerRepository: subscriptionLedgerRepository,
+    profileRepository,
     transactionalMailer,
+    auditService: adminAuditService,
+    addressIssueService,
+    logger
+  });
+  const upsPickupService = new UpsPickupService({
+    repository: upsPickupRepository,
+    shipmentRepository: upsShipmentRepository,
+    upsClient,
+    shippingService,
+    calendar: deliveryCalendar,
+    auditService: adminAuditService,
+    logger
+  });
+  const customerContactsService = new CustomerContactsService({
+    repository: customerContactsRepository,
+    adminBillingService,
+    auditService: adminAuditService
+  });
+  const subscriptionPaidCyclesService = new SubscriptionPaidCyclesService({
+    adminBillingService,
+    ledgerRepository: subscriptionLedgerRepository,
+    upsShipmentRepository,
+    courierDeliveryRepository
+  });
+  const marketExceptionsService = new MarketExceptionsService({
+    ledgerRepository: subscriptionLedgerRepository,
+    courierTableName: courierDeliveryRepository.tableName,
+    upsTableName: upsShipmentRepository.tableName
+  });
+  const courierDeliveryService = new CourierDeliveryService({
+    repository: courierDeliveryRepository,
+    nfeRepository: blingNfeRepository,
+    requireAuthorizedNfe: env.COURIER_REQUIRE_AUTHORIZED_NFE,
+    adminBillingService,
+    ledgerRepository: subscriptionLedgerRepository,
+    profileRepository,
+    auditService: adminAuditService,
+    transactionalMailer,
+    addressIssueService,
+    shippingSettings: () => shippingService.settings,
     logger
   });
   const adminCatalogRepository = new AdminCatalogRepository(dataSource, {
     postsTableName: env.WP_POSTS_TABLE_NAME,
     postmetaTableName: env.WP_POSTMETA_TABLE_NAME,
-    termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME
-  });
-  const adminAuditService = new AdminAuditService({
-    repository: new AdminAuditRepository(dataSource),
-    logger
+    termRelationshipsTableName: env.WP_TERM_RELATIONSHIPS_TABLE_NAME,
+    termTaxonomyTableName: env.WP_TERM_TAXONOMY_TABLE_NAME,
+    termsTableName: env.WP_TERMS_TABLE_NAME
   });
   const recipeContentRepository = new RecipeContentRepository(dataSource);
   const adminCatalogService = new AdminCatalogService({
@@ -729,6 +866,7 @@ async function bootstrap() {
     syncRunsRepository: new CatalogSyncRunsRepository(dataSource),
     auditService: adminAuditService,
     recipeContentRepository,
+    recipeImageStorage,
     logger
   });
   const recipeContentService = new RecipeContentService({
@@ -762,7 +900,9 @@ async function bootstrap() {
     productionRepository: subscriptionProductionRepository,
     auditService: adminAuditService,
     customerDeliveriesService,
-    packStockService: adminPackStockService
+    packStockService: adminPackStockService,
+    shippingSettings: () => shippingService.settings,
+    logger
   });
   const adminReportsService = new AdminReportsService({
     repository: new AdminReportsRepository(dataSource),
@@ -772,6 +912,13 @@ async function bootstrap() {
   const adminTodayService = new AdminTodayService({
     ledgerRepository: subscriptionLedgerRepository,
     upsShipmentRepository,
+    courierDeliveryService,
+    courierDeliveryRepository,
+    blingNfeRepository,
+    blingNfeService,
+    customerContactsRepository,
+    profileRepository,
+    deliveryAddressIssuesRepository,
     calendar: deliveryCalendar
   });
   const adminUsersService = new AdminUsersService({
@@ -785,6 +932,9 @@ async function bootstrap() {
     }),
     auditService: adminAuditService,
     ledgerRepository: subscriptionLedgerRepository,
+    paidCyclesService: subscriptionPaidCyclesService,
+    nfeRepository: blingNfeRepository,
+    logger,
     adminEmails: env.ADMIN_EMAILS,
     adminAppUrl: env.ADMIN_APP_URL
   });
@@ -847,6 +997,7 @@ async function bootstrap() {
     nutritionParametersService,
     lifeStageSettingsService,
     companyProfileService,
+    planSettingsService,
     legalDocumentsService,
     automatedEmailSettingsService,
     adminShippingService,
@@ -858,7 +1009,13 @@ async function bootstrap() {
     adminReportsService,
     adminDeliveryCalendarService,
     upsShipmentService,
+    upsPickupService,
+    courierDeliveryService,
+    marketExceptionsService,
+    subscriptionPaidCyclesService,
+    customerContactsService,
     customerInvoicesService,
+    blingNfeService,
     adminCatalogService,
     recipeContentService,
     adminSystemHealthService,
@@ -896,12 +1053,15 @@ async function bootstrap() {
       ledgerRepository: subscriptionLedgerRepository,
       transactionalMailer,
       customerInvoicesService,
+      blingNfeService,
       upsShipmentRepository,
+      upsShipmentService,
       upsClient,
       refreshTokenRepository: authRefreshTokenRepository,
       eventsRepository: stripeWebhookEventsRepository,
       deliveryCalendarSyncMaxAttempts: env.DELIVERY_CALENDAR_SYNC_MAX_ATTEMPTS,
-      lifeStageChangeEmailService
+      lifeStageChangeEmailService,
+      planNoticesService
     })
   });
 }

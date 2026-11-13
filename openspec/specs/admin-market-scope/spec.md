@@ -114,7 +114,7 @@ For `record` routes, after loading the entity, if its canonical market is outsid
 
 ### Requirement: Nested customer payloads stay in the actor market
 
-When returning a customer or onboarding detail, the system MUST include only nested billing, production, and shipment records whose canonical market is in the actor’s markets. When returning a billing or production item, identity fields MUST come from the ledger snapshot (email and address on the row), not a live profile join. The payload MUST indicate whether the linked customer profile is in the actor’s markets (`customerProfileInScope`).
+When returning a customer or onboarding detail, the system MUST include only nested billing, production, and shipment records whose canonical market is in the actor’s markets. When returning a billing or production item, identity fields MUST come from the ledger snapshot (email and address on the row), not a live profile join. The one exception is the account name of the operation screens (production queue, Brazil courier list, subscription detail and the queue search): it MAY be read live from the profile only when `customerProfileInScope` is true. When it is false, the item MUST carry no account name, MUST show the ledger email, and the queue search MUST NOT match that account name. The payload MUST indicate whether the linked customer profile is in the actor’s markets (`customerProfileInScope`).
 
 #### Scenario: Brazil customer detail omits a US subscription
 
@@ -125,6 +125,16 @@ When returning a customer or onboarding detail, the system MUST include only nes
 
 - **WHEN** an operator assigned `US` loads that US subscription
 - **THEN** `user.email` is the ledger `customer_email` and `customerProfileInScope` is false if the profile market is `BR`
+
+#### Scenario: Account name of a profile in the actor's market
+
+- **WHEN** a Brazil operator lists the production queue and a Brazil subscription with no recipient belongs to a profile in Brazil whose account name is "Ana Costa"
+- **THEN** the item shows "Ana Costa" with name source `account` and carries the account name
+
+#### Scenario: Account name of a profile in another market
+
+- **WHEN** the same subscription belongs to a profile in the United States
+- **THEN** the item shows the ledger email, carries no account name, and a search for "Costa" does not list it
 
 ### Requirement: Customer market is written once
 
@@ -158,3 +168,22 @@ While `ADMIN_ENFORCE_STAFF_MARKET` is unset or false, a non-admin with no stored
 
 - **WHEN** the flag is true and an operator has no stored markets
 - **THEN** `GET /api/v1/admin/users` responds `403` with code `market_required` and `GET /api/v1/admin/me` still succeeds
+
+### Requirement: Admin identity reports effective markets
+
+`GET /api/v1/admin/me` MUST also return `effectiveMarkets`: the markets the admin API scope applies to the caller on that request. It MUST be both markets for an admin, the stored markets for staff with stored markets, both markets for staff without stored markets while `ADMIN_ENFORCE_STAFF_MARKET` is off, and an empty array for them while it is on. `markets` MUST keep its current value.
+
+#### Scenario: Operator without a stored market, flag off
+
+- **WHEN** an operator with no stored market calls `GET /api/v1/admin/me` and `ADMIN_ENFORCE_STAFF_MARKET` is unset
+- **THEN** the response has `markets: []` and `effectiveMarkets: ["BR", "US"]`
+
+#### Scenario: Operator without a stored market, flag on
+
+- **WHEN** the same operator calls `GET /api/v1/admin/me` with `ADMIN_ENFORCE_STAFF_MARKET=true`
+- **THEN** the response is `200` with `markets: []` and `effectiveMarkets: []`
+
+#### Scenario: Operator assigned BR
+
+- **WHEN** an operator assigned `BR` calls `GET /api/v1/admin/me`
+- **THEN** the response has `markets: ["BR"]` and `effectiveMarkets: ["BR"]`

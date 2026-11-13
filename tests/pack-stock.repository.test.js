@@ -54,6 +54,42 @@ describe('PackStockRepository', () => {
     expect(touched.map((item) => [item.flavorKey, item.onHand])).toEqual([['carne', -2], ['frango', 5]]);
   });
 
+  function countManager(onHand) {
+    return {
+      query: jest.fn(async (sql, params) => (sql.startsWith('SELECT')
+        ? [{ id: 2, market: params[0], flavor_key: params[1], pack_size_grams: params[2], on_hand: onHand, min_level: null }]
+        : { affectedRows: 1 }))
+    };
+  }
+
+  test('applyCount moves on_hand to the counted total through one movement', async () => {
+    const manager = countManager(30);
+    const repository = new PackStockRepository(dataSource(async () => []));
+
+    const item = await repository.applyCount(manager, { market: 'BR', flavorKey: 'frango', packSizeGrams: 300 }, 120, {
+      type: 'adjustment',
+      reason: 'count'
+    });
+
+    const movements = manager.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO `pack_stock_movements`'));
+    expect(movements).toHaveLength(1);
+    expect(movements[0][1].slice(1, 4)).toEqual(['adjustment', 90, 'count']);
+    expect(item.onHand).toBe(120);
+  });
+
+  test('applyCount writes nothing when the count matches', async () => {
+    const manager = countManager(30);
+    const repository = new PackStockRepository(dataSource(async () => []));
+
+    const item = await repository.applyCount(manager, { market: 'BR', flavorKey: 'frango', packSizeGrams: 300 }, 30, {
+      type: 'adjustment',
+      reason: 'count'
+    });
+
+    expect(manager.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO `pack_stock_movements`'))).toHaveLength(0);
+    expect(item.onHand).toBe(30);
+  });
+
   test('openSeparationsForCycle maps what the cycle still has separated', async () => {
     const manager = { query: jest.fn().mockResolvedValue([{ market: 'BR', flavor_key: 'frango', pack_size_grams: 300, quantity: '-4' }]) };
     const repository = new PackStockRepository(dataSource(async () => []));

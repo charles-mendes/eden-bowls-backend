@@ -1,5 +1,7 @@
+const { upsTrackingUrl } = require('../../core/ups-tracking');
 const { DateTime } = require('luxon');
 const { withTimeout } = require('../../core/with-timeout');
+const { PLAN_NOTICE_TEMPLATES } = require('../../core/plan-notice');
 const {
   buildAdminNewSubscriptionEmail,
   buildAutoRenewOffEmail,
@@ -8,9 +10,14 @@ const {
   buildPausedEmail,
   buildPaymentFailedEmail,
   buildPlanChangedEmail,
+  buildPlanEndingNoticeEmail,
   buildRenewalEmail,
+  buildRenewalNoticeEmail,
   buildResumedEmail,
-  buildShippedEmail
+  buildShippedEmail,
+  buildCourierDeliveredEmail,
+  buildCourierOutForDeliveryEmail,
+  buildDeliveryAddressIssueEmail
 } = require('../../core/email/transactional-emails');
 const { buildLifeStageChangeEmail, formatDeadline, packsUrl } = require('../../core/email/life-stage-emails');
 const {
@@ -28,13 +35,18 @@ const TEMPLATES = {
   adminNewSubscription: 'admin_new_subscription',
   paymentFailed: 'payment_failed',
   shipped: 'shipped',
+  courierOutForDelivery: 'courier_out_for_delivery',
+  courierDelivered: 'courier_delivered',
+  deliveryAddressIssue: 'delivery_address_issue',
   renewal: 'renewal',
   paused: 'paused',
   resumed: 'resumed',
   cancelled: 'cancelled',
   autoRenewOff: 'auto_renew_off',
   planChanged: 'plan_changed',
-  lifeStageChange: 'life_stage_change'
+  lifeStageChange: 'life_stage_change',
+  renewalNotice: PLAN_NOTICE_TEMPLATES.renewal,
+  planEndingNotice: PLAN_NOTICE_TEMPLATES.ending
 };
 
 const RESEND_TEMPLATES = [
@@ -411,7 +423,7 @@ function createTransactionalMailer(options = {}) {
       petName: petNameFrom(source),
       trackingNumber,
       carrier: 'UPS',
-      trackingUrl: `https://www.ups.com/track?tracknum=${encodeURIComponent(trackingNumber)}`,
+      trackingUrl: upsTrackingUrl(trackingNumber),
       locale: localeFrom(source),
       assetBaseUrl: emailAssetBaseUrl
     });
@@ -423,6 +435,56 @@ function createTransactionalMailer(options = {}) {
       to,
       content
     });
+  }
+
+  // Brazil courier letters (courier-delivery), claimed once per courier row, so a new attempt after a failure
+  // writes again. They are not in RESEND_TEMPLATES: a failed send is logged and never retried by a job.
+  function courierLetter(template, build, { subscription = {}, delivery = {} }, extra = {}) {
+    const id = String(subscription.stripeSubscriptionId || subscription.providerSubscriptionId || '').trim();
+    const referenceId = String(delivery.id || '').trim();
+    const to = String((subscription.user && subscription.user.email) || subscription.customerEmail || '').trim();
+    if (!id || !referenceId || !to) {
+      return missingContext(template);
+    }
+    const content = build({
+      firstName: firstNameFrom(subscription),
+      petName: petNameFrom(subscription),
+      locale: localeFrom(subscription),
+      assetBaseUrl: emailAssetBaseUrl,
+      ...extra
+    });
+    return sendClaimed({ subscriptionId: id, template, referenceId, to, content });
+  }
+
+  async function notifyCourierOutForDelivery(input = {}) {
+    return courierLetter(TEMPLATES.courierOutForDelivery, buildCourierOutForDeliveryEmail, input, {
+      trackingUrl: (input.delivery && input.delivery.tracking_url) || ''
+    });
+  }
+
+  async function notifyCourierDelivered(input = {}) {
+    return courierLetter(TEMPLATES.courierDelivered, buildCourierDeliveredEmail, input, {
+      dashboardUrl: dashboardPlansUrl(storeAppUrl)
+    });
+  }
+
+  // The letter of an address problem (delivery-address-issues), claimed once per problem. It is not in
+  // RESEND_TEMPLATES nor in the automated email settings: it always goes out, and a failed send is only logged.
+  async function notifyDeliveryAddressIssue({ issue = {}, subscription = {} } = {}) {
+    const id = String(subscription.stripeSubscriptionId || issue.stripeSubscriptionId || '').trim();
+    const referenceId = String(issue.id || '').trim();
+    const to = String((subscription.user && subscription.user.email) || subscription.customerEmail || '').trim();
+    if (!id || !referenceId || !to) {
+      return missingContext(TEMPLATES.deliveryAddressIssue);
+    }
+    const content = buildDeliveryAddressIssueEmail({
+      firstName: firstNameFrom(subscription),
+      codes: issue.codes,
+      editUrl: `${dashboardPlansUrl(storeAppUrl)}/${encodeURIComponent(id)}/edit?step=address`,
+      locale: localeFrom({ stripeAccount: subscription.stripeAccount || issue.stripeAccount }),
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({ subscriptionId: id, template: TEMPLATES.deliveryAddressIssue, referenceId, to, content });
   }
 
   function customerTarget({ ledger = {}, subscriptionId, referenceId, fallbackEmail }) {
@@ -462,6 +524,54 @@ function createTransactionalMailer(options = {}) {
       to: target.to,
       content,
       attachments: attachmentList(invoiceAttachment)
+    });
+  }
+
+  // `total` is the amount of the next invoice from the Stripe preview, absent when the preview failed.
+  async function notifyRenewalNotice({ ledger = {}, subscriptionId, referenceId, renewsOn, total = null }) {
+    const target = customerTarget({ ledger, subscriptionId, referenceId });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.renewalNotice);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildRenewalNoticeEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      renewsOnLabel: formatLetterDate(renewsOn, locale),
+      totalLabel: total ? formatMoney(total.amount, total.currency) : '',
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.renewalNotice,
+      referenceId: target.reference,
+      to: target.to,
+      content
+    });
+  }
+
+  async function notifyPlanEndingNotice({ ledger = {}, subscriptionId, referenceId, endsOn }) {
+    const target = customerTarget({ ledger, subscriptionId, referenceId });
+    if (!target.id || !target.reference || !target.to) {
+      return missingContext(TEMPLATES.planEndingNotice);
+    }
+    const locale = localeFrom(ledger);
+    const content = buildPlanEndingNoticeEmail({
+      firstName: firstNameFrom(ledger),
+      petName: petNameFrom(ledger),
+      endsOnLabel: formatLetterDate(endsOn, locale),
+      dashboardUrl: dashboardPlansUrl(storeAppUrl),
+      locale,
+      assetBaseUrl: emailAssetBaseUrl
+    });
+    return sendClaimed({
+      subscriptionId: target.id,
+      template: TEMPLATES.planEndingNotice,
+      referenceId: target.reference,
+      to: target.to,
+      content
     });
   }
 
@@ -707,7 +817,12 @@ function createTransactionalMailer(options = {}) {
     notifyAdminNewSubscription,
     notifyPaymentFailed,
     notifyShipped,
+    notifyCourierOutForDelivery,
+    notifyCourierDelivered,
+    notifyDeliveryAddressIssue,
     notifyRenewal,
+    notifyRenewalNotice,
+    notifyPlanEndingNotice,
     notifyPaused,
     notifyResumed,
     notifyCancelled,

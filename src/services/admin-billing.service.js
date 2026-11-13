@@ -1,3 +1,8 @@
+const { shipmentMarket } = require('../core/shipment-market');
+const { addressField, brazilAddressIssues } = require('../core/delivery-address-check');
+const { parseRecipientNameInput } = require('../core/recipient-name');
+const { parseDeliveryInstructionsInput, resolveDeliveryInstructions } = require('../core/delivery-instructions');
+const { accountNameOf, shownName } = require('../core/production-queue-presenter');
 const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { ledgerStripeAccount, parseStripeAccountInput } = require('../core/stripe-account');
@@ -19,6 +24,7 @@ function dashboardUrl(secretKey, path) {
 
 function presentSubscription(item, secretKey, actor = {}) {
   const stripeAccount = String(item.stripeAccount || 'us').toLowerCase() || 'us';
+  const market = shipmentMarket({ stripeAccount, address: item.address });
   return {
     id: String(item.id),
     providerSubscriptionId: item.stripeSubscriptionId,
@@ -47,6 +53,9 @@ function presentSubscription(item, secretKey, actor = {}) {
       id: String(item.userId || ''),
       email: item.customerEmail || ''
     },
+    // shipment-market: the market that ships this subscription's boxes, or none when account and address disagree.
+    shipment_market: market.market,
+    market_exception: market.exception,
     term: {
       marketCountry: item.address && item.address.country ? String(item.address.country).toUpperCase() : '',
       months: item.subscriptionTermMonths || 0
@@ -58,10 +67,12 @@ function presentSubscription(item, secretKey, actor = {}) {
 class AdminBillingService {
   constructor(options = {}) {
     this.ledgerRepository = options.ledgerRepository;
+    this.addressIssueService = options.addressIssueService || null;
     this.webhookEventsRepository = options.webhookEventsRepository;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.profileRepository = options.profileRepository || null;
+    this.auditService = options.auditService || null;
     this.secretKey = options.secretKey || '';
   }
 
@@ -112,7 +123,9 @@ class AdminBillingService {
     });
   }
 
-  async getSubscription(id, actor = {}) {
+  // `detail` is the panel's subscription page, which also shows the address problem (delivery-address-issues);
+  // the courier and the label read the subscription without it.
+  async getSubscription(id, actor = {}, { detail = false } = {}) {
     const item = await this.ledgerRepository.findById(id);
     if (!item) {
       throw new HttpError(404, 'Subscription not found.');
@@ -121,7 +134,120 @@ class AdminBillingService {
       assertStripeAccountMarket(actor, ledgerStripeAccount(item));
     }
 
-    return presentSubscription(item, this.secretFor(item), actor);
+    const subscription = presentSubscription(item, this.secretFor(item), actor);
+    if (detail) {
+      // keep-ready-orders-dispatchable: what the courier dispatch would refuse for this address, before anyone
+      // fills the dispatch; null outside the Brazil shipping market. A read: it opens no problem and sends no email.
+      subscription.courier_issues = subscription.shipment_market === 'BR' ? brazilAddressIssues(item.address) : null;
+    }
+    if (detail) {
+      // operator-fills-recipient-name: the account name the panel suggests, and where the shown name comes from.
+      // A live profile read: only when the profile is in the actor's markets (admin-market-scope).
+      const accountName = subscription.customerProfileInScope ? await this.accountNameFor(item.userId) : null;
+      const shown = shownName(item.address, { accountName, email: item.customerEmail });
+      subscription.account_name = accountName;
+      subscription.name_source = shown.source;
+      // delivery-instructions: the subscription's own text, else the profile's when it is the same place.
+      const profileAddress = subscription.customerProfileInScope ? await this.profileAddressFor(item.userId) : null;
+      const instructions = resolveDeliveryInstructions(item.address, profileAddress);
+      subscription.delivery_instructions = instructions.text;
+      subscription.delivery_instructions_source = instructions.source;
+    }
+    if (detail && this.addressIssueService) {
+      subscription.address_issue = await this.addressIssueService.latestFor(item.id);
+    }
+    return subscription;
+  }
+
+  async profileAddressFor(userId) {
+    if (!userId || !this.profileRepository || typeof this.profileRepository.getAddress !== 'function') return null;
+    try {
+      const record = await this.profileRepository.getAddress(userId);
+      return record && record.exists ? record.address : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async accountNameFor(userId) {
+    if (!userId || !this.profileRepository || typeof this.profileRepository.findUserById !== 'function') return null;
+    try {
+      const user = await this.profileRepository.findUserById(userId);
+      return accountNameOf(user && user.displayName);
+    } catch {
+      return null;
+    }
+  }
+
+  // operator-fills-recipient-name: an operator fills the missing recipient of one subscription. It never replaces
+  // one, because the audit keeps no name and a replaced name could not be brought back.
+  async fillRecipientName(id, body = {}, actor = {}) {
+    const item = await this.ledgerRepository.findById(id);
+    if (!item) {
+      throw new HttpError(404, 'Subscription not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertStripeAccountMarket(actor, ledgerStripeAccount(item));
+    }
+    const present = () => new HttpError(409, 'This subscription already has a recipient.', { code: 'recipient_name_present' });
+    if (addressField(item.address || {}, 'recipient')) throw present();
+    const name = parseRecipientNameInput(body && body.recipient_name, { required: true });
+    if (!(await this.ledgerRepository.fillAddressRecipientName(item.id, name))) throw present();
+
+    const address = { ...(item.address || {}), recipient_name: name };
+    const saved = { ...item, address };
+    if (this.auditService && typeof this.auditService.record === 'function') {
+      await this.auditService.record({
+        action: 'billing.subscriptions.recipient.fill',
+        actor,
+        targetUserId: item.userId || null,
+        targetEmail: item.customerEmail || null,
+        metadata: { subscriptionId: String(item.id), fields: ['recipient_name'] }
+      });
+    }
+    if (this.addressIssueService && typeof this.addressIssueService.recheckSubscription === 'function') {
+      await this.addressIssueService.recheckSubscription(saved, { resolvedBy: 'operator' });
+    }
+    const market = shipmentMarket({ stripeAccount: ledgerStripeAccount(item), address });
+    return {
+      success: true,
+      data: {
+        subscription_id: String(item.id),
+        recipient_name: name,
+        courier_issues: market.market === 'BR' ? brazilAddressIssues(address) : null
+      }
+    };
+  }
+
+  // delivery-instructions: an operator sets or clears the instructions of one subscription, nothing else.
+  async updateDeliveryInstructions(id, body = {}, actor = {}) {
+    const raw = body ? body.delivery_instructions : undefined;
+    const text = parseDeliveryInstructionsInput(raw === undefined ? '' : raw);
+    const item = await this.ledgerRepository.findById(id);
+    if (!item) {
+      throw new HttpError(404, 'Subscription not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertStripeAccountMarket(actor, ledgerStripeAccount(item));
+    }
+    // findById already proved the row; the same text again may report no changed row, which is still a success.
+    await this.ledgerRepository.setAddressDeliveryInstructions(item.id, text);
+    if (this.auditService && typeof this.auditService.record === 'function') {
+      await this.auditService.record({
+        action: 'billing.subscriptions.delivery_instructions.update',
+        actor,
+        targetUserId: item.userId || null,
+        targetEmail: item.customerEmail || null,
+        metadata: { subscriptionId: String(item.id), fields: ['delivery_instructions'], cleared: !text }
+      });
+    }
+    return {
+      success: true,
+      data: {
+        subscription_id: String(item.id),
+        delivery_instructions: text || null
+      }
+    };
   }
 
   async metrics(actor = {}) {
@@ -184,6 +310,25 @@ class AdminBillingService {
   async backfillLinks() {
     const result = await this.ledgerRepository.backfillUserLinks(this.profileRepository);
     return { success: true, data: result };
+  }
+
+  async getSubscriptionInvoice(id, invoiceId, actor = {}) {
+    const item = await this.ledgerRepository.findById(id);
+    if (!item) {
+      throw new HttpError(404, 'Subscription not found.');
+    }
+    if (shouldEnforceMarketScope(actor)) {
+      assertStripeAccountMarket(actor, ledgerStripeAccount(item));
+    }
+
+    try {
+      return await this.billingFor(item).ensureClient().invoices.retrieve(invoiceId);
+    } catch (error) {
+      if (error && error.code === 'resource_missing') {
+        throw new HttpError(404, 'Invoice not found.', { code: 'invoice_not_found' });
+      }
+      throw new HttpError(502, 'Unable to read the invoice from Stripe.', { code: 'invoice_unavailable' });
+    }
   }
 
   async syncInvoices(id, actor = {}) {

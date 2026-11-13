@@ -52,12 +52,17 @@ function presentOwnRequest(row) {
   };
 }
 
+// The version an automatic renewal consent records when the store sends none (checkout-renewal-consent).
+const DEFAULT_RENEWAL_VERSION = 'checkout-v1';
+
 class PrivacyService {
   constructor(options = {}) {
     this.repository = options.repository;
     this.profileService = options.profileService || null;
     this.profileRepository = options.profileRepository || null;
     this.quotesRepository = options.quotesRepository || null;
+    this.customerContactsRepository = options.customerContactsRepository || null;
+    this.deliveryAddressIssuesRepository = options.deliveryAddressIssuesRepository || null;
     this.customerStore = options.customerStore || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.mailer = options.mailer || null;
@@ -117,15 +122,15 @@ class PrivacyService {
     return current;
   }
 
-  async recordOtpConsents({ userId, marketingOptIn, privacyVersion, termsVersion, market, ipHash, userAgent }) {
-    const context = { ipHash: ipHash || '', userAgent: userAgent || '' };
+  // The privacy policy and terms accepted together, at sign-in or at checkout (legal-documents).
+  async recordLegalConsents({ userId, privacyVersion, termsVersion, market, source, context }) {
     const legalMarket = String(market || '').toUpperCase() === 'BR' ? 'BR' : 'US';
     await this.recordConsent({
       userId,
       consentType: 'privacy_policy',
       status: 'granted',
       documentVersion: await this.consentVersion(legalMarket, 'privacy', privacyVersion),
-      source: 'otp_verify',
+      source,
       ...context
     });
     await this.recordConsent({
@@ -133,14 +138,35 @@ class PrivacyService {
       consentType: 'terms',
       status: 'granted',
       documentVersion: await this.consentVersion(legalMarket, 'terms', termsVersion),
-      source: 'otp_verify',
+      source,
       ...context
     });
+  }
+
+  async recordOtpConsents({ userId, marketingOptIn, privacyVersion, termsVersion, market, ipHash, userAgent }) {
+    const context = { ipHash: ipHash || '', userAgent: userAgent || '' };
+    await this.recordLegalConsents({ userId, privacyVersion, termsVersion, market, source: 'otp_verify', context });
     await this.recordConsent({
       userId,
       consentType: 'marketing_email',
       status: marketingOptIn ? 'granted' : 'denied',
       source: 'otp_verify',
+      ...context
+    });
+  }
+
+  // The boxes ticked at checkout: privacy policy and terms, then the automatic renewal (checkout-renewal-consent).
+  // The renewal text is checkout copy, not a published legal document, so its version is recorded as sent.
+  // The checkout does not ask about marketing.
+  async recordCheckoutConsents({ userId, market, privacyVersion, termsVersion, renewalVersion, ipHash, userAgent }) {
+    const context = { ipHash: ipHash || '', userAgent: userAgent || '' };
+    await this.recordLegalConsents({ userId, privacyVersion, termsVersion, market, source: 'checkout', context });
+    await this.recordConsent({
+      userId,
+      consentType: 'auto_renewal',
+      status: 'granted',
+      documentVersion: String(renewalVersion || '').trim() || DEFAULT_RENEWAL_VERSION,
+      source: 'checkout',
       ...context
     });
   }
@@ -223,6 +249,14 @@ class PrivacyService {
     const subscriptions = this.repository && typeof this.repository.listSubscriptionSummary === 'function'
       ? await this.repository.listSubscriptionSummary(userId)
       : [];
+    // The operator's e-mail stays out: the package is about the customer.
+    const contacts = this.customerContactsRepository && typeof this.customerContactsRepository.listByUser === 'function'
+      ? await this.customerContactsRepository.listByUser(userId)
+      : [];
+    const addressIssues = this.deliveryAddressIssuesRepository && typeof this.deliveryAddressIssuesRepository.listByUser === 'function'
+      ? await this.deliveryAddressIssuesRepository.listByUser(userId)
+      : [];
+    const isoDate = (value) => (value instanceof Date ? value.toISOString() : (value || null));
 
     return {
       exportedAt: this.now().toISOString(),
@@ -250,7 +284,25 @@ class PrivacyService {
         neutered: Boolean(pet.neutered)
       })),
       consents,
-      subscriptions
+      subscriptions,
+      customerContacts: contacts.map((contact) => ({
+        subscriptionId: contact.subscription_id,
+        channel: 'whatsapp',
+        reason: contact.reason,
+        outcome: contact.outcome,
+        note: contact.note,
+        createdAt: contact.created_at instanceof Date ? contact.created_at.toISOString() : contact.created_at
+      })),
+      // delivery-address-issues: what the customer was asked to fix, and when.
+      addressIssues: addressIssues.map((issue) => ({
+        subscriptionId: issue.stripeSubscriptionId,
+        codes: issue.codes,
+        source: issue.source,
+        openedAt: isoDate(issue.openedAt),
+        emailSentAt: isoDate(issue.emailSentAt),
+        resolvedAt: isoDate(issue.resolvedAt),
+        resolvedBy: issue.resolvedBy
+      }))
     };
   }
 

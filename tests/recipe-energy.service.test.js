@@ -17,7 +17,10 @@ describe('parseEnergyKcalPerKg', () => {
 });
 
 describe('RecipeEnergyService', () => {
-  const row = (recipeKey, lifeStage, extra = {}) => ({ market: 'BR', recipeKey, lifeStage, published: true, ...extra });
+  // Each recipe is a product: the product id here is the market and code of its content.
+  const row = (recipeKey, lifeStage, extra = {}) => ({
+    market: 'BR', recipeKey, lifeStage, published: true, productId: recipeKey ? `${extra.market || 'BR'}:${recipeKey}` : null, ...extra
+  });
   const labels = {
     'pork': '1.200 kcal/kg',
     'beef': '1.200 kcal/kg',
@@ -26,9 +29,12 @@ describe('RecipeEnergyService', () => {
     'senior-beef': '',
     'draft': '9.999 kcal/kg'
   };
+  const stages = { 'puppy-beef': 'puppy', 'senior-beef': 'senior' };
   const contentRepository = {
     findByMarketAndSlug: jest.fn(async (market, key) => (key in labels ? { label: { energyKg: labels[key] } } : null)),
-    findByMarketAndSlugs: jest.fn(async (market, keys) => new Map(keys.map((key) => [key, { label: { energyKg: labels[key] } }])))
+    listByMarket: jest.fn(async (market) => (market === 'BR'
+      ? Object.keys(labels).map((key) => ({ productId: `BR:${key}`, flavorSlug: key, name: key, lifeStage: stages[key] || 'adult', label: { energyKg: labels[key] } }))
+      : []))
   };
   const catalogRepository = {
     recipeVariationRows: jest.fn(async () => [

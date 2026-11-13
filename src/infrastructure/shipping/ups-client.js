@@ -13,6 +13,9 @@ const SERVICE_LABELS = {
   '11': 'UPS Standard'
 };
 
+// Pickup Creation and Pickup Cancel share the version of the Shipping API (v2409).
+const PICKUP_VERSION = 'v2409';
+
 const UPS_BASE_URLS = Object.freeze({
   cie: 'https://wwwcie.ups.com',
   production: 'https://onlinetools.ups.com'
@@ -248,6 +251,7 @@ class UpsClient {
   }
 
   buildPackage(pkg = {}) {
+    const dryIceKg = Number(pkg.dry_ice_kg);
     return {
       PackagingType: { Code: '02', Description: 'Customer Supplied Package' },
       Dimensions: {
@@ -259,7 +263,20 @@ class UpsClient {
       PackageWeight: {
         UnitOfMeasurement: { Code: 'LBS', Description: 'Pounds' },
         Weight: String(Number(pkg.weight_lb || pkg.weight || 10))
-      }
+      },
+      // Dry ice as a refrigerant (UN1845) under the US DOT rules. Rating needs the unit Description;
+      // Shipping accepts it. Not medical, so no MedicalUseIndicator (ups-dry-ice).
+      ...(dryIceKg > 0 ? {
+        PackageServiceOptions: {
+          DryIce: {
+            RegulationSet: 'CFR',
+            DryIceWeight: {
+              UnitOfMeasurement: { Code: '00', Description: 'Kilograms' },
+              Weight: dryIceKg.toFixed(1)
+            }
+          }
+        }
+      } : {})
     };
   }
 
@@ -359,9 +376,16 @@ class UpsClient {
     return { status, candidates };
   }
 
-  async createShipment({ shipFrom, shipTo, package: pkg, serviceCode }) {
+  // One shipment with one UPS package per box (shipping-boxes); a single `package` is still one package.
+  async createShipment({ shipFrom, shipTo, package: pkg, packages, serviceCode }) {
     this.ensureCanShip();
     const code = String(serviceCode || '03').trim() || '03';
+    const boxes = Array.isArray(packages) && packages.length > 0 ? packages : [pkg];
+    // Rating calls this field PackagingType; Shipping refuses that name and wants Packaging.
+    const packageEntries = boxes.map((box) => {
+      const { PackagingType: packaging, ...packageBody } = this.buildPackage(box);
+      return { ...packageBody, Packaging: packaging, Description: 'Eden Bowls' };
+    });
     const body = {
       ShipmentRequest: {
         Request: {
@@ -381,10 +405,7 @@ class UpsClient {
             }
           },
           Service: { Code: code, Description: serviceLabel(code) },
-          Package: {
-            ...this.buildPackage(pkg),
-            Description: 'Eden Bowls'
-          }
+          Package: packageEntries.length === 1 ? packageEntries[0] : packageEntries
         },
         LabelSpecification: {
           LabelImageFormat: { Code: 'GIF', Description: 'GIF' },
@@ -400,8 +421,8 @@ class UpsClient {
     });
 
     const results = response?.ShipmentResponse?.ShipmentResults || response?.ShipmentResults || {};
-    const packageResults = results.PackageResults;
-    const firstPackage = Array.isArray(packageResults) ? packageResults[0] : packageResults;
+    const packageResults = [].concat(results.PackageResults || []);
+    const firstPackage = packageResults[0];
     const trackingNumber = String(
       firstPackage?.TrackingNumber
       || results.ShipmentIdentificationNumber
@@ -425,16 +446,92 @@ class UpsClient {
       });
     }
 
+    // UPS answers the packages in the order they were sent.
+    const packageLabels = packageResults.map((result) => ({
+      trackingNumber: String(result?.TrackingNumber || '').trim(),
+      labelBase64: String(result?.ShippingLabel?.GraphicImage || result?.ShippingLabel?.HTMLImage || '').trim()
+    }));
+
     return {
       upsShipmentId: shipmentId,
       trackingNumber,
       serviceCode: code,
       labelFormat: 'GIF',
       labelBase64,
+      packages: packageLabels.length > 0 ? packageLabels : [{ trackingNumber, labelBase64 }],
       monetaryValue: Number.isFinite(monetaryValue) ? monetaryValue : null,
       currency: String(results?.ShipmentCharges?.TotalCharges?.CurrencyCode || 'USD'),
       raw: response
     };
+  }
+
+  // UPS on-demand pickup (ups-pickup). One call per request: a timeout is never retried here, and the 401 retry is
+  // off, as in createShipment, so UPS never gets a second pickup for the same boxes.
+  // `totalWeightLb` is the weight of every box together (shipping-boxes); `packageCount` is the number of boxes.
+  async createPickup({ pickupDate, readyTime, closeTime, packageCount, shipFrom = {}, serviceCode, totalWeightLb }) {
+    this.ensureCanShip();
+    const count = Number(packageCount);
+    if (!(Number(totalWeightLb) > 0)) {
+      throw new HttpError(400, 'Pickup total weight is required.', { code: 'invalid_pickup_weight' });
+    }
+    const weight = Number(totalWeightLb);
+    const code = String(serviceCode || '03').trim() || '03';
+    const body = {
+      PickupCreationRequest: {
+        Request: { TransactionReference: { CustomerContext: 'eden-bowls-pickup' } },
+        RatePickupIndicator: 'N',
+        Shipper: { Account: { AccountNumber: this.accountNumber, AccountCountryCode: 'US' } },
+        PickupDateInfo: {
+          PickupDate: String(pickupDate || '').replace(/-/g, ''),
+          ReadyTime: String(readyTime || '').replace(':', ''),
+          CloseTime: String(closeTime || '').replace(':', '')
+        },
+        PickupAddress: {
+          CompanyName: String(shipFrom.name || 'Eden Bowls').slice(0, 27),
+          ContactName: String(shipFrom.name || 'Eden Bowls').slice(0, 22),
+          AddressLine: [shipFrom.street, shipFrom.street2].filter(Boolean).map((line) => String(line).slice(0, 73)).join(' ').slice(0, 73),
+          City: String(shipFrom.city || '').slice(0, 50),
+          StateProvince: String(shipFrom.state || '').slice(0, 5),
+          PostalCode: String(shipFrom.zipcode || '').replace(/\D/g, '').slice(0, 9),
+          CountryCode: String(shipFrom.country || 'US').toUpperCase().slice(0, 2),
+          ResidentialIndicator: 'N',
+          Phone: { Number: String(shipFrom.phone || '').replace(/\D/g, '').slice(0, 15) }
+        },
+        AlternateAddressIndicator: 'N',
+        PickupPiece: [{
+          ServiceCode: code.padStart(3, '0'),
+          Quantity: String(count),
+          DestinationCountryCode: 'US',
+          ContainerCode: '01'
+        }],
+        TotalWeight: { Weight: String(Math.round(weight * 10) / 10), UnitOfMeasurement: 'LBS' },
+        OverweightIndicator: 'N',
+        PaymentMethod: '01'
+      }
+    };
+
+    const response = await this.request(`/api/pickupcreation/${PICKUP_VERSION}/pickup`, {
+      method: 'POST',
+      jsonBody: body,
+      retryOnUnauthorized: false
+    });
+    const prn = String(response?.PickupCreationResponse?.PRN || '').trim();
+    if (!prn) {
+      throw new HttpError(502, 'UPS pickup response missing the confirmation number.', { code: 'ups_pickup_incomplete' });
+    }
+    return { prn, raw: response };
+  }
+
+  async cancelPickup(prn) {
+    this.ensureCanShip();
+    const number = String(prn || '').trim();
+    if (!number) {
+      throw new HttpError(400, 'Pickup confirmation number is required.', { code: 'invalid_prn' });
+    }
+    return this.request(`/api/shipments/${PICKUP_VERSION}/pickup/02`, {
+      method: 'DELETE',
+      headers: { Prn: number }
+    });
   }
 
   async track(trackingNumber, options = {}) {

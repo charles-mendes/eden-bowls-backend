@@ -92,4 +92,12 @@ describe('admin roles', () => {
     expect(resolveAdminRoles({ storedRoles: '["nutritionist"]', email: 'lia@edenbowls.com' })).toEqual(['veterinarian']);
     expect(permissionsForRoles(parseRoles('["nutritionist"]'))).toEqual(['nutrition.simulate', 'nutrition.settings.write']);
   });
+
+  test('only operator and admin can record a customer contact', () => {
+    expect(permissionsForRoles(['operator'])).toContain('customers.contact.write');
+    expect(permissionsForRoles(['admin'])).toContain('customers.contact.write');
+    expect(permissionsForRoles(['readonly'])).not.toContain('customers.contact.write');
+    expect(permissionsForRoles(['veterinarian'])).not.toContain('customers.contact.write');
+    expect(ROLE_PERMISSIONS.readonly).toContain('billing.subscribers.read');
+  });
 });

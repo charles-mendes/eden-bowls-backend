@@ -1,5 +1,10 @@
 const { HttpError } = require('../core/http-error');
+const { parseDeliveryInstructionsInput } = require('../core/delivery-instructions');
 const { AUTH_ERROR } = require('../api/contracts/auth-errors');
+const { parseCpf, parseFiscalName } = require('../core/tax-document');
+const { checkoutShippingOf } = require('../core/checkout-shipping');
+const { subscriptionAlerts } = require('../core/customer-subscription-alerts');
+const { ownedPets } = require('../core/subscription-pet-link');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { generateTemporaryPassword } = require('../core/temporary-password');
@@ -22,6 +27,47 @@ const {
   isSoftDeleted
 } = require('../core/staff-invite');
 
+function canReadFiscalData(actor) {
+  return Array.isArray(actor.permissions) && actor.permissions.includes('users.delivery.write');
+}
+
+function hasPermission(actor, permission) {
+  return Array.isArray(actor.permissions) && actor.permissions.includes(permission);
+}
+
+const BR_ACCOUNT = 'br';
+// Who sees the latest cycle at all: one of the screens it links to.
+const LATEST_CYCLE_PERMISSIONS = ['production.read', 'shipping.read', 'nfe.read'];
+
+// The delivery of a cycle as the customer detail shows it: the courier attempt wins over a UPS label.
+function presentCycleDelivery(view) {
+  if (view.courierDelivery) return { kind: 'courier', ...view.courierDelivery };
+  if (view.upsShipment) return { kind: 'ups', ...view.upsShipment };
+  return null;
+}
+
+function presentNfe(note) {
+  if (!note) return null;
+  return {
+    id: note.id,
+    number: note.nfeNumber || null,
+    series: note.nfeSeries || null,
+    status: note.status,
+    lastError: note.lastError || null,
+    emailStatus: note.emailStatus || null
+  };
+}
+
+// Why the operator corrected a copy of the customer's data. Optional; kept only in the audit event.
+function parseCorrectionReason(value) {
+  if (value === undefined || value === null) return null;
+  const reason = String(value).trim();
+  if (reason.length < 3 || reason.length > 255) {
+    throw new HttpError(422, 'The reason must have 3 to 255 characters.', { code: 'invalid_reason', field: 'reason' });
+  }
+  return reason;
+}
+
 class AdminUsersService {
   constructor(options = {}) {
     this.usersRepository = options.usersRepository;
@@ -31,6 +77,9 @@ class AdminUsersService {
     this.inviteMailer = options.inviteMailer || null;
     this.auditService = options.auditService || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.paidCyclesService = options.paidCyclesService || null;
+    this.nfeRepository = options.nfeRepository || null;
+    this.logger = options.logger || null;
     this.adminEmails = parseAdminEmails(options.adminEmails);
     this.adminAppUrl = String(options.adminAppUrl || 'http://localhost:5174').replace(/\/+$/, '');
     this.inviteTtlSeconds = Number(options.inviteTtlSeconds || INVITE_TTL_SECONDS);
@@ -81,6 +130,8 @@ class AdminUsersService {
       status: user.status,
       createdAt: user.createdAt,
       profile: user.profile,
+      // The delivery address wins: the market meta is empty for most accounts.
+      country: user.addressCountry || user.profileMarket || null,
       ...this.presentRoles(user),
       ...this.presentInvite(user)
     };
@@ -184,6 +235,100 @@ class AdminUsersService {
     };
   }
 
+  // The customer's subscriptions with their contract and, for who reads an operation screen, the latest paid
+  // cycle (admin-customer-subscriptions). Each block follows the permission of the screen it comes from.
+  async presentSubscriptions(userId, rows, actor) {
+    const canReadBilling = hasPermission(actor, 'billing.subscribers.read');
+    const items = rows.map((item) => ({
+      id: String(item.id),
+      stripeSubscriptionId: item.stripeSubscriptionId,
+      stripeAccount: item.stripeAccount,
+      status: item.status,
+      currentPeriodEnd: item.currentPeriodEnd,
+      cancelAtPeriodEnd: item.cancelAtPeriodEnd,
+      planLabel: item.planLabel,
+      createdAt: item.createdAt || null,
+      subscriptionTermMonths: item.subscriptionTermMonths == null ? null : item.subscriptionTermMonths,
+      chargedDeliveries: item.chargedDeliveries == null ? null : item.chargedDeliveries,
+      autoRenew: item.autoRenew == null ? null : item.autoRenew,
+      pets: ownedPets(item),
+      ...(canReadBilling ? {
+        paymentMethod: { brand: item.paymentMethodBrand || null, last4: item.paymentMethodLast4 || null },
+        checkoutShipping: this.presentCheckoutShipping(item.shipping)
+      } : {})
+    }));
+
+    const withCycles = await this.attachLatestCycles(userId, rows, items, actor);
+    // Alerts read the item as the actor sees it, so a block hidden by permission raises nothing.
+    const now = new Date(this.nowProvider() * 1000);
+    return withCycles.map((item, index) => ({ ...item, alerts: subscriptionAlerts({ item, row: rows[index], now }) }));
+  }
+
+  async attachLatestCycles(userId, rows, items, actor) {
+    if (!items.length || !LATEST_CYCLE_PERMISSIONS.some((permission) => hasPermission(actor, permission))) {
+      return items;
+    }
+
+    let cycles;
+    try {
+      cycles = await this.latestCycles(rows, actor);
+    } catch (error) {
+      if (this.logger && typeof this.logger.warn === 'function') {
+        this.logger.warn({ userId: String(userId), code: (error && error.code) || 'latest_cycle_failed' }, 'Customer detail without the latest cycles.');
+      }
+      return items.map((item) => ({ ...item, latestCycleUnavailable: true }));
+    }
+    return items.map((item) => ({ ...item, latestCycle: cycles.get(item.id) || null }));
+  }
+
+  presentCheckoutShipping(shipping) {
+    const value = checkoutShippingOf(shipping);
+    if (!value) return null;
+    return { label: value.label, amount: value.amount, currency: value.currency };
+  }
+
+  // The latest paid cycle of each subscription, keyed by subscription id. NF-e only for Brazil subscriptions.
+  async latestCycles(rows, actor) {
+    if (!this.paidCyclesService) {
+      throw new HttpError(503, 'Paid cycles are not available.');
+    }
+    const views = await this.paidCyclesService.latestBySubscriptions(rows);
+    const canReadNfe = hasPermission(actor, 'nfe.read');
+    const brazilPairs = rows
+      .filter((row) => String(row.stripeAccount || '').toLowerCase() === BR_ACCOUNT)
+      .map((row) => views.get(String(row.id)))
+      .filter(Boolean)
+      .map((view) => ({ stripeAccount: BR_ACCOUNT, stripeInvoiceId: view.invoiceId }));
+    let notes = [];
+    if (canReadNfe && brazilPairs.length) {
+      if (!this.nfeRepository) {
+        throw new HttpError(503, 'NF-e records are not available.');
+      }
+      notes = await this.nfeRepository.listByStripeInvoices(brazilPairs);
+    }
+    const noteByInvoice = new Map(notes.filter(Boolean).map((note) => [String(note.stripeInvoiceId), note]));
+
+    const result = new Map();
+    for (const row of rows) {
+      const view = views.get(String(row.id));
+      if (!view) {
+        result.set(String(row.id), null);
+        continue;
+      }
+      const isBrazil = String(row.stripeAccount || '').toLowerCase() === BR_ACCOUNT;
+      result.set(String(row.id), {
+        invoiceId: view.invoiceId,
+        paidAt: view.paidAt,
+        preparationDay: view.preparationDay,
+        deliveryDate: view.deliveryDate,
+        ...(hasPermission(actor, 'production.read') ? { production: { status: view.productionStatus, note: view.productionNote } } : {}),
+        ...(hasPermission(actor, 'shipping.read') ? { delivery: presentCycleDelivery(view) } : {}),
+        ...(canReadNfe && isBrazil ? { nfe: presentNfe(noteByInvoice.get(String(view.invoiceId))) } : {})
+      });
+    }
+    return result;
+  }
+
   async getById(userId, actor = {}) {
     const user = await this.usersRepository.findUserById(userId);
     if (!user) {
@@ -200,15 +345,7 @@ class AdminUsersService {
       }
     }
 
-    const subscriptions = (await this.scopedSubscriptions(userId, actor)).map((item) => ({
-      id: String(item.id),
-      stripeSubscriptionId: item.stripeSubscriptionId,
-      stripeAccount: item.stripeAccount,
-      status: item.status,
-      currentPeriodEnd: item.currentPeriodEnd,
-      cancelAtPeriodEnd: item.cancelAtPeriodEnd,
-      planLabel: item.planLabel
-    }));
+    const subscriptions = await this.presentSubscriptions(user.id, await this.scopedSubscriptions(userId, actor), actor);
 
     return {
       id: String(user.id),
@@ -220,6 +357,8 @@ class AdminUsersService {
         phone: (profile && profile.phone) || (user.profile && user.profile.phone) || null
       },
       delivery: (profile && profile.delivery) || null,
+      // The CPF goes only to who can edit it, not to every role that reads customers.
+      ...(canReadFiscalData(actor) ? { fiscal: await this.usersRepository.findFiscalData(user.id) } : {}),
       subscriptions,
       ...this.presentRoles(user),
       ...this.presentInvite(user)
@@ -340,18 +479,42 @@ class AdminUsersService {
       throw new HttpError(503, 'Profile service is not available.');
     }
 
+    const { reason: rawReason, ...address } = payload || {};
+    const reason = parseCorrectionReason(rawReason);
     const user = await this.requireExistingUser(userId);
     this.assertCustomerInScope(actor, user);
     const delivery = await this.profileService.updateDelivery({
       userId,
-      payload,
+      payload: address,
       skipAccountCheck: true
+    });
+    // This copy is the account's; the subscription address that labels and couriers read stays as it is.
+    await this.audit('users.delivery.update', actor, user, {
+      fields: Object.keys(address).sort(),
+      ...(reason ? { reason } : {})
     });
 
     return {
       success: true,
       data: delivery
     };
+  }
+
+  // The next note and the next retry read these. An authorized note keeps what it was issued with.
+  async updateFiscal(userId, payload = {}, actor = {}) {
+    const user = await this.requireExistingUser(userId);
+    this.assertCustomerInScope(actor, user);
+    const fullName = parseFiscalName(payload.fullName);
+    if (!fullName) {
+      throw new HttpError(422, 'Enter the full name.', { code: 'invalid_fiscal_name', field: 'fullName' });
+    }
+    const cpf = parseCpf(payload.cpf);
+    if (!cpf) {
+      throw new HttpError(422, 'Invalid CPF.', { code: 'invalid_tax_document', field: 'cpf' });
+    }
+    await this.usersRepository.saveFiscalData(user.id, { fullName, cpf });
+    await this.audit('users.fiscal.update', actor, user, {});
+    return { success: true, data: { fullName, cpf } };
   }
 
   async updateStatus(userId, nextStatus, actor = {}) {
@@ -402,14 +565,18 @@ class AdminUsersService {
       throw new HttpError(503, 'Profile repository is not available.');
     }
 
+    // delivery-instructions: the same rule as every writer; the body keeps its `deliveryInstructions` key.
+    const text = parseDeliveryInstructionsInput(deliveryInstructions === undefined ? '' : deliveryInstructions);
     const user = await this.requireExistingUser(userId);
     this.assertCustomerInScope(actor, user);
 
     const saved = await this.profileRepository.mergeAddress(
       user.id,
-      { delivery_instructions: String(deliveryInstructions || '').trim() },
+      { delivery_instructions: text },
       { createIfMissing: true }
     );
+    // Only the profile copy changed; the audit never stores the text.
+    await this.audit('users.delivery_instructions.update', actor, user, { cleared: !text });
 
     return {
       success: true,

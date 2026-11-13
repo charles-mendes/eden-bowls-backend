@@ -3,10 +3,11 @@ const { createCheckoutLockStore } = require('../src/core/checkout-idempotency');
 const { OnboardingSubscriptionCheckoutService } = require('../src/services/onboarding-subscription-checkout.service');
 const { StripeCouponService } = require('../src/services/stripe-coupon.service');
 const { ShippingQuoteSigner } = require('../src/core/shipping-quote-token');
+const { validateCheckoutState } = require('../src/core/checkout-state');
 
 const quoteSigner = new ShippingQuoteSigner({ secret: 'test-shipping-quote-secret' });
-const US_ADDRESS = { country: 'US', zipcode: '94105', state: 'CA', city: 'San Francisco' };
-const BR_ADDRESS = { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' };
+const US_ADDRESS = { country: 'US', street: '1 Market St', zipcode: '94105', state: 'CA', city: 'San Francisco', recipient_name: 'Ana Costa' };
+const BR_ADDRESS = { country: 'BR', street: 'Av. Paulista', number: '1000', neighborhood: 'Bela Vista', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' };
 
 function quoted(address, shipping, signer = quoteSigner) {
   return {
@@ -82,6 +83,9 @@ function buildService(overrides = {}) {
   const petsSyncRepository = overrides.petsSyncRepository || {
     syncPets: jest.fn().mockResolvedValue({ pets: [] })
   };
+  const privacyService = 'privacyService' in overrides ? overrides.privacyService : {
+    recordCheckoutConsents: jest.fn().mockResolvedValue(undefined)
+  };
 
   return {
     service: new OnboardingSubscriptionCheckoutService(repository, {
@@ -95,9 +99,11 @@ function buildService(overrides = {}) {
       lockStore,
       planPreviewRepository: overrides.planPreviewRepository || null,
       petsSyncRepository,
+      privacyService,
       shippingQuoteSigner: overrides.shippingQuoteSigner || quoteSigner
     }),
     petsSyncRepository,
+    privacyService,
     repository,
     authService,
     discountEligibilityRepository,
@@ -108,7 +114,14 @@ function buildService(overrides = {}) {
   };
 }
 
-const payload = { paymentMethodId: 'pm_123', billing: { first_name: 'Jane', last_name: 'Doe' } };
+const payload = {
+  paymentMethodId: 'pm_123',
+  billing: { first_name: 'Jane', last_name: 'Doe' },
+  tax_document: '529.982.247-25',
+  fiscal_name: 'Jane Doe',
+  legal_consent: { accepted: true, terms_version: '2026-10-22', privacy_version: '2026-10-22' },
+  renewal_consent: { accepted: true, version: '2026-11-10' }
+};
 
 describe('OnboardingSubscriptionCheckoutService', () => {
   test('checks fresh account status before creating checkout', async () => {
@@ -139,7 +152,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('rejects checkout without a Stripe payment method', async () => {
     const { service, stripeBilling } = buildService();
 
-    await expect(service.checkout({ userId: 7, payload: {} })).rejects.toMatchObject({
+    await expect(service.checkout({ userId: 7, payload: { legal_consent: { accepted: true }, renewal_consent: { accepted: true } } })).rejects.toMatchObject({
       statusCode: 422,
       details: { code: 'invalid_payment_method' }
     });
@@ -292,6 +305,134 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     }));
   });
 
+  describe('Checkout records the acceptance before charging', () => {
+    const requestContext = { ipHash: 'hash', userAgent: 'jest-agent' };
+
+    test('Box not ticked: 422 before the account guard runs', async () => {
+      const { service, authService, privacyService, stripeBilling } = buildService();
+
+      await expect(service.checkout({ userId: 7, payload: { ...payload, legal_consent: { accepted: false } } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'legal_consent_required' }
+      });
+      expect(authService.assertCriticalOperationAllowed).not.toHaveBeenCalled();
+      expect(privacyService.recordCheckoutConsents).not.toHaveBeenCalled();
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['Renewal box not ticked', { accepted: false }],
+      ['Old client without the field', undefined]
+    ])('%s: 422 renewal_consent_required, nothing recorded and no Stripe call', async (_name, renewal) => {
+      const { service, authService, privacyService, stripeBilling } = buildService();
+
+      await expect(service.checkout({ userId: 7, payload: { ...payload, renewal_consent: renewal } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'renewal_consent_required' }
+      });
+      expect(authService.assertCriticalOperationAllowed).not.toHaveBeenCalled();
+      expect(privacyService.recordCheckoutConsents).not.toHaveBeenCalled();
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    });
+
+    test('Both boxes missing: 422 legal_consent_required, as before', async () => {
+      const { service, stripeBilling } = buildService();
+      const { legal_consent: _legal, renewal_consent: _renewal, ...bare } = payload;
+
+      await expect(service.checkout({ userId: 7, payload: bare })).rejects.toMatchObject({
+        details: { code: 'legal_consent_required' }
+      });
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    });
+
+    test('Accepted checkout: privacy and terms recorded for the delivery market before the subscription', async () => {
+      const { service, privacyService, stripeBilling } = buildService();
+
+      await service.checkout({ userId: 7, payload, requestContext });
+
+      expect(privacyService.recordCheckoutConsents).toHaveBeenCalledWith({
+        userId: 7,
+        market: 'US',
+        privacyVersion: '2026-10-22',
+        termsVersion: '2026-10-22',
+        renewalVersion: '2026-11-10',
+        ipHash: 'hash',
+        userAgent: 'jest-agent'
+      });
+      expect(privacyService.recordCheckoutConsents.mock.invocationCallOrder[0])
+        .toBeLessThan(stripeBilling.createOnboardingSubscription.mock.invocationCallOrder[0]);
+    });
+
+    test('a reused subscription records the acceptance too, and a retry records it again', async () => {
+      const lockStore = createCheckoutLockStore();
+      const first = buildService({ lockStore });
+      await first.service.checkout({ userId: 7, payload: { ...payload, attempt_id: 'attempt-1' }, requestContext });
+      const stored = first.repository.checkout.mock.calls[0][1].checkout;
+      const stripeBilling = {
+        automaticTaxEnabled: true,
+        createOnboardingSubscription: jest.fn(),
+        retrievePaymentIntent: jest.fn().mockResolvedValue({ status: 'requires_confirmation', client_secret: 'secret_123' }),
+        resolvePaymentState: jest.fn().mockReturnValue('requires_confirmation')
+      };
+      const second = buildService({
+        lockStore,
+        stripeBilling,
+        privacyService: first.privacyService,
+        repository: {
+          ...first.repository,
+          getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, checkoutReference: stored }),
+          checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout)
+        }
+      });
+
+      const reused = await second.service.checkout({ userId: 7, payload: { ...payload, attempt_id: 'attempt-1' }, requestContext });
+
+      expect(reused.data.reused).toBe(true);
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+      expect(first.privacyService.recordCheckoutConsents).toHaveBeenCalledTimes(2);
+    });
+
+    test('Checkout refused by another validation: no consent recorded', async () => {
+      const { service, privacyService } = buildService({
+        repository: {
+          checkout: jest.fn(),
+          getPlanSelection: jest.fn().mockResolvedValue(validContext.planSelection),
+          getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, shipping: { rate_id: 'fixed_us:default', cost: 12.9 } }),
+          resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+          getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+        }
+      });
+
+      await expect(service.checkout({ userId: 7, payload, requestContext })).rejects.toMatchObject({
+        details: { code: 'delivery_area_unverified' }
+      });
+      expect(privacyService.recordCheckoutConsents).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['the trail fails', { recordCheckoutConsents: jest.fn().mockRejectedValue(new Error('db down')) }],
+      ['the privacy service is not bound', null]
+    ])('Consent trail unavailable (%s): 503 and no subscription', async (_name, privacyService) => {
+      const { service, stripeBilling, repository } = buildService({ privacyService });
+
+      await expect(service.checkout({ userId: 7, payload, requestContext })).rejects.toMatchObject({
+        statusCode: 503,
+        details: { code: 'legal_consent_unavailable' }
+      });
+      expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+      expect(repository.checkout).not.toHaveBeenCalled();
+    });
+
+    test('the lock is released after a consent failure', async () => {
+      const lockStore = createCheckoutLockStore();
+      const failing = buildService({ lockStore, privacyService: { recordCheckoutConsents: jest.fn().mockRejectedValue(new Error('db down')) } });
+      await expect(failing.service.checkout({ userId: 7, payload })).rejects.toMatchObject({ statusCode: 503 });
+
+      const next = buildService({ lockStore });
+      await expect(next.service.checkout({ userId: 7, payload })).resolves.toMatchObject({ success: true });
+    });
+  });
+
   test('upserts an incomplete ledger row after Stripe create', async () => {
     const ledgerRepository = {
       listByUserId: jest.fn().mockResolvedValue([]),
@@ -308,6 +449,211 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       stripeCustomerId: 'cus_1',
       status: 'incomplete'
     }));
+  });
+
+  test('checkout-history: the ledger row carries the checkout of this request, before the onboarding row is rewritten', async () => {
+    const order = [];
+    const ledgerRepository = {
+      listByUserId: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn(async () => { order.push('ledger'); return {}; })
+    };
+    const { service, repository } = buildService();
+    const persist = repository.checkout.getMockImplementation();
+    repository.checkout.mockImplementation(async (...args) => {
+      order.push('onboarding');
+      return persist ? persist(...args) : args[1].checkout;
+    });
+    service.ledgerRepository = ledgerRepository;
+
+    await service.checkout({ userId: 7, payload });
+
+    const { checkoutSnapshot, petsSnapshot, planSelection, shipping, address } = ledgerRepository.upsert.mock.calls[0][0];
+    expect(order).toEqual(['ledger', 'onboarding']);
+    expect(checkoutSnapshot).toMatchObject({
+      version: 1,
+      source: 'checkout',
+      checkout_reference: { stripe_subscription_id: 'sub_123' },
+      pets_snapshot: petsSnapshot,
+      plan_selection: planSelection,
+      shipping,
+      address
+    });
+    expect(checkoutSnapshot.captured_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(checkoutSnapshot.checkout_reference).not.toHaveProperty('stripe_client_secret');
+    expect(repository.checkout.mock.calls[0][1].checkout.stripe_subscription_id).toBe('sub_123');
+  });
+
+  test.each([
+    ['missing', { country: 'US', street: '1 Market St', zipcode: '94105', state: 'CA', city: 'San Francisco' }],
+    ['invalid', { ...US_ADDRESS, recipient_name: 'a@b' }]
+  ])('a saved address with a %s recipient is refused before Stripe', async (_label, address) => {
+    const { service, repository, stripeBilling } = buildService({
+      repository: {
+        checkout: jest.fn(),
+        getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, address }),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+
+    await expect(service.checkout({ userId: 7, payload })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'recipient_name_required', field: 'recipient_name' }
+    });
+    expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    expect(repository.checkout).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['a US address without a street', { ...US_ADDRESS, street: '' }, ['street']],
+    ['a Brazil address without a neighborhood', { ...BR_ADDRESS, neighborhood: '' }, ['neighborhood']]
+  ])('%s is refused before Stripe with the missing fields', async (_label, address, fields) => {
+    const { service, repository, stripeBilling } = buildService({
+      repository: {
+        checkout: jest.fn(),
+        getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, address }),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+
+    await expect(service.checkout({ userId: 7, payload })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'address_incomplete', fields }
+    });
+    expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
+    expect(repository.checkout).not.toHaveBeenCalled();
+  });
+
+  test('the onboarding session check still asks only for country, CEP, state and city', () => {
+    expect(() => validateCheckoutState({ ...validContext, address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' } })).not.toThrow();
+  });
+
+  test('copies the recipient and the delivery instructions into the subscription address and keeps the recipient out of the Stripe name', async () => {
+    const ledgerRepository = {
+      listByUserId: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn().mockResolvedValue({})
+    };
+    const address = { ...US_ADDRESS, recipient_name: 'João Lima', delivery_instructions: 'Leave at back door' };
+    const { service, stripeBilling } = buildService({
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, body) => body.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(validContext.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue({
+          ...validContext,
+          address,
+          shipping: quoted(address, { rate_id: 'fixed_us:default', cost: 12.9, delivery_days: 1 })
+        }),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+    service.ledgerRepository = ledgerRepository;
+
+    await service.checkout({ userId: 7, payload });
+
+    expect(ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      address: expect.objectContaining({ recipient_name: 'João Lima', delivery_instructions: 'Leave at back door' })
+    }));
+    // delivery-instructions: the subscription and its checkout snapshot keep the instructions of the checkout.
+    expect(ledgerRepository.upsert.mock.calls[0][0].checkoutSnapshot.address.delivery_instructions).toBe('Leave at back door');
+    // The Stripe customer and shipping name stay the account name; the client never reads recipient_name.
+    expect(stripeBilling.createOnboardingSubscription.mock.calls[0][0].name).toBe('Jane Doe');
+  });
+
+  // checkout-reference-webhook-guard: a paid invoice of another subscription, between the checkout and its retry.
+  test.each([
+    ['guarded: the patch lands only on the checkout of that subscription', true, 'sub_b'],
+    ['unguarded merge, as before the guard: the retry would hand back the other subscription', false, 'sub_a']
+  ])('a retry after an older subscription is charged (%s)', async (_label, guarded, expected) => {
+    const { StripeWebhookService } = require('../src/services/stripe-webhook.service');
+    const lockStore = createCheckoutLockStore();
+    const settledBilling = (createOnboardingSubscription) => ({
+      automaticTaxEnabled: true,
+      createOnboardingSubscription,
+      retrievePaymentIntent: jest.fn().mockResolvedValue({ status: 'succeeded', client_secret: 'secret_b' }),
+      resolvePaymentState: jest.fn().mockReturnValue('paid')
+    });
+    const first = buildService({
+      lockStore,
+      stripeBilling: settledBilling(jest.fn().mockResolvedValue({
+        customerId: 'cus_1',
+        subscription: { id: 'sub_b', status: 'active' },
+        checkout: {
+          order_id: 0,
+          order_key: 'sub_sub_b',
+          payment_state: 'paid',
+          stripe_subscription_id: 'sub_b',
+          stripe_payment_intent_id: 'pi_b',
+          stripe_payment_intent_status: 'succeeded',
+          stripe_subscription_status: 'active',
+          status: 'active'
+        }
+      }))
+    });
+    await first.service.checkout({ userId: 7, payload });
+    let stored = first.repository.checkout.mock.calls[0][1].checkout;
+
+    // invoice.paid of subscription A reaches the webhook; the ledger mock applies the owner rule like the repository.
+    const webhookBilling = {
+      constructEvent: jest.fn().mockReturnValue({
+        id: 'evt_a_paid',
+        type: 'invoice.paid',
+        data: { object: { id: 'in_a7', customer: 'cus_1', subscription: 'sub_a' } }
+      }),
+      retrieveSubscription: jest.fn().mockResolvedValue({ id: 'sub_a', status: 'trialing', customer: 'cus_1', metadata: { eden_env: 'qa' } }),
+      addShippingInvoiceItem: jest.fn().mockResolvedValue({})
+    };
+    const webhook = new StripeWebhookService({
+      stripeBilling: webhookBilling,
+      webhookSecret: 'whsec_test',
+      eventsRepository: {
+        insertIfNew: jest.fn().mockResolvedValue({ inserted: true }),
+        markProcessed: jest.fn().mockResolvedValue(undefined),
+        scheduleRetry: jest.fn(),
+        markFailed: jest.fn()
+      },
+      ledgerRepository: {
+        findByStripeSubscriptionId: jest.fn().mockResolvedValue({ userId: 7, stripeSubscriptionId: 'sub_a', stripeAccount: 'us', status: 'trialing' }),
+        findUserStateBySubscriptionId: jest.fn().mockResolvedValue(null),
+        findUserStateByPaymentIntentId: jest.fn().mockResolvedValue(null),
+        upsert: jest.fn().mockResolvedValue({}),
+        updateCheckoutReference: jest.fn(async (_userId, patch, owner) => {
+          if (guarded && !(owner && owner.subscriptionId && owner.subscriptionId === stored.stripe_subscription_id)) {
+            return false;
+          }
+          stored = { ...stored, ...patch };
+          return true;
+        })
+      },
+      customerStore: { findUserIdByCustomerId: jest.fn().mockResolvedValue(null) },
+      shippingProductId: 'prod_ship',
+      logger: { error() {}, warn() {}, info() {} }
+    });
+    const previousRuntime = process.env.EDEN_RUNTIME;
+    process.env.EDEN_RUNTIME = 'qa';
+    try {
+      await webhook.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+    } finally {
+      if (previousRuntime === undefined) delete process.env.EDEN_RUNTIME;
+      else process.env.EDEN_RUNTIME = previousRuntime;
+    }
+
+    const createAgain = jest.fn();
+    const second = buildService({
+      lockStore,
+      stripeBilling: settledBilling(createAgain),
+      repository: {
+        ...first.repository,
+        getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, checkoutReference: stored }),
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout)
+      }
+    });
+    const retried = await second.service.checkout({ userId: 7, payload });
+
+    expect(retried.data.reused).toBe(true);
+    expect(retried.data.stripe_subscription_id).toBe(expected);
+    expect(createAgain).not.toHaveBeenCalled();
   });
 
   test('reuses an incomplete subscription with the same fingerprint', async () => {
@@ -344,6 +690,46 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(reused.data.stripe_subscription_id).toBe('sub_123');
     expect(stripeBilling.createOnboardingSubscription).not.toHaveBeenCalled();
     expect(firstResult.data.stripe_subscription_id).toBe('sub_123');
+  });
+
+  test.each([
+    ['the same cart', true],
+    ['a different cart', false]
+  ])('creates a new subscription after the last plan ended, with %s', async (_label, sameCart) => {
+    const lockStore = createCheckoutLockStore();
+    const first = buildService({ lockStore });
+    await first.service.checkout({ userId: 7, payload });
+    const previous = first.repository.checkout.mock.calls[0][1].checkout;
+    const stored = {
+      ...previous,
+      stripe_subscription_id: 'sub_old',
+      status: 'active',
+      stripe_subscription_status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      attempt_id: 'attempt-old',
+      ...(sameCart ? {} : { checkout_context_fingerprint: 'other-cart' })
+    };
+    const { service, stripeBilling } = buildService({
+      lockStore,
+      repository: {
+        ...first.repository,
+        getCheckoutContext: jest.fn().mockResolvedValue({ ...validContext, checkoutReference: stored }),
+        checkout: jest.fn().mockImplementation(async (_userId, nextPayload) => nextPayload.checkout)
+      }
+    });
+    const findByStripeSubscriptionId = jest.fn().mockResolvedValue({ status: 'canceled' });
+    service.ledgerRepository = {
+      findByStripeSubscriptionId,
+      listByUserId: jest.fn().mockResolvedValue([{ status: 'canceled', petsSnapshot: { pet_ids: ['pet-1'] } }]),
+      upsert: jest.fn().mockResolvedValue({})
+    };
+
+    const result = await service.checkout({ userId: 7, payload });
+
+    expect(findByStripeSubscriptionId).toHaveBeenCalledWith('sub_old');
+    expect(stripeBilling.createOnboardingSubscription).toHaveBeenCalledTimes(1);
+    expect(stripeBilling.createOnboardingSubscription.mock.calls[0][0].attemptId).not.toBe('attempt-old');
+    expect(result.data.reused).toBe(false);
   });
 
   test('creates a new subscription when shipping changes the fingerprint', async () => {
@@ -655,7 +1041,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('uses the BR Stripe client for a Brazil address', async () => {
     const brContext = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      address: BR_ADDRESS,
       shipping: quoted(BR_ADDRESS, { ...validContext.shipping, distance: 10 }),
       planSelection: {
         ...validContext.planSelection,
@@ -714,7 +1100,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('blocks Brazil checkout when STRIPE_BR_ENABLED is off', async () => {
     const brContext = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      address: BR_ADDRESS,
       shipping: quoted(BR_ADDRESS, { ...validContext.shipping, distance: 10 })
     };
     const { service, stripeBilling } = buildService({
@@ -738,7 +1124,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('rejects a Brazil checkout that has no catalog currency', async () => {
     const brContext = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      address: BR_ADDRESS,
       shipping: quoted(BR_ADDRESS, { ...validContext.shipping, distance: 10 }),
       planSelection: {
         ...validContext.planSelection,
@@ -771,7 +1157,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('refuses a Brazil address farther than 50 km and accepts 49 km', async () => {
     const far = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      address: BR_ADDRESS,
       planSelection: {
         ...validContext.planSelection,
         catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
@@ -826,10 +1212,74 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(nearRun.stripeBilling.createOnboardingSubscription).toHaveBeenCalled();
   });
 
+  test('a BR checkout needs a valid CPF and full name, saves them and takes no charge without them', async () => {
+    const context = {
+      ...validContext,
+      address: BR_ADDRESS,
+      planSelection: {
+        ...validContext.planSelection,
+        catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
+      },
+      shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 10, distance: 49 })
+    };
+    const buildRun = () => {
+      const billing = {
+        automaticTaxEnabled: false,
+        createOnboardingSubscription: jest.fn().mockResolvedValue({
+          customerId: 'cus_br',
+          subscription: { id: 'sub_br', status: 'incomplete' },
+          checkout: { order_id: 0, payment_state: 'requires_confirmation', stripe_client_secret: 'secret', stripe_subscription_id: 'sub_br', status: 'incomplete' }
+        }),
+        retrievePaymentIntent: jest.fn(),
+        resolvePaymentState: jest.fn().mockReturnValue('requires_confirmation')
+      };
+      const repository = {
+        checkout: jest.fn().mockImplementation(async (_userId, body) => body.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(context.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue(context),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' }),
+        saveTaxDocument: jest.fn().mockResolvedValue(undefined),
+        saveFiscalName: jest.fn().mockResolvedValue(undefined)
+      };
+      const run = buildService({
+        stripeBrEnabled: true,
+        stripeBilling: billing,
+        stripeAccounts: { getForCreation: jest.fn(() => billing), get: jest.fn(() => billing) },
+        repository
+      });
+      return { service: run.service, billing, repository };
+    };
+
+    for (const taxDocument of [undefined, '12345678901', '11.222.333/0001-81']) {
+      const refused = buildRun();
+      await expect(refused.service.checkout({ userId: 7, payload: { ...payload, tax_document: taxDocument } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'tax_document_required' }
+      });
+      expect(refused.repository.saveTaxDocument).not.toHaveBeenCalled();
+      expect(refused.billing.createOnboardingSubscription).not.toHaveBeenCalled();
+    }
+
+    for (const fiscalName of [undefined, 'Jane']) {
+      const refused = buildRun();
+      await expect(refused.service.checkout({ userId: 7, payload: { ...payload, fiscal_name: fiscalName } })).rejects.toMatchObject({
+        statusCode: 422,
+        details: { code: 'fiscal_name_required' }
+      });
+      expect(refused.billing.createOnboardingSubscription).not.toHaveBeenCalled();
+    }
+
+    const accepted = buildRun();
+    await accepted.service.checkout({ userId: 7, payload });
+    expect(accepted.repository.saveTaxDocument).toHaveBeenCalledWith(7, '52998224725');
+    expect(accepted.repository.saveFiscalName).toHaveBeenCalledWith(7, 'Jane Doe');
+  });
+
   test('accepts a Brazil address at exactly 50 km', async () => {
     const exact = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      address: BR_ADDRESS,
       planSelection: {
         ...validContext.planSelection,
         catalog_pricing: { ...validContext.planSelection.catalog_pricing, currency: 'brl' }
@@ -865,7 +1315,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
   test('refuses checkout when the delivery area cannot be verified', async () => {
     const brazil = {
       ...validContext,
-      address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' },
+      address: BR_ADDRESS,
       shipping: { rate_id: 'br:1', cost: 10 }
     };
     const unitedStates = {
@@ -993,7 +1443,7 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       const context = {
         ...validContext,
         address: market === 'BR'
-          ? { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' }
+          ? BR_ADDRESS
           : validContext.address,
         planSelection: market === 'BR'
           ? {

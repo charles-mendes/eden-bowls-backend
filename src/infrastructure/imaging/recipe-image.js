@@ -5,29 +5,57 @@ const {
   RECIPE_IMAGE_FORMATS,
   RECIPE_IMAGE_HEIGHT,
   RECIPE_IMAGE_INVALID,
+  RECIPE_IMAGE_MAX_CROP,
+  RECIPE_IMAGE_MAX_UPSCALE,
   RECIPE_IMAGE_MIME_TYPES,
   RECIPE_IMAGE_OUTPUT_EXT,
   RECIPE_IMAGE_OUTPUT_MIME,
   RECIPE_PLAN_IMAGE_SIZES,
   RECIPE_IMAGE_WEBP_QUALITY,
-  RECIPE_IMAGE_WIDTH
+  RECIPE_IMAGE_WIDTH,
+  recipeBannerFit
 } = require('../../core/recipe-content');
 
 function invalid(message, details) {
   return new HttpError(422, message, { code: RECIPE_IMAGE_INVALID, ...details });
 }
 
-const BANNER_SIZES = [{ width: RECIPE_IMAGE_WIDTH, height: RECIPE_IMAGE_HEIGHT }];
 const PLAN_SIZES = RECIPE_PLAN_IMAGE_SIZES.map((side) => ({ width: side, height: side }));
 
 function sizeText(sizes) {
   return sizes.map(({ width, height }) => `${width} x ${height}`).join(' or ');
 }
 
-// Checks type, weight and one of the accepted exact sizes (the banner, or the plan thumbnail with
-// kind 'plan'), then re-encodes as WebP at the same size (no crop or resize).
+function checkPlanSize(metadata) {
+  if (!PLAN_SIZES.some(({ width, height }) => metadata.width === width && metadata.height === height)) {
+    throw invalid(`Image must be ${sizeText(PLAN_SIZES)} pixels.`, {
+      reason: 'dimensions',
+      width: metadata.width,
+      height: metadata.height,
+      expectedWidth: PLAN_SIZES[0].width,
+      expectedHeight: PLAN_SIZES[0].height,
+      acceptedSizes: PLAN_SIZES
+    });
+  }
+}
+
+function checkBannerSize(metadata) {
+  if (!recipeBannerFit(metadata.width, metadata.height).ok) {
+    throw invalid(`Image must be ${RECIPE_IMAGE_WIDTH} x ${RECIPE_IMAGE_HEIGHT} pixels, or close enough to be resized to it.`, {
+      reason: 'dimensions',
+      width: metadata.width,
+      height: metadata.height,
+      expectedWidth: RECIPE_IMAGE_WIDTH,
+      expectedHeight: RECIPE_IMAGE_HEIGHT,
+      maxUpscale: RECIPE_IMAGE_MAX_UPSCALE,
+      maxCrop: RECIPE_IMAGE_MAX_CROP
+    });
+  }
+}
+
+// Checks type, weight and size, then re-encodes as WebP. The plan thumbnail (kind 'plan') must have
+// one of its exact sizes and keeps it; the banner is resized and centre-cropped to 1024 x 636.
 async function processRecipeImage({ mimeType, buffer, kind = 'banner' }) {
-  const sizes = kind === 'plan' ? PLAN_SIZES : BANNER_SIZES;
   const type = String(mimeType || '').trim().toLowerCase();
   if (!RECIPE_IMAGE_MIME_TYPES.includes(type)) {
     throw invalid('Unsupported image type. Use PNG, JPEG, or WebP.', {
@@ -65,18 +93,17 @@ async function processRecipeImage({ mimeType, buffer, kind = 'banner' }) {
     });
   }
 
-  if (!sizes.some(({ width, height }) => metadata.width === width && metadata.height === height)) {
-    throw invalid(`Image must be ${sizeText(sizes)} pixels.`, {
-      reason: 'dimensions',
-      width: metadata.width,
-      height: metadata.height,
-      expectedWidth: sizes[0].width,
-      expectedHeight: sizes[0].height,
-      ...(sizes.length > 1 ? { acceptedSizes: sizes } : {})
-    });
+  if (kind === 'plan') {
+    checkPlanSize(metadata);
+  } else {
+    checkBannerSize(metadata);
   }
 
-  const output = await sharp(buffer)
+  let pipeline = sharp(buffer);
+  if (kind !== 'plan') {
+    pipeline = pipeline.resize(RECIPE_IMAGE_WIDTH, RECIPE_IMAGE_HEIGHT, { fit: 'cover', position: 'centre' });
+  }
+  const output = await pipeline
     .webp({ quality: RECIPE_IMAGE_WEBP_QUALITY, alphaQuality: 100 })
     .toBuffer();
 

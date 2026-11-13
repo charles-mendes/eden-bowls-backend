@@ -4,15 +4,29 @@ const { parseNutritionSimulateInput } = require('../validators/admin-nutrition-s
 const { parseRolesAssignmentInput } = require('../validators/admin-users-roles.validator');
 const { parseHeadquartersValidateInput, parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
 const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = require('../validators/admin-coupons.validator');
-const { constrainMarketQuery, shouldEnforceMarketScope } = require('../../core/admin-market-scope');
+const { constrainMarketQuery, effectiveMarkets, shouldEnforceMarketScope } = require('../../core/admin-market-scope');
+
+// The markets the route scope applies to this caller. Staff without a market while the flag is on get none.
+function effectiveMarketsOrNone(identity) {
+  try {
+    return effectiveMarkets(identity);
+  } catch (error) {
+    if (error && error.details && error.details.code === 'market_required') return [];
+    throw error;
+  }
+}
 const { parsePageQuery } = require('../validators/admin-pagination');
+const { parseNfeCustomerInput, parseNfeListQuery } = require('../validators/admin-nfe.validator');
 const { parseAccountStatusInput } = require('../validators/admin-users-status.validator');
+const { parseCourierBody, parseCourierDeliveryId } = require('../validators/admin-courier.validator');
+const { parseContactInput } = require('../validators/admin-contacts.validator');
 const {
   parseProductionQueueQuery,
   parseProductionQueuePatch
 } = require('../validators/admin-production.validator');
 const {
   parseStockAdjustment,
+  parseStockCount,
   parseStockMinimum,
   parseStockMovementsQuery,
   parseStockOverviewQuery,
@@ -36,6 +50,12 @@ const { registerAdminNutritionSettingsRoutes } = require('./admin-nutrition-sett
 const { registerAdminLifeStageSettingsRoutes } = require('./admin-life-stage-settings.routes');
 const { registerAdminCompanySettingsRoutes } = require('./admin-company-settings.routes');
 const { registerAdminLegalRoutes } = require('./legal.routes');
+
+// The delivery range of a shipping queue (`from`, `to`); the service validates it.
+function deliveryRangeQuery(query = {}) {
+  const pick = (value) => (typeof value === 'string' && value ? value : undefined);
+  return { from: pick(query.from), to: pick(query.to) };
+}
 
 function couponAccountFor(request) {
   const query = { ...(request.query || {}), ...(request.body || {}) };
@@ -82,7 +102,10 @@ function registerAdminRoutes(app, dependencies = {}) {
   }
 
   app.get('/api/v1/admin/me', requirePermission(undefined, { market: 'none' }), async (request, response, next) => {
-    await handle(response, next, async () => request.adminIdentity);
+    await handle(response, next, async () => ({
+      ...request.adminIdentity,
+      effectiveMarkets: effectiveMarketsOrNone(request.adminIdentity)
+    }));
   });
 
   app.post('/api/v1/admin/me/password', requirePermission(undefined, { market: 'none' }), async (request, response, next) => {
@@ -173,6 +196,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       return dependencies.upsShipmentService.createForSubscription({
         subscriptionId: request.params.id,
         invoiceId: request.body && request.body.invoice_id,
+        confirmNotReady: Boolean(request.body && request.body.confirm_not_ready === true),
         actor: request.adminIdentity
       });
     });
@@ -183,7 +207,8 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.upsShipmentService) {
         throw new HttpError(503, 'UPS shipment service is not available.');
       }
-      const label = await dependencies.upsShipmentService.getLabel(request.params.id, request.adminIdentity);
+      // shipping-boxes: `?package=N` returns box N's label.
+      const label = await dependencies.upsShipmentService.getLabel(request.params.id, request.adminIdentity, request.query.package);
       return {
         binary: true,
         buffer: label.buffer,
@@ -204,13 +229,131 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  app.get('/api/v1/admin/shipments/queue', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.upsShipmentService) {
+        throw new HttpError(503, 'UPS shipment service is not available.');
+      }
+      return dependencies.upsShipmentService.listLabelQueue(request.adminIdentity, deliveryRangeQuery(request.query));
+    });
+  });
+
+  // UPS on-demand pickups (ups-pickup).
+  function pickupService() {
+    if (!dependencies.upsPickupService) {
+      throw new HttpError(503, 'UPS pickup service is not available.');
+    }
+    return dependencies.upsPickupService;
+  }
+
+  app.get('/api/v1/admin/shipments/pickups', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => pickupService().list(request.adminIdentity, { from: request.query && request.query.from }));
+  });
+
+  app.post('/api/v1/admin/shipments/pickups', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => pickupService().request({ actor: request.adminIdentity, body: request.body || {} }));
+  });
+
+  app.post('/api/v1/admin/shipments/pickups/:id/cancel', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => pickupService().cancel(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/shipments/pickups/:id/not-created', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => pickupService().markNotCreated(request.params.id, request.adminIdentity));
+  });
+
   app.post('/api/v1/admin/shipments/:id/refresh-tracking', requirePermission('shipping.read', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.upsShipmentService) {
         throw new HttpError(503, 'UPS shipment service is not available.');
       }
-      return dependencies.upsShipmentService.refreshTracking(request.params.id);
+      return dependencies.upsShipmentService.refreshTracking(request.params.id, request.adminIdentity);
     });
+  });
+
+  // Brazil courier deliveries (courier-delivery): recorded by hand, no courier API.
+  function courierService() {
+    if (!dependencies.courierDeliveryService) {
+      throw new HttpError(503, 'Courier delivery service is not available.');
+    }
+    return dependencies.courierDeliveryService;
+  }
+
+  app.get('/api/v1/admin/courier-deliveries/queue', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().listQueue(request.adminIdentity, {
+      ...deliveryRangeQuery(request.query),
+      preparo: (request.query || {}).preparo
+    }));
+  });
+
+  // Subscriptions whose account and address country fit no shipping market (shipment-market).
+  app.get('/api/v1/admin/market-exceptions', requirePermission('shipping.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.marketExceptionsService) {
+        throw new HttpError(503, 'Market exceptions are not available.');
+      }
+      return dependencies.marketExceptionsService.list(request.adminIdentity);
+    });
+  });
+
+  // Contacts made with the customer outside the system (customer-contacts).
+  function contactsService() {
+    if (!dependencies.customerContactsService) {
+      throw new HttpError(503, 'Customer contacts are not available.');
+    }
+    return dependencies.customerContactsService;
+  }
+
+  app.get('/api/v1/admin/billing/subscriptions/:id/contacts', requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => contactsService().list(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/billing/subscriptions/:id/contacts', requirePermission('customers.contact.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => contactsService().create(request.params.id, parseContactInput(request.body), request.adminIdentity));
+  });
+
+  // Paid cycles of a subscription with their shipping state (subscription-paid-cycles); no Stripe call.
+  app.get('/api/v1/admin/billing/subscriptions/:id/paid-cycles', requirePermission('shipping.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.subscriptionPaidCyclesService) {
+        throw new HttpError(503, 'Paid cycles service is not available.');
+      }
+      return dependencies.subscriptionPaidCyclesService.list(request.params.id, request.adminIdentity);
+    });
+  });
+
+  app.get('/api/v1/admin/billing/subscriptions/:id/courier-deliveries', requirePermission('shipping.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().listForSubscription(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/billing/subscriptions/:id/courier-deliveries', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().dispatch({
+      subscriptionId: request.params.id,
+      body: parseCourierBody(request.body),
+      actor: request.adminIdentity
+    }));
+  });
+
+  app.patch('/api/v1/admin/courier-deliveries/:id', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().updateDetails(
+      parseCourierDeliveryId(request.params.id), parseCourierBody(request.body), request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/courier-deliveries/:id/delivered', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().markDelivered(
+      parseCourierDeliveryId(request.params.id), parseCourierBody(request.body), request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/courier-deliveries/:id/failed', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().markFailed(
+      parseCourierDeliveryId(request.params.id), parseCourierBody(request.body), request.adminIdentity
+    ));
+  });
+
+  app.post('/api/v1/admin/courier-deliveries/:id/cancel', requirePermission('shipping.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => courierService().cancel(parseCourierDeliveryId(request.params.id), request.adminIdentity));
   });
 
   app.get('/api/v1/admin/onboarding/checkouts.csv', requirePermission('onboarding.read', { market: 'query' }), async (request, response, next) => {
@@ -284,7 +427,7 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.adminCatalogService) {
         throw new HttpError(503, 'Catalog service is not available.');
       }
-      return dependencies.adminCatalogService.createProduct(request.body || {});
+      return dependencies.adminCatalogService.createProduct(request.body || {}, request.adminIdentity);
     });
   });
 
@@ -346,83 +489,63 @@ function registerAdminRoutes(app, dependencies = {}) {
     return dependencies.recipeContentService;
   }
 
-  app.get('/api/v1/admin/catalog/recipe-content', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().list(request.query.market));
+  // Content of a product (recipe-content): name, life stage, aliases and short label go through the product PATCH.
+  app.put('/api/v1/admin/catalog/products/:productId/content/image', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().uploadImage(request.params.productId, request.body || {}, request.adminIdentity));
   });
 
-  app.post('/api/v1/admin/catalog/recipe-content', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().create(request.query.market, request.body || {}, request.adminIdentity));
+  app.delete('/api/v1/admin/catalog/products/:productId/content/image', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().removeImage(request.params.productId, request.adminIdentity));
   });
 
-  app.patch('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().update(
-      request.query.market,
-      request.params.flavorSlug,
-      request.body || {},
-      request.adminIdentity
-    ));
+  app.put('/api/v1/admin/catalog/products/:productId/content/plan-image', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().uploadPlanImage(request.params.productId, request.body || {}, request.adminIdentity));
   });
 
-  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().remove(
-      request.query.market,
-      request.params.flavorSlug,
-      request.adminIdentity
-    ));
+  app.delete('/api/v1/admin/catalog/products/:productId/content/plan-image', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireRecipeContentService().removePlanImage(request.params.productId, request.adminIdentity));
   });
 
-  app.get('/api/v1/admin/catalog/recipe-content/:flavorSlug', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().get(request.query.market, request.params.flavorSlug));
-  });
-
-  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().uploadImage(
-      request.query.market,
-      request.params.flavorSlug,
-      request.body || {},
-      request.adminIdentity
-    ));
-  });
-
-  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().uploadPlanImage(
-      request.query.market,
-      request.params.flavorSlug,
-      request.body || {},
-      request.adminIdentity
-    ));
-  });
-
-  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug/plan-image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().removePlanImage(
-      request.query.market,
-      request.params.flavorSlug,
-      request.adminIdentity
-    ));
-  });
-
-  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/label', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+  app.put('/api/v1/admin/catalog/products/:productId/content/label', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => requireRecipeContentService().saveLabel(
-      request.query.market,
-      request.params.flavorSlug,
+      request.params.productId,
       (request.body || {}).label,
       request.adminIdentity
     ));
   });
 
-  app.put('/api/v1/admin/catalog/recipe-content/:flavorSlug/presentation', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+  app.put('/api/v1/admin/catalog/products/:productId/content/presentation', requirePermission('catalog.write', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => requireRecipeContentService().savePresentation(
-      request.query.market,
-      request.params.flavorSlug,
+      request.params.productId,
       (request.body || {}).presentation,
       request.adminIdentity
     ));
   });
 
-  app.delete('/api/v1/admin/catalog/recipe-content/:flavorSlug/image', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => requireRecipeContentService().removeImage(
-      request.query.market,
-      request.params.flavorSlug,
+  // Plan settings of one market (plan-settings): plan days and large-pack limit of the recommendation.
+  function requirePlanSettingsService() {
+    if (!dependencies.planSettingsService) {
+      throw new HttpError(503, 'Plan settings service is not available.');
+    }
+    return dependencies.planSettingsService;
+  }
+
+  function planSettingsMarket(request) {
+    const market = (request.marketQuery || {}).market;
+    if (!market) {
+      throw new HttpError(400, 'Choose one market.', { code: 'market_required' });
+    }
+    return market;
+  }
+
+  app.get('/api/v1/admin/catalog/plan-settings', requirePermission('catalog.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requirePlanSettingsService().read(planSettingsMarket(request)));
+  });
+
+  app.put('/api/v1/admin/catalog/plan-settings', requirePermission('catalog.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requirePlanSettingsService().update(
+      planSettingsMarket(request),
+      request.body || {},
       request.adminIdentity
     ));
   });
@@ -512,6 +635,20 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  // production-block-preview: where blocking a cycle would move its charge, read before the operator confirms.
+  app.get('/api/v1/admin/production/queue/:id/block-preview', requirePermission('production.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminProductionService) {
+        throw new HttpError(503, 'Production service is not available.');
+      }
+      const periodEnd = request.query && typeof request.query.periodEnd === 'string' ? request.query.periodEnd : '';
+      if (!periodEnd || Number.isNaN(new Date(periodEnd).getTime())) {
+        throw new HttpError(400, 'periodEnd is required.', { code: 'period_end_required' });
+      }
+      return dependencies.adminProductionService.previewBlock(request.params.id, periodEnd, request.adminIdentity);
+    });
+  });
+
   app.patch('/api/v1/admin/production/queue/:id', requirePermission('production.write', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminProductionService) {
@@ -561,6 +698,13 @@ function registerAdminRoutes(app, dependencies = {}) {
     ));
   });
 
+  app.post('/api/v1/admin/stock/counts', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => packStockService().recordCount(
+      parseStockCount(request.body || {}),
+      request.adminIdentity
+    ));
+  });
+
   app.put('/api/v1/admin/stock/minimum', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => packStockService().setMinimum(
       parseStockMinimum(request.body || {}),
@@ -605,7 +749,27 @@ function registerAdminRoutes(app, dependencies = {}) {
       if (!dependencies.adminBillingService) {
         throw new HttpError(503, 'Billing service is not available.');
       }
-      return dependencies.adminBillingService.getSubscription(request.params.id, request.adminIdentity);
+      return dependencies.adminBillingService.getSubscription(request.params.id, request.adminIdentity, { detail: true });
+    });
+  });
+
+  // operator-fills-recipient-name: fills the missing recipient of one subscription, nothing else of the address.
+  app.patch('/api/v1/admin/billing/subscriptions/:id/recipient-name', requirePermission('users.delivery.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminBillingService) {
+        throw new HttpError(503, 'Billing service is not available.');
+      }
+      return dependencies.adminBillingService.fillRecipientName(request.params.id, request.body || {}, request.adminIdentity);
+    });
+  });
+
+  // delivery-instructions: sets or clears the instructions of one subscription, nothing else of the address.
+  app.patch('/api/v1/admin/billing/subscriptions/:id/delivery-instructions', requirePermission('users.delivery.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminBillingService) {
+        throw new HttpError(503, 'Billing service is not available.');
+      }
+      return dependencies.adminBillingService.updateDeliveryInstructions(request.params.id, request.body || {}, request.adminIdentity);
     });
   });
 
@@ -671,6 +835,54 @@ function registerAdminRoutes(app, dependencies = {}) {
 
   app.post('/api/v1/admin/billing/customer-invoices/:id/send', requirePermission('billing.subscribers.sync', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => requireCustomerInvoices().resendEmail(request.params.id, request.adminIdentity));
+  });
+
+  function requireBlingNfe() {
+    if (!dependencies.blingNfeService) {
+      throw new HttpError(503, 'NF-e service is not available.');
+    }
+    return dependencies.blingNfeService;
+  }
+
+  // NF-e issued through Bling. A separate flow from the Eden Bowls invoices above.
+  app.get('/api/v1/admin/nfe', requirePermission('nfe.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().list(
+      parseNfeListQuery(request.query),
+      parsePageQuery(request.query, { defaultPerPage: 20 }),
+      request.adminIdentity
+    ));
+  });
+
+  app.get('/api/v1/admin/nfe/:id', requirePermission('nfe.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().detail(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/nfe/:id/retry', requirePermission('nfe.retry', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().retry(request.params.id, request.adminIdentity));
+  });
+
+  app.post('/api/v1/admin/nfe/:id/email', requirePermission('nfe.retry', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().resendEmail(request.params.id, request.adminIdentity));
+  });
+
+  app.patch('/api/v1/admin/nfe/:id/customer', requirePermission('nfe.edit', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().updateCustomer(
+      request.params.id,
+      parseNfeCustomerInput(request.body),
+      request.adminIdentity
+    ));
+  });
+
+  app.get('/api/v1/admin/billing/subscriptions/:id/nfe', requirePermission('nfe.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().listForSubscription(request.params.id, request.adminIdentity));
+  });
+
+  app.get('/api/v1/admin/bling/connection', requirePermission('nfe.read', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().connectionStatus());
+  });
+
+  app.post('/api/v1/admin/bling/connection/authorize', requirePermission('bling.connect', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => requireBlingNfe().authorizeUrl());
   });
 
   app.get('/api/v1/admin/billing/invoices/:id/pdf',requirePermission('billing.subscribers.read', { market: 'record' }), async (request, response, next) => {
@@ -840,6 +1052,15 @@ function registerAdminRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Users service is not available.');
       }
       return dependencies.adminUsersService.updateDelivery(request.params.userId, request.body || {}, request.adminIdentity);
+    });
+  });
+
+  app.patch('/api/v1/admin/users/:userId/fiscal', requirePermission('users.delivery.write', { market: 'record' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminUsersService) {
+        throw new HttpError(503, 'Users service is not available.');
+      }
+      return dependencies.adminUsersService.updateFiscal(request.params.userId, request.body || {}, request.adminIdentity);
     });
   });
 

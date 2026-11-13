@@ -24,6 +24,7 @@ function variant(overrides = {}) {
     name: 'Senior Beef 300g',
     active: false,
     recipeKey: 'senior-beef',
+    ncm: '23091000',
     regularPrice: 40,
     stripePriceId: null,
     stripePriceIdsByCurrency: { brl: 'price_senior_beef_300' },
@@ -48,14 +49,18 @@ function serviceFor({ product, activeCount = 0, contents: given = {} }) {
     countActiveSubscriptionsForCatalog: jest.fn().mockResolvedValue(activeCount)
   };
   const auditService = { record: jest.fn() };
+  // The product is the recipe: its content is the one of its market and code (the code of its variations here).
   const recipeContentRepository = {
-    findByMarketAndSlugs: jest.fn(async (market, keys) => new Map(keys
-      .filter((key) => contents[`${market}:${key}`])
-      .map((key) => [key, contents[`${market}:${key}`]])))
+    findByProductId: jest.fn(async () => {
+      const current = state.product;
+      const code = (current.variants || []).map((item) => item.recipeKey).find(Boolean);
+      const content = code ? contents[`${current.planCountry}:${code}`] : null;
+      return content ? { flavorSlug: code, name: code, lifeStage: 'senior', market: current.planCountry, ...content } : null;
+    })
   };
   const service = new AdminCatalogService({ repository, ledgerRepository, auditService, recipeContentRepository });
   service.sync = jest.fn();
-  return { service, repository, ledgerRepository, auditService };
+  return { service, repository, ledgerRepository, auditService, recipeContentRepository };
 }
 
 function published(country, variants) {
@@ -63,6 +68,14 @@ function published(country, variants) {
 }
 
 describe('AdminCatalogService.setVariationActive', () => {
+  test('a BR variation needs an NCM and a US variation does not', async () => {
+    const br = serviceFor({ product: published('BR', [variant({ ncm: null })]) });
+    await expect(br.service.setVariationActive('100', '3001', true, actor)).rejects.toMatchObject({
+      details: { code: 'recipe_publish_refused', missing: ['ncm'] }
+    });
+    expect(br.repository.updatePostStatus).not.toHaveBeenCalled();
+  });
+
   test('activates a BR variation with a stored image and no manual image confirmation', async () => {
     const { service, repository } = serviceFor({
       product: published('BR', [variant({ recipeKey: 'senior-beef', finalImageReady: false })]),
@@ -226,26 +239,24 @@ describe('AdminCatalogService activation and the recipe presentation', () => {
     colors: { color: '#8A6F5A', accentColor: '#B89A80', pillBg: '#E6D6C8', pillText: '#3A2414', pillBorder: '#A88E78' }
   };
 
-  // One BR plan product with an inactive adult-lamb variation, and the recipe rows both services read.
+  // The BR adult-lamb product with an inactive variation, and its content row both services read.
   function lambCatalog() {
-    const rows = new Map([['BR:adult-lamb', {
-      market: 'BR', flavorSlug: 'adult-lamb', name: 'Cordeiro', lifeStage: 'adult',
+    const rows = new Map([['100', {
+      productId: '100', market: 'BR', flavorSlug: 'adult-lamb', name: 'Cordeiro', lifeStage: 'adult',
       imageUrl: '/recipe-images/recipe-br-adult-lamb-1.webp', label: lambLabel, presentation: null
     }]]);
     const state = { product: published('BR', [variant({ recipeKey: 'adult-lamb', finalImageReady: false })]) };
     const recipeContentRepository = {
-      findByMarketAndSlug: jest.fn(async (market, key) => rows.get(`${market}:${key}`) || null),
-      findByMarketAndSlugs: jest.fn(async (market, keys) => new Map(keys
-        .filter((key) => rows.has(`${market}:${key}`))
-        .map((key) => [key, rows.get(`${market}:${key}`)]))),
+      findByProductId: jest.fn(async (id) => rows.get(String(id)) || null),
+      findByMarketAndSlug: jest.fn(async (market, key) => [...rows.values()].find((row) => row.market === market && row.flavorSlug === key) || null),
       listByMarket: jest.fn(async (market) => [...rows.values()].filter((row) => row.market === market)),
-      upsertPresentation: jest.fn(async ({ market, flavorSlug, presentation }) => {
-        const row = { ...rows.get(`${market}:${flavorSlug}`), presentation };
-        rows.set(`${market}:${flavorSlug}`, row);
+      setPresentation: jest.fn(async ({ productId, presentation }) => {
+        const row = { ...rows.get(String(productId)), presentation };
+        rows.set(String(productId), row);
         return row;
       })
     };
-    const variationsOf = (key) => state.product.variants.filter((item) => item.recipeKey === key);
+    const variations = () => state.product.variants.map((item) => ({ ...item, productId: '100' }));
     const catalog = new AdminCatalogService({
       repository: {
         getProduct: jest.fn(async () => state.product),
@@ -263,8 +274,8 @@ describe('AdminCatalogService activation and the recipe presentation', () => {
     const recipes = new RecipeContentService({
       repository: recipeContentRepository,
       catalogRepository: {
-        listRecipeVariations: jest.fn(async (market, key) => (market === 'BR' ? variationsOf(key) : [])),
-        listMarketRecipeVariations: jest.fn(async () => new Map([['adult-lamb', variationsOf('adult-lamb')]]))
+        listProductVariations: jest.fn(async () => variations()),
+        listMarketProductVariations: jest.fn(async () => new Map([['100', variations()]]))
       }
     });
     return { catalog, recipes };
@@ -282,7 +293,7 @@ describe('AdminCatalogService activation and the recipe presentation', () => {
   test('New recipe goes live without a store deploy: saved presentation, active variation, listed and served', async () => {
     const { catalog, recipes } = lambCatalog();
 
-    await recipes.savePresentation('BR', 'adult-lamb', lambPresentation, actor);
+    await recipes.savePresentation('100', lambPresentation, actor);
     await catalog.setVariationActive('100', '3001', true, actor);
 
     expect((await recipes.listPublic('BR')).items).toEqual([{ key: 'adult-lamb', name: 'Cordeiro', lifeStage: 'adult', title: lambPresentation.title, tag: lambPresentation.tag }]);
@@ -312,6 +323,30 @@ describe('AdminCatalogService variations of a published product', () => {
     expect(repository.createVariation).not.toHaveBeenCalled();
   });
 
+  test('fills the missing weight of an active variation, and nothing else', async () => {
+    const { service, repository } = serviceFor({ product: published('BR', [variant({ id: '1001', active: true, weight: '' })]) });
+
+    await service.patchProduct('100', { variants: [{ id: '1001', weight: '300g' }] }, actor);
+
+    expect(repository.updateVariation).toHaveBeenCalledTimes(1);
+    expect(repository.updateVariation.mock.calls[0][0]).toMatchObject({ id: '1001', weight: '300g', name: undefined, sku: undefined, regularPrice: null, ncm: undefined, finalImageReady: undefined });
+  });
+
+  test('keeps the lock when the weight already exists or other fields come along', async () => {
+    const withWeight = serviceFor({ product: published('BR', [variant({ id: '1001', active: true, weight: '300g' })]) });
+    await expect(withWeight.service.patchProduct('100', { variants: [{ id: '1001', weight: '500g' }] }, actor))
+      .rejects.toMatchObject({ details: { code: 'variation_active_locked' } });
+
+    const withPrice = serviceFor({ product: published('BR', [variant({ id: '1001', active: true, weight: '' })]) });
+    await expect(withPrice.service.patchProduct('100', { variants: [{ id: '1001', weight: '300g', regularPrice: 99 }] }, actor))
+      .rejects.toMatchObject({ details: { code: 'variation_active_locked' } });
+
+    const cleared = serviceFor({ product: published('BR', [variant({ id: '1001', active: true, weight: '' })]) });
+    await expect(cleared.service.patchProduct('100', { variants: [{ id: '1001', weight: '' }] }, actor))
+      .rejects.toMatchObject({ details: { code: 'variation_active_locked' } });
+    expect(cleared.repository.updateVariation).not.toHaveBeenCalled();
+  });
+
   test('saves an inactive variation and a new one, and audits flag changes only', async () => {
     const { service, repository, auditService } = serviceFor({
       product: published('US', [variant({ finalImageReady: false })])
@@ -335,11 +370,16 @@ describe('AdminCatalogService variations of a published product', () => {
 });
 
 describe('AdminCatalogService short name', () => {
-  test('saves a short name and does not require it to activate', async () => {
-    const { service, repository } = serviceFor({ product: published('BR', [variant()]) });
+  // The short name belongs to the product and every variation copies it (catalog-products).
+  test('saves a short name on the product and does not require it to activate', async () => {
+    const { service, repository, recipeContentRepository } = serviceFor({ product: published('BR', [variant()]) });
+    recipeContentRepository.updateProductFields = jest.fn(async (_id, fields) => ({ flavorSlug: 'senior-beef', name: 'Bovino Sênior', lifeStage: 'senior', ...fields }));
+    repository.rewriteFlavorCopies = jest.fn();
+    repository.updatePost = jest.fn();
 
-    await service.patchProduct('100', { variants: [{ id: '3001', shortLabel: '  Bovino · Sênior ' }] }, actor);
-    expect(repository.updateVariation.mock.calls[0][0].shortLabel).toBe('Bovino · Sênior');
+    await service.patchProduct('100', { shortLabel: '  Bovino · Sênior ' }, actor);
+    expect(recipeContentRepository.updateProductFields.mock.calls[0][1].shortLabel).toBe('Bovino · Sênior');
+    expect(repository.rewriteFlavorCopies).toHaveBeenCalledWith('100', expect.objectContaining({ shortLabel: 'Bovino · Sênior' }));
 
     await service.setVariationActive('100', '3001', true, actor);
     expect(repository.updatePostStatus).toHaveBeenCalledWith('3001', 'publish');
@@ -348,7 +388,7 @@ describe('AdminCatalogService short name', () => {
   test('rejects a short name longer than 64 characters', async () => {
     const { service } = serviceFor({ product: published('BR', [variant()]) });
 
-    await expect(service.patchProduct('100', { variants: [{ id: '3001', shortLabel: 'x'.repeat(65) }] }, actor))
-      .rejects.toMatchObject({ statusCode: 422 });
+    await expect(service.patchProduct('100', { shortLabel: 'x'.repeat(65) }, actor))
+      .rejects.toMatchObject({ statusCode: 422, details: { code: 'product_short_label_invalid' } });
   });
 });

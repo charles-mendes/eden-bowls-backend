@@ -230,6 +230,32 @@ describe('production block trial end', () => {
     }));
     expect(typeof setTrialEnd.mock.calls[0][0].trial_end).toBe('number');
   });
+  // production-block-preview: the same trial end as the block, with no Stripe call.
+  test('the block preview gives the block\'s trial end and touches nothing', async () => {
+    const setTrialEnd = jest.fn().mockResolvedValue({});
+    const service = new CustomerDeliveriesService({
+      calendar: { listActive: async () => rows },
+      stripeAccounts: { get: () => ({ setTrialEnd }) },
+      now: () => charge(2026, 5, 4, 0, TIMEZONE_US)
+    });
+    const subscription = { market: 'US', chargeAt: wallTimeToUtc(2026, 5, 4, 0, 0, 0, TIMEZONE_US), transitDays: 1, stripeSubscriptionId: 'sub_us' };
+
+    const preview = await service.previewBlock({ subscription, alreadyCharged: false });
+    expect(setTrialEnd).not.toHaveBeenCalled();
+    expect(preview.charged).toBe(false);
+    expect(preview.preparationDay).toMatch(/^2026-06-\d{2}$/);
+
+    await service.onProductionStatus({ subscription, toStatus: 'blocked', fromStatus: 'to_prepare', alreadyCharged: false });
+    expect(new Date(setTrialEnd.mock.calls[0][0].trial_end * 1000).toISOString()).toBe(preview.chargeMovesTo);
+  });
+
+  test('the block preview of a paid cycle moves nothing', async () => {
+    const service = new CustomerDeliveriesService({ calendar: { listActive: async () => rows }, now: () => charge(2026, 5, 4, 0, TIMEZONE_US) });
+    const subscription = { market: 'US', chargeAt: wallTimeToUtc(2026, 5, 4, 0, 0, 0, TIMEZONE_US), transitDays: 1 };
+
+    await expect(service.previewBlock({ subscription, alreadyCharged: true })).resolves.toEqual({ charged: true, chargeMovesTo: null, preparationDay: null });
+  });
+
   test('a Thursday preparation moves to the next valid weekday and does not invoice', () => {
     const plan = planBlockTrialEnd({
       market: 'US',

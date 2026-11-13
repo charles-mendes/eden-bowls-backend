@@ -23,3 +23,13 @@ describe('OnboardingZipcodeRepository', () => {
     expect(sql).not.toContain('`market` = VALUES(`market`)');
   });
 });
+
+describe('OnboardingZipcodeRepository.getAddress', () => {
+  test('parses the stored JSON and returns null without a row', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValueOnce([{ address: '{"delivery_instructions":"Interfone 12"}' }]).mockResolvedValueOnce([]) };
+    const repository = new OnboardingZipcodeRepository(dataSource);
+    await expect(repository.getAddress(7)).resolves.toEqual({ delivery_instructions: 'Interfone 12' });
+    await expect(repository.getAddress(8)).resolves.toBeNull();
+    expect(dataSource.query.mock.calls[0][1]).toEqual([7]);
+  });
+});

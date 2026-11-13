@@ -91,6 +91,34 @@ describe('AdminProductionService', () => {
     expect(canceled.productionRepository.upsert).not.toHaveBeenCalled();
   });
 
+  // keep-ready-orders-dispatchable (delivery-address-issues): marking ready is not an event; the row shows the lock.
+  test('marking ready a Brazil cycle with no recipient name opens no address problem and sends no email', async () => {
+    const addressIssueService = { report: jest.fn(), latestFor: jest.fn() };
+    const transactionalMailer = { notifyDeliveryAddressIssue: jest.fn(), notifyShipped: jest.fn() };
+    const address = { country: 'BR', city: 'Curitiba', street: 'Rua A', number: '10', neighborhood: 'Centro', state: 'PR', postal_code: '80000-000' };
+    const service = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository: {
+        findById: jest.fn().mockResolvedValue(ledgerRow({ address })),
+        findQueueRowById: jest.fn().mockResolvedValue(queueItem({ address, productionStatus: 'ready' }))
+      },
+      productionRepository: {
+        findBySubscriptionAndPeriodEnd: jest.fn().mockResolvedValue({ status: 'in_production', paidAt: '2026-09-18T12:00:00.000Z' }),
+        upsert: jest.fn().mockResolvedValue({ status: 'ready' })
+      },
+      auditService: { record: jest.fn() },
+      addressIssueService,
+      transactionalMailer
+    });
+
+    const result = await service.updateStatus(42, { status: 'ready', periodEnd: '2026-09-20T08:00:00.000Z' }, { userId: 7 });
+
+    expect(result.productionStatus).toBe('ready');
+    expect(result.courierIssues).toEqual(['recipient_name_missing']);
+    expect(addressIssueService.report).not.toHaveBeenCalled();
+    expect(transactionalMailer.notifyDeliveryAddressIssue).not.toHaveBeenCalled();
+  });
+
   test('does not send a shipped letter when production status changes', async () => {
     const notifyShipped = jest.fn();
     const service = new AdminProductionService({
@@ -136,6 +164,25 @@ describe('AdminProductionService', () => {
     expect(result.metrics).toEqual({ today: 1, tomorrow: 0, upcoming: 1, overdue: 0 });
   });
 
+  // keep-ready-orders-dispatchable: a ready cycle kept past its day waits to leave; it is not late kitchen work.
+  test('overdue metric counts only late cycles not ready', async () => {
+    const service = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository: {
+        listQueue: jest.fn().mockResolvedValue({ total: 0, items: [] }),
+        listQueueMetricRows: jest.fn().mockResolvedValue([
+          { due_at: '2026-09-10T15:00:00.000Z', production_status: 'ready' },
+          { due_at: '2026-09-11T15:00:00.000Z', production_status: 'to_prepare' },
+          { due_at: '2026-09-20T15:00:00.000Z', production_status: 'ready' }
+        ])
+      }
+    });
+
+    const result = await service.listQueue({ windowDays: 7, includeOverdue: true }, { page: 1, perPage: 20, offset: 0 });
+
+    expect(result.metrics).toEqual({ today: 1, tomorrow: 0, upcoming: 0, overdue: 1 });
+  });
+
   test('names queue recipes from the current catalog, and still lists when the names fail to load', async () => {
     const ledgerRepository = {
       listQueue: jest.fn().mockResolvedValue({ total: 1, items: [queueItem()] }),
@@ -176,6 +223,21 @@ describe('AdminProductionService', () => {
     }));
     // The bucket counts stay the same whatever bucket the list shows.
     expect(listQueueMetricRows).toHaveBeenCalledWith(expect.not.objectContaining({ due: expect.anything() }));
+  });
+
+  // Today counts overdue cycles 30 days back; the queue it opens must list the same ones whatever its window.
+  test('looks back 30 days for overdue cycles whatever the window, as Today counts them', async () => {
+    const listQueue = jest.fn().mockResolvedValue({ total: 0, items: [] });
+    const listQueueMetricRows = jest.fn().mockResolvedValue([]);
+    const service = new AdminProductionService({
+      now: () => new Date('2026-09-20T15:00:00.000Z'),
+      ledgerRepository: { listQueue, listQueueMetricRows }
+    });
+
+    await service.listQueue({ windowDays: 7, includeOverdue: true, due: 'overdue' }, { page: 1, perPage: 20, offset: 0 });
+
+    expect(listQueue).toHaveBeenCalledWith(expect.objectContaining({ overdueFloor: '2026-08-21 03:00:00' }));
+    expect(listQueueMetricRows).toHaveBeenCalledWith(expect.objectContaining({ overdueFloor: '2026-08-21 03:00:00' }));
   });
 
   test('blocks in_production when a note is provided', async () => {
@@ -522,5 +584,71 @@ describe('AdminProductionService pack stock', () => {
     const queue = await service.listQueue({ windowDays: 7, includeOverdue: true }, { page: 2, perPage: 1, offset: 1 });
 
     expect(queue.items.map((item) => [item.id, item.stockCoverage])).toEqual([[42, 'short']]);
+    // admin-flow-fixes-5 (PM-09): the short item says which recipe the stock left over did not cover.
+    expect(queue.items[0].stockShortages).toEqual([{ flavorKey: 'frango', packSizeGrams: 300, recipeName: expect.any(String), missing: 3 }]);
+  });
+
+  test('a covered item has no shortages', async () => {
+    const item = queueItem({ id: 41, productionStatus: 'to_prepare', paymentState: 'paid', planSelection: packs([{ flavor: 'frango', quantity: 1, pack_size_grams: 300 }]) });
+    const { service } = build({ stock: memoryStock({ 'BR|frango|300': 5 }), demandRows: [item], page: [item] });
+
+    const queue = await service.listQueue({ windowDays: 7, includeOverdue: true }, { page: 1, perPage: 20, offset: 0 });
+
+    expect(queue.items[0]).toMatchObject({ stockCoverage: 'covered', stockShortages: [] });
+  });
+});
+
+// production-block-preview (admin-flow-fixes-5, PM-15).
+describe('AdminProductionService.previewBlock', () => {
+  const unpaidEnd = '2026-09-20T08:00:00.000Z';
+  function previewService({ row = ledgerRow(), cycle = null } = {}) {
+    const productionRepository = { findBySubscriptionAndPeriodEnd: jest.fn().mockResolvedValue(cycle), upsert: jest.fn(), moveCycle: jest.fn() };
+    const deliverySchedule = {
+      previewBlock: jest.fn().mockResolvedValue({ charged: false, chargeMovesTo: '2026-10-19T03:00:00.000Z', preparationDay: '2026-10-19' }),
+      onProductionStatus: jest.fn()
+    };
+    const auditService = { record: jest.fn() };
+    const service = new AdminProductionService({ ledgerRepository: { findById: jest.fn().mockResolvedValue(row) }, productionRepository, deliverySchedule, auditService });
+    return { service, productionRepository, deliverySchedule, auditService };
+  }
+
+  test('an unpaid cycle answers where the charge goes and writes nothing', async () => {
+    const { service, productionRepository, deliverySchedule, auditService } = previewService();
+
+    await expect(service.previewBlock(42, unpaidEnd, { userId: 7 })).resolves.toEqual({ charged: false, chargeMovesTo: '2026-10-19T03:00:00.000Z', preparationDay: '2026-10-19' });
+    expect(deliverySchedule.previewBlock).toHaveBeenCalledWith({
+      subscription: expect.objectContaining({ market: 'BR', chargeAt: new Date(unpaidEnd), stripeSubscriptionId: 'sub_123' }),
+      alreadyCharged: false
+    });
+    expect(deliverySchedule.onProductionStatus).not.toHaveBeenCalled();
+    expect(productionRepository.upsert).not.toHaveBeenCalled();
+    expect(productionRepository.moveCycle).not.toHaveBeenCalled();
+    expect(auditService.record).not.toHaveBeenCalled();
+  });
+
+  test('a paid cycle is already charged', async () => {
+    const { service, deliverySchedule } = previewService({ cycle: { status: 'to_prepare', paidAt: '2026-09-20T08:01:00.000Z', periodEnd: unpaidEnd } });
+
+    await expect(service.previewBlock(42, unpaidEnd, {})).resolves.toEqual({ charged: true, chargeMovesTo: null, preparationDay: null });
+    expect(deliverySchedule.previewBlock).not.toHaveBeenCalled();
+  });
+
+  test('a stale period end answers 409 production_period_stale', async () => {
+    const { service } = previewService();
+
+    await expect(service.previewBlock(42, '2026-10-20T08:00:00.000Z', {})).rejects.toMatchObject({ statusCode: 409, details: { code: 'production_period_stale' } });
+  });
+
+  test('an unknown subscription answers 404', async () => {
+    const { service } = previewService({ row: null });
+
+    await expect(service.previewBlock(404, unpaidEnd, {})).rejects.toMatchObject({ statusCode: 404 });
+  });
+
+  test('a record outside the actor\'s market is refused', async () => {
+    const { service, deliverySchedule } = previewService({ row: ledgerRow({ stripeAccount: 'us', address: { country: 'US' } }) });
+
+    await expect(service.previewBlock(42, unpaidEnd, { userId: 7, roles: ['operator'], markets: ['BR'] })).rejects.toBeInstanceOf(HttpError);
+    expect(deliverySchedule.previewBlock).not.toHaveBeenCalled();
   });
 });

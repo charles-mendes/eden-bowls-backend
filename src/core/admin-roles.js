@@ -16,7 +16,8 @@ const ROLE_PERMISSIONS = {
     'privacy.requests.read',
     'production.read',
     'settings.read',
-    'reports.read'
+    'reports.read',
+    'nfe.read'
   ],
   operator: [
     'nutrition.simulate',
@@ -30,6 +31,7 @@ const ROLE_PERMISSIONS = {
     'billing.subscribers.read',
     'billing.subscribers.sync',
     'billing.coupons.write',
+    'customers.contact.write',
     'users.read',
     'users.delivery.write',
     'users.status.write',
@@ -42,7 +44,10 @@ const ROLE_PERMISSIONS = {
     'settings.read',
     'settings.email.write',
     'reports.read',
-    'reports.export'
+    'reports.export',
+    'nfe.read',
+    'nfe.retry',
+    'nfe.edit'
   ]
 };
 
@@ -54,7 +59,8 @@ ROLE_PERMISSIONS.admin = [
   'system.health.read',
   'nutrition.settings.write',
   'settings.company.write',
-  'legal.write'
+  'legal.write',
+  'bling.connect'
 ];
 
 const VALID_ROLES = new Set(['admin', 'operator', 'veterinarian', 'readonly', 'customer']);

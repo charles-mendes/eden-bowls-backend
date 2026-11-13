@@ -1,5 +1,9 @@
 const { recordJobItemsFailed, recordJobSuccess } = require('./job-metrics');
 
+// Each tick holds one pooled connection for its GET_LOCK while the job body needs
+// others. Running every job at once takes the whole pool and freezes the process.
+const MAX_CONCURRENT_JOBS = 3;
+
 async function runTick({ dataSource, lockName, jobName, run, logger, metrics }) {
   const started = Date.now();
   const log = logger || { info() {}, error() {} };
@@ -48,10 +52,16 @@ async function runTick({ dataSource, lockName, jobName, run, logger, metrics }) 
   }
 }
 
-function startScheduler({ jobs, dataSource, logger, metrics }) {
+function startScheduler({ jobs, dataSource, logger, metrics, maxConcurrent = MAX_CONCURRENT_JOBS }) {
   const timers = [];
-  for (const job of jobs) {
-    const tick = () => {
+  const waiting = [];
+  const scheduled = new Set();
+  let active = 0;
+
+  const drain = () => {
+    while (active < maxConcurrent && waiting.length) {
+      const job = waiting.shift();
+      active += 1;
       runTick({
         dataSource,
         lockName: job.lockName,
@@ -61,7 +71,22 @@ function startScheduler({ jobs, dataSource, logger, metrics }) {
         metrics
       }).catch((error) => {
         logger.error({ err: error, job: job.name }, 'Background job tick failed');
+      }).finally(() => {
+        active -= 1;
+        scheduled.delete(job.name);
+        drain();
       });
+    }
+  };
+
+  for (const job of jobs) {
+    const tick = () => {
+      if (scheduled.has(job.name)) {
+        return;
+      }
+      scheduled.add(job.name);
+      waiting.push(job);
+      drain();
     };
     tick();
     timers.push(setInterval(tick, job.intervalMs));
@@ -72,11 +97,13 @@ function startScheduler({ jobs, dataSource, logger, metrics }) {
       for (const timer of timers) {
         clearInterval(timer);
       }
+      waiting.length = 0;
     }
   };
 }
 
 module.exports = {
+  MAX_CONCURRENT_JOBS,
   runTick,
   startScheduler
 };

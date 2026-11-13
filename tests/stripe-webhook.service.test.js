@@ -36,6 +36,7 @@ function buildService(overrides = {}) {
       logger: overrides.logger || { error() {}, warn() {}, info() {} },
       transactionalMailer: overrides.transactionalMailer || null,
       customerInvoices: overrides.customerInvoices || null,
+      addressIssueService: overrides.addressIssueService || null,
       withTimeout: overrides.withTimeout
     }),
     stripeBilling,
@@ -250,8 +251,46 @@ describe('StripeWebhookService', () => {
       status: 'active'
     }));
     expect(ledgerRepository.updateCheckoutReference).toHaveBeenCalledWith(7, expect.objectContaining({
-      payment_state: 'paid'
-    }));
+      payment_state: 'paid',
+      stripe_subscription_id: 'sub_123'
+    }), { subscriptionId: 'sub_123' });
+  });
+
+  test.each([
+    ['invoice.paid', { id: 'in_1', customer: 'cus_1', subscription: 'sub_123' }],
+    ['customer.subscription.updated', {
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      items: { data: [{ price: { id: 'price_abc' }, quantity: 1 }] },
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    }]
+  ])('%s keeps the Stripe account the checkout recorded', async (type, object) => {
+    const { service, stripeBilling, ledgerRepository } = buildService();
+    stripeBilling.constructEvent.mockReturnValue({ id: 'evt_account', type, data: { object } });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      items: { data: [{ price: { id: 'price_abc' }, quantity: 1 }] },
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeCustomerId: 'cus_1',
+      stripeSubscriptionId: 'sub_123',
+      stripeAccount: 'br'
+    });
+
+    await service.handle({ account: 'us', rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    // invoice.paid on the other account's endpoint writes nothing at all (subscription-detail-workflow).
+    if (type !== 'invoice.paid') {
+      expect(ledgerRepository.upsert).toHaveBeenCalled();
+    }
+    for (const [row] of ledgerRepository.upsert.mock.calls) {
+      expect(row.stripeAccount).toBe('br');
+    }
   });
 
   describe('Eden Bowls invoice PDF', () => {
@@ -748,6 +787,109 @@ describe('StripeWebhookService', () => {
     }));
   });
 
+  describe('only the checkout of the event changes (checkout-reference-webhook-guard)', () => {
+    // Mirrors the repository: with an owner, the patch lands only when the stored checkout carries that id.
+    function ownedCheckout(initial) {
+      const state = { reference: { ...initial } };
+      const update = jest.fn(async (userId, patch, owner) => {
+        const ids = owner ? [
+          ['stripe_subscription_id', owner.subscriptionId],
+          ['stripe_payment_intent_id', owner.paymentIntentId]
+        ].filter(([, id]) => id) : [];
+        if (owner && !ids.some(([key, id]) => state.reference[key] === id)) {
+          return false;
+        }
+        state.reference = { ...state.reference, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) };
+        return true;
+      });
+      return { state, update };
+    }
+
+    const checkoutB = {
+      order_key: 'sub_sub_b',
+      stripe_subscription_id: 'sub_b',
+      stripe_payment_intent_id: 'pi_b',
+      payment_state: 'paid',
+      stripe_invoice_id: 'in_b1',
+      pet_ids: ['chocolate']
+    };
+
+    test('a paid invoice of an older subscription records its cycle and leaves the checkout alone', async () => {
+      const { service, stripeBilling, ledgerRepository } = buildService();
+      const checkout = ownedCheckout(checkoutB);
+      ledgerRepository.updateCheckoutReference = checkout.update;
+      stripeBilling.constructEvent.mockReturnValue({
+        id: 'evt_old_paid',
+        type: 'invoice.paid',
+        data: { object: { id: 'in_a7', customer: 'cus_1', subscription: 'sub_a' } }
+      });
+      stripeBilling.retrieveSubscription.mockResolvedValue({
+        id: 'sub_a',
+        status: 'trialing',
+        customer: 'cus_1',
+        items: { data: [{ price: { id: 'price_a' }, quantity: 1 }] },
+        metadata: { eden_env: 'qa', wp_user_id: '7' }
+      });
+      ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+        userId: 7,
+        stripeSubscriptionId: 'sub_a',
+        stripeAccount: 'us',
+        status: 'trialing'
+      });
+      const recordNfe = jest.spyOn(service, 'recordNfe');
+      const recordChargedDelivery = jest.spyOn(service, 'recordChargedDelivery');
+
+      await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+        .resolves.toEqual({ received: true });
+
+      expect(checkout.update).toHaveBeenCalledWith(7, expect.objectContaining({ stripe_subscription_id: 'sub_a' }), { subscriptionId: 'sub_a' });
+      expect(checkout.state.reference).toEqual(checkoutB);
+      expect(ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, stripeSubscriptionId: 'sub_a' }));
+      expect(recordNfe).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: 'sub_a' }));
+      expect(recordChargedDelivery).toHaveBeenCalledWith(expect.objectContaining({ subscriptionId: 'sub_a' }));
+    });
+
+    test('a failed payment of the checkout itself marks it failed', async () => {
+      const transactionalMailer = { notifyPaymentFailed: jest.fn().mockResolvedValue({ claimed: true }) };
+      const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+      const checkout = ownedCheckout({ ...checkoutB, payment_state: 'requires_confirmation' });
+      ledgerRepository.updateCheckoutReference = checkout.update;
+      stripeBilling.constructEvent.mockReturnValue({
+        id: 'evt_own_fail',
+        type: 'invoice.payment_failed',
+        data: { object: { id: 'in_b1', customer: 'cus_1', subscription: 'sub_b', payment_intent: 'pi_b', status: 'open' } }
+      });
+      ledgerRepository.findUserStateByPaymentIntentId.mockResolvedValue({ userId: 7 });
+      ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ userId: 7, stripeSubscriptionId: 'sub_b', status: 'incomplete' });
+
+      await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+        .resolves.toEqual({ received: true });
+
+      expect(checkout.state.reference).toMatchObject({ stripe_subscription_id: 'sub_b', payment_state: 'failed', stripe_payment_intent_id: 'pi_b' });
+      expect(transactionalMailer.notifyPaymentFailed).toHaveBeenCalledTimes(1);
+    });
+
+    test('a failed payment of an older, inactive subscription leaves the checkout alone and still mails', async () => {
+      const transactionalMailer = { notifyPaymentFailed: jest.fn().mockResolvedValue({ claimed: true }) };
+      const { service, stripeBilling, ledgerRepository } = buildService({ transactionalMailer });
+      const checkout = ownedCheckout(checkoutB);
+      ledgerRepository.updateCheckoutReference = checkout.update;
+      stripeBilling.constructEvent.mockReturnValue({
+        id: 'evt_old_fail',
+        type: 'invoice.payment_failed',
+        data: { object: { id: 'in_a9', customer: 'cus_1', subscription: 'sub_a', payment_intent: 'pi_a9', status: 'open' } }
+      });
+      ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ userId: 7, stripeSubscriptionId: 'sub_a', status: 'past_due' });
+
+      await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' }))
+        .resolves.toEqual({ received: true });
+
+      expect(checkout.update).toHaveBeenCalledWith(7, expect.objectContaining({ payment_state: 'failed' }), { subscriptionId: 'sub_a', paymentIntentId: 'pi_a9' });
+      expect(checkout.state.reference).toEqual(checkoutB);
+      expect(transactionalMailer.notifyPaymentFailed).toHaveBeenCalledTimes(1);
+    });
+  });
+
   test('sends payment-failed mail when ledger is already active', async () => {
     const transactionalMailer = {
       notifyPaymentFailed: jest.fn().mockResolvedValue({ claimed: true })
@@ -830,6 +972,36 @@ describe('StripeWebhookService', () => {
     expect(transactionalMailer.notifyAdminNewSubscription).not.toHaveBeenCalled();
   });
 
+  test('Edit waiting for payment: the new contract starts when the invoice is paid', async () => {
+    const { service, stripeBilling, ledgerRepository } = buildService({});
+    ledgerRepository.startContract = jest.fn();
+    stripeBilling.setCancelAtPeriodEnd = jest.fn().mockResolvedValue({});
+    stripeBilling.constructEvent.mockReturnValue({
+      id: 'evt_term',
+      type: 'invoice.paid',
+      data: { object: { id: 'in_plan', subscription: 'sub_123', customer: 'cus_1', billing_reason: 'subscription_update' } }
+    });
+    stripeBilling.retrieveSubscription.mockResolvedValue({
+      id: 'sub_123',
+      status: 'active',
+      customer: 'cus_1',
+      metadata: { eden_env: 'qa', wp_user_id: '7' }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({
+      userId: 7,
+      stripeSubscriptionId: 'sub_123',
+      autoRenew: false,
+      cancelAtPeriodEnd: true,
+      editPaymentPending: true,
+      editPending: { invoice_id: 'in_plan', term_months: 3, term_changed: true }
+    });
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(ledgerRepository.startContract).toHaveBeenCalledWith('sub_123');
+    expect(stripeBilling.setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_123', false);
+  });
+
   test('does not mail when payment_intent.payment_failed updates checkout', async () => {
     const transactionalMailer = {
       notifyPaymentFailed: jest.fn()
@@ -855,7 +1027,7 @@ describe('StripeWebhookService', () => {
     expect(ledgerRepository.updateCheckoutReference).toHaveBeenCalledWith(7, expect.objectContaining({
       payment_state: 'failed',
       stripe_payment_intent_id: 'pi_fail'
-    }));
+    }), { subscriptionId: '', paymentIntentId: 'pi_fail' });
   });
 
   test('does not mail when payment_intent.succeeded updates checkout', async () => {
@@ -1042,6 +1214,42 @@ describe('StripeWebhookService', () => {
       status: 'canceled',
       endedAt: 1791640800
     }));
+  });
+
+  // close-address-issues-when-subscription-ends
+  test('a deleted subscription checks its address problem against the ledger id', async () => {
+    const addressIssueService = { closeIfEnded: jest.fn().mockResolvedValue(1) };
+    const { service, stripeBilling, ledgerRepository } = buildService({
+      addressIssueService,
+      transactionalMailer: { notifyCancelled: jest.fn(), hasSentClaim: jest.fn().mockResolvedValue(true) }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ id: 179, userId: 7, stripeSubscriptionId: 'sub_123' });
+    ledgerRepository.upsert.mockResolvedValue({ id: 179, status: 'canceled', stripeSubscriptionId: 'sub_123' });
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.deleted',
+      subscriptionFixture({ status: 'canceled' }),
+      {}
+    ));
+
+    await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    expect(addressIssueService.closeIfEnded).toHaveBeenCalledWith(179);
+  });
+
+  test('a deleted subscription without the address problem service still goes through', async () => {
+    const { service, stripeBilling, ledgerRepository } = buildService({
+      transactionalMailer: { notifyCancelled: jest.fn(), hasSentClaim: jest.fn().mockResolvedValue(true) }
+    });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ id: 179, userId: 7, stripeSubscriptionId: 'sub_123' });
+    ledgerRepository.upsert.mockResolvedValue({ id: 179 });
+    stripeBilling.constructEvent.mockReturnValue(subscriptionEvent(
+      'customer.subscription.deleted',
+      subscriptionFixture({ status: 'canceled' }),
+      {}
+    ));
+
+    await expect(service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' })).resolves.toEqual({ received: true });
+    expect(ledgerRepository.upsert).toHaveBeenCalled();
   });
 
   test('returns 200 and keeps the event pending when dispatch throws', async () => {
@@ -1236,6 +1444,143 @@ describe('StripeWebhookService', () => {
     }), 'Stripe webhook ignored.');
   });
 
+  describe('invoice.paid on the other account endpoint (subscription-detail-workflow)', () => {
+    // Every method is a mock, so any write the handler would make shows up as a call.
+    function recorder(base = {}) {
+      return new Proxy(base, {
+        get(target, key) {
+          if (!(key in target) && typeof key === 'string' && key !== 'then') {
+            target[key] = jest.fn().mockResolvedValue(null);
+          }
+          return target[key];
+        }
+      });
+    }
+
+    function arrangeAccount({ stored = { userId: 7, stripeSubscriptionId: 'sub_br', stripeAccount: 'br' } } = {}) {
+      const warn = jest.fn();
+      const ledgerRepository = recorder({
+        findByStripeSubscriptionId: jest.fn().mockResolvedValue(stored),
+        findUserStateBySubscriptionId: jest.fn().mockResolvedValue({ userId: 7, checkoutReference: {} })
+      });
+      const stripeBilling = recorder({
+        constructEvent: jest.fn().mockReturnValue({
+          id: 'evt_paid',
+          type: 'invoice.paid',
+          data: { object: { id: 'in_br', customer: 'cus_1', subscription: 'sub_br', total: 132997, billing_reason: 'subscription_cycle' } }
+        }),
+        retrieveSubscription: jest.fn().mockResolvedValue({
+          id: 'sub_br',
+          status: 'active',
+          customer: 'cus_1',
+          items: { data: [] },
+          metadata: { eden_env: 'qa', wp_user_id: '7' }
+        })
+      });
+      const customerInvoices = recorder({
+        issueForInvoice: jest.fn().mockResolvedValue({ row: { id: 1, invoiceNumber: 'EB-2026-000010' } }),
+        letterAttachment: jest.fn().mockResolvedValue(null)
+      });
+      const blingNfe = recorder();
+      const paidCycles = recorder();
+      const transactionalMailer = recorder();
+      const eventsRepository = {
+        insertIfNew: jest.fn().mockResolvedValue({ inserted: true }),
+        markProcessed: jest.fn().mockResolvedValue(undefined),
+        scheduleRetry: jest.fn().mockResolvedValue(undefined),
+        markFailed: jest.fn().mockResolvedValue(undefined)
+      };
+      const service = new StripeWebhookService({
+        stripeBilling,
+        webhookSecret: 'whsec_test',
+        eventsRepository,
+        ledgerRepository,
+        customerStore: { findUserIdByCustomerId: jest.fn().mockResolvedValue(null) },
+        customerInvoices,
+        blingNfe,
+        paidCycles,
+        transactionalMailer,
+        logger: { error() {}, warn, info() {} }
+      });
+      return { service, warn, ledgerRepository, stripeBilling, customerInvoices, blingNfe, paidCycles, transactionalMailer, eventsRepository };
+    }
+
+    const handleOn = (service, account) => service.handle({ account, rawBody: Buffer.from('{}'), signature: 'sig' });
+
+    function calledMethods(mock, allowed = []) {
+      return Object.keys(mock).filter((key) => !allowed.includes(key) && mock[key].mock && mock[key].mock.calls.length > 0);
+    }
+
+    test('a br subscription paid on the us endpoint writes nothing and is acknowledged', async () => {
+      const built = arrangeAccount();
+
+      await expect(handleOn(built.service, 'us')).resolves.toEqual({ received: true });
+
+      expect(calledMethods(built.ledgerRepository, ['findByStripeSubscriptionId', 'findUserStateBySubscriptionId'])).toEqual([]);
+      expect(calledMethods(built.stripeBilling, ['constructEvent', 'retrieveSubscription'])).toEqual([]);
+      expect(calledMethods(built.customerInvoices)).toEqual([]);
+      expect(calledMethods(built.blingNfe)).toEqual([]);
+      expect(calledMethods(built.paidCycles)).toEqual([]);
+      expect(calledMethods(built.transactionalMailer)).toEqual([]);
+      expect(built.eventsRepository.markProcessed).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'evt_paid', stripeAccount: 'us' }));
+      expect(built.warn).toHaveBeenCalledWith(expect.objectContaining({
+        eventId: 'evt_paid',
+        reason: 'account_mismatch',
+        stripe_account: 'us',
+        stored_account: 'br',
+        subscription_id: 'sub_br',
+        invoice_id: 'in_br'
+      }), 'Stripe webhook ignored.');
+    });
+
+    test('a pending term change stays pending on the wrong endpoint', async () => {
+      const built = arrangeAccount({
+        stored: {
+          userId: 7,
+          stripeSubscriptionId: 'sub_br',
+          stripeAccount: 'br',
+          editPaymentPending: true,
+          editPending: { invoice_id: 'in_br', term_changed: true, term_months: 3 }
+        }
+      });
+
+      await handleOn(built.service, 'us');
+
+      expect(calledMethods(built.ledgerRepository, ['findByStripeSubscriptionId', 'findUserStateBySubscriptionId'])).toEqual([]);
+      expect(calledMethods(built.stripeBilling, ['constructEvent', 'retrieveSubscription'])).toEqual([]);
+    });
+
+    test('the same event on the subscription endpoint issues one br invoice', async () => {
+      const built = arrangeAccount();
+
+      await expect(handleOn(built.service, 'br')).resolves.toEqual({ received: true });
+
+      expect(built.ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({ stripeAccount: 'br' }));
+      expect(built.customerInvoices.issueForInvoice).toHaveBeenCalledWith(expect.objectContaining({ account: 'br' }));
+      expect(built.customerInvoices.issueForInvoice.mock.calls.every(([args]) => args.account === 'br')).toBe(true);
+      expect(built.warn).not.toHaveBeenCalledWith(expect.objectContaining({ reason: 'account_mismatch' }), expect.anything());
+    });
+
+    test('one sandbox behind both endpoints leaves one invoice account', async () => {
+      const built = arrangeAccount();
+
+      await handleOn(built.service, 'us');
+      await handleOn(built.service, 'br');
+
+      const accounts = new Set(built.customerInvoices.issueForInvoice.mock.calls.map(([args]) => args.account));
+      expect([...accounts]).toEqual(['br']);
+    });
+
+    test('a subscription with no stored row is handled on the endpoint that delivered it', async () => {
+      const built = arrangeAccount({ stored: null });
+
+      await handleOn(built.service, 'us');
+
+      expect(built.ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({ stripeAccount: 'us' }));
+      expect(built.warn).not.toHaveBeenCalledWith(expect.objectContaining({ reason: 'account_mismatch' }), expect.anything());
+    });
+  });
+
   test('does not attach a user from a mismatched payment intent', async () => {
     const { service, stripeBilling, ledgerRepository } = buildService();
     stripeBilling.constructEvent.mockReturnValue({
@@ -1389,6 +1734,17 @@ describe('StripeWebhookService charged deliveries', () => {
 
     expect(ledger.repository.incrementChargedDeliveries).not.toHaveBeenCalled();
     expect(ledger.current().chargedDeliveries).toBe(1);
+  });
+
+  test('Renewal off after a term change: the plan ends at the last delivery of the new contract', async () => {
+    const ledger = ledgerWith({ chargedDeliveries: 3, contractStartCharged: 1, subscriptionTermMonths: 3, autoRenew: false, lastChargedInvoiceId: 'in_3' });
+    const stripeBilling = billingStub();
+    const { service } = buildService({ stripeBilling, ledgerRepository: ledger.repository });
+
+    await deliver(service, stripeBilling, { id: 'in_4', billing_reason: 'subscription_cycle', subtotal: 3200, amount_paid: 3200 });
+
+    expect(ledger.current().chargedDeliveries).toBe(4);
+    expect(stripeBilling.setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_123', true);
   });
 
   test('the $0 invoice paid by a skip keeps the ledger trialing and sends no letter', async () => {

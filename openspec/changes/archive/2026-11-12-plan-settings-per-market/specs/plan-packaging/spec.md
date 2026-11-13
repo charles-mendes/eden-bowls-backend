@@ -1,0 +1,39 @@
+## MODIFIED Requirements
+
+### Requirement: Pack sizes come from the market's active variations
+
+The recommendation MUST use as pack sizes the distinct weights, in grams, of the active variations of every published product of the market. With one size, every pet MUST get that size. With two or more, the small pack MUST be the lightest and the large pack the heaviest. When the market has no active variation, the recommendation MUST use 300 g and 500 g, the values before this change.
+
+#### Scenario: Catalog with 300 g and 500 g
+
+- **WHEN** the BR products have active variations of 300 g and 500 g
+- **THEN** the recommendation offers 300 g and 500 g packs, as before the deploy
+
+#### Scenario: Operator adds a 1 kg variation
+
+- **WHEN** a BR product gains an active 1000 g variation besides 300 g and 500 g
+- **THEN** the large pack of the recommendation is 1000 g and `package_sizes_grams` lists 300, 500 and 1000
+
+#### Scenario: Weight only on a second product
+
+- **WHEN** BR has two published products, the first with active 300 g and 500 g variations and the second with an active 1000 g variation
+- **THEN** `package_sizes_grams` lists 300, 500 and 1000
+
+### Requirement: Plan period and large-pack limit come from the market's plan settings
+
+The monthly grams of the recommendation MUST use the plan days of the market's plan settings in place of a fixed 30. A pet MUST get the large pack when its monthly grams divided by the small pack size exceeds the large-pack limit of the market's plan settings.
+
+#### Scenario: Values after deploy
+
+- **WHEN** the migration runs and a 20 kg adult dog gets a recommendation in BR
+- **THEN** the pack size and count are the same as before the deploy
+
+#### Scenario: Lower large-pack limit
+
+- **WHEN** an operator sets the BR large-pack limit to 4 and a pet needs 1,500 g per month
+- **THEN** the pet gets the large pack, because 1,500 / 300 = 5 exceeds 4
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Plan period and large-pack limit come from the product`
+- TO: `### Requirement: Plan period and large-pack limit come from the market's plan settings`

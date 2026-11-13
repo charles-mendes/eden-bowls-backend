@@ -115,30 +115,43 @@ describe('ProductsRepository', () => {
   });
 
   describe('plan packaging of a market (plan-packaging)', () => {
-    test('reads the active variation weights, plan days and large-pack limit of the plan product', async () => {
+    const settings = (values) => ({ read: jest.fn().mockResolvedValue({ market: 'US', stored: true, ...values }) });
+
+    test('reads the active weights of every published product and the plan settings of the market', async () => {
       const dataSource = {
         isInitialized: true,
-        query: jest.fn()
-          .mockResolvedValueOnce([{ id: 200, days: '30', large_pack_limit: null }])
-          .mockResolvedValueOnce([{ weight: '10.6oz' }, { weight: '17.6oz' }, { weight: '10.6oz' }, { weight: '' }])
+        query: jest.fn().mockResolvedValueOnce([{ weight: '10.6oz' }, { weight: '17.6oz' }, { weight: '10.6oz' }, { weight: '' }])
       };
+      const planSettingsRepository = settings({ planDays: 28, largePackLimit: 6 });
 
-      const packaging = await new ProductsRepository(dataSource).findPlanPackaging('us');
+      const packaging = await new ProductsRepository(dataSource, { planSettingsRepository }).findPlanPackaging('us');
 
-      expect(packaging).toEqual({ packSizesGrams: [300, 500, 300], planDays: 30, largePackLimit: 0 });
-      expect(dataSource.query.mock.calls[0][0]).toContain("p.post_status = 'publish'");
-      expect(dataSource.query.mock.calls[0][0]).toContain('_cmpb_large_pack_limit');
-      expect(dataSource.query.mock.calls[0][1]).toEqual(['US']);
-      expect(dataSource.query.mock.calls[1][0]).toContain("v.post_status = 'publish'");
-      expect(dataSource.query.mock.calls[1][1]).toEqual(['attribute_pa_weight', 'attribute_weight', 'attribute_gram', 'attribute_peso', 200]);
+      expect(packaging).toEqual({ packSizesGrams: [300, 500, 300], planDays: 28, largePackLimit: 6 });
+      expect(planSettingsRepository.read).toHaveBeenCalledWith('US');
+      const [sql, params] = dataSource.query.mock.calls[0];
+      expect(sql).toContain("v.post_status = 'publish'");
+      expect(sql).toContain("p.post_status = 'publish'");
+      expect(sql).not.toContain('LIMIT 1');
+      expect(sql).not.toContain('post_parent = ?');
+      expect(params).toEqual(['attribute_pa_weight', 'attribute_weight', 'attribute_gram', 'attribute_peso', 'US']);
     });
 
-    test('has no packaging without a plan product or catalog tables', async () => {
-      const none = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    test('Weight only on a second product', async () => {
+      // Two BR products: the first sells 300 g and 500 g, the second 1000 g; the query covers both.
+      const dataSource = {
+        isInitialized: true,
+        query: jest.fn().mockResolvedValueOnce([{ weight: '300g' }, { weight: '500g' }, { weight: '1000g' }])
+      };
+      const packaging = await new ProductsRepository(dataSource, { planSettingsRepository: settings({ planDays: 30, largePackLimit: 8 }) })
+        .findPlanPackaging('BR');
+      expect(packaging.packSizesGrams).toEqual([300, 500, 1000]);
+    });
+
+    test('without catalog tables or plan settings the fields stay empty', async () => {
       const missing = { isInitialized: true, query: jest.fn().mockRejectedValue(Object.assign(new Error('missing'), { code: 'ER_NO_SUCH_TABLE' })) };
 
-      await expect(new ProductsRepository(none).findPlanPackaging('BR')).resolves.toBeNull();
-      await expect(new ProductsRepository(missing).findPlanPackaging('BR')).resolves.toBeNull();
+      await expect(new ProductsRepository(missing).findPlanPackaging('BR'))
+        .resolves.toEqual({ packSizesGrams: [], planDays: null, largePackLimit: null });
     });
   });
 
@@ -154,6 +167,7 @@ describe('ProductsRepository', () => {
 
     await expect(repository.listFlavorLabelsByCountry('BR')).resolves.toEqual(['Beef', 'Lamb']);
     expect(dataSource.query.mock.calls[0][0]).toContain('attribute_pa_flavor');
+    expect(dataSource.query.mock.calls[0][0]).toContain('ORDER BY MIN(p.menu_order) ASC');
     expect(dataSource.query.mock.calls[0][1]).toEqual(['BR']);
   });
 
@@ -170,6 +184,8 @@ describe('ProductsRepository', () => {
       { key: 'turkey', label: 'Frango', aliases: ['chicken', 'frango', 'peru'] }
     ]);
     expect(dataSource.query.mock.calls[0][0]).toContain('_flavor_slug');
+    // One product per recipe: the store order is the product order, then the variation order.
+    expect(dataSource.query.mock.calls[0][0]).toContain('ORDER BY MIN(p.menu_order) ASC, MIN(v.menu_order) ASC, MIN(v.ID) ASC');
   });
 
   test('returns an empty flavor list when catalog tables are missing', async () => {
@@ -276,5 +292,31 @@ describe('ProductsRepository', () => {
     expect(senior.products[0].variations.map((item) => item.variation_id)).toEqual([2]);
     const puppy = await repository.listByCategory({ categorySlug: 'flavors', country: 'BR', currency: 'BRL', lifeStage: 'puppy' });
     expect(puppy.products).toEqual([]);
+  });
+
+  test('Store reads plan days', async () => {
+    const planSettingsRepository = { read: jest.fn().mockResolvedValue({ market: 'BR', planDays: 28, largePackLimit: 8, stored: true }) };
+    const repository = new ProductsRepository({ isInitialized: true, query: jest.fn() }, { planSettingsRepository });
+    const meta = (flavor) => ({
+      _br_regular_price: '40.00',
+      _stripe_product_id: 'prod_abc',
+      _stripe_price_id: 'price_1',
+      _stripe_price_ids_by_currency: '{"brl":"price_1"}',
+      attribute_pa_flavor: flavor,
+      attribute_pa_weight: '300g'
+    });
+    repository.findCategoryBySlug = jest.fn().mockResolvedValue({ id: 10, slug: 'flavors', name: 'Flavors' });
+    repository.findProducts = jest.fn().mockResolvedValue([
+      { id: 100, name: 'Carne', slug: 'carne', days: 30 },
+      { id: 101, name: 'Frango', slug: 'frango', days: null }
+    ]);
+    repository.findZoneIdByCountryCurrency = jest.fn().mockResolvedValue('br');
+    repository.findVariationRowsByProductId = jest.fn(async (id) => [{ variation_id: id * 10, meta: meta(id === 100 ? 'Bovino' : 'Frango') }]);
+    repository.findProductTags = jest.fn().mockResolvedValue([]);
+
+    const catalog = await repository.listByCategory({ categorySlug: 'flavors', country: 'BR', currency: 'BRL' });
+
+    expect(catalog.products.map((product) => product.days)).toEqual([28, 28]);
+    expect(planSettingsRepository.read).toHaveBeenCalledWith('BR');
   });
 });

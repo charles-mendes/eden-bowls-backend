@@ -6,8 +6,16 @@ const {
 const { parseJsonColumn } = require('./stripe-subscription-map');
 const { canAccessMarket } = require('./admin-market-scope');
 const { parseWeightToGrams } = require('./plan-catalog-pricing');
+const { brazilAddressIssues } = require('./delivery-address-check');
+const { cyclePacks } = require('./pack-stock');
+const { planBoxes } = require('./shipping-boxes');
+const { DEFAULT_SETTINGS } = require('../infrastructure/shipping/shipping-settings');
 
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
+
+// How far back the queue, Today and the stock read keep an unpaid overdue cycle, whatever window they show; older
+// ones are billing's to follow. A paid cycle never drops out: past this age Today flags it as stale.
+const OVERDUE_DAYS = 30;
 
 const PAYMENT_LABELS = {
   awaiting_payment: 'Aguardando pagamento',
@@ -184,6 +192,48 @@ function addressBits(row) {
   };
 }
 
+// Who receives the box (delivery-recipient), then the older name keys, then the email, as before.
+// The courier queue reads the same chain, so both screens show the same name.
+function recipientDisplayName(address, email) {
+  const value = jsonColumn(address);
+  return String(value.recipient_name || value.name || value.full_name || value.recipient || email || '');
+}
+
+// The account name as a name to show, or null when there is none or it is an email (WordPress fills
+// `display_name` with the login, often the email).
+function accountNameOf(value) {
+  const name = String(value == null ? '' : value).trim();
+  return name && !name.includes('@') ? name : null;
+}
+
+// The name operation screens show and where it came from (operator-fills-recipient-name): the recipient, then the
+// account name, then the email. Only the recipient counts for the courier; the others are for reading the row.
+function shownName(address, { accountName, email } = {}) {
+  const value = jsonColumn(address);
+  const recipient = String(value.recipient_name || value.name || value.full_name || value.recipient || '');
+  if (recipient) return { name: recipient, source: 'recipient' };
+  const account = accountNameOf(accountName);
+  if (account) return { name: account, source: 'account' };
+  return { name: String(email || ''), source: 'email' };
+}
+
+// The cycle's boxes (shipping-boxes), from the packs the kitchen separates. Dry ice goes only in a US box.
+function boxesFor(row, lineItems, { stripeAccount, country, shippingSettings, onUnsizedLines }) {
+  const us = (shippingSettings && shippingSettings.us) || DEFAULT_SETTINGS.us;
+  const { packs, unsized } = cyclePacks({
+    subscriptionId: String(row.stripeSubscriptionId || row.stripe_subscription_id || row.id || ''),
+    periodEnd: row.cyclePeriodEnd || row.currentPeriodEnd || row.current_period_end || null,
+    lineItems
+  });
+  if (unsized.length && typeof onUnsizedLines === 'function') {
+    onUnsizedLines(unsized);
+  }
+  const isUs = stripeAccount !== 'br' && country !== 'BR';
+  const dryIceKg = isUs ? Number((us.package || DEFAULT_SETTINGS.us.package).dry_ice_kg) || 0 : 0;
+  return planBoxes({ packs, boxes: us.boxes || DEFAULT_SETTINGS.us.boxes, dryIceKg })
+    .map((box) => ({ key: box.key, label: box.label, pack_count: box.pack_count, weight_kg: box.weight_kg }));
+}
+
 function presentProductionQueueItem(row, options = {}) {
   const timezone = options.timezone || DEFAULT_TIMEZONE;
   const now = options.now || new Date();
@@ -197,8 +247,11 @@ function presentProductionQueueItem(row, options = {}) {
   // A paid cycle is due on its preparation day; an unpaid one on its charge.
   const daysUntil = civilDaysUntil(row.dueAt || row.currentPeriodEnd || row.current_period_end, timezone, now);
   const address = jsonColumn(row.address);
-  const displayName = address.name || address.full_name || address.recipient
-    || row.customerEmail || row.customer_email || '';
+  const customerProfileInScope = canAccessMarket(options.actor || {}, row.profileMarket || row.profile_market);
+  // The account name is a live profile read, so it shows only when the profile is in the actor's markets
+  // (admin-market-scope); otherwise the row keeps the ledger email.
+  const accountName = customerProfileInScope ? accountNameOf(row.accountDisplayName) : null;
+  const shown = shownName(address, { accountName, email: row.customerEmail || row.customer_email });
   // The cycle key the admin sends back when it changes the production status.
   const periodEnd = toJsDate(row.cyclePeriodEnd || row.currentPeriodEnd || row.current_period_end);
   const { country, city } = addressBits(row);
@@ -215,7 +268,9 @@ function presentProductionQueueItem(row, options = {}) {
     daysUntil,
     dueBucket: dueBucket(daysUntil),
     dueLabel: dueLabel(daysUntil),
-    displayName: String(displayName),
+    displayName: shown.name,
+    nameSource: shown.source,
+    accountName,
     email: String(row.customerEmail || row.customer_email || ''),
     flavorMix: flavorMixFor(lineItems),
     packCount,
@@ -230,20 +285,35 @@ function presentProductionQueueItem(row, options = {}) {
     productionStatus,
     paymentState: String(row.paymentState || 'paid'),
     paymentLabel: PAYMENT_LABELS[row.paymentState] || null,
+    // simplify-brazil-dispatch: the paid invoice of the cycle, so Expedir opens that order; null while unpaid.
+    paidInvoiceId: row.paidInvoiceId ? String(row.paidInvoiceId) : null,
+    // keep-ready-orders-dispatchable: what the courier dispatch would refuse for the address, on a Brazil cycle
+    // (account `br`, address in Brazil, the rule of the Expedir link); null on any other. A read: it opens no problem.
+    courierIssues: stripeAccount === 'br' && country === 'BR' ? brazilAddressIssues(row.address) : null,
     preparationDay: row.preparationDay || null,
     deliveryDate: row.deliveryDate || null,
     note: row.note || row.production_note || null,
     subtotal,
     currency: catalog.currency || (country === 'BR' ? 'BRL' : null),
     stripeAccount,
-    customerProfileInScope: canAccessMarket(options.actor || {}, row.profileMarket || row.profile_market),
+    customerProfileInScope,
     dense: lineItems.length > 3 || packSizeLabel === 'misto',
-    lineItems
+    lineItems,
+    boxes: boxesFor(row, lineItems, {
+      stripeAccount,
+      country,
+      shippingSettings: options.shippingSettings,
+      onUnsizedLines: options.onUnsizedLines
+    })
   };
 }
 
 module.exports = {
   DEFAULT_TIMEZONE,
+  OVERDUE_DAYS,
+  recipientDisplayName,
+  accountNameOf,
+  shownName,
   civilDaysUntil,
   dueBucket,
   dueLabel,

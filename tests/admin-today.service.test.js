@@ -20,16 +20,38 @@ function row(overrides = {}) {
   };
 }
 
-function service({ rows, shipments = [], closed = [] }) {
-  const ledgerRepository = { listQueue: jest.fn().mockResolvedValue({ total: rows.length, items: rows }) };
-  const upsShipmentRepository = { listByInvoiceIds: jest.fn().mockResolvedValue(shipments) };
+function service({ rows, total = rows.length, shipments = [], closed = [], courierRows = [], courierCounts = { toDispatch: 0, onTheRoadLong: 0, failed: 0 }, nfeCounts = {}, upsUnresolved = 0, upsWithoutPickup = 0, bling = { configured: true, connected: true }, contacts = new Map(), people = new Map(), issueCounts = new Map(), exceptionCounts = new Map(), withIssues = true }) {
+  const ledgerRepository = { listQueue: jest.fn().mockResolvedValue({ total, items: rows }), countMarketExceptions: jest.fn(async ({ stripeAccounts }) => new Map([...exceptionCounts].filter(([account]) => stripeAccounts.includes(account)))) };
+  const deliveryAddressIssuesRepository = withIssues
+    ? { countOpenByAccount: jest.fn(async ({ stripeAccounts }) => new Map([...issueCounts].filter(([account]) => stripeAccounts.includes(account)))) }
+    : null;
+  const upsShipmentRepository = { listActiveByInvoiceIds: jest.fn().mockResolvedValue(shipments), countUnresolved: jest.fn().mockResolvedValue(upsUnresolved), countCreatedWithoutPickup: jest.fn().mockResolvedValue(upsWithoutPickup) };
   const calendar = { listActive: jest.fn().mockResolvedValue(closed) };
+  const courierDeliveryService = { countQueue: jest.fn().mockResolvedValue(courierCounts) };
+  const courierDeliveryRepository = { listByInvoiceIds: jest.fn().mockResolvedValue(courierRows) };
+  const blingNfeRepository = { countByStatuses: jest.fn().mockResolvedValue({ blocked_missing_document: 0, rejected: 0, error: 0, ...nfeCounts }) };
+  const blingNfeService = { connectionStatus: jest.fn().mockResolvedValue({ success: true, data: bling }) };
+  const customerContactsRepository = { latestBySubscriptions: jest.fn().mockResolvedValue(contacts) };
+  const profileRepository = { listDeliveryContacts: jest.fn().mockResolvedValue(people) };
   return {
     ledgerRepository,
     upsShipmentRepository,
-    service: new AdminTodayService({ ledgerRepository, upsShipmentRepository, calendar, now: () => NOW })
+    courierDeliveryService,
+    courierDeliveryRepository,
+    blingNfeRepository,
+    customerContactsRepository,
+    profileRepository,
+    deliveryAddressIssuesRepository,
+    service: new AdminTodayService({
+      ledgerRepository, upsShipmentRepository, calendar, courierDeliveryService, courierDeliveryRepository,
+      blingNfeRepository, blingNfeService, customerContactsRepository, profileRepository, deliveryAddressIssuesRepository, now: () => NOW
+    })
   };
 }
+
+const brRow = (overrides = {}) => row({ stripeAccount: 'br', address: { name: 'Ana', city: 'Curitiba', country: 'BR' }, ...overrides });
+const adminActor = { roles: ['admin'], permissions: ['bling.connect'] };
+const brOperator = { roles: ['operator'], markets: ['BR'], permissions: ['production.read'] };
 
 describe('AdminTodayService', () => {
   test('counts today, tomorrow and overdue work per market', async () => {
@@ -37,7 +59,7 @@ describe('AdminTodayService', () => {
       rows: [
         row({ id: 1 }),
         row({ id: 2, stripeAccount: 'br', paidInvoiceId: null, address: { city: 'Curitiba', country: 'BR' }, dueAt: '2026-10-08 15:00:00' }),
-        row({ id: 3, dueAt: '2026-10-05 15:00:00' })
+        row({ id: 3, dueAt: '2026-10-05 15:00:00', productionStatus: 'to_prepare' })
       ]
     });
 
@@ -62,17 +84,49 @@ describe('AdminTodayService', () => {
     }));
   });
 
+  // A paid cycle never prepared is not dropped by the overdue month: Today counts it apart and flags it.
+  test('counts and flags paid cycles still not ready past the overdue month', async () => {
+    const { service: today, ledgerRepository } = service({
+      rows: [
+        row({ id: 1, productionStatus: 'to_prepare', dueAt: '2026-08-20 15:00:00' }),
+        row({ id: 2, productionStatus: 'to_prepare', dueAt: '2026-10-05 15:00:00' })
+      ]
+    });
+    ledgerRepository.countStalePaidQueue = jest.fn().mockResolvedValue(3);
+
+    const result = await today.overview({ timezone: 'America/Sao_Paulo', account: 'br' }, adminActor);
+
+    expect(ledgerRepository.countStalePaidQueue).toHaveBeenCalledWith(expect.objectContaining({ overdueFloor: '2026-09-07 03:00:00', account: 'br' }));
+    expect(result.data.stalePaid).toBe(3);
+    expect(result.data.items.map((item) => [item.id, item.stale])).toEqual([[1, true], [2, false]]);
+  });
+
   test('flags a paid US cycle whose invoice has no UPS label', async () => {
     const { service: today, upsShipmentRepository } = service({
       rows: [row({ id: 1, paidInvoiceId: 'in_1' }), row({ id: 2, paidInvoiceId: 'in_2' }), row({ id: 3, paymentState: 'awaiting_payment', paidInvoiceId: null })],
-      shipments: [{ stripe_invoice_id: 'in_1' }]
+      shipments: [{ stripe_invoice_id: 'in_1', status: 'created' }]
     });
 
     const result = await today.overview({});
 
-    expect(upsShipmentRepository.listByInvoiceIds).toHaveBeenCalledWith(['in_1', 'in_2']);
+    expect(upsShipmentRepository.listActiveByInvoiceIds).toHaveBeenCalledWith(['in_1', 'in_2']);
     expect(result.data.items.map((item) => [item.id, item.upsLabel])).toEqual([[1, 'created'], [2, 'missing'], [3, null]]);
     expect(result.data.items[0]).not.toHaveProperty('paidInvoiceId');
+  });
+
+  test('marks a purchase UPS never confirmed as unresolved, and a delivered label as created', async () => {
+    const { service: today } = service({
+      rows: [row({ id: 1, paidInvoiceId: 'in_1' }), row({ id: 2, paidInvoiceId: 'in_2' }), row({ id: 3, paidInvoiceId: 'in_3' }), row({ id: 4, paidInvoiceId: 'in_4' })],
+      shipments: [
+        { stripe_invoice_id: 'in_1', status: 'pending' },
+        { stripe_invoice_id: 'in_2', status: 'unknown' },
+        { stripe_invoice_id: 'in_3', status: 'delivered' }
+      ]
+    });
+
+    const result = await today.overview({});
+
+    expect(result.data.items.map((item) => [item.id, item.upsLabel])).toEqual([[1, 'unresolved'], [2, 'unresolved'], [3, 'created'], [4, 'missing']]);
   });
 
   test('lists closed days of today and tomorrow for the markets in scope', async () => {
@@ -90,5 +144,204 @@ describe('AdminTodayService', () => {
     expect(result.data.closedDays).toEqual([
       expect.objectContaining({ market: 'BR', date: '2026-10-08', label: 'Folga' })
     ]);
+  });
+
+  test('a paid Brazil item says where its box is, a canceled attempt counting as none', async () => {
+    const { service: today, courierDeliveryRepository } = service({
+      rows: [brRow({ id: 1, paidInvoiceId: 'in_1' }), brRow({ id: 2, paidInvoiceId: 'in_2' }), brRow({ id: 3, paidInvoiceId: 'in_3' }), brRow({ id: 4, paidInvoiceId: 'in_4' }), row({ id: 5, paidInvoiceId: 'in_5' })],
+      courierRows: [
+        { id: 1, stripe_invoice_id: 'in_1', status: 'out_for_delivery' },
+        { id: 2, stripe_invoice_id: 'in_2', status: 'failed' },
+        { id: 3, stripe_invoice_id: 'in_3', status: 'failed' },
+        { id: 4, stripe_invoice_id: 'in_3', status: 'delivered' },
+        { id: 5, stripe_invoice_id: 'in_4', status: 'canceled' }
+      ]
+    });
+
+    const result = await today.overview({});
+
+    expect(courierDeliveryRepository.listByInvoiceIds).toHaveBeenCalledWith(['in_1', 'in_2', 'in_3', 'in_4']);
+    expect(result.data.items.map((item) => [item.id, item.courierDelivery])).toEqual([
+      [1, 'out_for_delivery'], [2, 'failed'], [3, 'delivered'], [4, 'none'], [5, null]
+    ]);
+  });
+
+  test('counts shipping and invoice work on its own, beyond the 200 items of the list', async () => {
+    const rows = Array.from({ length: 200 }, (_, index) => brRow({ id: index + 1, paidInvoiceId: `in_${index + 1}` }));
+    const { service: today } = service({
+      rows,
+      total: 250,
+      courierCounts: { toDispatch: 230, onTheRoadLong: 2, failed: 1 },
+      nfeCounts: { rejected: 1, error: 3 },
+      upsUnresolved: 4
+    });
+
+    const result = await today.overview({}, adminActor);
+
+    expect(result.data.truncated).toBe(true);
+    expect(result.data.fulfillment).toEqual({
+      courierToDispatch: 230, courierOnTheRoadLong: 2, courierFailed: 1, courierAwaitingNfe: null, courierAddressLocked: 0,
+      nfeMissingDocument: 0, nfeRejected: 1, nfeError: 3,
+      upsUnresolved: 4, upsLabelsWithoutPickup: 0, blingConnected: true,
+      addressIssues: { BR: { open: 0, stale: 0 }, US: { open: 0, stale: 0 } },
+      marketExceptions: { BR: 0, US: 0 }
+    });
+  });
+
+  // admin-flow-fixes-5 (PM-26): address problems and market exceptions per market.
+  test('counts open address problems per market, stale from 72 hours', async () => {
+    const { service: today, deliveryAddressIssuesRepository } = service({
+      rows: [],
+      issueCounts: new Map([['br', { open: 2, stale: 1 }], ['us', { open: 1, stale: 0 }]]),
+      exceptionCounts: new Map([['us', 230], ['br', 1]])
+    });
+
+    const result = await today.overview({}, adminActor);
+
+    expect(result.data.fulfillment.addressIssues).toEqual({ BR: { open: 2, stale: 1 }, US: { open: 1, stale: 0 } });
+    expect(result.data.fulfillment.marketExceptions).toEqual({ BR: 1, US: 230 });
+    expect(deliveryAddressIssuesRepository.countOpenByAccount).toHaveBeenCalledWith({
+      staleBefore: new Date(NOW.getTime() - 72 * 3600 * 1000),
+      stripeAccounts: ['br', 'us']
+    });
+  });
+
+  test('a Brazil operator gets no US address problem nor exception', async () => {
+    const { service: today, ledgerRepository } = service({
+      rows: [],
+      issueCounts: new Map([['br', { open: 1, stale: 0 }], ['us', { open: 4, stale: 2 }]]),
+      exceptionCounts: new Map([['us', 1]])
+    });
+
+    const result = await today.overview({}, brOperator);
+
+    expect(result.data.fulfillment.addressIssues).toEqual({ BR: { open: 1, stale: 0 }, US: { open: 0, stale: 0 } });
+    expect(result.data.fulfillment.marketExceptions).toEqual({ BR: 0, US: 0 });
+    expect(ledgerRepository.countMarketExceptions).toHaveBeenCalledWith({ stripeAccounts: ['br'] });
+  });
+
+  test('without the address problems repository the counts are 0', async () => {
+    const result = await service({ rows: [], withIssues: false }).service.overview({}, adminActor);
+
+    expect(result.data.fulfillment.addressIssues).toEqual({ BR: { open: 0, stale: 0 }, US: { open: 0, stale: 0 } });
+  });
+
+  test('a Brazil operator gets no US counts and no Bling state', async () => {
+    const { service: today, upsShipmentRepository, courierDeliveryService } = service({
+      rows: [],
+      courierCounts: { toDispatch: 2, onTheRoadLong: 0, failed: 0 },
+      nfeCounts: { rejected: 1 },
+      upsUnresolved: 5
+    });
+
+    const result = await today.overview({}, brOperator);
+
+    expect(courierDeliveryService.countQueue).toHaveBeenCalledWith(brOperator);
+    expect(upsShipmentRepository.countUnresolved).not.toHaveBeenCalled();
+    expect(upsShipmentRepository.countCreatedWithoutPickup).not.toHaveBeenCalled();
+    expect(result.data.fulfillment).toMatchObject({ courierToDispatch: 2, nfeRejected: 1, upsUnresolved: 0, upsLabelsWithoutPickup: 0, blingConnected: null });
+  });
+
+  // admin-flow-fixes-4 (PM-25): part of "a despachar", waiting for an authorized NF-e.
+  test('reports the orders waiting for the NF-e, and null while the lock is off', async () => {
+    const on = await service({ rows: [], courierCounts: { toDispatch: 3, onTheRoadLong: 0, failed: 0, awaitingNfe: 2 } }).service.overview({}, adminActor);
+    expect(on.data.fulfillment).toMatchObject({ courierToDispatch: 3, courierAwaitingNfe: 2 });
+
+    const off = await service({ rows: [], courierCounts: { toDispatch: 3, onTheRoadLong: 0, failed: 0, awaitingNfe: null } }).service.overview({}, adminActor);
+    expect(off.data.fulfillment.courierAwaitingNfe).toBeNull();
+  });
+
+  // keep-ready-orders-dispatchable: part of "a despachar" held by the address, whatever the open problems.
+  test('reports the orders to dispatch held by the address, and 0 outside Brazil', async () => {
+    const held = await service({ rows: [], courierCounts: { toDispatch: 3, addressLocked: 2, onTheRoadLong: 0, failed: 0 } }).service.overview({}, brOperator);
+    expect(held.data.fulfillment).toMatchObject({ courierToDispatch: 3, courierAddressLocked: 2 });
+    expect(held.data.fulfillment.addressIssues.BR).toEqual({ open: 0, stale: 0 });
+
+    const usOperator = { roles: ['operator'], markets: ['US'], permissions: ['production.read'] };
+    const us = await service({ rows: [], courierCounts: { toDispatch: 3, addressLocked: 2, onTheRoadLong: 0, failed: 0 } }).service.overview({}, usOperator);
+    expect(us.data.fulfillment.courierAddressLocked).toBe(0);
+  });
+
+  // keep-ready-orders-dispatchable: overdue is late kitchen work; the ready one waits in "a despachar".
+  test('a ready cycle kept past its day is not counted overdue', async () => {
+    const { service: today } = service({
+      rows: [
+        brRow({ id: 1, dueAt: '2026-09-13 15:00:00', productionStatus: 'ready' }),
+        brRow({ id: 2, dueAt: '2026-10-05 15:00:00', productionStatus: 'to_prepare', paidInvoiceId: 'in_2' })
+      ]
+    });
+
+    const result = await today.overview({ timezone: 'America/Sao_Paulo' }, adminActor);
+
+    expect(result.data.totals.overdue).toBe(1);
+    expect(result.data.byMarket.BR.overdue).toBe(1);
+    expect(result.data.items.map((item) => item.id)).toEqual(expect.arrayContaining([1, 2]));
+  });
+
+  test('with the lock on, the US on screen counts 0 waiting for the NF-e', async () => {
+    const { service: today, courierDeliveryService } = service({ rows: [] });
+    courierDeliveryService.nfeRequired = true;
+    const result = await today.overview({ account: 'us' }, adminActor);
+    expect(result.data.fulfillment.courierAwaitingNfe).toBe(0);
+  });
+
+  test('the US on screen counts no Brazil work', async () => {
+    const { service: today, courierDeliveryService, blingNfeRepository } = service({ rows: [], upsUnresolved: 1 });
+
+    const result = await today.overview({ account: 'us' }, adminActor);
+
+    expect(courierDeliveryService.countQueue).not.toHaveBeenCalled();
+    expect(blingNfeRepository.countByStatuses).not.toHaveBeenCalled();
+    expect(result.data.fulfillment).toMatchObject({ courierToDispatch: 0, nfeRejected: 0, upsUnresolved: 1 });
+  });
+
+  // admin-flow-fixes-6 (ups-pickup): created labels with no pickup asked of UPS.
+  test('counts the US labels without a pickup', async () => {
+    const { service: today, upsShipmentRepository } = service({ rows: [], upsWithoutPickup: 3 });
+
+    const result = await today.overview({ account: 'us' }, adminActor);
+
+    expect(upsShipmentRepository.countCreatedWithoutPickup).toHaveBeenCalledTimes(1);
+    expect(result.data.fulfillment.upsLabelsWithoutPickup).toBe(3);
+  });
+
+  test('the Brazil screen counts no label without a pickup', async () => {
+    const { service: today, upsShipmentRepository } = service({ rows: [], upsWithoutPickup: 3 });
+
+    const result = await today.overview({ account: 'br' }, adminActor);
+
+    expect(upsShipmentRepository.countCreatedWithoutPickup).not.toHaveBeenCalled();
+    expect(result.data.fulfillment.upsLabelsWithoutPickup).toBe(0);
+  });
+
+  test('an admin hears that Bling is disconnected; nothing where Bling is not configured', async () => {
+    const disconnected = await service({ rows: [], bling: { configured: true, connected: false } }).service.overview({}, adminActor);
+    expect(disconnected.data.fulfillment.blingConnected).toBe(false);
+
+    const absent = await service({ rows: [], bling: { configured: false, connected: false } }).service.overview({}, adminActor);
+    expect(absent.data.fulfillment.blingConnected).toBeNull();
+  });
+
+  test('a refused payment carries the last contact and the account phone; other items carry no phone', async () => {
+    const { service: today, customerContactsRepository, profileRepository } = service({
+      rows: [
+        row({ id: 1, userId: '10', paymentState: 'past_due', paidInvoiceId: null }),
+        row({ id: 2, userId: '11', paymentState: 'past_due', paidInvoiceId: null }),
+        row({ id: 3, userId: '12' })
+      ],
+      contacts: new Map([['1', { id: 8, subscription_id: '1', reason: 'payment_failed', outcome: 'no_answer', note: null, actor_email: 'ops@edenbowls.com', created_at: new Date('2026-11-04T17:05:00Z') }]]),
+      people: new Map([['10', { phone: '+1 305 555 0101', deliveryInstructions: null }]])
+    });
+
+    const result = await today.overview({});
+
+    expect(customerContactsRepository.latestBySubscriptions).toHaveBeenCalledWith([1, 2]);
+    expect(profileRepository.listDeliveryContacts).toHaveBeenCalledWith(['10', '11']);
+    const [first, second, third] = result.data.items;
+    expect(first.lastContact).toMatchObject({ reason: 'payment_failed', outcome: 'no_answer', actor_email: 'ops@edenbowls.com', created_at: '2026-11-04T17:05:00.000Z' });
+    expect(first.phone).toBe('+1 305 555 0101');
+    expect(second).toMatchObject({ lastContact: null, phone: null });
+    expect(third).not.toHaveProperty('phone');
+    expect(third).not.toHaveProperty('lastContact');
   });
 });

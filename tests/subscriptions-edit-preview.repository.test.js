@@ -2,7 +2,7 @@ const { SubscriptionsEditPreviewRepository } = require('../src/infrastructure/re
 const { ShippingQuoteSigner } = require('../src/core/shipping-quote-token');
 
 const quoteSigner = new ShippingQuoteSigner({ secret: 'test-shipping-quote-secret' });
-const US_EDIT_ADDRESS = { country: 'US', state: 'CA', postal_code: '94105', line1: '1 Market St', city: 'San Francisco' };
+const US_EDIT_ADDRESS = { country: 'US', state: 'CA', postal_code: '94105', line1: '1 Market St', city: 'San Francisco', recipient_name: 'Ana Costa' };
 
 function signedShipping({ cost = 12.9, deliveryDays = 1 } = {}) {
   return {
@@ -78,5 +78,27 @@ describe('SubscriptionsEditPreviewRepository signed shipping quote', () => {
     });
     expect(result.term_change).toBe(true);
     expect(result.proposed.subscription_term_months).toBe(3);
+  });
+});
+
+describe('SubscriptionsEditPreviewRepository market and address checks', () => {
+  const payload = (address) => ({
+    subscription_term_months: 1,
+    pets: [{ pet_name: 'Milo', enabled: true, selected_flavors: ['chicken'], flavor_weights: [100] }],
+    address,
+    shipping: signedShipping()
+  });
+
+  test('refuses an address of another country before asking Stripe', async () => {
+    const repository = buildRepo();
+    await expect(repository.preview(7, 'sub_123', payload({ ...US_EDIT_ADDRESS, country: 'BR' })))
+      .rejects.toMatchObject({ statusCode: 422, details: { code: 'address_country_mismatch' } });
+    expect(repository.stripeBilling.retrieveSubscription).not.toHaveBeenCalled();
+  });
+
+  test('refuses an incomplete address with its fields', async () => {
+    const repository = buildRepo();
+    await expect(repository.preview(7, 'sub_123', payload({ ...US_EDIT_ADDRESS, city: '' })))
+      .rejects.toMatchObject({ statusCode: 422, details: { code: 'address_incomplete', fields: ['city'] } });
   });
 });

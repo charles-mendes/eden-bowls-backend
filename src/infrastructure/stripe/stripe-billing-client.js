@@ -1,3 +1,4 @@
+const { withTimeout } = require('../../core/with-timeout');
 function isSeedStripePriceId(priceId) {
   return String(priceId || '').startsWith('price_seed_');
 }
@@ -1187,13 +1188,16 @@ class StripeBillingClient {
     }
   }
 
-  async resumeSubscription(subscriptionId) {
+  // Reactivating also drops a scheduled cancellation, in the same update, so the plan keeps renewing.
+  async resumeSubscription(subscriptionId, { clearCancelAtPeriodEnd = false } = {}) {
     const { HttpError } = require('../../core/http-error');
     const stripe = this.ensureClient();
+    const params = { pause_collection: '' };
+    if (clearCancelAtPeriodEnd) {
+      params.cancel_at_period_end = false;
+    }
     try {
-      return await stripe.subscriptions.update(subscriptionId, {
-        pause_collection: ''
-      });
+      return await stripe.subscriptions.update(subscriptionId, params);
     } catch (error) {
       throw this.httpError(502, this.stripeMessage(error, 'Unable to resume Stripe subscription.'), {
         code: 'stripe_subscription_resume_failed'
@@ -1333,6 +1337,13 @@ class StripeBillingClient {
         code: 'stripe_proration_preview_failed'
       });
     }
+  }
+
+  // The subscription's next invoice as it stands, with no plan change. Read only.
+  async previewUpcomingInvoice(subscriptionId, { timeoutMs = 15 * 1000 } = {}) {
+    const stripe = this.ensureClient();
+    const invoice = await withTimeout(stripe.invoices.createPreview({ subscription: subscriptionId }), timeoutMs);
+    return { amount: invoice.amount_due, currency: invoice.currency };
   }
 
   async updateSubscriptionItems({ subscriptionId, items, metadata, prorationBehavior = 'create_prorations' }) {
