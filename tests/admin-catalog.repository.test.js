@@ -42,6 +42,7 @@ describe('AdminCatalogRepository', () => {
     const repository = new AdminCatalogRepository(dataSource);
     const result = await repository.listProducts({ market: 'BR', offset: 0, perPage: 20 });
 
+    expect(dataSource.query.mock.calls[0][0]).not.toContain('NOT IN');
     expect(dataSource.query.mock.calls[1][0]).toContain('p.created_at AS createdAt');
     expect(dataSource.query.mock.calls[1][0]).toContain('ORDER BY p.created_at DESC');
     expect(dataSource.query.mock.calls[1][0]).not.toContain('post_date');
@@ -231,6 +232,18 @@ describe('AdminCatalogRepository', () => {
 
     const lines = Object.fromEntries(result.items[0].variants.map((variant) => [variant.id, variant.lifeStage]));
     expect(lines).toEqual({ 1001: 'adult', 3001: 'senior' });
+  });
+
+  test('leaves out the excluded products of the quick filters', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValueOnce([{ total: 0 }]).mockResolvedValueOnce([]) };
+    const repository = new AdminCatalogRepository(dataSource);
+
+    await repository.listProducts({ market: 'BR', excludeProductIds: ['100', '102'], offset: 0, perPage: 20 });
+
+    const [countSql, countParams] = dataSource.query.mock.calls[0];
+    expect(countSql).toContain('p.ID NOT IN (?, ?)');
+    expect(countParams).toEqual(expect.arrayContaining([100, 102]));
+    expect(dataSource.query.mock.calls[1][0]).toContain('p.ID NOT IN (?, ?)');
   });
 
   test('stores the life stage line on create, adult by default, and on update only when given', async () => {

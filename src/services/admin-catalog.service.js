@@ -55,6 +55,11 @@ function parseProductCode(value) {
   return code;
 }
 
+// Query flags of the products list arrive as strings: 'true' or '1' turns the filter on.
+function isTruthyFlag(value) {
+  return value === true || value === 'true' || value === '1';
+}
+
 function parseProductLifeStage(value) {
   const lifeStage = String(value == null ? '' : value).trim().toLowerCase();
   if (!LIFE_STAGES.includes(lifeStage)) {
@@ -275,12 +280,30 @@ class AdminCatalogService {
 
   async listProducts(query, pagination, actor = {}) {
     const markets = this.scopedMarkets(query, actor);
-    const productIds = query.code ? await this.productIdsWithCode(query.code, markets || ['BR', 'US']) : undefined;
+    const contentMarkets = markets || ['BR', 'US'];
+    let productIds = query.code ? await this.productIdsWithCode(query.code, contentMarkets) : undefined;
+    const lifeStage = query.lifeStage ? parseProductLifeStage(query.lifeStage) : null;
+    const noImage = isTruthyFlag(query.noImage);
+    const labelIncomplete = isTruthyFlag(query.labelIncomplete);
+    let excludeProductIds;
+    if (lifeStage || noImage || labelIncomplete) {
+      const contents = await this.contentsInMarkets(contentMarkets);
+      if (lifeStage) {
+        const stageIds = contents.filter((content) => content.lifeStage === lifeStage).map((content) => content.productId);
+        productIds = productIds ? productIds.filter((id) => stageIds.includes(id)) : stageIds;
+      }
+      // A product without content has no image and no label, so these filters keep it.
+      excludeProductIds = contents
+        .filter((content) => (noImage && content.imageUrl)
+          || (labelIncomplete && labelCompleteness(content.label, normalizeRecipeMarket(content.market)).status === 'complete'))
+        .map((content) => content.productId);
+    }
     const result = await this.repository.listProducts({
       search: query.search,
       market: query.market,
       markets,
       productIds,
+      excludeProductIds,
       offset: pagination.offset,
       perPage: pagination.perPage
     });
@@ -308,6 +331,23 @@ class AdminCatalogService {
       }
     }
     return ids;
+  }
+
+  // Content rows of the given markets with a product, for the list filters (Fase, Sem imagem, Rótulo incompleto).
+  async contentsInMarkets(markets) {
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.listByMarket;
+    if (typeof lookup !== 'function') {
+      return [];
+    }
+    const contents = [];
+    for (const market of markets) {
+      for (const content of await lookup.call(this.recipeContentRepository, market)) {
+        if (content && content.productId) {
+          contents.push(content);
+        }
+      }
+    }
+    return contents;
   }
 
   async annotateDeleteFlags(products) {

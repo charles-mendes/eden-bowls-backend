@@ -142,7 +142,7 @@ class AdminCatalogRepository {
     }
   }
 
-  async listProducts({ search, market, markets, productIds, offset, perPage }) {
+  async listProducts({ search, market, markets, productIds, excludeProductIds, offset, perPage }) {
     this.ensureDataSource();
     const where = ["p.post_type = 'product'", "p.post_status IN ('publish', 'draft', 'private', 'pending')"];
     const params = [];
@@ -153,6 +153,12 @@ class AdminCatalogRepository {
         return { total: 0, items: [] };
       }
       appendInFilter(where, params, 'p.ID', productIds.map(Number));
+    }
+
+    // Quick filters (no image, label incomplete) drop the products whose content already has it.
+    if (Array.isArray(excludeProductIds) && excludeProductIds.length) {
+      where.push(`p.ID NOT IN (${excludeProductIds.map(() => '?').join(', ')})`);
+      params.push(...excludeProductIds.map(Number));
     }
 
     if (search) {

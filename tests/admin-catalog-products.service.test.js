@@ -6,6 +6,7 @@ function contentStore(rows = []) {
   return {
     byId,
     findByProductId: jest.fn(async (id) => byId.get(String(id)) || null),
+    listByMarket: jest.fn(async (market) => [...byId.values()].filter((row) => row.market === market)),
     findByMarketAndSlug: jest.fn(async (market, slug) => [...byId.values()].find((row) => row.market === market && row.flavorSlug === slug) || null),
     createForProduct: jest.fn(async ({ productId, market, flavorSlug, name, lifeStage }) => {
       const row = { productId: String(productId), market, flavorSlug, name, lifeStage, flavorAliases: '', shortLabel: '', label: null, presentation: null, imageUrl: null };
@@ -316,6 +317,49 @@ describe('Product detail reports each variation content', () => {
     const { service, repository } = setup();
     await service.listProducts({ market: 'BR', code: 'bovino' }, { page: 1, perPage: 20, offset: 0 });
     expect(repository.listProducts).toHaveBeenCalledWith(expect.objectContaining({ productIds: [] }));
+  });
+
+  test('the list filters by life stage', async () => {
+    const { service, repository } = setup({
+      contents: [BEEF_BR, { ...BEEF_BR, productId: '101', flavorSlug: 'senior-beef', lifeStage: 'senior' }, { ...BEEF_BR, productId: '102', market: 'US', lifeStage: 'senior' }]
+    });
+
+    await service.listProducts({ market: 'BR', lifeStage: 'senior' }, { page: 1, perPage: 20, offset: 0 });
+
+    expect(repository.listProducts).toHaveBeenCalledWith(expect.objectContaining({ productIds: ['101'] }));
+  });
+
+  test('life stage and code filters combine', async () => {
+    const { service, repository } = setup();
+    await service.listProducts({ market: 'BR', code: 'beef', lifeStage: 'senior' }, { page: 1, perPage: 20, offset: 0 });
+    expect(repository.listProducts).toHaveBeenCalledWith(expect.objectContaining({ productIds: [] }));
+  });
+
+  test('an unknown life stage is rejected', async () => {
+    const { service } = setup();
+    await expect(service.listProducts({ market: 'BR', lifeStage: 'kitten' }, { page: 1, perPage: 20, offset: 0 }))
+      .rejects.toMatchObject({ statusCode: 422, details: { code: 'product_life_stage_invalid' } });
+  });
+
+  const COMPLETE_LABEL = { ingredients: ['carne'], analysis: [{ name: 'Proteína' }], energyKg: '1200 kcal/kg', energyPackage: '360 kcal' };
+
+  test('no image and label incomplete filter on the API and keep products without content', async () => {
+    const { service, repository } = setup({
+      contents: [
+        { ...BEEF_BR, imageUrl: '/recipe-images/beef.webp', label: COMPLETE_LABEL },
+        { ...BEEF_BR, productId: '101', flavorSlug: 'lamb', label: { ingredients: ['cordeiro'] } },
+        { ...BEEF_BR, productId: '102', flavorSlug: 'fish', imageUrl: '/recipe-images/fish.webp' }
+      ]
+    });
+
+    await service.listProducts({ market: 'BR', noImage: 'true' }, { page: 1, perPage: 20, offset: 0 });
+    expect(repository.listProducts).toHaveBeenLastCalledWith(expect.objectContaining({ productIds: undefined, excludeProductIds: ['100', '102'] }));
+
+    await service.listProducts({ market: 'BR', labelIncomplete: 'true' }, { page: 1, perPage: 20, offset: 0 });
+    expect(repository.listProducts).toHaveBeenLastCalledWith(expect.objectContaining({ excludeProductIds: ['100'] }));
+
+    await service.listProducts({ market: 'BR', noImage: 'false' }, { page: 1, perPage: 20, offset: 0 });
+    expect(repository.listProducts).toHaveBeenLastCalledWith(expect.objectContaining({ excludeProductIds: undefined }));
   });
 });
 
