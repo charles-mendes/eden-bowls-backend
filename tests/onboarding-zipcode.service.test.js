@@ -54,3 +54,46 @@ describe('OnboardingZipcodeService recipient name', () => {
     expect(repository.saveZipcode).not.toHaveBeenCalled();
   });
 });
+
+describe('OnboardingZipcodeService delivery instructions', () => {
+  const base = { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo', recipient_name: 'Ana Costa' };
+  function build(stored) {
+    const repository = {
+      getAddress: jest.fn().mockResolvedValue(stored),
+      saveZipcode: jest.fn().mockImplementation(async (_userId, payload) => ({ zipcode: payload }))
+    };
+    return { service: new OnboardingZipcodeService(repository), repository };
+  }
+
+  test('older client without the field keeps the stored instructions', async () => {
+    const { service, repository } = build({ delivery_instructions: 'Interfone 12' });
+    await service.setZipcode({ userId: 7, payload: base });
+    expect(repository.saveZipcode.mock.calls[0][1].delivery_instructions).toBe('Interfone 12');
+  });
+
+  test('an empty string clears them', async () => {
+    const { service, repository } = build({ delivery_instructions: 'Interfone 12' });
+    await service.setZipcode({ userId: 7, payload: { ...base, delivery_instructions: '' } });
+    expect(repository.saveZipcode.mock.calls[0][1].delivery_instructions).toBe('');
+    expect(repository.getAddress).not.toHaveBeenCalled();
+  });
+
+  test('a value replaces them after the rule', async () => {
+    const { service, repository } = build({ delivery_instructions: 'Interfone 12' });
+    await service.setZipcode({ userId: 7, payload: { ...base, delivery_instructions: '  Deixar\n na portaria ' } });
+    expect(repository.saveZipcode.mock.calls[0][1].delivery_instructions).toBe('Deixar na portaria');
+  });
+
+  test('201 characters are refused and nothing is saved', async () => {
+    const { service, repository } = build(null);
+    await expect(service.setZipcode({ userId: 7, payload: { ...base, delivery_instructions: 'a'.repeat(201) } }))
+      .rejects.toMatchObject({ statusCode: 422, details: { field: 'delivery_instructions' } });
+    expect(repository.saveZipcode).not.toHaveBeenCalled();
+  });
+
+  test('no stored address and no field stores none', async () => {
+    const { service, repository } = build(null);
+    await service.setZipcode({ userId: 7, payload: base });
+    expect(repository.saveZipcode.mock.calls[0][1].delivery_instructions).toBe('');
+  });
+});

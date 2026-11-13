@@ -529,12 +529,12 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     expect(() => validateCheckoutState({ ...validContext, address: { country: 'BR', zipcode: '01310100', state: 'SP', city: 'Sao Paulo' } })).not.toThrow();
   });
 
-  test('copies the recipient into the subscription address and keeps it out of the Stripe name', async () => {
+  test('copies the recipient and the delivery instructions into the subscription address and keeps the recipient out of the Stripe name', async () => {
     const ledgerRepository = {
       listByUserId: jest.fn().mockResolvedValue([]),
       upsert: jest.fn().mockResolvedValue({})
     };
-    const address = { ...US_ADDRESS, recipient_name: 'João Lima' };
+    const address = { ...US_ADDRESS, recipient_name: 'João Lima', delivery_instructions: 'Leave at back door' };
     const { service, stripeBilling } = buildService({
       repository: {
         checkout: jest.fn().mockImplementation(async (_userId, body) => body.checkout),
@@ -553,8 +553,10 @@ describe('OnboardingSubscriptionCheckoutService', () => {
     await service.checkout({ userId: 7, payload });
 
     expect(ledgerRepository.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      address: expect.objectContaining({ recipient_name: 'João Lima' })
+      address: expect.objectContaining({ recipient_name: 'João Lima', delivery_instructions: 'Leave at back door' })
     }));
+    // delivery-instructions: the subscription and its checkout snapshot keep the instructions of the checkout.
+    expect(ledgerRepository.upsert.mock.calls[0][0].checkoutSnapshot.address.delivery_instructions).toBe('Leave at back door');
     // The Stripe customer and shipping name stay the account name; the client never reads recipient_name.
     expect(stripeBilling.createOnboardingSubscription.mock.calls[0][0].name).toBe('Jane Doe');
   });

@@ -322,6 +322,32 @@ describe('ProfileService', () => {
     }
   });
 
+  test('delivery instructions: one line, omit keeps them, too long is refused in the errors map', async () => {
+    const build = () => createService({
+      repository: {
+        findUserById: jest.fn().mockResolvedValue(createUser({ phoneCountry: 'BR' })),
+        getAddress: jest.fn().mockResolvedValue({ exists: true, address: { country: 'BR', delivery_instructions: 'Interfone 12' } }),
+        mergeAddress: jest.fn().mockImplementation(async (_id, patch) => ({ country: 'BR', delivery_instructions: 'Interfone 12', ...patch }))
+      }
+    });
+    const base = { address: 'Rua A', city: 'Sao Paulo', state: 'SP', zipCode: '01310-100' };
+
+    const edited = build();
+    const saved = await edited.service.updateDelivery({ userId: 77, payload: { ...base, deliveryInstructions: ' Portão\n azul ' } });
+    expect(edited.repository.mergeAddress.mock.calls[0][1].delivery_instructions).toBe('Portão azul');
+    expect(saved.deliveryInstructions).toBe('Portão azul');
+
+    const omitted = build();
+    const kept = await omitted.service.updateDelivery({ userId: 77, payload: base });
+    expect(omitted.repository.mergeAddress.mock.calls[0][1]).not.toHaveProperty('delivery_instructions');
+    expect(kept.deliveryInstructions).toBe('Interfone 12');
+
+    const refused = build();
+    await expect(refused.service.updateDelivery({ userId: 77, payload: { ...base, deliveryInstructions: 'a'.repeat(201) } }))
+      .rejects.toMatchObject({ statusCode: 422, details: { code: 'validation_error', errors: { deliveryInstructions: expect.any(String) } } });
+    expect(refused.repository.mergeAddress).not.toHaveBeenCalled();
+  });
+
   test('uppercases a BR state and rejects a short US ZIP', async () => {
     const br = createService({
       repository: {

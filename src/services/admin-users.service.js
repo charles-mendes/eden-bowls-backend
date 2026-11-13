@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { parseDeliveryInstructionsInput } = require('../core/delivery-instructions');
 const { AUTH_ERROR } = require('../api/contracts/auth-errors');
 const { parseCpf, parseFiscalName } = require('../core/tax-document');
 const { checkoutShippingOf } = require('../core/checkout-shipping');
@@ -564,14 +565,18 @@ class AdminUsersService {
       throw new HttpError(503, 'Profile repository is not available.');
     }
 
+    // delivery-instructions: the same rule as every writer; the body keeps its `deliveryInstructions` key.
+    const text = parseDeliveryInstructionsInput(deliveryInstructions === undefined ? '' : deliveryInstructions);
     const user = await this.requireExistingUser(userId);
     this.assertCustomerInScope(actor, user);
 
     const saved = await this.profileRepository.mergeAddress(
       user.id,
-      { delivery_instructions: String(deliveryInstructions || '').trim() },
+      { delivery_instructions: text },
       { createIfMissing: true }
     );
+    // Only the profile copy changed; the audit never stores the text.
+    await this.audit('users.delivery_instructions.update', actor, user, { cleared: !text });
 
     return {
       success: true,

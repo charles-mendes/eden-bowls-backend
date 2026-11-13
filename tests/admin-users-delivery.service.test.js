@@ -39,3 +39,32 @@ describe('AdminUsersService.updateDelivery audit', () => {
     expect(auditService.record).not.toHaveBeenCalled();
   });
 });
+
+describe('AdminUsersService.updateDeliveryInstructions', () => {
+  function buildWithProfile() {
+    const built = build();
+    built.service.profileRepository = {
+      mergeAddress: jest.fn(async (_id, patch) => ({ country: 'BR', ...patch }))
+    };
+    return built;
+  }
+
+  test('profile instructions saved by an operator are normalized and audited without the text', async () => {
+    const { service, auditService } = buildWithProfile();
+    const result = await service.updateDeliveryInstructions('8', '  Deixar\n na portaria ', { id: 1 });
+
+    expect(service.profileRepository.mergeAddress).toHaveBeenCalledWith('8', { delivery_instructions: 'Deixar na portaria' }, { createIfMissing: true });
+    expect(result.data.deliveryInstructions).toBe('Deixar na portaria');
+    const event = auditService.record.mock.calls[0][0];
+    expect(event).toMatchObject({ action: 'users.delivery_instructions.update', actor: { id: 1 }, target: user });
+    expect(JSON.stringify(event.metadata)).not.toContain('portaria');
+  });
+
+  test('an invalid value is refused with field delivery_instructions and nothing is saved', async () => {
+    const { service, auditService } = buildWithProfile();
+    await expect(service.updateDeliveryInstructions('8', 'a'.repeat(201), { id: 1 }))
+      .rejects.toMatchObject({ statusCode: 422, details: { field: 'delivery_instructions' } });
+    expect(service.profileRepository.mergeAddress).not.toHaveBeenCalled();
+    expect(auditService.record).not.toHaveBeenCalled();
+  });
+});

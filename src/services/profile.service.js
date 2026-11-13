@@ -1,5 +1,6 @@
 const { HttpError } = require('../core/http-error');
 const { RECIPIENT_NAME_KEY, validateRecipientName } = require('../core/recipient-name');
+const { DELIVERY_INSTRUCTIONS_MAX_LENGTH, validateDeliveryInstructions } = require('../core/delivery-instructions');
 const { hashWordpressPassword, verifyWordpressPassword } = require('../core/wordpress-password');
 const { normalizeCountry, normalizeZipcode } = require('./onboarding-zipcode.service');
 const { formatStateForDisplay, formatStateForStorage } = require('../core/us-states');
@@ -380,6 +381,13 @@ class ProfileService {
       errors[RECIPIENT_NAME_KEY] = 'Use 2 to 60 characters, with at least one letter and no @.';
     }
 
+    // delivery-instructions: omitted keeps the stored text through the merge; this route reports it in `errors`.
+    const rawInstructions = payload.deliveryInstructions === undefined ? payload.delivery_instructions : payload.deliveryInstructions;
+    const deliveryInstructions = rawInstructions === undefined ? undefined : validateDeliveryInstructions(rawInstructions);
+    if (rawInstructions !== undefined && deliveryInstructions === null) {
+      errors.deliveryInstructions = `Use at most ${DELIVERY_INSTRUCTIONS_MAX_LENGTH} characters, on one line.`;
+    }
+
     if (Object.keys(errors).length > 0) {
       throw new HttpError(422, 'Required fields are missing.', {
         code: 'validation_error',
@@ -404,7 +412,7 @@ class ProfileService {
       state: stateForStorage,
       zipcode: zipCode,
       postal_code: zipCode,
-      delivery_instructions: String(payload.deliveryInstructions || '').trim(),
+      ...(deliveryInstructions === undefined ? {} : { delivery_instructions: deliveryInstructions }),
       ...(recipientName === undefined ? {} : { [RECIPIENT_NAME_KEY]: recipientName }),
       ...(number === undefined ? {} : { number }),
       ...(neighborhood === undefined ? {} : { neighborhood })
