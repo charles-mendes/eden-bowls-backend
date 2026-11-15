@@ -71,7 +71,9 @@ const DEFAULT_NUTRITION_PARAMETERS = Object.freeze({
     cat: 60,
     cat_active: 100
   }),
-  nem: Object.freeze({ dog: 3600, cat: 3800 }),
+  // EM do alimento (kcal/kg) when the recipe gives none: the fresh food of the adult recipes (1200 kcal/kg on every
+  // adult label). There is no cat recipe; 1200 is the fresh-food example of the veterinarian's document.
+  nem: Object.freeze({ dog: 1200, cat: 1200 }),
   breed_groups: Object.freeze({
     dogue: Object.freeze([
       'dogue alemao',

@@ -169,8 +169,8 @@ describe('nutrition recommendation', () => {
     });
 
     expect(withInput.nem_kcal_kg).toBe(4100);
-    expect(dogDefault.nem_kcal_kg).toBe(3600);
-    expect(catDefault.nem_kcal_kg).toBe(3800);
+    expect(dogDefault.nem_kcal_kg).toBe(1200);
+    expect(catDefault.nem_kcal_kg).toBe(1200);
   });
 
   test('returns an error for invalid weight', () => {
@@ -199,7 +199,7 @@ describe('nutrition recommendation', () => {
     expect(result.pet_id).toBe('pet-1');
     expect(result.pet_name).toBe('Luna');
     expect(result.fator_aplicado).toBe(85);
-    expect(result.quantidade_g_dia).toBe(Math.round((85 * (10 ** 0.75) / 3600) * 1000));
+    expect(result.quantidade_g_dia).toBe(Math.round((85 * (10 ** 0.75) / 1200) * 1000));
   });
 
   test('converts pound weight to kilograms before calculating', () => {

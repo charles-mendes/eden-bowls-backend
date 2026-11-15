@@ -40,11 +40,11 @@ describe('parseNutritionParameters', () => {
     }));
   });
 
-  test('refuses a factor outside 1 to 400, a NEM outside 1000 to 8000 and a missing key', () => {
+  test('refuses a factor outside 1 to 400, a NEM outside 500 to 8000 and a missing key', () => {
     const input = defaults();
     input.combination_giant['NAO-ALTO-ABAIXO'] = 401;
     input.combination['SIM-BAIXO-ACIMA'] = 0;
-    input.nem.cat = 999;
+    input.nem.cat = 499;
     delete input.state.SENIOR;
 
     let error;
@@ -64,6 +64,12 @@ describe('parseNutritionParameters', () => {
 
     expect(draft.parameters.base).toEqual({ cat: 60, cat_active: 100 });
     expect(draft.parameters.combination_giant['NAO-ALTO-ABAIXO']).toBe(115);
+  });
+
+  test('accepts a fresh-food EM such as 957 kcal/kg', () => {
+    const input = defaults();
+    input.nem.cat = 957;
+    expect(parseNutritionParameters(input).nem.cat).toBe(957);
   });
 
   test('normalizes breeds and drops repeats within a group', () => {

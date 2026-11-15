@@ -4,14 +4,14 @@ const { HttpError } = require('../src/core/http-error');
 describe('AdminNutritionService', () => {
   const service = new AdminNutritionService();
 
-  test('uses dog NEM 3600 and combination factor', async () => {
+  test('uses the default fresh-food EM of 1200 for a dog and the combination factor', async () => {
     const result = await service.simulate({
       country: 'US',
       pet: { type: 'dog', life_stage: 'adult', weight: 20, neutered: true, age: 4 },
       questionnaire: { nivel_atividade: 'BAIXO', score_corporal: 'ADEQUADO' }
     });
 
-    expect(result.data.nem_kcal_kg).toBe(3600);
+    expect(result.data.nem_kcal_kg).toBe(1200);
     expect(result.data.fator_aplicado).toBe(85);
     expect(result.data.refeicoes).toBe(2);
     expect(result.data.display.weight).toContain('lb');
@@ -52,14 +52,14 @@ describe('AdminNutritionService', () => {
     expect(result.data.energia_kcal_dia).toBeGreaterThan(0);
   });
 
-  test('uses cat NEM 3800 instead of the old admin 3600 bug', async () => {
+  test('uses the default fresh-food EM of 1200 for a cat', async () => {
     const result = await service.simulate({
       country: 'BR',
       pet: { type: 'cat', life_stage: 'adult', weight: 4, neutered: true },
       questionnaire: { nivel_atividade: 'BAIXO', score_corporal: 'ADEQUADO' }
     });
 
-    expect(result.data.nem_kcal_kg).toBe(3800);
+    expect(result.data.nem_kcal_kg).toBe(1200);
     expect(result.data.especie).toBe('cat');
     expect(result.data.refeicoes).toBe(3);
     expect(result.data.display.daily).toContain('g/dia');
@@ -123,7 +123,7 @@ describe('AdminNutritionService', () => {
     test('keeps the engine default when the line has no energyKg', async () => {
       const result = await withEnergy.simulate({ country: 'BR', pet: { ...dog, life_stage: 'senior' }, questionnaire });
 
-      expect(result.data.nem_kcal_kg).toBe(3600);
+      expect(result.data.nem_kcal_kg).toBe(1200);
       expect(result.data.nem_source).toBe('default');
     });
 
@@ -134,7 +134,7 @@ describe('AdminNutritionService', () => {
         questionnaire: { nivel_atividade: 'BAIXO', score_corporal: 'ADEQUADO' }
       });
 
-      expect(result.data.nem_kcal_kg).toBe(3800);
+      expect(result.data.nem_kcal_kg).toBe(1200);
     });
 
     test('lists the recipes of the market for the simulator', async () => {
