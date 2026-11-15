@@ -1,4 +1,5 @@
 const { convertWeight } = require('./market');
+const { GIANT_BREED_GROUPS } = require('./giant-breeds');
 
 const COMBINATION_FACTORS = {
   'SIM-BAIXO-ABAIXO': 95,
@@ -75,21 +76,7 @@ const DEFAULT_NUTRITION_PARAMETERS = Object.freeze({
   // EM do alimento (kcal/kg) when the recipe gives none: the fresh food of the adult recipes (1200 kcal/kg on every
   // adult label). There is no cat recipe; 1200 is the fresh-food example of the veterinarian's document.
   nem: Object.freeze({ dog: 1200, cat: 1200 }),
-  breed_groups: Object.freeze({
-    dogue: Object.freeze([
-      'dogue alemao',
-      'great dane',
-      'irish wolfhound',
-      'scottish deerhound',
-      'borzoi',
-      'greyhound',
-      'anatolian',
-      'anatolian shepherd',
-      'leonberger'
-    ]),
-    slow_metabolism: Object.freeze(['sao bernardo', 'sao bernard', 'saint bernard']),
-    terranova: Object.freeze(['terra nova', 'terranova', 'newfoundland'])
-  })
+  breed_groups: GIANT_BREED_GROUPS
 });
 
 const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);

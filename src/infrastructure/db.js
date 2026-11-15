@@ -97,6 +97,7 @@ const { SplitPlanProducts1700000000075 } = require('./migrations/1700000000075-s
 const { SplitFirstPurchaseMisconfigByAccount1700000000076 } = require('./migrations/1700000000076-split-first-purchase-misconfig-by-account');
 const { NutritionParametersVetDocument1700000000077 } = require('./migrations/1700000000077-nutrition-parameters-vet-document');
 const { NutritionDefaultFoodEnergy1700000000078 } = require('./migrations/1700000000078-nutrition-default-food-energy');
+const { NutritionGiantBreeds1700000000079 } = require('./migrations/1700000000079-nutrition-giant-breeds');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -219,7 +220,8 @@ function buildDataSourceOptions(env) {
       SplitPlanProducts1700000000075,
       SplitFirstPurchaseMisconfigByAccount1700000000076,
       NutritionParametersVetDocument1700000000077,
-      NutritionDefaultFoodEnergy1700000000078
+      NutritionDefaultFoodEnergy1700000000078,
+      NutritionGiantBreeds1700000000079
     ],
     synchronize: false,
     logging: false,
