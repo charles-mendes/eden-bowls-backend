@@ -1,8 +1,18 @@
 const { ROLE_PERMISSIONS, parseRoles, permissionsForRoles, resolveAdminRoles } = require('../src/core/admin-roles');
 
 describe('admin roles', () => {
-  test('maps veterinarian to simulate and nutrition settings only', () => {
-    expect(permissionsForRoles(['veterinarian'])).toEqual(['nutrition.simulate', 'nutrition.settings.write']);
+  test('maps veterinarian to simulate, nutrition settings, breeds and limits only', () => {
+    expect(permissionsForRoles(['veterinarian'])).toEqual(['nutrition.simulate', 'nutrition.settings.write', 'nutrition.breeds.write', 'nutrition.limits.write']);
+  });
+
+  test('lets the operator write breeds and limits but not the energy factors', () => {
+    expect(ROLE_PERMISSIONS.operator).toContain('nutrition.breeds.write');
+    expect(ROLE_PERMISSIONS.operator).toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.admin).toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.readonly).not.toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.operator).not.toContain('nutrition.settings.write');
+    expect(ROLE_PERMISSIONS.admin).toContain('nutrition.breeds.write');
+    expect(ROLE_PERMISSIONS.readonly).not.toContain('nutrition.breeds.write');
   });
 
   test('gives each role exactly the new settings permissions of phase 3', () => {
@@ -90,7 +100,7 @@ describe('admin roles', () => {
     expect(parseRoles('nutritionist,readonly')).toEqual(['veterinarian', 'readonly']);
     expect(parseRoles(['nutritionist', 'veterinarian'])).toEqual(['veterinarian']);
     expect(resolveAdminRoles({ storedRoles: '["nutritionist"]', email: 'lia@edenbowls.com' })).toEqual(['veterinarian']);
-    expect(permissionsForRoles(parseRoles('["nutritionist"]'))).toEqual(['nutrition.simulate', 'nutrition.settings.write']);
+    expect(permissionsForRoles(parseRoles('["nutritionist"]'))).toEqual(['nutrition.simulate', 'nutrition.settings.write', 'nutrition.breeds.write', 'nutrition.limits.write']);
   });
 
   test('only operator and admin can record a customer contact', () => {

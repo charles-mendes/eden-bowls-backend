@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { marketsFromIdentity } = require('../../core/admin-market-scope');
 
 function requireLifeStageSettingsService(dependencies) {
   if (!dependencies.lifeStageSettingsService) {
@@ -16,37 +17,58 @@ function singleMarket(request) {
   return scope;
 }
 
-// Life-stage limits and giant breeds (nutrition-parameters). Reading needs nutrition.simulate; saving and the
-// preview need nutrition.settings.write.
+function hasPermission(identity, permission) {
+  return Boolean(identity && Array.isArray(identity.permissions) && identity.permissions.includes(permission));
+}
+
+function canWriteSettings(identity) {
+  return hasPermission(identity, 'nutrition.settings.write');
+}
+
+// Limits and breeds are written by the veterinarian or the admin in any market, or by an operator only in a market
+// assigned to them. An operator with no assigned market writes nothing: the "both markets" fallback is for reading.
+function writableMarket(request) {
+  const scope = singleMarket(request);
+  const identity = request.adminIdentity;
+  if (!canWriteSettings(identity) && !marketsFromIdentity(identity).includes(scope.market)) {
+    throw new HttpError(403, 'Requested market is outside staff scope.', { code: 'market_forbidden' });
+  }
+  return scope;
+}
+
+// Life-stage limits and giant breeds (nutrition-parameters). Reading needs nutrition.simulate; saving limits needs
+// nutrition.limits.write; creating and editing breeds needs nutrition.breeds.write; the preview needs the permission
+// of what it previews.
 function registerAdminLifeStageSettingsRoutes(app, dependencies, { requirePermission, handle }) {
   app.get('/api/v1/admin/life-stage', requirePermission('nutrition.simulate', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => requireLifeStageSettingsService(dependencies).overview(singleMarket(request).market));
   });
 
-  app.put('/api/v1/admin/life-stage/limits', requirePermission('nutrition.settings.write', { market: 'query' }), async (request, response, next) => {
+  app.put('/api/v1/admin/life-stage/limits', requirePermission('nutrition.limits.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => requireLifeStageSettingsService(dependencies).updateLimits(
-      singleMarket(request).market,
+      writableMarket(request).market,
       (request.body || {}).limits,
       request.adminIdentity
     ));
   });
 
-  app.post('/api/v1/admin/life-stage/breeds', requirePermission('nutrition.settings.write', { market: 'query' }), async (request, response, next) => {
+  app.post('/api/v1/admin/life-stage/breeds', requirePermission('nutrition.breeds.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => requireLifeStageSettingsService(dependencies).createBreed(
-      singleMarket(request).market,
+      writableMarket(request).market,
       request.body || {},
       request.adminIdentity
     ));
   });
 
-  app.patch('/api/v1/admin/life-stage/breeds/:id', requirePermission('nutrition.settings.write', { market: 'query' }), async (request, response, next) => {
+  app.patch('/api/v1/admin/life-stage/breeds/:id', requirePermission('nutrition.breeds.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
+      const scope = writableMarket(request);
       const id = Number(request.params.id);
       if (!Number.isInteger(id) || id <= 0) {
         throw new HttpError(400, 'Invalid breed id.');
       }
       return requireLifeStageSettingsService(dependencies).updateBreed(
-        singleMarket(request).market,
+        scope.market,
         id,
         request.body || {},
         request.adminIdentity
@@ -54,9 +76,21 @@ function registerAdminLifeStageSettingsRoutes(app, dependencies, { requirePermis
     });
   });
 
-  app.post('/api/v1/admin/life-stage/preview', requirePermission('nutrition.settings.write', { market: 'query' }), async (request, response, next) => {
+  // Gated by nutrition.simulate so either writer gets in; the body then needs the permission of each part it previews.
+  app.post('/api/v1/admin/life-stage/preview', requirePermission('nutrition.simulate', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
-      const scope = singleMarket(request);
+      const body = request.body || {};
+      const identity = request.adminIdentity;
+      const needed = [];
+      if (body.limits !== undefined) needed.push('nutrition.limits.write');
+      if (body.breed !== undefined) needed.push('nutrition.breeds.write');
+      const allowed = needed.length
+        ? needed.every((permission) => hasPermission(identity, permission))
+        : hasPermission(identity, 'nutrition.limits.write') || hasPermission(identity, 'nutrition.breeds.write');
+      if (!allowed) {
+        throw new HttpError(403, 'Forbidden.');
+      }
+      const scope = writableMarket(request);
       return requireLifeStageSettingsService(dependencies).preview(scope.market, scope.stripeAccount, request.body || {});
     });
   });

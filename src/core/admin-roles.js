@@ -3,7 +3,7 @@ const ADMIN_ROLES_META_KEY = '_eden_admin_roles';
 const OPERATIONAL_ROLES = ['admin', 'operator', 'veterinarian', 'readonly'];
 
 const ROLE_PERMISSIONS = {
-  veterinarian: ['nutrition.simulate', 'nutrition.settings.write'],
+  veterinarian: ['nutrition.simulate', 'nutrition.settings.write', 'nutrition.breeds.write', 'nutrition.limits.write'],
   readonly: [
     'nutrition.simulate',
     'onboarding.read',
@@ -21,6 +21,8 @@ const ROLE_PERMISSIONS = {
   ],
   operator: [
     'nutrition.simulate',
+    'nutrition.breeds.write',
+    'nutrition.limits.write',
     'onboarding.read',
     'shipping.read',
     'shipping.write',
@@ -51,7 +53,10 @@ const ROLE_PERMISSIONS = {
   ]
 };
 
-// Nutrition settings are clinical: the operator does not get them. Company data and legal texts are admin only.
+// Energy factors are clinical: the operator does not get them. The operator does change the life-stage limits and
+// create and edit breeds with their own size class, only in the market assigned to them (nutrition.limits.write,
+// nutrition.breeds.write).
+// Company data and legal texts are admin only.
 ROLE_PERMISSIONS.admin = [
   ...ROLE_PERMISSIONS.operator,
   'users.roles.write',
