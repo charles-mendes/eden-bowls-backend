@@ -20,7 +20,7 @@ describe('admin roles', () => {
     const NEW = ['nutrition.settings.write', 'settings.read', 'settings.company.write', 'settings.email.write', 'legal.write'];
     const granted = (role) => NEW.filter((permission) => ROLE_PERMISSIONS[role].includes(permission));
     expect(granted('admin')).toEqual(NEW);
-    expect(granted('operator')).toEqual(['settings.read', 'settings.company.write', 'settings.email.write']);
+    expect(granted('operator')).toEqual(['settings.read', 'settings.company.write', 'settings.email.write', 'legal.write']);
     expect(granted('readonly')).toEqual(['settings.read']);
     expect(granted('veterinarian')).toEqual(['nutrition.settings.write']);
     expect(ROLE_PERMISSIONS.veterinarian.some((permission) => permission.startsWith('catalog.') || permission.startsWith('settings.'))).toBe(false);

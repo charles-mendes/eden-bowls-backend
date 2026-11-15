@@ -45,6 +45,7 @@ const ROLE_PERMISSIONS = {
     'settings.read',
     'settings.company.write',
     'settings.email.write',
+    'legal.write',
     'reports.read',
     'reports.export',
     'nfe.read',
@@ -56,15 +57,14 @@ const ROLE_PERMISSIONS = {
 // Energy factors and life-stage limits are clinical: only the veterinarian changes the limits
 // (nutrition.limits.write), not the operator nor the admin. The operator does create and edit breeds with their own
 // size class, only in the market assigned to them (nutrition.breeds.write).
-// The operator saves the company data only of the markets assigned to them (the route scopes the market);
-// legal texts are admin only.
+// The operator saves the company data and publishes the privacy policy and terms of use only of the markets
+// assigned to them (the routes scope the market).
 ROLE_PERMISSIONS.admin = [
   ...ROLE_PERMISSIONS.operator,
   'users.roles.write',
   'users.access.write',
   'system.health.read',
   'nutrition.settings.write',
-  'legal.write',
   'bling.connect'
 ];
 
