@@ -3,7 +3,7 @@ const { buildRequireAdminPermission } = require('../middleware/require-admin-per
 const { parseNutritionSimulateInput } = require('../validators/admin-nutrition-simulate.validator');
 const { parseRolesAssignmentInput } = require('../validators/admin-users-roles.validator');
 const { parseHeadquartersValidateInput, parseShippingSettingsInput, parseShippingTestInput } = require('../validators/admin-shipping.validator');
-const { parseCreateCouponInput, parsePromoMappingInput, parseCouponAccount } = require('../validators/admin-coupons.validator');
+const { parseCreateCouponInput, parseCouponAccount } = require('../validators/admin-coupons.validator');
 const { constrainMarketQuery, effectiveMarkets, shouldEnforceMarketScope } = require('../../core/admin-market-scope');
 
 // The markets the route scope applies to this caller. Staff without a market while the flag is on get none.
@@ -931,19 +931,6 @@ function registerAdminRoutes(app, dependencies = {}) {
         throw new HttpError(503, 'Coupon service is not available.');
       }
       return dependencies.stripeCouponService.mappingHealth(couponAccountFor(request));
-    });
-  });
-
-  app.put('/api/v1/admin/stripe/first-purchase-promos', requirePermission('billing.coupons.write', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => {
-      if (!dependencies.stripeCouponService) {
-        throw new HttpError(503, 'Coupon service is not available.');
-      }
-      return dependencies.stripeCouponService.saveMapping(
-        parsePromoMappingInput(request.body || {}),
-        {},
-        couponAccountFor(request)
-      );
     });
   });
 

@@ -560,10 +560,6 @@
     "path": "/api/v1/admin/stripe/first-purchase-promos"
   },
   {
-    "method": "PUT",
-    "path": "/api/v1/admin/stripe/first-purchase-promos"
-  },
-  {
     "method": "POST",
     "path": "/api/v1/admin/stripe/first-purchase-promos/sync"
   },

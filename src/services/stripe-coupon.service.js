@@ -269,44 +269,6 @@ class StripeCouponService {
     }
   }
 
-  async enrichMappingFromStripe(mapping, coupons, account) {
-    try {
-      resolveStripeBilling(this, this.accountOf(account));
-    } catch {
-      return { mapping, coupons };
-    }
-
-    for (const term of VALID_SUBSCRIPTION_TERMS) {
-      const promoId = mapping[term];
-      if (!promoId) {
-        continue;
-      }
-
-      const promo = await this.retrievePromotionCode(promoId, account);
-      if (!promo || promo.active === false) {
-        throw new HttpError(422, 'Promotion code is invalid.', {
-          code: 'invalid_promotion_code_id',
-          promotion_code_id: promoId,
-          term_months: term,
-          stripe_account: this.accountOf(account)
-        });
-      }
-
-      const couponId = couponIdFromPromo(promo);
-      if (couponId) {
-        coupons[term] = couponId;
-      }
-    }
-
-    return { mapping, coupons };
-  }
-
-  async saveMapping(mapping = {}, coupons = {}, account) {
-    const sanitized = this.sanitizeMapping(mapping, coupons);
-    await this.enrichMappingFromStripe(sanitized.mapping, sanitized.coupons, account);
-    return this.persistMapping(sanitized.mapping, sanitized.coupons, account);
-  }
-
   async seedEmptySlots(fallbackMapping = {}, account) {
     const stored = await this.getStoredMapping(account);
     const mapping = {};

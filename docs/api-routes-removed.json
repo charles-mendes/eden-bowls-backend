@@ -53,5 +53,10 @@
     "method": "PUT",
     "path": "/api/v1/admin/catalog/recipe-content/:flavorSlug/presentation",
     "reason": "product-is-recipe: content belongs to the product; use /api/v1/admin/catalog/products/:productId/content/* and the product create, detail and PATCH."
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/stripe/first-purchase-promos",
+    "reason": "first-purchase-coupons: a promotion code is no longer linked to a term by typing its ID; create the coupon with POST /api/v1/admin/stripe/first-purchase-coupons or bring existing ones with POST /api/v1/admin/stripe/first-purchase-promos/sync."
   }
 ]

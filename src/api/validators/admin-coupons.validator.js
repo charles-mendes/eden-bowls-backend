@@ -3,12 +3,6 @@ const { HttpError } = require('../../core/http-error');
 const { VALID_SUBSCRIPTION_TERMS } = require('../../core/first-purchase-discount');
 const { parseStripeAccountInput } = require('../../core/stripe-account');
 
-const mappingSchema = z.object({
-  1: z.string().optional().nullable(),
-  3: z.string().optional().nullable(),
-  6: z.string().optional().nullable()
-}).passthrough();
-
 const createCouponSchema = z.object({
   term_months: z.coerce.number().int(),
   code: z.string().trim().min(1),
@@ -18,14 +12,6 @@ const createCouponSchema = z.object({
   // Checked by the coupon service, which answers 422 invalid_percent_off.
   percent_off: z.unknown().optional()
 });
-
-function parsePromoMappingInput(input) {
-  const parsed = mappingSchema.safeParse(input || {});
-  if (!parsed.success) {
-    throw new HttpError(400, 'Invalid request payload.', parsed.error.issues);
-  }
-  return parsed.data;
-}
 
 function parseCreateCouponInput(input) {
   const parsed = createCouponSchema.safeParse(input || {});
@@ -50,6 +36,5 @@ function parseCouponAccount(input = {}) {
 
 module.exports = {
   parseCreateCouponInput,
-  parsePromoMappingInput,
   parseCouponAccount
 };

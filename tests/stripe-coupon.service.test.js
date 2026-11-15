@@ -186,50 +186,6 @@ describe('StripeCouponService', () => {
     expect(repository.saveMapping).toHaveBeenCalledWith({ 3: 'promo_env_3m' }, {}, 'us');
   });
 
-  test('persists only promo_ ids', async () => {
-    const repository = {
-      getMapping: jest.fn().mockResolvedValue({
-        mapping: { 1: 'promo_saved', 3: null, 6: null },
-        coupons: { 1: null, 3: null, 6: null }
-      }),
-      saveMapping: jest.fn().mockResolvedValue(undefined),
-      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
-    };
-    const service = new StripeCouponService(repository);
-
-    await service.saveMapping({ 1: 'promo_saved', 3: 'coupon_bad', 6: '' });
-
-    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_saved' }, {}, 'us');
-  });
-
-  test('validates mapped promo ids against Stripe before saving', async () => {
-    const repository = {
-      getMapping: jest.fn().mockResolvedValue({
-        mapping: { 1: 'promo_saved', 3: null, 6: null },
-        coupons: { 1: null, 3: null, 6: null }
-      }),
-      saveMapping: jest.fn().mockResolvedValue(undefined),
-      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
-    };
-    const stripe = {
-      promotionCodes: {
-        retrieve: jest.fn().mockResolvedValue({
-          id: 'promo_saved',
-          active: true,
-          promotion: { type: 'coupon', coupon: { id: 'coupon_saved' } }
-        })
-      }
-    };
-    const service = new StripeCouponService(repository, {
-      stripeBilling: { ensureClient: () => stripe }
-    });
-
-    await service.saveMapping({ 1: 'promo_saved' });
-
-    expect(stripe.promotionCodes.retrieve).toHaveBeenCalledWith('promo_saved', { expand: ['promotion.coupon'] });
-    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_saved' }, { 1: 'coupon_saved' }, 'us');
-  });
-
   test('syncs empty slots from Stripe first-purchase promotion codes', async () => {
     const repository = {
       getMapping: jest.fn()
@@ -456,7 +412,7 @@ describe('StripeCouponService', () => {
     const service = new StripeCouponService(repository);
 
     await service.getMapping('br');
-    await service.saveMapping({ 1: 'promo_br_1m' }, {}, 'br');
+    await service.persistMapping({ 1: 'promo_br_1m' }, {}, 'br');
 
     expect(repository.getMapping).toHaveBeenCalledWith('br');
     expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_br_1m' }, {}, 'br');
