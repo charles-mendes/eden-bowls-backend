@@ -46,6 +46,10 @@ const GIANT_COMBINATION_FACTORS = {
 };
 
 // Exponent of the weight in the energy of the day: Fator × Peso^exponent.
+// Eden Bowls sells no cat food yet: the API sizes dogs only. The cat rules below follow the vet's document and stay
+// for when a cat recipe exists.
+const CATS_ENABLED = false;
+
 const DOG_EXPONENT = 0.75;
 const GIANT_MIN_WEIGHT_KG = 40;
 const CAT_EXPONENT = 0.67;
@@ -491,6 +495,7 @@ function buildForPet(pet = {}, questionnaire = null, locale = '', parameters = D
 }
 
 module.exports = {
+  CATS_ENABLED,
   COMBINATION_FACTORS,
   GIANT_COMBINATION_FACTORS,
   upgradeNutritionParameters,

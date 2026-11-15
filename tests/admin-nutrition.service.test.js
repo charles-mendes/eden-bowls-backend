@@ -52,17 +52,12 @@ describe('AdminNutritionService', () => {
     expect(result.data.energia_kcal_dia).toBeGreaterThan(0);
   });
 
-  test('uses the default fresh-food EM of 1200 for a cat', async () => {
-    const result = await service.simulate({
+  test('refuses a cat: no cat food is sold yet', async () => {
+    await expect(service.simulate({
       country: 'BR',
       pet: { type: 'cat', life_stage: 'adult', weight: 4, neutered: true },
       questionnaire: { nivel_atividade: 'BAIXO', score_corporal: 'ADEQUADO' }
-    });
-
-    expect(result.data.nem_kcal_kg).toBe(1200);
-    expect(result.data.especie).toBe('cat');
-    expect(result.data.refeicoes).toBe(3);
-    expect(result.data.display.daily).toContain('g/dia');
+    })).rejects.toMatchObject({ statusCode: 422, details: { code: 'species_unavailable' } });
   });
 
   test('rejects invalid weight', async () => {
@@ -125,16 +120,6 @@ describe('AdminNutritionService', () => {
 
       expect(result.data.nem_kcal_kg).toBe(1200);
       expect(result.data.nem_source).toBe('default');
-    });
-
-    test('keeps the cat default', async () => {
-      const result = await withEnergy.simulate({
-        country: 'BR',
-        pet: { type: 'cat', life_stage: 'adult', weight: 4, neutered: true },
-        questionnaire: { nivel_atividade: 'BAIXO', score_corporal: 'ADEQUADO' }
-      });
-
-      expect(result.data.nem_kcal_kg).toBe(1200);
     });
 
     test('lists the recipes of the market for the simulator', async () => {

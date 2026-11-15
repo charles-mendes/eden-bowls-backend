@@ -96,16 +96,13 @@ OnboardingRecommendationRepository.prototype.annotatePets = async function annot
   return this.lifeStageService.annotate(pets, market.country, (pet) => accountById.get(String(pet.pet_id || pet.id || '')) || pet);
 };
 
-// kcal/kg per pet from the mean energyKg of its line, null to keep the engine default (cats, no catalog).
+// kcal/kg per pet from the mean energyKg of its line, null to keep the engine default (no catalog). The store
+// sizes dogs only: a draft pet carries no species.
 OnboardingRecommendationRepository.prototype.energiesFor = async function energiesFor(market, pets, annotated) {
   if (!this.recipeEnergyService) {
     return pets.map(() => null);
   }
-  return Promise.all(pets.map((pet, index) => {
-    const type = String(pet.type || pet.especie || 'dog').toLowerCase();
-    if (type === 'cat' || type === 'gato') {
-      return null;
-    }
+  return Promise.all(pets.map((_pet, index) => {
     const stage = annotated && annotated[index] ? annotated[index].life_stage : null;
     return this.recipeEnergyService.forLifeStage(market.country, stage);
   }));

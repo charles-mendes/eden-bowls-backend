@@ -1,5 +1,5 @@
 const { HttpError } = require('../core/http-error');
-const { buildForPet } = require('../core/nutrition-recommendation');
+const { CATS_ENABLED, buildForPet } = require('../core/nutrition-recommendation');
 const { convertWeight } = require('../core/market');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 
@@ -41,9 +41,9 @@ class AdminNutritionService {
   }
 
   // kcal/kg for the simulation: the chosen recipe's energyKg, else the mean of the pet's line.
-  // Cats and an unwired catalog keep the engine default.
+  // An unwired catalog keeps the engine default.
   async resolveEnergy(market, recipeKey, pet) {
-    if (!this.recipeEnergyService || pet.type === 'cat') {
+    if (!this.recipeEnergyService) {
       return { kcalKg: null, source: 'default' };
     }
     if (recipeKey) {
@@ -76,6 +76,10 @@ class AdminNutritionService {
     }
     const market = country === 'BR' ? 'BR' : 'US';
     const locale = market === 'BR' ? 'pt-BR' : 'en-US';
+    // Eden Bowls sells no cat food yet (no recipe, no pack): the cat calculation of the engine stays, unused.
+    if (!CATS_ENABLED && pet.type === 'cat') {
+      throw new HttpError(422, 'A Eden Bowls ainda não tem comida para gatos.', { code: 'species_unavailable' });
+    }
     const weight = Number(pet.weight);
     if (!Number.isFinite(weight) || weight <= 0) {
       throw new HttpError(422, 'Peso inválido. Informe peso maior que zero.');
