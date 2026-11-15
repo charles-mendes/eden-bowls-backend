@@ -25,8 +25,8 @@ function canWriteSettings(identity) {
   return hasPermission(identity, 'nutrition.settings.write');
 }
 
-// Limits and breeds are written by the veterinarian or the admin in any market, or by an operator only in a market
-// assigned to them. An operator with no assigned market writes nothing: the "both markets" fallback is for reading.
+// Breeds are written by the veterinarian or the admin in any market, or by an operator only in a market assigned to
+// them. Limits are written only by the veterinarian (nutrition.limits.write), in any market. An operator with no assigned market writes nothing: the "both markets" fallback is for reading.
 function writableMarket(request) {
   const scope = singleMarket(request);
   const identity = request.adminIdentity;

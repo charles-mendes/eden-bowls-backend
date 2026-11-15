@@ -40,7 +40,7 @@ A user with `nutrition.settings.write` MUST be able to save a draft, simulate wi
 
 ### Requirement: Life-stage limits and giant breeds are editable with an impact preview
 
-A user with `nutrition.settings.write` MUST be able to change, per market, the adult and senior months of each size class and the size class of each breed in `life_stage_breeds`, and to add or deactivate a breed. Senior months MUST be greater than adult months, and both MUST be from 1 to 240. Before saving, the API MUST offer a preview that reports how many pets with an active subscription in the market would change life stage, without changing anything. Saving MUST be recorded in the admin audit log as `life_stage.limits.update` or `life_stage.breed.update`. A user with `nutrition.limits.write` or `nutrition.breeds.write` and without `nutrition.settings.write` (the operator) MUST be able to change the limits, or add and edit breeds, and preview that change, only in a market assigned to them; an operator with no assigned market MUST NOT write limits or breeds. The energy factors stay with `nutrition.settings.write`. The overview of a market MUST carry its latest `life_stage.*` audit events (actor, date, before and after), and the parameter-set overview MUST carry its latest `nutrition.parameters.*` events, so the admin shows who edited what. A saved change MUST apply to the next life-stage evaluation in the API and the job processes, with no restart.
+Only the veterinarian (`nutrition.limits.write`) MUST be able to change, per market, the adult and senior months of each size class, and preview that change; the admin and the operator MUST NOT. A user with `nutrition.settings.write` MUST be able to change the size class of each breed in `life_stage_breeds`, and to add or deactivate a breed. Senior months MUST be greater than adult months, and both MUST be from 1 to 240. Before saving, the API MUST offer a preview that reports how many pets with an active subscription in the market would change life stage, without changing anything. Saving MUST be recorded in the admin audit log as `life_stage.limits.update` or `life_stage.breed.update`. A user with `nutrition.breeds.write` and without `nutrition.settings.write` (the operator) MUST be able to add and edit breeds, and preview that change, only in a market assigned to them; an operator with no assigned market MUST NOT write breeds. The energy factors stay with `nutrition.settings.write`. The overview of a market MUST carry its latest `life_stage.*` audit events (actor, date, before and after), and the parameter-set overview MUST carry its latest `nutrition.parameters.*` events, so the admin shows who edited what. A saved change MUST apply to the next life-stage evaluation in the API and the job processes, with no restart.
 
 #### Scenario: Preview before lowering the senior age
 
@@ -51,3 +51,8 @@ A user with `nutrition.settings.write` MUST be able to change, per market, the a
 
 - **WHEN** a veterinarian saves BR small with adult 120 and senior 100 months
 - **THEN** the API returns 422 and the stored limits are unchanged
+
+#### Scenario: Only the veterinarian changes the limits
+
+- **WHEN** a BR operator or an admin saves or previews the BR limits
+- **THEN** the API returns 403 and the stored limits are unchanged

@@ -15,6 +15,7 @@ const IDENTITIES = {
   operator: { userId: '8', email: 'op@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['BR', 'US'] },
   operatorBr: { userId: '9', email: 'op.br@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['BR'] },
   operatorUs: { userId: '10', email: 'op.us@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['US'] },
+  admin: { userId: '1', email: 'admin@edenbowls.com', roles: ['admin'], permissions: ROLE_PERMISSIONS.admin, markets: ['BR', 'US'] },
   operatorUnassigned: { userId: '11', email: 'op.none@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: [] }
 };
 
@@ -70,36 +71,34 @@ describe('admin life-stage settings routes', () => {
     expect(repository.saveLimits).not.toHaveBeenCalled();
   });
 
-  test('the BR operator previews and saves the limits of BR only', async () => {
-    const { app, repository } = setup(IDENTITIES.operatorBr);
+  test('the veterinarian saves the limits of any market', async () => {
+    const { app, repository } = setup(IDENTITIES.veterinarian);
     const limits = { medium: { adult_from_months: 12, senior_from_months: 84 } };
 
-    const preview = await auth(request(app).post('/api/v1/admin/life-stage/preview')).send({ market: 'BR', limits });
-    expect(preview.status).toBe(200);
-    expect(preview.body.pets_changing).toBe(1);
     expect((await auth(request(app).put('/api/v1/admin/life-stage/limits')).send({ market: 'BR', limits })).status).toBe(200);
-    expect(repository.saveLimits).toHaveBeenCalledWith('BR', { medium: { adultFromMonths: 12, seniorFromMonths: 84 } }, 9, {});
-
-    const otherSave = await auth(request(app).put('/api/v1/admin/life-stage/limits')).send({ market: 'US', limits });
-    const otherPreview = await auth(request(app).post('/api/v1/admin/life-stage/preview')).send({ market: 'US', limits });
-    expect([otherSave.status, otherPreview.status]).toEqual([403, 403]);
-    expect(otherSave.body.details).toEqual({ code: 'market_forbidden' });
-    expect(repository.saveLimits).toHaveBeenCalledTimes(1);
-  });
-
-  test('the US operator saves the limits of US but not of BR', async () => {
-    const { app, repository } = setup(IDENTITIES.operatorUs);
-    const limits = { giant: { adult_from_months: 20, senior_from_months: 72 } };
     expect((await auth(request(app).put('/api/v1/admin/life-stage/limits')).send({ market: 'US', limits })).status).toBe(200);
-    expect((await auth(request(app).put('/api/v1/admin/life-stage/limits')).send({ market: 'BR', limits })).status).toBe(403);
-    expect(repository.saveLimits).toHaveBeenCalledTimes(1);
+    expect(repository.saveLimits).toHaveBeenCalledWith('BR', { medium: { adultFromMonths: 12, seniorFromMonths: 84 } }, 5, {});
+    expect(repository.saveLimits).toHaveBeenCalledTimes(2);
   });
 
-  test('an operator with no assigned market saves no limits', async () => {
-    const { app, repository } = setup(IDENTITIES.operatorUnassigned);
-    const limits = { giant: { adult_from_months: 20, senior_from_months: 72 } };
-    expect((await auth(request(app).put('/api/v1/admin/life-stage/limits')).send({ market: 'BR', limits })).status).toBe(403);
+  test.each(['operatorBr', 'operatorUs', 'operator', 'admin'])('%s neither previews nor saves the limits, even of its own market', async (name) => {
+    const { app, repository } = setup(IDENTITIES[name]);
+    const limits = { medium: { adult_from_months: 12, senior_from_months: 84 } };
+    const market = name === 'operatorUs' ? 'US' : 'BR';
+
+    const save = await auth(request(app).put('/api/v1/admin/life-stage/limits')).send({ market, limits });
+    const preview = await auth(request(app).post('/api/v1/admin/life-stage/preview')).send({ market, limits });
+
+    expect([save.status, preview.status]).toEqual([403, 403]);
     expect(repository.saveLimits).not.toHaveBeenCalled();
+    expect(repository.listSubscribedPets).not.toHaveBeenCalled();
+  });
+
+  test('the BR operator still previews a breed of BR', async () => {
+    const { app } = setup(IDENTITIES.operatorBr);
+    const breed = { name_pt: 'Mastim', name_en: 'Mastiff', size_class: 'giant' };
+
+    expect((await auth(request(app).post('/api/v1/admin/life-stage/preview')).send({ market: 'BR', breed })).status).toBe(200);
   });
 
   test('readonly reads the limits but neither previews nor saves them', async () => {

@@ -5,10 +5,11 @@ describe('admin roles', () => {
     expect(permissionsForRoles(['veterinarian'])).toEqual(['nutrition.simulate', 'nutrition.settings.write', 'nutrition.breeds.write', 'nutrition.limits.write']);
   });
 
-  test('lets the operator write breeds and limits but not the energy factors', () => {
+  test('lets the operator write breeds but neither the limits nor the energy factors; only the veterinarian writes limits', () => {
     expect(ROLE_PERMISSIONS.operator).toContain('nutrition.breeds.write');
-    expect(ROLE_PERMISSIONS.operator).toContain('nutrition.limits.write');
-    expect(ROLE_PERMISSIONS.admin).toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.operator).not.toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.admin).not.toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.veterinarian).toContain('nutrition.limits.write');
     expect(ROLE_PERMISSIONS.readonly).not.toContain('nutrition.limits.write');
     expect(ROLE_PERMISSIONS.operator).not.toContain('nutrition.settings.write');
     expect(ROLE_PERMISSIONS.admin).toContain('nutrition.breeds.write');

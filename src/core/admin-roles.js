@@ -22,7 +22,6 @@ const ROLE_PERMISSIONS = {
   operator: [
     'nutrition.simulate',
     'nutrition.breeds.write',
-    'nutrition.limits.write',
     'onboarding.read',
     'shipping.read',
     'shipping.write',
@@ -53,9 +52,9 @@ const ROLE_PERMISSIONS = {
   ]
 };
 
-// Energy factors are clinical: the operator does not get them. The operator does change the life-stage limits and
-// create and edit breeds with their own size class, only in the market assigned to them (nutrition.limits.write,
-// nutrition.breeds.write).
+// Energy factors and life-stage limits are clinical: only the veterinarian changes the limits
+// (nutrition.limits.write), not the operator nor the admin. The operator does create and edit breeds with their own
+// size class, only in the market assigned to them (nutrition.breeds.write).
 // Company data and legal texts are admin only.
 ROLE_PERMISSIONS.admin = [
   ...ROLE_PERMISSIONS.operator,
