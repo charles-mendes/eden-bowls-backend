@@ -8,7 +8,7 @@ describe('StripeCouponService createFirstPurchaseCoupon', () => {
         coupons: { 1: null, 3: null, 6: null }
       }),
       saveMapping: jest.fn().mockResolvedValue(undefined),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const stripe = {
       coupons: {
@@ -57,7 +57,7 @@ describe('StripeCouponService createFirstPurchaseCoupon with a new percent', () 
         Object.assign(state.mapping, mapping);
         Object.assign(state.coupons, coupons);
       }),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const termDiscounts = {
       percentsFor: jest.fn(async () => ({ ...state.percents })),

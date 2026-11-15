@@ -97,7 +97,7 @@ describe('admin shipping and coupon routes', () => {
   test('promo health carries the percent of each term', async () => {
     const stripeCouponService = new StripeCouponService({
       getMapping: jest.fn().mockResolvedValue(null),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     });
     const app = adminApp({ stripeCouponService });
     const response = await request(app)

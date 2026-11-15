@@ -201,9 +201,9 @@ class StripeCouponService {
   async mappingHealth(account) {
     const mapping = await this.getMapping(account);
     const missingTerms = VALID_SUBSCRIPTION_TERMS.filter((term) => !mapping[term]);
-    const misconfigCount = this.repository && this.repository.getMisconfigCount
-      ? await this.repository.getMisconfigCount()
-      : 0;
+    const misconfig = this.repository && this.repository.getMisconfig
+      ? await this.repository.getMisconfig(this.accountOf(account))
+      : null;
 
     return {
       complete: missingTerms.length === 0,
@@ -211,14 +211,16 @@ class StripeCouponService {
       mapping,
       // The percent of each term, the same list the plan snapshot offers as plan_terms.
       terms: planTermsFor(await this.termPercents(account)),
-      misconfig_count: misconfigCount,
+      // Checkouts of this account blocked by a term with no coupon, since the three terms were last saved.
+      misconfig_count: (misconfig && misconfig.count) || 0,
+      misconfig_last_at: (misconfig && misconfig.lastAt) || null,
       stripe_account: this.accountOf(account)
     };
   }
 
-  async incrementMisconfigMetric() {
+  async incrementMisconfigMetric(account) {
     this.ensureRepository();
-    return this.repository.incrementMisconfigCount();
+    return this.repository.incrementMisconfigCount(this.accountOf(account));
   }
 
   sanitizeMapping(mapping = {}, coupons = {}) {
@@ -245,7 +247,13 @@ class StripeCouponService {
     this.ensureRepository();
     const sanitized = this.sanitizeMapping(mapping, coupons);
     await this.repository.saveMapping(sanitized.mapping, sanitized.coupons, this.accountOf(account));
-    return this.mappingHealth(account);
+    const health = await this.mappingHealth(account);
+    // The three terms are saved, so the blocked checkouts counted before no longer describe the setup.
+    if (health.complete && health.misconfig_count > 0 && this.repository.resetMisconfigCount) {
+      await this.repository.resetMisconfigCount(this.accountOf(account));
+      return { ...health, misconfig_count: 0, misconfig_last_at: null };
+    }
+    return health;
   }
 
   async retrievePromotionCode(promoId, account) {
@@ -484,7 +492,7 @@ class StripeCouponService {
 
     const promotionCodeId = await this.getPromotionCodeIdForTerm(termMonths, account);
     if (!promotionCodeId) {
-      await this.incrementMisconfigMetric();
+      await this.incrementMisconfigMetric(account);
       throw new HttpError(503, 'First purchase promotion is not configured.', {
         code: 'first_purchase_promo_not_configured',
         stripe_account: this.accountOf(account)

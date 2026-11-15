@@ -58,24 +58,41 @@ class StripeFirstPurchasePromosRepository {
     }
   }
 
-  async getMisconfigCount() {
+  // One row per Stripe account: checkouts that found no coupon for their term. updated_at is the last one.
+  misconfigKey(account) {
+    return `misconfig_count:${parseStripeAccountInput(account)}`;
+  }
+
+  async getMisconfig(account = 'us') {
     this.ensureDataSource();
 
     const rows = await this.dataSource.query(
-      `SELECT \`metric_value\` FROM \`${this.metricsTableName}\` WHERE \`metric_key\` = 'misconfig_count' LIMIT 1`
+      `SELECT \`metric_value\`, \`updated_at\` FROM \`${this.metricsTableName}\` WHERE \`metric_key\` = ? LIMIT 1`,
+      [this.misconfigKey(account)]
     );
     const row = Array.isArray(rows) ? rows[0] : null;
-    return Number(row && row.metric_value) || 0;
+    const count = Number(row && row.metric_value) || 0;
+    return { count, lastAt: count && row.updated_at ? new Date(row.updated_at).toISOString() : null };
   }
 
-  async incrementMisconfigCount() {
+  async incrementMisconfigCount(account = 'us') {
     this.ensureDataSource();
 
     await this.dataSource.query(
-      `INSERT INTO \`${this.metricsTableName}\` (\`metric_key\`, \`metric_value\`) VALUES ('misconfig_count', 1) ON DUPLICATE KEY UPDATE \`metric_value\` = \`metric_value\` + 1`
+      `INSERT INTO \`${this.metricsTableName}\` (\`metric_key\`, \`metric_value\`) VALUES (?, 1) ON DUPLICATE KEY UPDATE \`metric_value\` = \`metric_value\` + 1`,
+      [this.misconfigKey(account)]
     );
 
-    return this.getMisconfigCount();
+    return (await this.getMisconfig(account)).count;
+  }
+
+  async resetMisconfigCount(account = 'us') {
+    this.ensureDataSource();
+
+    await this.dataSource.query(
+      `DELETE FROM \`${this.metricsTableName}\` WHERE \`metric_key\` = ?`,
+      [this.misconfigKey(account)]
+    );
   }
 }
 

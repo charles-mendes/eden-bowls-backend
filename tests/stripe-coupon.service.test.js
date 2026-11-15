@@ -11,7 +11,7 @@ describe('StripeCouponService', () => {
     };
     const repository = {
       getMapping: jest.fn().mockResolvedValue({ mapping: { 1: 'promo_1', 3: 'promo_3', 6: 'promo_6' }, coupons: {} }),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
 
     test('Accounts are independent: each checkout gets the percent of its own account', async () => {
@@ -59,7 +59,7 @@ describe('StripeCouponService', () => {
         mapping: { 1: 'promo_db_1m', 3: null, 6: null },
         coupons: { 1: 'coupon_1', 3: null, 6: null }
       }),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const service = new StripeCouponService(repository);
 
@@ -74,14 +74,65 @@ describe('StripeCouponService', () => {
       mapping: { 1: 'promo_db_1m', 3: null, 6: null },
       terms: PLAN_TERMS,
       misconfig_count: 0,
+      misconfig_last_at: null,
       stripe_account: 'us'
     });
+  });
+
+  test('health reports the blocked checkouts of the chosen account only', async () => {
+    const repository = {
+      getMapping: jest.fn().mockResolvedValue({ mapping: { 1: null, 3: null, 6: null }, coupons: {} }),
+      getMisconfig: jest.fn().mockResolvedValue({ count: 2, lastAt: '2026-09-29T05:42:49.000Z' })
+    };
+    const service = new StripeCouponService(repository);
+
+    await expect(service.mappingHealth('br')).resolves.toMatchObject({
+      misconfig_count: 2,
+      misconfig_last_at: '2026-09-29T05:42:49.000Z',
+      stripe_account: 'br'
+    });
+    expect(repository.getMisconfig).toHaveBeenCalledWith('br');
+  });
+
+  test('saving the three terms resets the blocked checkouts of that account', async () => {
+    const full = { mapping: { 1: 'promo_1m', 3: 'promo_3m', 6: 'promo_6m' }, coupons: {} };
+    const repository = {
+      getMapping: jest.fn().mockResolvedValue(full),
+      saveMapping: jest.fn().mockResolvedValue(undefined),
+      getMisconfig: jest.fn().mockResolvedValue({ count: 2, lastAt: '2026-09-29T05:42:49.000Z' }),
+      resetMisconfigCount: jest.fn().mockResolvedValue(undefined)
+    };
+    const service = new StripeCouponService(repository);
+
+    await expect(service.persistMapping(full.mapping, {}, 'br')).resolves.toMatchObject({
+      complete: true,
+      misconfig_count: 0,
+      misconfig_last_at: null
+    });
+    expect(repository.resetMisconfigCount).toHaveBeenCalledWith('br');
+  });
+
+  test('saving with a term still empty keeps the blocked checkouts', async () => {
+    const partial = { mapping: { 1: 'promo_1m', 3: null, 6: null }, coupons: {} };
+    const repository = {
+      getMapping: jest.fn().mockResolvedValue(partial),
+      saveMapping: jest.fn().mockResolvedValue(undefined),
+      getMisconfig: jest.fn().mockResolvedValue({ count: 2, lastAt: '2026-09-29T05:42:49.000Z' }),
+      resetMisconfigCount: jest.fn()
+    };
+    const service = new StripeCouponService(repository);
+
+    await expect(service.persistMapping({ 1: 'promo_1m' }, {}, 'us')).resolves.toMatchObject({
+      complete: false,
+      misconfig_count: 2
+    });
+    expect(repository.resetMisconfigCount).not.toHaveBeenCalled();
   });
 
   test('health lists the three terms with the percents the plan snapshot offers', async () => {
     const repository = {
       getMapping: jest.fn().mockResolvedValue({ mapping: { 1: 'promo_1', 3: 'promo_3', 6: 'promo_6' }, coupons: {} }),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const service = new StripeCouponService(repository);
 
@@ -98,7 +149,7 @@ describe('StripeCouponService', () => {
   test('health without any mapped coupon still lists the terms', async () => {
     const repository = {
       getMapping: jest.fn().mockResolvedValue(null),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const service = new StripeCouponService(repository);
 
@@ -122,7 +173,7 @@ describe('StripeCouponService', () => {
           coupons: { 1: 'coupon_1', 3: null, 6: null }
         }),
       saveMapping: jest.fn().mockResolvedValue(undefined),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const service = new StripeCouponService(repository);
 
@@ -142,7 +193,7 @@ describe('StripeCouponService', () => {
         coupons: { 1: null, 3: null, 6: null }
       }),
       saveMapping: jest.fn().mockResolvedValue(undefined),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const service = new StripeCouponService(repository);
 
@@ -158,7 +209,7 @@ describe('StripeCouponService', () => {
         coupons: { 1: null, 3: null, 6: null }
       }),
       saveMapping: jest.fn().mockResolvedValue(undefined),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const stripe = {
       promotionCodes: {
@@ -191,7 +242,7 @@ describe('StripeCouponService', () => {
           coupons: { 1: 'coupon_1', 3: 'coupon_3', 6: null }
         }),
       saveMapping: jest.fn().mockResolvedValue(undefined),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const stripe = {
       promotionCodes: {
@@ -236,7 +287,7 @@ describe('StripeCouponService', () => {
       const repository = {
         getMapping: jest.fn().mockResolvedValue({ mapping, coupons: { 1: null, 3: null, 6: null } }),
         saveMapping: jest.fn().mockResolvedValue(undefined),
-        getMisconfigCount: jest.fn().mockResolvedValue(0)
+        getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
       };
       const stripe = {
         promotionCodes: {
@@ -370,12 +421,13 @@ describe('StripeCouponService', () => {
 
     await expect(service.resolveFirstPurchasePromotionForCheckout({
       eligible: true,
-      termMonths: 1
+      termMonths: 1,
+      account: 'br'
     })).rejects.toMatchObject({
       statusCode: 503,
       details: { code: 'first_purchase_promo_not_configured' }
     });
-    expect(repository.incrementMisconfigCount).toHaveBeenCalledTimes(1);
+    expect(repository.incrementMisconfigCount).toHaveBeenCalledWith('br');
   });
 
   test('throws 503 without incrementing when the term is invalid', async () => {
@@ -399,7 +451,7 @@ describe('StripeCouponService', () => {
         coupons: { 1: 'coupon_br', 3: null, 6: null }
       }),
       saveMapping: jest.fn().mockResolvedValue(undefined),
-      getMisconfigCount: jest.fn().mockResolvedValue(0)
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
     };
     const service = new StripeCouponService(repository);
 
