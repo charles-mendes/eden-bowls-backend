@@ -57,8 +57,9 @@ class OnboardingRecommendationRepository {
     const annotated = await this.annotatePets(userId, market, pets);
     const energies = await this.energiesFor(market, pets, annotated);
     const parameterSet = await publishedParametersFor(this.nutritionParameters);
+    // The stage of the line (puppy, adult, senior) picks the growth or senior factor of Tabela 1.
     const recommendations = pets.map((pet, index) => buildForPet(
-      pet,
+      withLifeStage(pet, annotated && annotated[index] ? annotated[index].life_stage : null),
       energies[index] ? { nem_kcal_kg: energies[index] } : null,
       market.locale,
       parameterSet.parameters
@@ -78,6 +79,11 @@ class OnboardingRecommendationRepository {
       nutrition_parameter_set_id: parameterSet.id
     };
   }
+}
+
+// The resolved line goes to the engine as the physiological state; a pet without one keeps what it sent.
+function withLifeStage(pet, lifeStage) {
+  return lifeStage ? { ...pet, life_stage: lifeStage } : pet;
 }
 
 // Draft pets that already exist in the account age from the account record, which holds age_recorded_at.

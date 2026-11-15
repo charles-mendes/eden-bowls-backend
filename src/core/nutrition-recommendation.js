@@ -46,6 +46,7 @@ const GIANT_COMBINATION_FACTORS = {
 
 // Exponent of the weight in the energy of the day: Fator × Peso^exponent.
 const DOG_EXPONENT = 0.75;
+const GIANT_MIN_WEIGHT_KG = 40;
 const CAT_EXPONENT = 0.67;
 const CAT_OBESE_EXPONENT = 0.4;
 
@@ -308,8 +309,11 @@ function resolveMeals(species, lifeStage) {
   return 2;
 }
 
-function isGiantDog(size, breed, p) {
-  return size === 'gigante'
+// Giant (requerimento_energetico.md, "Porte dos cães"): over 40 kg whatever size the tutor declared, declared
+// giant, or a breed of the giant groups.
+function isGiantDog(size, breed, p, weightKg) {
+  return weightKg > GIANT_MIN_WEIGHT_KG
+    || size === 'gigante'
     || p.groups.dogue.has(breed)
     || p.groups.terranova.has(breed)
     || p.groups.slow_metabolism.has(breed);
@@ -323,7 +327,7 @@ function isGiantDog(size, breed, p) {
  *   of a giant breed group (Dogue Alemão, Terra Nova, São Bernardo).
  * Dogs use Peso^0,75.
  */
-function selectFactor({ species, castrado, activity, score, breed, lifeStage, growthStage, size }, p) {
+function selectFactor({ species, castrado, activity, score, breed, lifeStage, growthStage, size, weightKg }, p) {
   const trace = [];
 
   if (species === 'cat') {
@@ -347,7 +351,7 @@ function selectFactor({ species, castrado, activity, score, breed, lifeStage, gr
   }
 
   const key = `${castrado}-${activity}-${score}`;
-  const giant = isGiantDog(size, breed, p);
+  const giant = isGiantDog(size, breed, p, weightKg);
   const matrix = giant ? p.combination_giant : p.combination;
   trace.push(`${giant ? 'giant_combination' : 'combination'}:${key}:${matrix[key]}`);
   return { factor: matrix[key], exponent: DOG_EXPONENT, trace };
@@ -411,7 +415,8 @@ function calculateFood(input = {}, locale = '', parameters = DEFAULT_NUTRITION_P
     breed,
     lifeStage,
     growthStage,
-    size: resolvedSize
+    size: resolvedSize,
+    weightKg
   }, p);
   const energyKcalDay = factorDecision.factor * (weightKg ** factorDecision.exponent);
   const nemKcalKg = resolveNemKcalPerKg(species, input, p);

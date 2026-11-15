@@ -149,7 +149,26 @@ describe('AdminOnboardingService.csv', () => {
     });
   });
 
-  test('checkout-history: one checkout per subscription, newest purchase first, complete or partial', async () => {
+  test('the checkout detail sizes a puppy with the growth factor of its line, as the store does', async () => {
+    const service = new AdminOnboardingService({
+      repository: {
+        getCheckout: jest.fn().mockResolvedValue({
+          userId: '91', market: 'BR', checkoutReference: null, planSelection: null, address: { country: 'BR' },
+          pets: [{ id: '7', name: 'Rex', ageYears: 0, ageMonths: 4, weightInput: 2, weightUnit: 'kg', neutered: true }]
+        })
+      },
+      ledgerRepository: { listByUserId: jest.fn().mockResolvedValue([]) },
+      lifeStageService: { resolveMany: jest.fn().mockResolvedValue([{ lifeStage: 'puppy' }]) },
+      recipeEnergyService: { forLifeStage: jest.fn().mockResolvedValue(1500) }
+    });
+
+    const result = await service.getByUserId('91', { roles: ['operator'], markets: ['BR'] });
+
+    // 140 × 2^0,75 = 235 kcal ÷ 1500 kcal/kg = 157 g; the adult matrix (95) would give 107 g.
+    expect(result.pets[0].simplified.daily.grams).toBe(157);
+  });
+
+    test('checkout-history: one checkout per subscription, newest purchase first, complete or partial', async () => {
     const snapshot = {
       version: 1,
       source: 'checkout',

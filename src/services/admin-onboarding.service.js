@@ -219,16 +219,21 @@ class AdminOnboardingService {
     this.nutritionParameters = options.nutritionParameters || null;
   }
 
+  // Line of each checkout pet (puppy, adult, senior), null when it cannot be resolved.
+  async lifeStagesFor(pets, market) {
+    if (!this.lifeStageService || pets.length === 0) {
+      return pets.map(() => null);
+    }
+    const stages = await this.lifeStageService.resolveMany(pets, market);
+    return pets.map((_pet, index) => (stages[index] ? stages[index].lifeStage : null));
+  }
+
   // kcal/kg per checkout pet from the mean energyKg of its line, null to keep the engine default.
-  async energiesFor(pets, market) {
+  async energiesFor(pets, market, lifeStages) {
     if (!this.recipeEnergyService || pets.length === 0) {
       return pets.map(() => null);
     }
-    const stages = this.lifeStageService ? await this.lifeStageService.resolveMany(pets, market) : [];
-    return Promise.all(pets.map((pet, index) => this.recipeEnergyService.forLifeStage(
-      market,
-      stages[index] ? stages[index].lifeStage : null
-    )));
+    return Promise.all(pets.map((_pet, index) => this.recipeEnergyService.forLifeStage(market, lifeStages[index])));
   }
 
   scopedQuery(query = {}, actor = {}) {
@@ -283,7 +288,8 @@ class AdminOnboardingService {
       ? subscriptions.filter((item) => constrainMarketQuery(actor, {}).stripeAccounts.includes(String(item.stripeAccount || '').toLowerCase()))
       : subscriptions;
     const marketCountry = checkout.address && checkout.address.country === 'BR' ? 'BR' : 'US';
-    const energies = await this.energiesFor(checkout.pets, marketCountry);
+    const lifeStages = await this.lifeStagesFor(checkout.pets, marketCountry);
+    const energies = await this.energiesFor(checkout.pets, marketCountry, lifeStages);
     const parameterSet = await publishedParametersFor(this.nutritionParameters);
     const recommendations = checkout.pets.map((pet, index) => buildForPet({
       id: pet.id,
@@ -297,7 +303,9 @@ class AdminOnboardingService {
       size: pet.size,
       activity_level: pet.activityLevel,
       pet_condition: pet.petCondition,
-      neutered: pet.neutered
+      neutered: pet.neutered,
+      // The line picks the growth or senior factor of Tabela 1, as in the store.
+      life_stage: lifeStages[index] || ''
     }, energies[index] ? { nem_kcal_kg: energies[index] } : null, '', parameterSet.parameters));
     const simplified = checkout.pets.length
       ? buildSimplifiedRecommendation(recommendations, { country: marketCountry }, await planPackagingFor(this.productsRepository, marketCountry))

@@ -40,6 +40,8 @@ describe('nutrition recommendation', () => {
     expect(calculateFood({ especie: 'cao', peso: 40, ...answers }).fator_aplicado).toBe(100);
     expect(calculateFood({ especie: 'cao', peso: 40.5, ...answers }).fator_aplicado).toBe(115);
     expect(calculateFood({ especie: 'cao', peso: 30, porte: 'gigante', ...answers }).fator_aplicado).toBe(115);
+    // The store declares only small, medium or large: a large dog over 40 kg is still giant.
+    expect(calculateFood({ especie: 'cao', peso: 45, porte: 'large', ...answers }).decision_trace).toEqual(['giant_combination:NAO-ALTO-ABAIXO:115']);
     for (const raca of ['Dogue Alemão', 'Terra Nova', 'São Bernardo']) {
       const result = calculateFood({ especie: 'cao', peso: 35, raca, ...answers });
       expect(result.decision_trace).toEqual(['giant_combination:NAO-ALTO-ABAIXO:115']);
