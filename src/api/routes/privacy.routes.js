@@ -40,6 +40,14 @@ function withHash(privacyService, request, dependencies) {
   return hashed;
 }
 
+// privacy-data-export: the PDF goes as a download; errors keep the JSON envelope through next().
+function sendPdf(response, { buffer, filename }) {
+  response.setHeader('Content-Type', 'application/pdf');
+  response.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  response.setHeader('Cache-Control', 'no-store');
+  response.status(200).send(buffer);
+}
+
 function registerPrivacyRoutes(app, dependencies = {}) {
   app.get('/api/v1/privacy/identity-confirm', async (request, response, next) => {
     try {
@@ -166,6 +174,19 @@ function registerPrivacyRoutes(app, dependencies = {}) {
       next(error);
     }
   });
+
+  app.get('/api/v1/privacy/requests/:id/export/pdf', async (request, response, next) => {
+    try {
+      const privacyService = requirePrivacyService(dependencies);
+      const result = await privacyService.downloadOwnPdf({
+        userId: requireUserId(request),
+        requestId: parseRequestId(request.params.id)
+      });
+      sendPdf(response, result);
+    } catch (error) {
+      next(error);
+    }
+  });
 }
 
 function registerAdminPrivacyRoutes(app, dependencies, { requirePermission, handle }) {
@@ -263,6 +284,15 @@ function registerAdminPrivacyRoutes(app, dependencies, { requirePermission, hand
       const privacyService = requirePrivacyService(dependencies);
       return privacyService.downloadAdminPackage(parseRequestId(request.params.id), request.adminIdentity);
     });
+  });
+
+  app.get('/api/v1/admin/privacy/requests/:id/export/pdf', requirePermission('privacy.requests.read', { market: 'record' }), async (request, response, next) => {
+    try {
+      const privacyService = requirePrivacyService(dependencies);
+      sendPdf(response, await privacyService.downloadAdminPdf(parseRequestId(request.params.id), request.adminIdentity));
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get('/api/v1/admin/users/:userId/privacy', requirePermission('users.read', { market: 'record' }), async (request, response, next) => {

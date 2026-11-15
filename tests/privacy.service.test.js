@@ -374,3 +374,78 @@ describe('PrivacyService customer note', () => {
     }]);
   });
 });
+
+describe('PrivacyService export PDF (privacy-data-export)', () => {
+  const storedPack = { exportedAt: '2026-01-01T00:00:00.000Z', profile: { fullName: 'Jane' } };
+
+  function pdfService(row) {
+    const renderExportPdf = jest.fn().mockResolvedValue({ buffer: Buffer.from('%PDF-'), filename: 'eden-bowls-dados-11.pdf' });
+    const created = createService({
+      repository: { findRequestById: jest.fn().mockResolvedValue(row) },
+      options: { renderExportPdf }
+    });
+    return { ...created, renderExportPdf };
+  }
+
+  test('renders the stored package of the customer own request in its locale', async () => {
+    const row = requestRow({ type: 'access', status: 'completed', locale: 'en-US', payload: { package: storedPack } });
+    const { service, renderExportPdf, profileService } = pdfService(row);
+
+    const result = await service.downloadOwnPdf({ userId: 77, requestId: 11 });
+
+    expect(result.filename).toBe('eden-bowls-dados-11.pdf');
+    expect(renderExportPdf).toHaveBeenCalledWith({ pack: storedPack, requestId: 11, type: 'access', locale: 'en' });
+    expect(profileService.getProfile).not.toHaveBeenCalled();
+  });
+
+  test('gives the PDF and the JSON the same package', async () => {
+    const row = requestRow({ type: 'portability', status: 'completed', payload: { package: storedPack } });
+    const { service, renderExportPdf } = pdfService(row);
+
+    const json = await service.downloadOwnPackage({ userId: 77, requestId: 11 });
+    await service.downloadOwnPdf({ userId: 77, requestId: 11 });
+
+    expect(renderExportPdf.mock.calls[0][0].pack).toBe(json);
+  });
+
+  test('answers 404 for a request of another customer', async () => {
+    const { service, renderExportPdf } = pdfService(requestRow({ type: 'access', userId: 88 }));
+
+    await expect(service.downloadOwnPdf({ userId: 77, requestId: 11 })).rejects.toMatchObject({ statusCode: 404 });
+    expect(renderExportPdf).not.toHaveBeenCalled();
+  });
+
+  test('answers no_export_package for a correction', async () => {
+    const { service } = pdfService(requestRow({ type: 'correction' }));
+
+    await expect(service.downloadAdminPdf(11, { roles: ['admin'] })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'no_export_package' }
+    });
+  });
+
+  test('answers identity_unverified for an e-mail request not yet verified', async () => {
+    const { service } = pdfService(requestRow({ type: 'access', channel: 'email', identityStatus: 'unverified' }));
+
+    await expect(service.downloadAdminPdf(11, { roles: ['admin'] })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'identity_unverified' }
+    });
+  });
+
+  test('follows the market when the panel opened the request without a locale', async () => {
+    const row = requestRow({ type: 'access', market: 'US', locale: null, payload: { package: storedPack } });
+    const { service, renderExportPdf } = pdfService(row);
+
+    await service.downloadAdminPdf(11, { roles: ['operator'], markets: ['US'] });
+
+    expect(renderExportPdf).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en' }));
+  });
+
+  test('keeps the panel PDF inside the operator markets', async () => {
+    const { service, renderExportPdf } = pdfService(requestRow({ type: 'access', market: 'US', payload: { package: storedPack } }));
+
+    await expect(service.downloadAdminPdf(11, { roles: ['operator'], markets: ['BR'] })).rejects.toMatchObject({ statusCode: 404 });
+    expect(renderExportPdf).not.toHaveBeenCalled();
+  });
+});

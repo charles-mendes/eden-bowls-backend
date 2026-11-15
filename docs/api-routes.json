@@ -400,6 +400,10 @@
     "path": "/api/v1/admin/privacy/requests/:id/export"
   },
   {
+    "method": "GET",
+    "path": "/api/v1/admin/privacy/requests/:id/export/pdf"
+  },
+  {
     "method": "POST",
     "path": "/api/v1/admin/privacy/requests/:id/extend"
   },
@@ -826,6 +830,10 @@
   {
     "method": "GET",
     "path": "/api/v1/privacy/requests/:id/export"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/privacy/requests/:id/export/pdf"
   },
   {
     "method": "GET",

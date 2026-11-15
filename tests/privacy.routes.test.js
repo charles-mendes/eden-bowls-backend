@@ -160,4 +160,91 @@ describe('admin privacy routes', () => {
     expect(response.status).toBe(403);
     expect(privacyService.listAdminRequests).not.toHaveBeenCalled();
   });
+
+  test('downloads the panel PDF of a request', async () => {
+    const privacyService = {
+      downloadAdminPdf: jest.fn().mockResolvedValue({ buffer: Buffer.from('%PDF-1.3 test'), filename: 'eden-bowls-dados-41.pdf' })
+    };
+    const app = adminApp({ privacyService });
+    const response = await request(app)
+      .get('/api/v1/admin/privacy/requests/41/export/pdf')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    expect(response.headers['content-disposition']).toBe('attachment; filename="eden-bowls-dados-41.pdf"');
+    expect(privacyService.downloadAdminPdf).toHaveBeenCalledWith(41, expect.objectContaining({ userId: '7' }));
+  });
+
+  test('keeps the JSON error of the panel PDF', async () => {
+    const privacyService = {
+      downloadAdminPdf: jest.fn().mockRejectedValue(new HttpError(422, 'Identity must be verified.', { code: 'identity_unverified' }))
+    };
+    const app = adminApp({ privacyService });
+    const response = await request(app)
+      .get('/api/v1/admin/privacy/requests/41/export/pdf')
+      .set('Authorization', `Bearer ${issueAccessToken(7)}`);
+
+    expect(response.status).toBe(422);
+    expect(response.body.details.code).toBe('identity_unverified');
+  });
+
+  test('forbids the panel PDF without privacy.requests.read', async () => {
+    const privacyService = { downloadAdminPdf: jest.fn() };
+    const app = createApp({
+      corsOrigins: ['http://localhost:5174'],
+      jwt,
+      privacyService,
+      adminIdentityService: {
+        requireOperational: jest.fn().mockResolvedValue({
+          userId: '8', email: 'nutri@edenbowls.com', roles: ['veterinarian'], permissions: ROLE_PERMISSIONS.veterinarian
+        })
+      }
+    });
+    const response = await request(app)
+      .get('/api/v1/admin/privacy/requests/41/export/pdf')
+      .set('Authorization', `Bearer ${issueAccessToken(8)}`);
+
+    expect(response.status).toBe(403);
+    expect(privacyService.downloadAdminPdf).not.toHaveBeenCalled();
+  });
+});
+
+describe('privacy customer PDF route', () => {
+  test('downloads the PDF of the customer own request', async () => {
+    const privacyService = {
+      downloadOwnPdf: jest.fn().mockResolvedValue({ buffer: Buffer.from('%PDF-1.3 test'), filename: 'eden-bowls-data-9.pdf' })
+    };
+    const app = createApp({ privacyService, corsOrigins, jwt });
+    const response = await request(app)
+      .get('/api/v1/privacy/requests/9/export/pdf')
+      .set('Authorization', `Bearer ${issueAccessToken(77)}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    expect(response.headers['content-disposition']).toBe('attachment; filename="eden-bowls-data-9.pdf"');
+    expect(privacyService.downloadOwnPdf).toHaveBeenCalledWith({ userId: 77, requestId: 9 });
+  });
+
+  test('answers 404 for another customer request', async () => {
+    const privacyService = {
+      downloadOwnPdf: jest.fn().mockRejectedValue(new HttpError(404, 'Privacy request not found.', { code: 'not_found' }))
+    };
+    const app = createApp({ privacyService, corsOrigins, jwt });
+    const response = await request(app)
+      .get('/api/v1/privacy/requests/9/export/pdf')
+      .set('Authorization', `Bearer ${issueAccessToken(77)}`);
+
+    expect(response.status).toBe(404);
+    expect(response.headers['content-type']).toContain('application/json');
+  });
+
+  test('asks for a session', async () => {
+    const privacyService = { downloadOwnPdf: jest.fn() };
+    const app = createApp({ privacyService, corsOrigins, jwt });
+    const response = await request(app).get('/api/v1/privacy/requests/9/export/pdf');
+
+    expect(response.status).toBe(401);
+    expect(privacyService.downloadOwnPdf).not.toHaveBeenCalled();
+  });
 });

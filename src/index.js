@@ -109,6 +109,7 @@ const { BlingNfeRepository } = require('./infrastructure/repositories/bling-nfe.
 const { BlingNfeService } = require('./services/bling-nfe.service');
 const { BlingNfeEmailService } = require('./services/bling-nfe-email.service');
 const { renderInvoicePdf } = require('./infrastructure/invoices/invoice-pdf-renderer');
+const { renderPrivacyExportPdf } = require('./infrastructure/privacy/privacy-export-pdf-renderer');
 const { SubscriptionsActionsService } = require('./services/subscriptions-actions.service');
 const { SubscriptionsDetailService } = require('./services/subscriptions-detail.service');
 const { SubscriptionsEditCommitService } = require('./services/subscriptions-edit-commit.service');
@@ -685,6 +686,7 @@ async function bootstrap() {
   });
   const privacyService = new PrivacyService({
     deliveryAddressIssuesRepository,
+    renderExportPdf: renderPrivacyExportPdf,
     repository: privacyRepository,
     customerContactsRepository,
     legalDocuments: legalDocumentsService,

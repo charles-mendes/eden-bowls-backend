@@ -12,6 +12,7 @@ const {
   TYPES_REQUIRING_IDENTITY_TO_COMPLETE
 } = require('../core/privacy');
 const { STRIPE_ACCOUNTS } = require('../core/stripe-account');
+const { resolveExportLocale } = require('../core/privacy-export-copy');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
   constrainMarketQuery,
@@ -70,6 +71,7 @@ class PrivacyService {
     this.ipPepper = String(options.ipPepper || '');
     this.logger = options.logger || { info() {}, warn() {}, error() {} };
     this.legalDocuments = options.legalDocuments || null;
+    this.renderExportPdf = options.renderExportPdf || null;
     this.nowProvider = typeof options.nowProvider === 'function' ? options.nowProvider : () => new Date();
   }
 
@@ -423,6 +425,16 @@ class PrivacyService {
   }
 
   async downloadOwnPackage({ userId, requestId }) {
+    return (await this.loadOwnExport({ userId, requestId })).pack;
+  }
+
+  // privacy-data-export: the PDF is drawn from the same package the JSON route returns.
+  async downloadOwnPdf({ userId, requestId }) {
+    const { row, pack } = await this.loadOwnExport({ userId, requestId });
+    return this.renderExport(row, pack);
+  }
+
+  async loadOwnExport({ userId, requestId }) {
     const row = await this.requireOwnedRequest(userId, requestId);
     if (row.type !== 'access' && row.type !== 'portability') {
       throw new HttpError(422, 'This request has no export package.', { code: 'no_export_package' });
@@ -431,9 +443,16 @@ class PrivacyService {
       throw new HttpError(422, 'Identity is not verified.', { code: 'identity_unverified' });
     }
     if (row.payload && row.payload.package) {
-      return row.payload.package;
+      return { row, pack: row.payload.package };
     }
-    return this.buildExportPackage(userId);
+    return { row, pack: await this.buildExportPackage(userId) };
+  }
+
+  async renderExport(row, pack) {
+    if (typeof this.renderExportPdf !== 'function') {
+      throw new HttpError(503, 'PDF rendering is not available.');
+    }
+    return this.renderExportPdf({ pack, requestId: row.id, type: row.type, locale: resolveExportLocale(row) });
   }
 
   async updateOwnRequestNote({ userId, requestId, note }) {
@@ -663,6 +682,15 @@ class PrivacyService {
   }
 
   async downloadAdminPackage(id, actor) {
+    return (await this.loadAdminExport(id, actor)).pack;
+  }
+
+  async downloadAdminPdf(id, actor) {
+    const { row, pack } = await this.loadAdminExport(id, actor);
+    return this.renderExport(row, pack);
+  }
+
+  async loadAdminExport(id, actor) {
     const row = await this.requireAdminRequest(id, actor);
     if (row.type !== 'access' && row.type !== 'portability') {
       throw new HttpError(422, 'This request has no export package.', { code: 'no_export_package' });
@@ -673,12 +701,12 @@ class PrivacyService {
       });
     }
     if (row.payload && row.payload.package) {
-      return row.payload.package;
+      return { row, pack: row.payload.package };
     }
     if (!row.userId) {
       throw new HttpError(422, 'No account is linked to this request.', { code: 'user_not_linked' });
     }
-    return this.buildExportPackage(row.userId);
+    return { row, pack: await this.buildExportPackage(row.userId) };
   }
 
   async getUserPrivacySnapshot(userId, actor) {
