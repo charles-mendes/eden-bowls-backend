@@ -95,6 +95,7 @@ const { CreatePlanSettings1700000000073 } = require('./migrations/1700000000073-
 const { AddRecipeContentProduct1700000000074 } = require('./migrations/1700000000074-add-recipe-content-product');
 const { SplitPlanProducts1700000000075 } = require('./migrations/1700000000075-split-plan-products');
 const { SplitFirstPurchaseMisconfigByAccount1700000000076 } = require('./migrations/1700000000076-split-first-purchase-misconfig-by-account');
+const { NutritionParametersVetDocument1700000000077 } = require('./migrations/1700000000077-nutrition-parameters-vet-document');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -215,7 +216,8 @@ function buildDataSourceOptions(env) {
       CreatePlanSettings1700000000073,
       AddRecipeContentProduct1700000000074,
       SplitPlanProducts1700000000075,
-      SplitFirstPurchaseMisconfigByAccount1700000000076
+      SplitFirstPurchaseMisconfigByAccount1700000000076,
+      NutritionParametersVetDocument1700000000077
     ],
     synchronize: false,
     logging: false,

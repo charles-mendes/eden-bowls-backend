@@ -98,13 +98,15 @@ describe('AdminNutritionService', () => {
     const dog = { type: 'dog', life_stage: 'puppy', weight: 2, neutered: true, age: 0, age_months: 6 };
     const questionnaire = { nivel_atividade: 'ALTO', score_corporal: 'ABAIXO' };
 
+    // A puppy gets the growth factor of Tabela 1 (140), not the castrated × activity × score matrix.
     test('divides the daily kcal by the chosen recipe energyKg', async () => {
       const result = await withEnergy.simulate({ country: 'US', recipeKey: 'pork', pet: dog, questionnaire });
 
       expect(recipeEnergyService.forRecipe).toHaveBeenCalledWith('US', 'pork');
-      expect(result.data.energia_kcal_dia).toBe(160);
+      expect(result.data.energia_kcal_dia).toBe(235);
+      expect(result.data.fator_aplicado).toBe(140);
       expect(result.data.nem_kcal_kg).toBe(1200);
-      expect(result.data.quantidade_g_dia).toBe(133);
+      expect(result.data.quantidade_g_dia).toBe(196);
       expect(result.data.nem_source).toBe('recipe');
       expect(result.data.recipe_key).toBe('pork');
     });
@@ -114,7 +116,7 @@ describe('AdminNutritionService', () => {
 
       expect(recipeEnergyService.forLifeStage).toHaveBeenCalledWith('BR', 'puppy');
       expect(result.data.nem_kcal_kg).toBe(1500);
-      expect(result.data.quantidade_g_dia).toBe(107);
+      expect(result.data.quantidade_g_dia).toBe(157);
       expect(result.data.nem_source).toBe('life_stage_average');
     });
 

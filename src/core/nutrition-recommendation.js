@@ -21,6 +21,34 @@ const COMBINATION_FACTORS = {
   'NAO-MODERADO-ACIMA': 85
 };
 
+// Giant dogs (over 40 kg, or a breed of the giant groups) in maintenance: the factors sent by the zootechnician
+// Izabella (requerimento_energetico.md, "Fatores para raças gigantes").
+const GIANT_COMBINATION_FACTORS = {
+  'SIM-BAIXO-ABAIXO': 95,
+  'SIM-BAIXO-ADEQUADO': 85,
+  'SIM-BAIXO-ACIMA': 75,
+  'SIM-ALTO-ABAIXO': 105,
+  'SIM-ALTO-ADEQUADO': 95,
+  'SIM-ALTO-ACIMA': 85,
+  'SIM-MODERADO-ABAIXO': 100,
+  'SIM-MODERADO-ADEQUADO': 90,
+  'SIM-MODERADO-ACIMA': 80,
+  'NAO-BAIXO-ABAIXO': 100,
+  'NAO-BAIXO-ADEQUADO': 95,
+  'NAO-BAIXO-ACIMA': 85,
+  'NAO-ALTO-ABAIXO': 115,
+  'NAO-ALTO-ADEQUADO': 105,
+  'NAO-ALTO-ACIMA': 95,
+  'NAO-MODERADO-ABAIXO': 105,
+  'NAO-MODERADO-ADEQUADO': 100,
+  'NAO-MODERADO-ACIMA': 90
+};
+
+// Exponent of the weight in the energy of the day: Fator × Peso^exponent.
+const DOG_EXPONENT = 0.75;
+const CAT_EXPONENT = 0.67;
+const CAT_OBESE_EXPONENT = 0.4;
+
 const STATE_FACTORS = {
   SENIOR: 95,
   GESTANTE: 132,
@@ -36,19 +64,12 @@ const STATE_FACTORS = {
  */
 const DEFAULT_NUTRITION_PARAMETERS = Object.freeze({
   combination: Object.freeze({ ...COMBINATION_FACTORS }),
+  combination_giant: Object.freeze({ ...GIANT_COMBINATION_FACTORS }),
   state: Object.freeze({ ...STATE_FACTORS }),
+  // Cats (Tabela 1): indoor and active. An obese cat keeps the factor and changes the exponent.
   base: Object.freeze({
-    dog: 95,
-    cat: 242,
-    cat_overweight: 134,
-    work_dog_high: 165,
-    moderate_high_impact: 125,
-    age_1_2: 130,
-    age_3_7: 110,
-    terranova: 105,
-    dog_overweight: 80,
-    dogue: 200,
-    slow_metabolism: 95
+    cat: 60,
+    cat_active: 100
   }),
   nem: Object.freeze({ dog: 3600, cat: 3800 }),
   breed_groups: Object.freeze({
@@ -70,15 +91,33 @@ const DEFAULT_NUTRITION_PARAMETERS = Object.freeze({
 
 const has = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
+/**
+ * A set saved before the calculation followed the veterinarian's document (requerimento_energetico.md), with the
+ * values that document sets: the giant matrix, and the cat factors 60 and 100 in place of the old base section
+ * (dog exceptions and cat 242/134), which the calculation no longer reads. A current set comes back unchanged.
+ */
+function upgradeNutritionParameters(input) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const base = source.base && typeof source.base === 'object' ? source.base : {};
+  if (source.combination_giant && base.cat_active !== undefined) return source;
+  return {
+    ...source,
+    combination_giant: { ...DEFAULT_NUTRITION_PARAMETERS.combination_giant },
+    base: { ...DEFAULT_NUTRITION_PARAMETERS.base }
+  };
+}
+
 // The parameter set with its breed lists as sets, read once per calculation.
 function resolveParameters(parameters) {
-  const source = parameters || DEFAULT_NUTRITION_PARAMETERS;
+  const source = upgradeNutritionParameters(parameters || DEFAULT_NUTRITION_PARAMETERS);
   const groups = source.breed_groups || {};
+  const section = (name) => ({ ...DEFAULT_NUTRITION_PARAMETERS[name], ...(source[name] || {}) });
   return {
-    combination: source.combination,
-    state: source.state,
-    base: source.base,
-    nem: source.nem,
+    combination: section('combination'),
+    combination_giant: section('combination_giant'),
+    state: section('state'),
+    base: section('base'),
+    nem: section('nem'),
     groups: {
       dogue: new Set((groups.dogue || []).map(normalizeText)),
       slow_metabolism: new Set((groups.slow_metabolism || []).map(normalizeText)),
@@ -267,106 +306,49 @@ function resolveMeals(species, lifeStage) {
   return 2;
 }
 
-function selectStateFactor(state, p) {
-  if (!state) {
-    return null;
-  }
-
-  if (state === 'CRESCIMENTO') {
-    return p.state.CRESCIMENTO_81_100;
-  }
-
-  return has(p.state, state) ? p.state[state] : null;
+function isGiantDog(size, breed, p) {
+  return size === 'gigante'
+    || p.groups.dogue.has(breed)
+    || p.groups.terranova.has(breed)
+    || p.groups.slow_metabolism.has(breed);
 }
 
-function selectBaseFactor(species, breed, activity, score, age, workDog, highImpact, growthStage, p) {
-  if (species === 'cat') {
-    return score === 'ACIMA' ? p.base.cat_overweight : p.base.cat;
-  }
-
-  if (growthStage && has(p.state, growthStage)) {
-    return p.state[growthStage];
-  }
-
-  if (activity === 'ALTO' && workDog) {
-    return p.base.work_dog_high;
-  }
-
-  if (activity === 'MODERADO' && highImpact) {
-    return p.base.moderate_high_impact;
-  }
-
-  if (age >= 1 && age <= 2) {
-    return p.base.age_1_2;
-  }
-
-  if (age >= 3 && age <= 7) {
-    return p.base.age_3_7;
-  }
-
-  if (p.groups.terranova.has(breed)) {
-    return p.base.terranova;
-  }
-
-  if (score === 'ACIMA') {
-    return p.base.dog_overweight;
-  }
-
-  return p.base.dog;
-}
-
-function selectFactor({
-  species,
-  weightKg,
-  castrado,
-  activity,
-  score,
-  breed,
-  lifeStage,
-  growthStage,
-  age,
-  workDog,
-  highImpact
-}, p) {
+/**
+ * Factor and weight exponent of the energy of the day (requerimento_energetico.md):
+ * - cat: 60 indoor, 100 with high activity; Peso^0,67, or Peso^0,4 when above weight. No combination matrix.
+ * - dog growing, pregnant or senior: the stage factor of Tabela 1.
+ * - adult dog in maintenance: the castrated × activity × body score matrix, the giant one for a dog over 40 kg or
+ *   of a giant breed group (Dogue Alemão, Terra Nova, São Bernardo).
+ * Dogs use Peso^0,75.
+ */
+function selectFactor({ species, castrado, activity, score, breed, lifeStage, growthStage, size }, p) {
   const trace = [];
-  const baseFactor = selectBaseFactor(species, breed, activity, score, age, workDog, highImpact, growthStage, p);
-  let factor = baseFactor;
-  trace.push(`base:${baseFactor}`);
 
-  const stateFactor = selectStateFactor(lifeStage, p);
-  if (stateFactor !== null) {
-    factor = stateFactor;
-    trace.push(`state_override:${lifeStage}:${stateFactor}`);
+  if (species === 'cat') {
+    const active = activity === 'ALTO';
+    const factor = active ? p.base.cat_active : p.base.cat;
+    trace.push(`${active ? 'cat_active' : 'cat_indoor'}:${factor}`);
+    const exponent = score === 'ACIMA' ? CAT_OBESE_EXPONENT : CAT_EXPONENT;
+    trace.push(`${score === 'ACIMA' ? 'cat_obese_exponent' : 'cat_exponent'}:${exponent}`);
+    return { factor, exponent, trace };
   }
 
-  if (species === 'dog' && p.groups.dogue.has(breed)) {
-    factor = p.base.dogue;
-    trace.push(`breed_dogue_group:${factor}`);
+  if (lifeStage === 'CRESCIMENTO' || growthStage) {
+    const key = growthStage && has(p.state, growthStage) ? growthStage : 'CRESCIMENTO_81_100';
+    trace.push(`growth:${key}:${p.state[key]}`);
+    return { factor: p.state[key], exponent: DOG_EXPONENT, trace };
   }
 
-  if (species === 'dog' && p.groups.slow_metabolism.has(breed)) {
-    factor = p.base.slow_metabolism;
-    trace.push(`slow_metabolism_exception:${factor}`);
+  if (lifeStage === 'GESTANTE' || lifeStage === 'SENIOR') {
+    trace.push(`state:${lifeStage}:${p.state[lifeStage]}`);
+    return { factor: p.state[lifeStage], exponent: DOG_EXPONENT, trace };
   }
 
-  const combinationKey = `${castrado}-${activity}-${score}`;
-  const hasCombination = has(p.combination, combinationKey);
-  if (hasCombination) {
-    factor = p.combination[combinationKey];
-    trace.push(`combination_override:${combinationKey}:${factor}`);
-  }
-
-  if (species === 'cat' && score === 'ACIMA' && !hasCombination) {
-    factor = p.base.cat_overweight;
-    trace.push(`cat_obese_adjustment:${factor}`);
-  }
-
-  if (species === 'cat' && score !== 'ACIMA' && !hasCombination) {
-    factor = p.base.cat;
-    trace.push(`cat_normal_factor:${factor}`);
-  }
-
-  return { factor, trace };
+  const key = `${castrado}-${activity}-${score}`;
+  const giant = isGiantDog(size, breed, p);
+  const matrix = giant ? p.combination_giant : p.combination;
+  trace.push(`${giant ? 'giant_combination' : 'combination'}:${key}:${matrix[key]}`);
+  return { factor: matrix[key], exponent: DOG_EXPONENT, trace };
 }
 
 function localizedDisplayMetadata(locale) {
@@ -417,25 +399,19 @@ function calculateFood(input = {}, locale = '', parameters = DEFAULT_NUTRITION_P
   const breed = normalizeText(input.raca);
   const lifeStage = normalizeState(input.estado_fisiologico || 'manutencao');
   const growthStage = normalizeGrowthStage(input.growth_stage);
-  const age = Math.max(0, Number.parseInt(input.idade, 10) || 0);
-  const workDog = sanitizeBoolean(input.work_dog) === true;
-  const highImpact = sanitizeBoolean(input.high_impact) === true;
   const declaredSize = normalizeSize(input.porte);
   const resolvedSize = declaredSize || classifySize(species, weightKg);
   const factorDecision = selectFactor({
     species,
-    weightKg,
     castrado,
     activity,
     score,
     breed,
     lifeStage,
     growthStage,
-    age,
-    workDog,
-    highImpact
+    size: resolvedSize
   }, p);
-  const energyKcalDay = factorDecision.factor * (weightKg ** 0.75);
+  const energyKcalDay = factorDecision.factor * (weightKg ** factorDecision.exponent);
   const nemKcalKg = resolveNemKcalPerKg(species, input, p);
   const gramsDay = nemKcalKg > 0 ? Math.round((energyKcalDay / nemKcalKg) * 1000) : 0;
   const meals = resolveMeals(species, lifeStage);
@@ -447,6 +423,7 @@ function calculateFood(input = {}, locale = '', parameters = DEFAULT_NUTRITION_P
     refeicoes: meals,
     quantidade_por_refeicao: gramsPerMeal,
     fator_aplicado: Math.round(factorDecision.factor * 100) / 100,
+    expoente_peso: factorDecision.exponent,
     porte: resolvedSize,
     especie: species,
     nem_kcal_kg: Math.round(nemKcalKg),
@@ -521,6 +498,8 @@ function buildForPet(pet = {}, questionnaire = null, locale = '', parameters = D
 
 module.exports = {
   COMBINATION_FACTORS,
+  GIANT_COMBINATION_FACTORS,
+  upgradeNutritionParameters,
   DEFAULT_NUTRITION_PARAMETERS,
   normalizeText,
   buildForPet,

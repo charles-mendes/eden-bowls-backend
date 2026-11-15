@@ -1,10 +1,10 @@
 const { HttpError } = require('./http-error');
-const { DEFAULT_NUTRITION_PARAMETERS, normalizeText } = require('./nutrition-recommendation');
+const { DEFAULT_NUTRITION_PARAMETERS, normalizeText, upgradeNutritionParameters } = require('./nutrition-recommendation');
 
 const NUTRITION_PARAMETERS_INVALID = 'nutrition_parameters_invalid';
 const FACTOR_RANGE = { min: 1, max: 400 };
 const NEM_RANGE = { min: 1000, max: 8000 };
-const FACTOR_SECTIONS = ['combination', 'state', 'base'];
+const FACTOR_SECTIONS = ['combination', 'combination_giant', 'state', 'base'];
 const BREED_GROUPS = ['dogue', 'slow_metabolism', 'terranova'];
 const MAX_BREED_LENGTH = 80;
 
@@ -88,5 +88,6 @@ module.exports = {
   FACTOR_RANGE,
   NEM_RANGE,
   NUTRITION_PARAMETERS_INVALID,
-  parseNutritionParameters
+  parseNutritionParameters,
+  upgradeNutritionParameters
 };
