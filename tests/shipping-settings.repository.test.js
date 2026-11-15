@@ -84,6 +84,29 @@ describe('ShippingSettingsRepository', () => {
     );
   });
 
+  test('reads and saves the Brazil delivery days, 0 (same day) for a row without it', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([brRow])
+        .mockResolvedValueOnce([usRow])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([brRow])
+        .mockResolvedValueOnce([usRow])
+        .mockResolvedValueOnce([])
+        .mockResolvedValue({ affectedRows: 1 })
+    };
+    const repository = new ShippingSettingsRepository(dataSource);
+
+    expect((await repository.get()).br.rule.delivery_days).toBe(0);
+    const saved = await repository.save({ br: { rule: { delivery_days: 2 } } });
+
+    expect(saved.br.rule.delivery_days).toBe(2);
+    const [sql, params] = dataSource.query.mock.calls.find(([text]) => text.includes('INSERT INTO `shipping_br_settings`'));
+    expect(sql).toContain('`delivery_days` = VALUES(`delivery_days`)');
+    expect(params[params.length - 1]).toBe(2);
+  });
+
   test('reads and saves the US max transit days, 1 for a row without it', async () => {
     const dataSource = {
       isInitialized: true,

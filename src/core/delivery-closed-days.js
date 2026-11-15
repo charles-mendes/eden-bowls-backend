@@ -1,6 +1,8 @@
 const { HttpError } = require('./http-error');
 const MAX_TRANSIT_DAYS_US = 1;
 const MAX_DELIVERY_RADIUS_KM_BR = 50;
+// Brazil delivery time the operator picks: 0 (the same day as preparation) to 3 business days after it.
+const BR_DELIVERY_DAYS_MAX = 3;
 const TIMEZONE_BR = 'America/Sao_Paulo';
 const TIMEZONE_US = 'America/New_York';
 
@@ -291,9 +293,22 @@ function usPrepValid(parts, rows, transitDays) {
   return true;
 }
 
-function deliveryForPrep(market, parts, transitDays) {
+// Brazil: the business days after preparation, skipping Saturday, Sunday and the days that close delivery.
+function brazilDeliveryForPrep(parts, rows) {
+  let delivery = parts;
+  for (let left = brDeliveryDays; left > 0;) {
+    delivery = addCalendarDays(delivery.year, delivery.month, delivery.day, 1);
+    if (!isWeekend(delivery) && !flagOn(rows, 'BR', dateKey(delivery.year, delivery.month, delivery.day), 'closesDelivery')) {
+      left -= 1;
+    }
+  }
+  return delivery;
+}
+
+// `rows` (the active closed days) only matter for Brazil, whose delivery time skips the days that close delivery.
+function deliveryForPrep(market, parts, transitDays, rows = []) {
   if (market === 'BR') {
-    return parts;
+    return brazilDeliveryForPrep(parts, rows);
   }
   const pickup = addCalendarDays(parts.year, parts.month, parts.day, 1);
   return addCalendarDays(pickup.year, pickup.month, pickup.day, transitDays);
@@ -334,6 +349,17 @@ function setBrDeliveryRadiusKm(value) {
 
 function currentBrDeliveryRadiusKm() {
   return brDeliveryRadiusKm;
+}
+
+let brDeliveryDays = 0;
+
+function setBrDeliveryDays(value) {
+  const days = Number(value);
+  brDeliveryDays = Number.isInteger(days) && days >= 0 && days <= BR_DELIVERY_DAYS_MAX ? days : 0;
+}
+
+function currentBrDeliveryDays() {
+  return brDeliveryDays;
 }
 
 // The admin edits the US transit limit in the shipping settings; the default holds until settings load.
@@ -389,6 +415,9 @@ module.exports = {
   MAX_DELIVERY_RADIUS_KM_BR,
   currentBrDeliveryRadiusKm,
   setBrDeliveryRadiusKm,
+  BR_DELIVERY_DAYS_MAX,
+  currentBrDeliveryDays,
+  setBrDeliveryDays,
   currentUsMaxTransitDays,
   setUsMaxTransitDays,
   TIMEZONE_BR,

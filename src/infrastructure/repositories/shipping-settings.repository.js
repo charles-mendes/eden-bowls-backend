@@ -29,7 +29,8 @@ const BR_COLUMNS = [
   'max_distance_km',
   'km_per_day',
   'min_days',
-  'max_days'
+  'max_days',
+  'delivery_days'
 ];
 
 const US_COLUMNS = [

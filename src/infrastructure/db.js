@@ -98,6 +98,7 @@ const { SplitFirstPurchaseMisconfigByAccount1700000000076 } = require('./migrati
 const { NutritionParametersVetDocument1700000000077 } = require('./migrations/1700000000077-nutrition-parameters-vet-document');
 const { NutritionDefaultFoodEnergy1700000000078 } = require('./migrations/1700000000078-nutrition-default-food-energy');
 const { NutritionGiantBreeds1700000000079 } = require('./migrations/1700000000079-nutrition-giant-breeds');
+const { AddBrDeliveryDays1700000000080 } = require('./migrations/1700000000080-add-br-delivery-days');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -221,7 +222,8 @@ function buildDataSourceOptions(env) {
       SplitFirstPurchaseMisconfigByAccount1700000000076,
       NutritionParametersVetDocument1700000000077,
       NutritionDefaultFoodEnergy1700000000078,
-      NutritionGiantBreeds1700000000079
+      NutritionGiantBreeds1700000000079,
+      AddBrDeliveryDays1700000000080
     ],
     synchronize: false,
     logging: false,

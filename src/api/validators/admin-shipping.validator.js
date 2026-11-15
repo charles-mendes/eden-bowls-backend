@@ -27,7 +27,8 @@ const shippingSettingsSchema = z.object({
       max_distance_km: optionalNumber,
       km_per_day: optionalNumber,
       min_days: optionalNumber,
-      max_days: optionalNumber
+      max_days: optionalNumber,
+      delivery_days: optionalNumber
     }).optional()
   }).optional(),
   us: z.object({

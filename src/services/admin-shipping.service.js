@@ -1,5 +1,6 @@
 const { HttpError } = require('../core/http-error');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
+const { BR_DELIVERY_DAYS_MAX } = require('../core/delivery-closed-days');
 const { mapRatedShipments, pickRate } = require('../infrastructure/shipping/ups-client');
 const { BOX_KEYS, DEFAULT_SETTINGS, mergeBoxes } = require('../infrastructure/shipping/shipping-settings');
 
@@ -41,6 +42,20 @@ function assertUsMaxTransitDays(us) {
   if (!Number.isInteger(days) || days < MIN_US_TRANSIT_DAYS || days > MAX_US_TRANSIT_DAYS) {
     throw new HttpError(422, `US max transit days must be a whole number from ${MIN_US_TRANSIT_DAYS} to ${MAX_US_TRANSIT_DAYS}.`, {
       code: 'invalid_max_transit_days'
+    });
+  }
+}
+
+// The Brazil delivery time is a whole number of business days, 0 (same day) to 3; a refused value stores nothing.
+function assertBrDeliveryDays(br) {
+  const value = br && br.rule ? br.rule.delivery_days : null;
+  if (value == null || value === '') {
+    return;
+  }
+  const days = Number(value);
+  if (!Number.isInteger(days) || days < 0 || days > BR_DELIVERY_DAYS_MAX) {
+    throw new HttpError(422, `Brazil delivery days must be a whole number from 0 to ${BR_DELIVERY_DAYS_MAX}.`, {
+      code: 'invalid_br_delivery_days'
     });
   }
 }
@@ -227,6 +242,7 @@ class AdminShippingService {
   async saveSettings(payload = {}, actor = {}) {
     this.ensureRepository();
     assertUsMaxTransitDays(payload.us);
+    assertBrDeliveryDays(payload.br);
     await assertUsDryIce(payload.us, this.repository);
     await assertUsBoxes(payload.us, this.repository);
     const scoped = await this.resolveHeadquarters(this.scopedPayload(payload, actor));

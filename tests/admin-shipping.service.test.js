@@ -44,6 +44,26 @@ describe('AdminShippingService', () => {
     expect(shippingService.settings.us.max_transit_days).toBe(1);
   });
 
+  test.each([-1, 4, 1.5, 'two'])('Out of range: Brazil delivery_days %j is refused with 422 and nothing is stored', async (days) => {
+    const repository = { save: jest.fn(), get: jest.fn() };
+    const service = new AdminShippingService({ repository, shippingService: { settings: null } });
+
+    await expect(service.saveSettings({ br: { rule: { delivery_days: days } } })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'invalid_br_delivery_days' }
+    });
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  test.each([0, 1, 2, 3])('saves Brazil delivery_days %j', async (days) => {
+    const repository = { save: jest.fn(async (payload) => payload) };
+    const service = new AdminShippingService({ repository, shippingService: { settings: null } });
+
+    await service.saveSettings({ br: { rule: { delivery_days: days } } });
+
+    expect(repository.save).toHaveBeenCalledWith({ br: { rule: { delivery_days: days } } });
+  });
+
   test('saves max_transit_days within 1 to 10', async () => {
     const repository = { save: jest.fn(async (payload) => payload) };
     const service = new AdminShippingService({ repository, shippingService: { settings: null } });

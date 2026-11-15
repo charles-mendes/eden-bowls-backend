@@ -128,6 +128,11 @@ function buildShippingBrSettingsEntitySchema(tableName = 'shipping_br_settings')
         name: 'max_days',
         type: Number
       },
+      deliveryDays: {
+        name: 'delivery_days',
+        type: Number,
+        default: 0
+      },
       createdAt: {
         name: 'created_at',
         type: 'datetime',

@@ -23,7 +23,9 @@ const DEFAULT_SETTINGS = {
       max_distance_km: 50,
       km_per_day: 80,
       min_days: 2,
-      max_days: 10
+      max_days: 10,
+      // Business days from preparation to delivery; 0 is the same day.
+      delivery_days: 0
     }
   },
   us: {
@@ -215,7 +217,8 @@ function mergeSettings(base, overlay) {
         max_distance_km: toNumber(fileRule.max_distance_km, baseRule.max_distance_km),
         km_per_day: toNumber(fileRule.km_per_day, baseRule.km_per_day),
         min_days: toNumber(fileRule.min_days, baseRule.min_days),
-        max_days: toNumber(fileRule.max_days, baseRule.max_days)
+        max_days: toNumber(fileRule.max_days, baseRule.max_days),
+        delivery_days: toNumber(fileRule.delivery_days, toNumber(baseRule.delivery_days, DEFAULT_SETTINGS.br.rule.delivery_days))
       }
     },
     us: {
@@ -314,7 +317,8 @@ function brFromRow(row) {
       max_distance_km: toNumber(row.max_distance_km, DEFAULT_SETTINGS.br.rule.max_distance_km),
       km_per_day: toNumber(row.km_per_day, DEFAULT_SETTINGS.br.rule.km_per_day),
       min_days: toNumber(row.min_days, DEFAULT_SETTINGS.br.rule.min_days),
-      max_days: toNumber(row.max_days, DEFAULT_SETTINGS.br.rule.max_days)
+      max_days: toNumber(row.max_days, DEFAULT_SETTINGS.br.rule.max_days),
+      delivery_days: toNumber(row.delivery_days, DEFAULT_SETTINGS.br.rule.delivery_days)
     }
   };
 }
@@ -383,7 +387,8 @@ function brToParams(br) {
     br.rule.max_distance_km,
     br.rule.km_per_day,
     br.rule.min_days,
-    br.rule.max_days
+    br.rule.max_days,
+    toNumber(br.rule.delivery_days, DEFAULT_SETTINGS.br.rule.delivery_days)
   ];
 }
 

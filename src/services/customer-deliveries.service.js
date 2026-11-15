@@ -48,7 +48,7 @@ function projectOne(market, chargeAt, rows, transitDays) {
   return {
     chargeAt,
     preparationDay: presentDate(prep),
-    deliveryDate: presentDate(deliveryForPrep(market, prep, transitDays))
+    deliveryDate: presentDate(deliveryForPrep(market, prep, transitDays, rows))
   };
 }
 
@@ -97,7 +97,7 @@ function offerDates({ market, rows, transitDays, timeZone, fromPreparationDay, a
       ? brazilPrepValid(candidate, rows)
       : usPrepValid(candidate, rows, transitDays);
     if (!valid) continue;
-    const deliveryDate = presentDate(deliveryForPrep(market, candidate, transitDays));
+    const deliveryDate = presentDate(deliveryForPrep(market, candidate, transitDays, rows));
     if (deliveryDate <= afterDate) continue;
     if (deliveryDate > throughDate) break;
     const midnight = wallTimeToUtc(candidate.year, candidate.month, candidate.day, 0, 0, 0, timeZone);
@@ -137,7 +137,7 @@ function targetPlans({ market, rows, transitDays, timeZone, chargeAt, projected,
       : null,
     // The delivery a skip lands on, so the confirmation can name it before the customer commits.
     nextDeliveryIfSkip: skipPlan.preparationDay
-      ? presentDate(deliveryForPrep(market, partsOf(skipPlan.preparationDay), transitDays))
+      ? presentDate(deliveryForPrep(market, partsOf(skipPlan.preparationDay), transitDays, rows))
       : null,
     offeredDates: projected && after
       ? offerDates({

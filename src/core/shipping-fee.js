@@ -66,23 +66,6 @@ function applyShippingFee(distanceKm, rule = {}) {
   };
 }
 
-function deliveryDays(distanceKm, rule = {}) {
-  const kmPerDay = Math.max(0.0001, Number(rule.km_per_day) || 80);
-  const minDays = Number(rule.min_days);
-  const maxDays = Number(rule.max_days);
-  let days = Math.ceil(Number(distanceKm) / kmPerDay);
-
-  if (Number.isFinite(minDays)) {
-    days = Math.max(minDays, days);
-  }
-
-  if (Number.isFinite(maxDays) && maxDays > 0) {
-    days = Math.min(maxDays, days);
-  }
-
-  return Math.max(1, days);
-}
-
 function formatBrZipcode(cep8) {
   const digits = String(cep8 || '').replace(/\D/g, '').slice(0, 8);
   if (digits.length !== 8) {
@@ -96,7 +79,6 @@ module.exports = {
   EARTH_RADIUS_M,
   applyShippingFee,
   billableDistanceKm,
-  deliveryDays,
   formatBrZipcode,
   haversineMeters,
   roundTo
