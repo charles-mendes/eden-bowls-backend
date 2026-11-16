@@ -9,7 +9,8 @@ const unix = (iso) => Math.floor(Date.parse(iso) / 1000);
 function subscription(overrides = {}) {
   return {
     stripeSubscriptionId: 'sub_1', ledgerId: 1, userId: 70, market: 'US', status: 'active',
-    chargeAt: new Date('2027-12-20T15:00:00Z'), termMonths: 1, chargedCount: null, transitDays: 1,
+    // Charged at 20:30 in New York on the 20th, after closing: it prepares on the 21st.
+    chargeAt: new Date('2027-12-21T01:30:00Z'), termMonths: 1, chargedCount: null, transitDays: 1,
     productionStatus: 'to_prepare', pendingDeliveryChanges: null, paidCycle: null, ...overrides
   };
 }

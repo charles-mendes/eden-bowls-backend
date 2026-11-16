@@ -1,10 +1,11 @@
 const { HttpError } = require('./http-error');
-const { DEFAULT_NUTRITION_PARAMETERS, normalizeText } = require('./nutrition-recommendation');
+const { DEFAULT_NUTRITION_PARAMETERS, normalizeText, upgradeNutritionParameters } = require('./nutrition-recommendation');
 
 const NUTRITION_PARAMETERS_INVALID = 'nutrition_parameters_invalid';
 const FACTOR_RANGE = { min: 1, max: 400 };
-const NEM_RANGE = { min: 1000, max: 8000 };
-const FACTOR_SECTIONS = ['combination', 'state', 'base'];
+// EM of the food: fresh food sits around 950 to 1500 kcal/kg, dry kibble up to 4000.
+const NEM_RANGE = { min: 500, max: 8000 };
+const FACTOR_SECTIONS = ['combination', 'combination_giant', 'state', 'base'];
 const BREED_GROUPS = ['dogue', 'slow_metabolism', 'terranova'];
 const MAX_BREED_LENGTH = 80;
 
@@ -21,7 +22,7 @@ function objectOf(value) {
 
 /**
  * A parameter set from a request with exactly the keys of the published one (nutrition-parameters), or 422
- * `nutrition_parameters_invalid` listing every invalid field. Factors go from 1 to 400 and NEM from 1000 to
+ * `nutrition_parameters_invalid` listing every invalid field. Factors go from 1 to 400 and NEM from 500 to
  * 8000; breeds are normalized and a breed may sit in one energy group only (`breed_groups.<group>:<breed>`).
  */
 function parseNutritionParameters(input) {
@@ -88,5 +89,6 @@ module.exports = {
   FACTOR_RANGE,
   NEM_RANGE,
   NUTRITION_PARAMETERS_INVALID,
-  parseNutritionParameters
+  parseNutritionParameters,
+  upgradeNutritionParameters
 };

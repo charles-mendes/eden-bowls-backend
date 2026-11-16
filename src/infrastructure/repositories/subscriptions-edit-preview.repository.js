@@ -7,7 +7,8 @@ const {
   diffSubscriptionItems,
   mapProrationFromInvoice,
   resolveProposedPlan,
-  withLedgerMarket
+  assertLedgerMarket,
+  parseEditFiscal
 } = require('../../core/subscription-edit-plan');
 const { roundMoney } = require('../../core/plan-catalog-pricing');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
@@ -55,10 +56,11 @@ class SubscriptionsEditPreviewRepository {
     }
     const packMode = Boolean(requestPayload.delivery_id);
     if (packMode) assertPackOnlyChange(requestPayload, row);
-    const payload = withLedgerMarket(
+    const payload = assertLedgerMarket(
       packMode ? withStoredPets(requestPayload, row.planSelection) : requestPayload,
-      ledgerStripeAccount(row)
+      row
     );
+    parseEditFiscal(payload, row);
     const currentTerm = Number(row.subscriptionTermMonths || 1);
     const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
 

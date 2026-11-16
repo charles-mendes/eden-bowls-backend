@@ -22,22 +22,24 @@ class RecipeEnergyService {
   }
 
   // Published recipes of the market with their line and label energyKg (null when not filled), for the
-  // nutrition simulator.
+  // nutrition simulator. A recipe is a product (catalog-products): one with a published variation is listed.
   async listRecipes(market) {
     const normalized = normalizeRecipeMarket(market) || 'US';
-    const lineByRecipe = new Map();
+    const productIds = [];
     for (const row of await this.catalogRepository.recipeVariationRows()) {
-      if (row.market === normalized && row.published && row.recipeKey && !lineByRecipe.has(row.recipeKey)) {
-        lineByRecipe.set(row.recipeKey, row.lifeStage);
+      if (row.market === normalized && row.published && row.productId && !productIds.includes(row.productId)) {
+        productIds.push(row.productId);
       }
     }
-    const contents = await this.contentRepository.findByMarketAndSlugs(normalized, [...lineByRecipe.keys()]);
-    return [...lineByRecipe].filter(([recipeKey]) => contents.has(recipeKey)).map(([recipeKey, lifeStage]) => {
-      const content = contents.get(recipeKey);
+    const byProduct = new Map((await this.contentRepository.listByMarket(normalized))
+      .filter((content) => content.productId)
+      .map((content) => [String(content.productId), content]));
+    return productIds.filter((productId) => byProduct.has(productId)).map((productId) => {
+      const content = byProduct.get(productId);
       return {
-        key: recipeKey,
-        name: content.name || recipeKey,
-        life_stage: content.lifeStage || lifeStage,
+        key: content.flavorSlug,
+        name: content.name || content.flavorSlug,
+        life_stage: content.lifeStage,
         energy_kcal_kg: content.label ? parseEnergyKcalPerKg(content.label.energyKg) : null
       };
     });

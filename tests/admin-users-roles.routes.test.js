@@ -173,6 +173,24 @@ describe('admin users roles routes', () => {
     }, identity);
   });
 
+  test('PATCH fiscal needs the delivery permission and passes the identity', async () => {
+    const operator = { id: '2', email: 'ops@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator };
+    const updateFiscal = jest.fn().mockResolvedValue({ success: true, data: {} });
+    const body = { fullName: 'Ana Souza', cpf: '52998224725' };
+
+    const allowed = await request(appWithIdentity(operator, { adminUsersService: { updateFiscal } }))
+      .patch('/api/v1/admin/users/8/fiscal').set('Authorization', `Bearer ${tokenFor()}`).send(body);
+    expect(allowed.status).toBe(200);
+    expect(updateFiscal).toHaveBeenCalledWith('8', body, operator);
+
+    updateFiscal.mockClear();
+    const reader = { ...operator, permissions: ['users.read'] };
+    const refused = await request(appWithIdentity(reader, { adminUsersService: { updateFiscal } }))
+      .patch('/api/v1/admin/users/8/fiscal').set('Authorization', `Bearer ${tokenFor()}`).send(body);
+    expect(refused.status).toBe(403);
+    expect(updateFiscal).not.toHaveBeenCalled();
+  });
+
   test('forbids readonly from changing account status', async () => {
     const adminUsersService = {
       updateStatus: jest.fn()

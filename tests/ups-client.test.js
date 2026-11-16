@@ -319,4 +319,242 @@ describe('UPS simulation client', () => {
       candidates: [{ street: '26601 ALISO CREEK RD', street2: '', city: 'ALISO VIEJO', state: 'CA', zipcode: '92656-4301' }]
     });
   });
+
+  test('Rating says PackagingType and Shipping says Packaging', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/rating/v2403/Shop': () => jsonResponse(200, {
+        RateResponse: { RatedShipment: [{ Service: { Code: '03' }, TotalCharges: { MonetaryValue: '1' } }] }
+      }),
+      '/api/shipments/v2409/ship': () => jsonResponse(200, {
+        ShipmentResponse: { ShipmentResults: { ShipmentIdentificationNumber: '1ZSHIP', PackageResults: { TrackingNumber: '1ZSHIP' } } }
+      })
+    });
+    const ups = clientFromEnv(envFor('local'), fetchImpl);
+    const parties = { shipFrom: { zipcode: '33101' }, shipTo: { zipcode: '10001' }, package: {} };
+
+    await ups.rate(parties);
+    await ups.createShipment(parties);
+
+    const bodyOf = (path) => JSON.parse(calls.find((call) => call.url.includes(path)).init.body);
+    const shipped = bodyOf('/shipments/').ShipmentRequest.Shipment.Package;
+    expect(shipped.Packaging).toMatchObject({ Code: '02' });
+    expect(shipped.PackagingType).toBeUndefined();
+    expect(bodyOf('/rating/').RateRequest.Shipment.Package.PackagingType).toMatchObject({ Code: '02' });
+  });
+});
+
+describe('UpsClient shipment with several boxes', () => {
+  test('sends one Package per box with its dry ice and reads every package back in order', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/shipments/v2409/ship': () => jsonResponse(200, {
+        ShipmentResponse: { ShipmentResults: {
+          ShipmentIdentificationNumber: '1ZSHIP',
+          PackageResults: [
+            { TrackingNumber: '1ZBOX1', ShippingLabel: { GraphicImage: 'R0lGMQ==' } },
+            { TrackingNumber: '1ZBOX2', ShippingLabel: { GraphicImage: 'R0lGMg==' } }
+          ]
+        } }
+      })
+    });
+    const ups = client({ fetchImpl });
+
+    const result = await ups.createShipment({
+      shipFrom: { zipcode: '33431' },
+      shipTo: { zipcode: '10001' },
+      packages: [
+        { length_in: 18, width_in: 14, height_in: 12, weight_lb: 37.5, dry_ice_kg: 0.5 },
+        { length_in: 18, width_in: 14, height_in: 12, weight_lb: 20.2, dry_ice_kg: 0.5 }
+      ]
+    });
+
+    const shipped = JSON.parse(calls.find((call) => call.url.includes('/shipments/')).init.body).ShipmentRequest.Shipment.Package;
+    expect(shipped).toHaveLength(2);
+    expect(shipped.map((entry) => entry.PackageWeight.Weight)).toEqual(['37.5', '20.2']);
+    expect(shipped.map((entry) => entry.Dimensions.Length)).toEqual(['18', '18']);
+    for (const entry of shipped) {
+      expect(entry.PackageServiceOptions.DryIce).toEqual({
+        RegulationSet: 'CFR',
+        DryIceWeight: { UnitOfMeasurement: { Code: '00', Description: 'Kilograms' }, Weight: '0.5' }
+      });
+      expect(entry.Packaging).toMatchObject({ Code: '02' });
+    }
+    expect(result.trackingNumber).toBe('1ZBOX1');
+    expect(result.labelBase64).toBe('R0lGMQ==');
+    expect(result.packages).toEqual([
+      { trackingNumber: '1ZBOX1', labelBase64: 'R0lGMQ==' },
+      { trackingNumber: '1ZBOX2', labelBase64: 'R0lGMg==' }
+    ]);
+  });
+});
+
+describe('UpsClient ship-to name', () => {
+  test('cuts a long recipient to the 35 characters UPS accepts', () => {
+    const name = 'Maria Aparecida dos Santos Oliveira Albuquerque';
+    expect(name.length).toBeGreaterThan(35);
+    const address = client().buildAddress({ name });
+    expect(address.Name).toBe(name.slice(0, 35));
+    expect(address.AttentionName).toBe(name.slice(0, 35));
+  });
+});
+
+describe('UPS pickup', () => {
+  const shipFrom = { name: 'Eden Bowls', street: '100 Main St', street2: 'Suite 2', city: 'Boca Raton', state: 'FL', zipcode: '33431', country: 'US', phone: '(305) 555-0100' };
+
+  test('creates a pickup with the date, window, count, address, phone and total weight', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/pickupcreation/v2409/pickup': () => jsonResponse(200, { PickupCreationResponse: { PRN: '2929602E9CP' } })
+    });
+    const ups = client({ fetchImpl });
+
+    const result = await ups.createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 8, shipFrom, serviceCode: '03', totalWeightLb: 80 });
+
+    expect(result.prn).toBe('2929602E9CP');
+    const call = calls.find((item) => item.url.includes('/api/pickupcreation/'));
+    expect(call.init.method).toBe('POST');
+    const body = JSON.parse(call.init.body).PickupCreationRequest;
+    expect(body.RatePickupIndicator).toBe('N');
+    expect(body.Shipper.Account.AccountNumber).toBe('A1B2C3');
+    expect(body.PickupDateInfo).toEqual({ PickupDate: '20261109', ReadyTime: '1400', CloseTime: '1800' });
+    expect(body.PickupAddress).toMatchObject({ AddressLine: '100 Main St Suite 2', City: 'Boca Raton', StateProvince: 'FL', PostalCode: '33431', Phone: { Number: '3055550100' } });
+    expect(body.PickupPiece).toEqual([{ ServiceCode: '003', Quantity: '8', DestinationCountryCode: 'US', ContainerCode: '01' }]);
+    expect(body.TotalWeight).toEqual({ Weight: '80', UnitOfMeasurement: 'LBS' });
+    expect(body.PaymentMethod).toBe('01');
+  });
+
+  test('a response without PRN is ups_pickup_incomplete', async () => {
+    const { fetchImpl } = fakeUps({ '/api/pickupcreation/v2409/pickup': () => jsonResponse(200, { PickupCreationResponse: {} }) });
+    await expect(client({ fetchImpl }).createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 1, shipFrom, totalWeightLb: 37.5 }))
+      .rejects.toMatchObject({ statusCode: 502, details: { code: 'ups_pickup_incomplete' } });
+  });
+
+  test('Two labels with three boxes: TotalWeight is the sum sent, not multiplied by the count', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/pickupcreation/v2409/pickup': () => jsonResponse(200, { PickupCreationResponse: { PRN: '2929602E9CP' } })
+    });
+
+    await client({ fetchImpl }).createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 3, shipFrom, totalWeightLb: 67.6 });
+
+    const body = JSON.parse(calls.find((item) => item.url.includes('/api/pickupcreation/')).init.body).PickupCreationRequest;
+    expect(body.TotalWeight).toEqual({ Weight: '67.6', UnitOfMeasurement: 'LBS' });
+    expect(body.PickupPiece[0].Quantity).toBe('3');
+  });
+
+  test('a pickup without a total weight is refused before UPS', async () => {
+    const { fetchImpl, calls } = fakeUps();
+    await expect(client({ fetchImpl }).createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 1, shipFrom }))
+      .rejects.toMatchObject({ statusCode: 400, details: { code: 'invalid_pickup_weight' } });
+    expect(calls.filter((item) => item.url.includes('/api/pickupcreation/'))).toHaveLength(0);
+  });
+
+  test('a 401 on create is not repeated', async () => {
+    const { fetchImpl, calls } = fakeUps({ '/api/pickupcreation/v2409/pickup': () => jsonResponse(401, {}) });
+    await expect(client({ fetchImpl }).createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 1, shipFrom, totalWeightLb: 37.5 })).rejects.toBeTruthy();
+    expect(calls.filter((item) => item.url.includes('/api/pickupcreation/'))).toHaveLength(1);
+  });
+
+  test('cancels by PRN in the header', async () => {
+    const { fetchImpl, calls } = fakeUps();
+    await client({ fetchImpl }).cancelPickup('2929602E9CP');
+    const call = calls.find((item) => item.url.includes('/pickup/02'));
+    expect(call.url).toBe(`${CIE}/api/shipments/v2409/pickup/02`);
+    expect(call.init.method).toBe('DELETE');
+    expect(call.init.headers.Prn).toBe('2929602E9CP');
+  });
+
+  test('the simulation client refuses both', async () => {
+    const ups = client({ simulationOnly: true, fetchImpl: fakeUps().fetchImpl });
+    await expect(ups.createPickup({ pickupDate: '2026-11-09', readyTime: '14:00', closeTime: '18:00', packageCount: 1, shipFrom })).rejects.toMatchObject({ details: { code: 'ups_simulation_only' } });
+    await expect(ups.cancelPickup('X')).rejects.toMatchObject({ details: { code: 'ups_simulation_only' } });
+  });
+
+  test('a label buy carries the ship-from phone when there is one', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/shipments/v2409/ship': () => jsonResponse(200, {
+        ShipmentResponse: { ShipmentResults: { ShipmentIdentificationNumber: '1ZSHIP', PackageResults: { TrackingNumber: '1ZSHIP' } } }
+      })
+    });
+    await client({ fetchImpl }).createShipment({ shipFrom, shipTo: { zipcode: '10001' }, package: {} });
+    const body = JSON.parse(calls.find((item) => item.url.includes('/ship')).init.body);
+    expect(body.ShipmentRequest.Shipment.Shipper.Phone).toEqual({ Number: '3055550100' });
+  });
+
+  test('a label buy carries the ship-to phone, and none when it is empty (delivery-instructions)', async () => {
+    const { fetchImpl, calls } = fakeUps({
+      '/api/shipments/v2409/ship': () => jsonResponse(200, {
+        ShipmentResponse: { ShipmentResults: { ShipmentIdentificationNumber: '1ZSHIP', PackageResults: { TrackingNumber: '1ZSHIP' } } }
+      })
+    });
+    await client({ fetchImpl }).createShipment({ shipFrom, shipTo: { zipcode: '10001', phone: '2125550100' }, package: {} });
+    await client({ fetchImpl }).createShipment({ shipFrom, shipTo: { zipcode: '10001', phone: '' }, package: {} });
+    const bodies = calls.filter((item) => item.url.includes('/ship')).map((item) => JSON.parse(item.init.body));
+    expect(bodies[0].ShipmentRequest.Shipment.ShipTo.Phone).toEqual({ Number: '2125550100' });
+    expect(bodies[1].ShipmentRequest.Shipment.ShipTo).not.toHaveProperty('Phone');
+  });
+});
+
+describe('UPS dry ice declaration', () => {
+  const DRY_ICE = {
+    DryIce: {
+      RegulationSet: 'CFR',
+      DryIceWeight: { UnitOfMeasurement: { Code: '00', Description: 'Kilograms' }, Weight: '0.5' }
+    }
+  };
+  const parties = {
+    shipFrom: { zipcode: '33431', state: 'FL' },
+    shipTo: { zipcode: '10001', state: 'NY' },
+    package: { weight_lb: 10, length_in: 12, width_in: 12, height_in: 12, dry_ice_kg: 0.5 }
+  };
+
+  function upsWithRates() {
+    const rated = () => jsonResponse(200, {
+      RateResponse: { RatedShipment: [{ Service: { Code: '03' }, TotalCharges: { MonetaryValue: '22.65', CurrencyCode: 'USD' } }] }
+    });
+    return fakeUps({
+      '/api/rating/v2403/Shop': rated,
+      '/api/rating/v2403/Shoptimeintransit': rated,
+      '/api/shipments/v2409/ship': () => jsonResponse(200, {
+        ShipmentResponse: { ShipmentResults: { ShipmentIdentificationNumber: '1ZDRY', PackageResults: { TrackingNumber: '1ZDRY' } } }
+      })
+    });
+  }
+
+  const bodyOf = (calls, path) => JSON.parse(calls.find((call) => new URL(call.url).pathname.endsWith(path)).init.body);
+
+  test('Label with the deploy value: 0.5 kg under CFR on the package, service 03', async () => {
+    const { fetchImpl, calls } = upsWithRates();
+    const ups = clientFromEnv(envFor('local'), fetchImpl);
+
+    await ups.createShipment({ ...parties, serviceCode: '03' });
+
+    const shipment = bodyOf(calls, '/ship').ShipmentRequest.Shipment;
+    expect(shipment.Service).toMatchObject({ Code: '03' });
+    expect(shipment.Package.PackageServiceOptions).toEqual(DRY_ICE);
+    expect(shipment.Package.Packaging).toMatchObject({ Code: '02' });
+    expect(shipment.Package.PackagingType).toBeUndefined();
+  });
+
+  test('Shop and Shoptimeintransit rate requests carry the same block', async () => {
+    const { fetchImpl, calls } = upsWithRates();
+    const ups = clientFromEnv(envFor('local'), fetchImpl);
+
+    await ups.rate(parties);
+    await ups.rate({ ...parties, withTransit: true, pickupDate: new Date('2026-11-10T12:00:00Z') });
+
+    expect(bodyOf(calls, '/rating/v2403/Shop').RateRequest.Shipment.Package.PackageServiceOptions).toEqual(DRY_ICE);
+    const transit = bodyOf(calls, '/Shoptimeintransit').RateRequest.Shipment;
+    expect(transit.Package.PackageServiceOptions).toEqual(DRY_ICE);
+    expect(transit.ShipmentTotalWeight).toEqual({ UnitOfMeasurement: { Code: 'LBS', Description: 'Pounds' }, Weight: '10' });
+  });
+
+  test('sends the weight with one decimal place and no medical or audit flag', () => {
+    const block = client().buildPackage({ weight_lb: 10, dry_ice_kg: 2 }).PackageServiceOptions.DryIce;
+
+    expect(block.DryIceWeight.Weight).toBe('2.0');
+    expect(block).not.toHaveProperty('MedicalUseIndicator');
+    expect(block).not.toHaveProperty('AuditRequired');
+  });
+
+  test('a package without dry ice sends no service options', () => {
+    expect(client().buildPackage({ weight_lb: 10 })).not.toHaveProperty('PackageServiceOptions');
+  });
 });

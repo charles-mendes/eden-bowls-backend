@@ -36,6 +36,22 @@ function baseRow(overrides = {}) {
 }
 
 describe('presentProductionQueueItem', () => {
+  // simplify-brazil-dispatch: Expedir opens the courier queue on this invoice.
+  test('names the paid invoice of a paid cycle and null for an unpaid one', () => {
+    expect(presentProductionQueueItem(baseRow({ paymentState: 'paid', paidInvoiceId: 'in_123' })).paidInvoiceId).toBe('in_123');
+    expect(presentProductionQueueItem(baseRow({ paymentState: 'awaiting_payment', paidInvoiceId: null })).paidInvoiceId).toBeNull();
+    expect(presentProductionQueueItem(baseRow()).paidInvoiceId).toBeNull();
+  });
+
+  // keep-ready-orders-dispatchable: the courier lock shows on the queue row before anyone clicks Expedir.
+  test('lists what the courier dispatch would refuse on a Brazil cycle, and null elsewhere', () => {
+    const full = { country: 'BR', city: 'Curitiba', street: 'Rua A', number: '10', neighborhood: 'Centro', state: 'PR', postal_code: '80000-000', recipient_name: 'Ana Costa' };
+    expect(presentProductionQueueItem(baseRow({ address: full })).courierIssues).toEqual([]);
+    expect(presentProductionQueueItem(baseRow({ address: { ...full, recipient_name: '' } })).courierIssues).toEqual(['recipient_name_missing']);
+    expect(presentProductionQueueItem(baseRow({ stripeAccount: 'us', address: { country: 'US', city: 'Miami' } })).courierIssues).toBeNull();
+    expect(presentProductionQueueItem(baseRow({ stripeAccount: 'us', address: full })).courierIssues).toBeNull();
+  });
+
   test('flattens catalog line items into mix, packs, and compact lineItems', () => {
     const item = presentProductionQueueItem(baseRow(), {
       timezone: 'America/Sao_Paulo',
@@ -189,3 +205,91 @@ describe('presentProductionQueueItem', () => {
     expect(outOfScope.email).toBe('ana@edenbowls.com');
   });
 });
+
+describe('presentProductionQueueItem recipient', () => {
+  test('shows the delivery recipient first', () => {
+    const item = presentProductionQueueItem(baseRow({ address: { ...baseRow().address, recipient_name: 'João Lima' } }));
+    expect(item.displayName).toBe('João Lima');
+  });
+
+  test('an old subscription without any name keeps the customer email', () => {
+    const { name, ...address } = baseRow().address;
+    const item = presentProductionQueueItem(baseRow({ address }));
+    expect(item.displayName).toBe('ana@edenbowls.com');
+  });
+  // operator-fills-recipient-name: the account name comes before the email, only for a profile in scope.
+  const brOperator = { roles: ['operator'], markets: ['BR'], permissions: ['market.br'] };
+  const noName = () => {
+    const { name, ...address } = baseRow().address;
+    return address;
+  };
+
+  test('no recipient: the account name of a profile in scope, marked as such', () => {
+    const item = presentProductionQueueItem(baseRow({ address: noName(), profileMarket: 'BR', accountDisplayName: ' Carla Dias ' }), { actor: brOperator });
+    expect(item).toMatchObject({ displayName: 'Carla Dias', nameSource: 'account', accountName: 'Carla Dias' });
+  });
+
+  test('no recipient and a profile out of scope: the email, no account name', () => {
+    const item = presentProductionQueueItem(baseRow({ address: noName(), profileMarket: 'US', accountDisplayName: 'Carla Dias' }), { actor: brOperator });
+    expect(item).toMatchObject({ displayName: 'ana@edenbowls.com', nameSource: 'email', accountName: null, customerProfileInScope: false });
+  });
+
+  test('an account name that is an email is not a name', () => {
+    const item = presentProductionQueueItem(baseRow({ address: noName(), profileMarket: 'BR', accountDisplayName: 'carla@x.com' }), { actor: brOperator });
+    expect(item).toMatchObject({ displayName: 'ana@edenbowls.com', nameSource: 'email', accountName: null });
+  });
+
+  test('the recipient wins over the account name and still carries the suggestion', () => {
+    const item = presentProductionQueueItem(baseRow({ profileMarket: 'BR', accountDisplayName: 'Carla Dias' }), { actor: brOperator });
+    expect(item).toMatchObject({ nameSource: 'recipient', accountName: 'Carla Dias' });
+    expect(item.displayName).not.toBe('Carla Dias');
+  });
+});
+
+describe('presentProductionQueueItem boxes', () => {
+  const lines = (...items) => ({ planSelection: { catalog_pricing: { currency: 'USD', line_items: items } } });
+
+  test('Production queue item: 45 packs give two monthly boxes of 30 and 15', () => {
+    const item = presentProductionQueueItem(baseRow({
+      stripeAccount: 'us',
+      address: { country: 'US', city: 'Miami' },
+      ...lines(
+        { flavor: 'beef', flavor_label: 'Beef', quantity: 25, pack_size_grams: 500, pet_name: 'Rex' },
+        { flavor: 'chicken', flavor_label: 'Chicken', quantity: 20, pack_size_grams: 500, pet_name: 'Max' }
+      )
+    }));
+
+    expect(item.boxes).toEqual([
+      { key: 'monthly', label: 'Caixa mensal', pack_count: 30, weight_kg: 17 },
+      { key: 'monthly', label: 'Caixa mensal', pack_count: 15, weight_kg: 9.5 }
+    ]);
+  });
+
+  test('a BR box has no dry ice', () => {
+    const item = presentProductionQueueItem(baseRow(lines({ flavor: 'frango', flavor_label: 'Frango', quantity: 10, pack_size_grams: 300 })));
+
+    expect(item.boxes).toEqual([{ key: 'starter', label: 'Starter Box', pack_count: 10, weight_kg: 4 }]);
+  });
+
+  test('uses the saved boxes', () => {
+    const shippingSettings = { us: { package: { dry_ice_kg: 0.5 }, boxes: {
+      starter: { label: 'Starter Box', length_in: 14, width_in: 12, height_in: 8, empty_weight_kg: 1, max_packs: 10 },
+      monthly: { label: 'Caixa mensal', length_in: 18, width_in: 14, height_in: 12, empty_weight_kg: 1.7, max_packs: 30 }
+    } } };
+    const item = presentProductionQueueItem(baseRow(lines({ flavor: 'frango', quantity: 12, pack_size_grams: 300 })), { shippingSettings });
+
+    expect(item.boxes).toEqual([{ key: 'monthly', label: 'Caixa mensal', pack_count: 12, weight_kg: 5.3 }]);
+  });
+
+  test('unsized lines stay out of the boxes and are reported', () => {
+    const onUnsizedLines = jest.fn();
+    const item = presentProductionQueueItem(baseRow(lines(
+      { flavor: 'frango', flavor_label: 'Frango', quantity: 4, pack_size_grams: 300 },
+      { flavor: 'peixe', flavor_label: 'Peixe', quantity: 2 }
+    )), { onUnsizedLines });
+
+    expect(item.boxes).toEqual([{ key: 'starter', label: 'Starter Box', pack_count: 4, weight_kg: 2.2 }]);
+    expect(onUnsizedLines).toHaveBeenCalledWith([expect.objectContaining({ flavorKey: 'peixe', quantity: 2, subscriptionId: 'sub_123' })]);
+  });
+});
+

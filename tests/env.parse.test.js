@@ -186,6 +186,14 @@ describe('parseEnv', () => {
     }))).toThrow(/STRIPE_US_WEBHOOK_SECRET/);
   });
 
+  // admin-flow-fixes-4 (PM-25): the courier fiscal lock is off unless set, even with NODE_ENV=production (QA).
+  test('the courier fiscal lock is off without a value and follows an explicit one', () => {
+    expect(parseEnv(productionEnv()).COURIER_REQUIRE_AUTHORIZED_NFE).toBe(false);
+    expect(parseEnv(productionEnv({ COURIER_REQUIRE_AUTHORIZED_NFE: 'true' })).COURIER_REQUIRE_AUTHORIZED_NFE).toBe(true);
+    expect(parseEnv(productionEnv({ COURIER_REQUIRE_AUTHORIZED_NFE: 'false' })).COURIER_REQUIRE_AUTHORIZED_NFE).toBe(false);
+    expect(parseEnv({ NODE_ENV: 'development', EDEN_RUNTIME: 'local', COURIER_REQUIRE_AUTHORIZED_NFE: 'true' }).COURIER_REQUIRE_AUTHORIZED_NFE).toBe(true);
+  });
+
   test('parses production when the regional Stripe credentials are set', () => {
     const env = parseEnv(productionEnv({ STRIPE_BR_ENABLED: 'false' }));
 

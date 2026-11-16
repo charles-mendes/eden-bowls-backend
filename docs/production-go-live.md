@@ -33,6 +33,8 @@ The store repo constant `DOMAIN_COM_URL` is `https://www.edenbowls.com`. `DOMAIN
 
 `CORS_ORIGINS` in production must be an https allow-list. `http://` and `localhost` are rejected.
 
+`COURIER_REQUIRE_AUTHORIZED_NFE=true` is required in production: a Brazil box is then dispatched by courier only with an authorized NF-e. The API does not refuse to start without it, because QA also runs with `NODE_ENV=production` and keeps it off; a missing value leaves the lock off and boxes leave without a note. Connect Bling before opening: with Bling disconnected no Brazil box can leave. Turning it off is `COURIER_REQUIRE_AUTHORIZED_NFE=false` and a restart.
+
 `GET /metrics` in production returns 404 unless `Authorization` is `Bearer` plus `METRICS_TOKEN`. `GET /health` and `GET /liveness` do not touch MySQL. `GET /readiness` runs `SELECT 1`.
 
 ## Domains and CORS

@@ -1,5 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const {
+  boxesToParams,
   brToParams,
   loadShippingSettings,
   nextSettings,
@@ -28,7 +29,8 @@ const BR_COLUMNS = [
   'max_distance_km',
   'km_per_day',
   'min_days',
-  'max_days'
+  'max_days',
+  'delivery_days'
 ];
 
 const US_COLUMNS = [
@@ -51,7 +53,9 @@ const US_COLUMNS = [
   'package_width_in',
   'package_height_in',
   'allowed_service_codes',
-  'max_transit_days'
+  'max_transit_days',
+  'ship_from_phone',
+  'package_dry_ice_kg'
 ];
 
 class ShippingSettingsRepository {
@@ -59,6 +63,7 @@ class ShippingSettingsRepository {
     this.dataSource = dataSource;
     this.brTableName = options.brTableName || 'shipping_br_settings';
     this.usTableName = options.usTableName || 'shipping_us_settings';
+    this.boxesTableName = options.boxesTableName || 'shipping_us_boxes';
   }
 
   ensureDataSource() {
@@ -70,9 +75,10 @@ class ShippingSettingsRepository {
   async get() {
     this.ensureDataSource();
 
-    const [brRows, usRows] = await Promise.all([
+    const [brRows, usRows, boxRows] = await Promise.all([
       this.dataSource.query(`SELECT * FROM \`${this.brTableName}\` WHERE \`id\` = 1 LIMIT 1`),
-      this.dataSource.query(`SELECT * FROM \`${this.usTableName}\` WHERE \`id\` = 1 LIMIT 1`)
+      this.dataSource.query(`SELECT * FROM \`${this.usTableName}\` WHERE \`id\` = 1 LIMIT 1`),
+      this.dataSource.query(`SELECT * FROM \`${this.boxesTableName}\``)
     ]);
 
     const brRow = Array.isArray(brRows) ? brRows[0] : null;
@@ -82,7 +88,7 @@ class ShippingSettingsRepository {
       return loadShippingSettings();
     }
 
-    return settingsFromRows(brRow, usRow);
+    return settingsFromRows(brRow, usRow, boxRows);
   }
 
   async save(payload = {}) {
@@ -107,7 +113,16 @@ class ShippingSettingsRepository {
           `ON DUPLICATE KEY UPDATE ${US_COLUMNS.map((column) => `\`${column}\` = VALUES(\`${column}\`)`).join(', ')}`
         ].join(' '),
         usToParams(next.us)
-      )
+      ),
+      ...boxesToParams(next.us.boxes).map((params) => this.dataSource.query(
+        [
+          `INSERT INTO \`${this.boxesTableName}\` (\`key\`, \`label\`, \`length_in\`, \`width_in\`, \`height_in\`, \`empty_weight_kg\`, \`max_packs\`)`,
+          'VALUES (?, ?, ?, ?, ?, ?, ?)',
+          'ON DUPLICATE KEY UPDATE `label` = VALUES(`label`), `length_in` = VALUES(`length_in`), `width_in` = VALUES(`width_in`),',
+          '`height_in` = VALUES(`height_in`), `empty_weight_kg` = VALUES(`empty_weight_kg`), `max_packs` = VALUES(`max_packs`)'
+        ].join(' '),
+        params
+      ))
     ]);
 
     return next;

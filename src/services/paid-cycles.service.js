@@ -7,8 +7,9 @@ function unixToDate(value) {
 }
 
 // A cycle enters production only once its invoice is paid. The cycle is keyed by the charge it belongs to
-// (the start of the period that invoice opened). Preparation is the first valid day whose local midnight is at
-// or after the payment, so a payment that arrives late (past_due) moves preparation and the delivery date.
+// (the start of the period that invoice opened). Preparation comes from the payment by the hours of the
+// standard week (firstPrepDay): paid before closing on an open day, that day; otherwise the next preparation day.
+// A payment that arrives late (past_due) therefore moves preparation and the delivery date.
 class PaidCyclesService {
   constructor(options = {}) {
     this.productionRepository = options.productionRepository || null;

@@ -6,6 +6,11 @@ const RECIPE_CONTENT_MARKETS = ['BR', 'US'];
 // Recipe banner image accepted by the store (recipe-content): the size of public/images/recipe-*.png.
 const RECIPE_IMAGE_WIDTH = 1024;
 const RECIPE_IMAGE_HEIGHT = 636;
+// A banner of another size is accepted when covering 1024 x 636 needs little: at most 25% of
+// enlargement (so the photo does not get blurry) and at most 15% of the width or height cut off
+// (so the proportion stays close). It is then resized and centre-cropped to the exact size.
+const RECIPE_IMAGE_MAX_UPSCALE = 1.25;
+const RECIPE_IMAGE_MAX_CROP = 0.15;
 // Square package thumbnail of the plan flavor picker (recipe-content): 400 px for retina screens, or 200 px.
 const RECIPE_PLAN_IMAGE_SIZES = [400, 200];
 const MAX_RECIPE_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -17,6 +22,15 @@ const RECIPE_IMAGE_OUTPUT_EXT = 'webp';
 const RECIPE_IMAGE_WEBP_QUALITY = 85;
 const RECIPE_IMAGE_INVALID = 'recipe_image_invalid';
 const RECIPE_CONTENT_IN_USE = 'recipe_content_in_use';
+
+// How a width x height image covers the banner: the scale applied and the share of the scaled
+// image cut off on its longer side. ok when both stay within the accepted range.
+function recipeBannerFit(width, height) {
+  const scale = Math.max(RECIPE_IMAGE_WIDTH / width, RECIPE_IMAGE_HEIGHT / height);
+  const crop = Math.max(1 - RECIPE_IMAGE_WIDTH / (width * scale), 1 - RECIPE_IMAGE_HEIGHT / (height * scale));
+  const ok = Number.isFinite(scale) && scale <= RECIPE_IMAGE_MAX_UPSCALE + 1e-9 && crop <= RECIPE_IMAGE_MAX_CROP + 1e-9;
+  return { ok, scale, crop };
+}
 
 // Explicit link of a variation to a recipe (recipe-content): blank means no recipe.
 const RECIPE_KEY_META = '_recipe_key';
@@ -223,6 +237,9 @@ module.exports = {
   RECIPE_LABEL_INVALID,
   RECIPE_IMAGE_WIDTH,
   RECIPE_IMAGE_HEIGHT,
+  RECIPE_IMAGE_MAX_UPSCALE,
+  RECIPE_IMAGE_MAX_CROP,
+  recipeBannerFit,
   RECIPE_PLAN_IMAGE_SIZES,
   MAX_RECIPE_IMAGE_BYTES,
   RECIPE_IMAGE_MIME_TYPES,

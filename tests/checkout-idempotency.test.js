@@ -131,6 +131,46 @@ describe('checkout-idempotency', () => {
     }));
   });
 
+  describe('when the stored subscription has ended', () => {
+    const ended = {
+      stripe_subscription_id: 'sub_123',
+      status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      checkout_context_fingerprint: 'abc'
+    };
+
+    test.each([['the same', 'abc'], ['a different', 'other']])('does not reuse it with %s fingerprint', (_label, fingerprint) => {
+      expect(evaluateCheckoutReuse(ended, fingerprint, {
+        currentPetIds: ['pet-1'],
+        subscribedPetIds: [],
+        storedSubscriptionEnded: true
+      })).toEqual({ reuse: false, reason: 'subscription_ended' });
+    });
+
+    test('still rejects a checkout for a pet another subscription covers', () => {
+      expect(() => evaluateCheckoutReuse(ended, 'other', {
+        currentPetIds: ['pet-2'],
+        subscribedPetIds: ['pet-2'],
+        storedSubscriptionEnded: true
+      })).toThrow(expect.objectContaining({
+        statusCode: 409,
+        details: { code: 'checkout_context_mismatch' }
+      }));
+    });
+  });
+
+  test('keeps reusing a paid checkout while the ledger has no subscribed pets yet', () => {
+    expect(evaluateCheckoutReuse({
+      stripe_subscription_id: 'sub_123',
+      status: 'active',
+      stripe_payment_intent_status: 'succeeded',
+      checkout_context_fingerprint: 'abc'
+    }, 'abc', {
+      currentPetIds: ['pet-1'],
+      subscribedPetIds: []
+    })).toEqual({ reuse: true, reason: 'settled' });
+  });
+
   test('builds a Stripe idempotency key from user, items and attempt', () => {
     const key = buildSubscriptionCreateIdempotencyKey({
       userId: 7,

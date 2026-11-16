@@ -2,7 +2,7 @@ const request = require('supertest');
 const { createApp } = require('../src/app');
 const { issueJwtToken } = require('../src/core/jwt-token');
 const { ROLE_PERMISSIONS } = require('../src/core/admin-roles');
-const { HttpError } = require('../src/core/http-error');
+const { RecipeContentService } = require('../src/services/recipe-content.service');
 
 const jwt = { secret: 'test-secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
 
@@ -10,31 +10,27 @@ function token() {
   return issueJwtToken({ data: { user: { id: 7 } } }, { ...jwt, ttlSeconds: 900, now: Math.floor(Date.now() / 1000) });
 }
 
-const content = {
-  market: 'BR',
-  flavorSlug: 'senior-beef',
-  imageUrl: '/recipe-images/recipe-br-senior-beef-1.webp',
-  label: null,
-  labelStatus: 'missing',
-  labelMissing: [],
-  variations: [{ id: '301', name: 'Sênior Carne 300g', sku: 'SENIOR-BEEF-300', active: false }]
+// Product 500 is BR senior-beef, product 600 is US beef.
+const CONTENTS = {
+  500: { productId: '500', market: 'BR', flavorSlug: 'senior-beef', name: 'Sênior Carne', lifeStage: 'senior', imageUrl: '/recipe-images/old.webp', label: null },
+  600: { productId: '600', market: 'US', flavorSlug: 'beef', name: 'Beef', lifeStage: 'adult', imageUrl: null, label: null }
 };
 
-function appFor({ role = 'operator', markets = ['BR'], service = {} } = {}) {
-  const recipeContentService = {
-    get: jest.fn().mockResolvedValue(content),
-    list: jest.fn().mockResolvedValue({ market: 'BR', items: [{ key: 'senior-beef', imageUrl: null, labelStatus: 'missing', variations: content.variations }] }),
-    uploadImage: jest.fn().mockResolvedValue(content),
-    removeImage: jest.fn().mockResolvedValue({ ...content, imageUrl: null }),
-    uploadPlanImage: jest.fn().mockResolvedValue({ ...content, planImageUrl: '/recipe-images/recipe-br-senior-beef-plan-1.webp' }),
-    removePlanImage: jest.fn().mockResolvedValue({ ...content, planImageUrl: null }),
-    saveLabel: jest.fn().mockResolvedValue({ ...content, labelStatus: 'complete' }),
-    savePresentation: jest.fn().mockResolvedValue({ ...content, presentation: { title: 'Receita de Carne para Cães Sênior' } }),
-    create: jest.fn().mockResolvedValue({ ...content, flavorSlug: 'senior-duck', name: 'Sênior Pato', variations: [] }),
-    update: jest.fn().mockResolvedValue({ ...content, name: 'Carne Sênior' }),
-    remove: jest.fn().mockResolvedValue({ deleted: true, market: 'BR', flavorSlug: 'senior-beef' }),
-    ...service
+function appFor({ role = 'operator', markets = ['BR'] } = {}) {
+  const save = (fields) => jest.fn(async ({ productId, ...values }) => ({ ...CONTENTS[productId], ...fields(values) }));
+  const repository = {
+    findByProductId: jest.fn(async (productId) => CONTENTS[productId] || null),
+    setImage: save(({ imageUrl }) => ({ imageUrl })),
+    setPlanImage: save(({ imageUrl }) => ({ planImageUrl: imageUrl })),
+    setLabel: save(({ label }) => ({ label })),
+    setPresentation: save(({ presentation }) => ({ presentation }))
   };
+  const recipeContentService = new RecipeContentService({
+    repository,
+    catalogRepository: { listProductVariations: jest.fn(async () => [{ id: '301', name: 'Sênior Carne 300g', sku: 'S-300', active: false }]) },
+    imageStorage: { write: jest.fn(async () => '/recipe-images/new.webp'), delete: jest.fn() },
+    processImage: jest.fn(async () => ({ buffer: Buffer.from('webp') }))
+  });
   const app = createApp({
     corsOrigins: ['http://localhost:5174'],
     jwt,
@@ -49,157 +45,67 @@ function appFor({ role = 'operator', markets = ['BR'], service = {} } = {}) {
     },
     recipeContentService
   });
-  return { app, recipeContentService };
+  return { app, repository };
 }
 
-const base = '/api/v1/admin/catalog/recipe-content/senior-beef';
+const auth = (call) => call.set('Authorization', `Bearer ${token()}`);
 const upload = { mimeType: 'image/png', imageBase64: Buffer.from('png').toString('base64') };
+const presentation = {
+  tag: 'Carne',
+  title: 'Receita de Carne para Cães Sênior',
+  tagline: 'Leveza & Equilíbrio',
+  resume: 'Da nossa linha sênior, com carne bovina, ovo, batata e vagem.',
+  highlights: ['Carne bovina', 'Batata', 'Vagem'],
+  colors: { color: '#A784C5', accentColor: '#A784C5', pillBg: '#D3BAE8', pillText: '#2D1145', pillBorder: '#9C78BA' }
+};
 
-describe('admin recipe content routes', () => {
-  test.each(['operator', 'readonly'])('%s reads the content of its market', async (role) => {
-    const { app, recipeContentService } = appFor({ role });
+const CALLS = [
+  ['PUT', 'image', upload],
+  ['DELETE', 'image', null],
+  ['PUT', 'plan-image', upload],
+  ['DELETE', 'plan-image', null],
+  ['PUT', 'label', { label: { ingredients: ['Carne'] } }],
+  ['PUT', 'presentation', { presentation }]
+];
 
-    const response = await request(app).get(`${base}?market=BR`).set('Authorization', `Bearer ${token()}`);
+function send(app, method, productId, part, body) {
+  const call = request(app)[method.toLowerCase()](`/api/v1/admin/catalog/products/${productId}/content/${part}`);
+  return auth(body ? call.send(body) : call);
+}
 
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ imageUrl: content.imageUrl, labelStatus: 'missing' });
-    expect(recipeContentService.get).toHaveBeenCalledWith('BR', 'senior-beef');
-  });
-
-  test('lists the recipes of the market', async () => {
-    const { app, recipeContentService } = appFor({ role: 'readonly' });
-
-    const response = await request(app).get('/api/v1/admin/catalog/recipe-content?market=BR').set('Authorization', `Bearer ${token()}`);
-
-    expect(response.status).toBe(200);
-    expect(response.body.items[0].key).toBe('senior-beef');
-    expect(recipeContentService.list).toHaveBeenCalledWith('BR');
-  });
-
-  test('operator registers, renames and deletes a recipe', async () => {
-    const { app, recipeContentService } = appFor();
-    const auth = `Bearer ${token()}`;
-
-    const created = await request(app).post('/api/v1/admin/catalog/recipe-content?market=BR').set('Authorization', auth).send({ key: 'senior-duck', name: 'Sênior Pato' });
-    const renamed = await request(app).patch(`${base}?market=BR`).set('Authorization', auth).send({ name: 'Carne Sênior' });
-    const removed = await request(app).delete(`${base}?market=BR`).set('Authorization', auth);
-
-    expect([created.status, renamed.status, removed.status]).toEqual([200, 200, 200]);
-    expect(recipeContentService.create).toHaveBeenCalledWith('BR', { key: 'senior-duck', name: 'Sênior Pato' }, expect.objectContaining({ userId: '7' }));
-    expect(recipeContentService.update).toHaveBeenCalledWith('BR', 'senior-beef', { name: 'Carne Sênior' }, expect.objectContaining({ userId: '7' }));
-    expect(recipeContentService.remove).toHaveBeenCalledWith('BR', 'senior-beef', expect.objectContaining({ userId: '7' }));
-  });
-
-  test('operator uploads an image with the actor', async () => {
-    const { app, recipeContentService } = appFor();
-
-    const response = await request(app).put(`${base}/image?market=BR`).set('Authorization', `Bearer ${token()}`).send(upload);
-
-    expect(response.status).toBe(200);
-    expect(recipeContentService.uploadImage).toHaveBeenCalledWith('BR', 'senior-beef', upload, expect.objectContaining({ userId: '7' }));
-  });
-
-  test('accepts an image body larger than the default 1 MB JSON limit', async () => {
+describe('admin product content routes', () => {
+  test.each(CALLS)('an operator of the market can %s the %s', async (method, part, body) => {
     const { app } = appFor();
-    const large = { mimeType: 'image/png', imageBase64: 'A'.repeat(3 * 1024 * 1024) };
-
-    const response = await request(app).put(`${base}/image?market=BR`).set('Authorization', `Bearer ${token()}`).send(large);
-
+    const response = await send(app, method, 500, part, body);
     expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ productId: '500', market: 'BR', flavorSlug: 'senior-beef' });
   });
 
-  test('operator uploads and removes the plan thumbnail, with a large body', async () => {
-    const { app, recipeContentService } = appFor();
-    const large = { mimeType: 'image/png', imageBase64: 'A'.repeat(3 * 1024 * 1024) };
-
-    const uploaded = await request(app).put(`${base}/plan-image?market=BR`).set('Authorization', `Bearer ${token()}`).send(large);
-    const removed = await request(app).delete(`${base}/plan-image?market=BR`).set('Authorization', `Bearer ${token()}`);
-
-    expect([uploaded.status, removed.status]).toEqual([200, 200]);
-    expect(uploaded.body.planImageUrl).toBe('/recipe-images/recipe-br-senior-beef-plan-1.webp');
-    expect(recipeContentService.uploadPlanImage).toHaveBeenCalledWith('BR', 'senior-beef', large, expect.objectContaining({ userId: '7' }));
-    expect(recipeContentService.removePlanImage).toHaveBeenCalledWith('BR', 'senior-beef', expect.objectContaining({ userId: '7' }));
-  });
-
-  test('operator saves the label sent under label', async () => {
-    const { app, recipeContentService } = appFor();
-    const label = { ingredients: ['Carne'] };
-
-    const response = await request(app).put(`${base}/label?market=BR`).set('Authorization', `Bearer ${token()}`).send({ label });
-
-    expect(response.status).toBe(200);
-    expect(recipeContentService.saveLabel).toHaveBeenCalledWith('BR', 'senior-beef', label, expect.objectContaining({ userId: '7' }));
-  });
-
-  test('operator saves the presentation sent under presentation', async () => {
-    const { app, recipeContentService } = appFor();
-    const presentation = { title: 'Receita de Carne para Cães Sênior' };
-
-    const response = await request(app).put(`${base}/presentation?market=BR`).set('Authorization', `Bearer ${token()}`).send({ presentation });
-
-    expect(response.status).toBe(200);
-    expect(response.body.presentation).toEqual(presentation);
-    expect(recipeContentService.savePresentation).toHaveBeenCalledWith('BR', 'senior-beef', presentation, expect.objectContaining({ userId: '7' }));
-  });
-
-  test('Operator outside the market scope: a US operator cannot save a BR presentation', async () => {
-    const { app, recipeContentService } = appFor({ markets: ['US'] });
-
-    const response = await request(app).put(`${base}/presentation?market=BR`).set('Authorization', `Bearer ${token()}`).send({ presentation: {} });
-
+  test.each(CALLS)('a read-only session cannot %s the %s', async (method, part, body) => {
+    const { app, repository } = appFor({ role: 'readonly' });
+    const response = await send(app, method, 500, part, body);
     expect(response.status).toBe(403);
-    expect(recipeContentService.savePresentation).not.toHaveBeenCalled();
+    expect(repository.findByProductId).not.toHaveBeenCalled();
   });
 
-  test.each([
-    ['put', `${base}/image?market=BR`],
-    ['put', `${base}/label?market=BR`],
-    ['put', `${base}/presentation?market=BR`],
-    ['delete', `${base}/image?market=BR`],
-    ['put', `${base}/plan-image?market=BR`],
-    ['delete', `${base}/plan-image?market=BR`],
-    ['post', '/api/v1/admin/catalog/recipe-content?market=BR'],
-    ['patch', `${base}?market=BR`],
-    ['delete', `${base}?market=BR`]
-  ])('readonly cannot %s %s', async (method, path) => {
-    const { app, recipeContentService } = appFor({ role: 'readonly' });
-
-    const response = await request(app)[method](path).set('Authorization', `Bearer ${token()}`).send(upload);
-
-    expect(response.status).toBe(403);
-    expect(recipeContentService.uploadImage).not.toHaveBeenCalled();
-    expect(recipeContentService.removeImage).not.toHaveBeenCalled();
-    expect(recipeContentService.saveLabel).not.toHaveBeenCalled();
-    expect(recipeContentService.savePresentation).not.toHaveBeenCalled();
-    expect(recipeContentService.create).not.toHaveBeenCalled();
-    expect(recipeContentService.update).not.toHaveBeenCalled();
-    expect(recipeContentService.remove).not.toHaveBeenCalled();
+  // Same rule as the product detail: a record outside the session markets is reported as not found.
+  test('a product of another market answers 404 and changes nothing', async () => {
+    const { app, repository } = appFor({ markets: ['BR'] });
+    const response = await send(app, 'PUT', 600, 'label', { label: { ingredients: ['Beef'] } });
+    expect(response.status).toBe(404);
+    expect(repository.setLabel).not.toHaveBeenCalled();
   });
 
-  test('a BR operator cannot read US content', async () => {
-    const { app, recipeContentService } = appFor();
-
-    const response = await request(app).get('/api/v1/admin/catalog/recipe-content/beef?market=US').set('Authorization', `Bearer ${token()}`);
-
-    expect(response.status).toBe(403);
-    expect(recipeContentService.get).not.toHaveBeenCalled();
+  test('an unknown product answers 404 product_not_found', async () => {
+    const { app } = appFor();
+    const response = await send(app, 'PUT', 999, 'presentation', { presentation });
+    expect(response.status).toBe(404);
+    expect(response.body.details).toMatchObject({ code: 'product_not_found' });
   });
 
-  test('passes the 422 and 409 refusals through with their details', async () => {
-    const invalid = new HttpError(422, 'Image must be 1024 x 636 pixels.', {
-      code: 'recipe_image_invalid', reason: 'dimensions', width: 1200, height: 800, expectedWidth: 1024, expectedHeight: 636
-    });
-    const inUse = new HttpError(409, 'The image of a recipe with an active variation cannot be removed.', {
-      code: 'recipe_content_in_use', activeVariations: ['301']
-    });
-    const { app } = appFor({ service: { uploadImage: jest.fn().mockRejectedValue(invalid), removeImage: jest.fn().mockRejectedValue(inUse) } });
-
-    const refused = await request(app).put(`${base}/image?market=BR`).set('Authorization', `Bearer ${token()}`).send(upload);
-    const locked = await request(app).delete(`${base}/image?market=BR`).set('Authorization', `Bearer ${token()}`);
-
-    expect(refused.status).toBe(422);
-    expect(refused.body.details).toEqual(invalid.details);
-    expect(locked.status).toBe(409);
-    expect(locked.body.details).toEqual(inUse.details);
+  test('the old recipe-content routes are gone', async () => {
+    const { app } = appFor();
+    const response = await auth(request(app).get('/api/v1/admin/catalog/recipe-content?market=BR'));
+    expect(response.status).toBe(404);
   });
 });

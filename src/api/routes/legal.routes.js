@@ -39,7 +39,8 @@ function registerLegalRoutes(app, dependencies = {}) {
   });
 }
 
-// Versions of the legal documents in the admin. Reading needs settings.read; publishing needs legal.write.
+// Versions of the legal documents in the admin. Reading needs settings.read; publishing needs legal.write (admin,
+// and the operator in an assigned market).
 function registerAdminLegalRoutes(app, dependencies, { requirePermission, handle }) {
   const marketOf = (request) => {
     const market = (request.marketQuery || {}).market;

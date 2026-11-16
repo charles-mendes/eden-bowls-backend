@@ -1,3 +1,4 @@
+const { parseUpsTracking } = require('../core/ups-tracking');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const { withTimeout } = require('../core/with-timeout');
 const { startScheduler } = require('../core/job-scheduler');
@@ -18,10 +19,13 @@ const JOB_INTERVALS = {
   mail_resend: 5 * 60 * 1000,
   invoice_email: 5 * 60 * 1000,
   ups_tracking: 30 * 60 * 1000,
+  plan_notices: 60 * 60 * 1000,
   refresh_cleanup: DAY_MS,
   webhook_retention: DAY_MS,
   delivery_calendar_stripe_sync: 60 * 1000,
-  life_stage_change_email: DAY_MS
+  life_stage_change_email: DAY_MS,
+  bling_nfe: 60 * 1000,
+  bling_nfe_sync: 5 * 60 * 1000
 };
 
 const LOCKS = {
@@ -30,10 +34,12 @@ const LOCKS = {
   mail_resend: 'eden_job_mail_resend',
   invoice_email: 'eden_job_invoice_email',
   ups_tracking: 'eden_job_ups_tracking',
+  plan_notices: 'eden_job_plan_notices',
   refresh_cleanup: 'eden_job_refresh_cleanup',
   webhook_retention: 'eden_job_webhook_retention',
   delivery_calendar_stripe_sync: 'eden_job_delivery_calendar_stripe_sync',
-  life_stage_change_email: 'eden_job_life_stage_change_email'
+  life_stage_change_email: 'eden_job_life_stage_change_email',
+  bling_nfe: 'eden_job_bling_nfe'
 };
 
 function upsTrackTimeoutMs(clientTimeoutMs) {
@@ -99,21 +105,23 @@ async function runLedgerReconcile(deps) {
 async function runUpsTracking(deps) {
   const timeoutMs = upsTrackTimeoutMs(deps.upsClient && deps.upsClient.timeoutMs);
   const rows = await deps.upsShipmentRepository.listOpenForTracking(UPS_TRACK_BATCH);
+  const service = deps.upsShipmentService || null;
   let updated = 0;
   let failed = 0;
   let scanned = 0;
+  let mailed = 0;
 
   for (const row of rows) {
     if (!row.tracking_number || row.status === 'delivered' || row.status === 'voided') {
       continue;
     }
     scanned += 1;
+    let payload;
     try {
-      const payload = await deps.upsClient.track(row.tracking_number, { timeoutMs });
-      await deps.upsShipmentRepository.updateTracking(row.id, row.tracking_number, payload);
-      updated += 1;
+      payload = await deps.upsClient.track(row.tracking_number, { timeoutMs });
     } catch (error) {
       failed += 1;
+      await deps.upsShipmentRepository.markTrackingChecked(row.id).catch(() => {});
       if (deps.logger) {
         deps.logger.warn({
           shipmentId: row.id,
@@ -121,10 +129,37 @@ async function runUpsTracking(deps) {
           status: error && error.details && error.details.status
         }, 'UPS tracking refresh failed.');
       }
+      continue;
+    }
+    try {
+      if (service) {
+        // The service stores the read first; a failed letter never undoes it.
+        const result = await service.recordTracking(row, payload);
+        mailed += result.mailed ? 1 : 0;
+      } else {
+        await deps.upsShipmentRepository.recordTracking(row.id, parseUpsTracking(payload), payload);
+      }
+      updated += 1;
+    } catch (error) {
+      failed += 1;
+      if (deps.logger) {
+        deps.logger.warn({ shipmentId: row.id, code: error && error.code }, 'UPS tracking could not be stored.');
+      }
     }
   }
 
-  return { scanned, updated, failed };
+  if (service) {
+    mailed += await service.sendDueShippedLetters(UPS_TRACK_BATCH).catch((error) => {
+      if (deps.logger) {
+        deps.logger.warn({ code: error && error.code }, 'Shipped letter retry failed.');
+      }
+      return 0;
+    });
+  }
+  if (deps.logger && typeof deps.logger.info === 'function') {
+    deps.logger.info({ scanned, updated, failed, mailed }, 'UPS tracking tick.');
+  }
+  return { scanned, updated, failed, mailed };
 }
 
 async function runRefreshCleanup(deps, now = new Date()) {
@@ -181,6 +216,12 @@ function createJobDefinitions(deps) {
       run: () => runUpsTracking(deps)
     },
     {
+      name: 'plan_notices',
+      lockName: LOCKS.plan_notices,
+      intervalMs: JOB_INTERVALS.plan_notices,
+      run: () => (deps.planNoticesService ? deps.planNoticesService.runDue() : { skipped: true })
+    },
+    {
       name: 'refresh_cleanup',
       lockName: LOCKS.refresh_cleanup,
       intervalMs: JOB_INTERVALS.refresh_cleanup,
@@ -203,6 +244,19 @@ function createJobDefinitions(deps) {
       lockName: LOCKS.life_stage_change_email,
       intervalMs: JOB_INTERVALS.life_stage_change_email,
       run: () => (deps.lifeStageChangeEmailService ? deps.lifeStageChangeEmailService.runDaily() : { skipped: true })
+    },
+    {
+      name: 'bling_nfe',
+      lockName: LOCKS.bling_nfe,
+      intervalMs: JOB_INTERVALS.bling_nfe,
+      run: () => (deps.blingNfeService ? deps.blingNfeService.runDue() : { skipped: true })
+    },
+    {
+      name: 'bling_nfe_sync',
+      // The lock of bling_nfe on purpose: Bling rotates the refresh token, so only one of the two may talk to it.
+      lockName: LOCKS.bling_nfe,
+      intervalMs: JOB_INTERVALS.bling_nfe_sync,
+      run: () => (deps.blingNfeService ? deps.blingNfeService.syncFromBling() : { skipped: true })
     }
   ];
 }

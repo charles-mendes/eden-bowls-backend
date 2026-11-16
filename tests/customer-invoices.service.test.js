@@ -164,6 +164,17 @@ describe('CustomerInvoicesService.issueForInvoice', () => {
     expect(mailer.sendMail.mock.calls[0][0].subject).toBe('Sua fatura Eden Bowls EB-2026-000418');
   });
 
+  test('a US account delivered in Brazil is invoiced in English by the US issuer', async () => {
+    const sample = PREVIEW_CASES['en-US'];
+    const { service, ledgerRepository } = buildService({ invoice: sample.invoice('paid') });
+    ledgerRepository.findByStripeSubscriptionId.mockResolvedValue({ ...sample.ledger, stripeAccount: 'us', userId: 3, address: { country: 'BR', city: 'Curitiba', zipcode: '80000000' } });
+
+    const { row } = await service.issueForInvoice({ invoice: { id: 'in_preview_us' }, account: 'us', send: false });
+
+    expect(row).toMatchObject({ locale: 'en-US', stripeAccount: 'us' });
+    expect(row.issuerSnapshot.line).toMatch(/USA$/);
+  });
+
   test('a disk failure throws so the webhook retries, and the reserved number is kept for that retry', async () => {
     const { service, storage, repository } = buildService();
     storage.write.mockRejectedValueOnce(new Error('ENOSPC'));

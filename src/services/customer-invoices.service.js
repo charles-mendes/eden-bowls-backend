@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const { HttpError } = require('../core/http-error');
 const { ledgerStripeAccount, parseStripeAccountInput } = require('../core/stripe-account');
-const { extractSubscriptionIdFromInvoice, parseJsonColumn } = require('../core/stripe-subscription-map');
+const { extractSubscriptionIdFromInvoice } = require('../core/stripe-subscription-map');
 const { assertStripeAccountMarket, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const { buildInvoiceDocument, formatInvoiceMoney, formatLongDate, invoiceLocale, linePriceId } = require('../core/invoice/invoice-document');
@@ -127,7 +127,7 @@ class CustomerInvoicesService {
 
     let created = false;
     if (!row) {
-      const locale = invoiceLocale(stripeAccount, parseJsonColumn(ledgerRow.address) || {});
+      const locale = invoiceLocale(stripeAccount);
       const issuedAt = full.status_transitions && full.status_transitions.finalized_at || full.created;
       const sequence = await this.repository.nextSequence(invoiceYear(issuedAt, locale));
       const inserted = await this.repository.insertOrGet({

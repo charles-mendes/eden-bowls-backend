@@ -1,6 +1,8 @@
 const { HttpError } = require('./http-error');
 const MAX_TRANSIT_DAYS_US = 1;
 const MAX_DELIVERY_RADIUS_KM_BR = 50;
+// Brazil delivery time the operator picks: 0 (the same day as preparation) to 3 business days after it.
+const BR_DELIVERY_DAYS_MAX = 3;
 const TIMEZONE_BR = 'America/Sao_Paulo';
 const TIMEZONE_US = 'America/New_York';
 
@@ -28,6 +30,20 @@ const US_2026_CLOSED = [
   ['2026-12-25', 'Christmas Day'],
   ['2027-01-01', 'New Year\'s Day']
 ];
+
+// The standard week of a market (delivery-calendar): seven days, Monday first (weekday 1) to Sunday (7), each open
+// or not, with its hours in the market's time zone. "Open" is about preparation only.
+const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7];
+
+function weekOf(openDays, opensAt = '09:00', closesAt = '20:00') {
+  return WEEKDAYS.map((weekday) => ({ weekday, open: openDays.includes(weekday), opensAt, closesAt }));
+}
+
+// The week the code applied before the table: what the migration seeds and what a bare list of closed days reads.
+const DEFAULT_OPERATING_WEEK = Object.freeze({
+  BR: weekOf([1, 2, 3, 4, 5, 6]),
+  US: weekOf([1, 2, 3, 4, 5])
+});
 
 function dateKey(year, month, day) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -136,8 +152,35 @@ function buildSeedRows() {
     .concat(buildUs2026Rows());
 }
 
-function activeRows(rows, market, closedOn) {
-  return (rows || []).filter((item) => item
+// The calendar a rule reads: `{ rows, week }` (a snapshot), or a bare list of closed days, which reads with the
+// default week. A snapshot missing one market's week reads that market with the default too.
+function calendarOf(input) {
+  if (Array.isArray(input) || input == null) {
+    return { rows: input || [], week: DEFAULT_OPERATING_WEEK };
+  }
+  return {
+    rows: input.rows || [],
+    week: { ...DEFAULT_OPERATING_WEEK, ...(input.week || {}) }
+  };
+}
+
+// Monday = 1 … Sunday = 7, the weekday numbering of the operating week.
+function isoWeekday(parts) {
+  return weekday(parts.year, parts.month, parts.day) || 7;
+}
+
+function weekDay(calendar, market, parts) {
+  const days = calendarOf(calendar).week[market] || [];
+  return days.find((day) => day.weekday === isoWeekday(parts)) || null;
+}
+
+function openWeekday(calendar, market, parts) {
+  const day = weekDay(calendar, market, parts);
+  return Boolean(day && day.open);
+}
+
+function activeRows(input, market, closedOn) {
+  return calendarOf(input).rows.filter((item) => item
     && item.active !== false
     && item.market === market
     && String(item.closedOn).slice(0, 10) === closedOn);
@@ -259,58 +302,82 @@ function timeZoneFor(market) {
   return null;
 }
 
-function isSunday(parts) {
-  return weekday(parts.year, parts.month, parts.day) === 0;
-}
-
 function isWeekend(parts) {
   const day = weekday(parts.year, parts.month, parts.day);
   return day === 0 || day === 6;
 }
 
-function brazilPrepValid(parts, rows) {
+// A preparation day: the weekday is open in the market's week and no closed day closes preparation on the date.
+// `calendar` is a snapshot `{ rows, week }` or a bare list of closed days (see calendarOf).
+function brazilPrepValid(parts, calendar) {
   const key = dateKey(parts.year, parts.month, parts.day);
-  if (isSunday(parts)) return false;
-  if (flagOn(rows, 'BR', key, 'closesPreparation')) return false;
+  if (!openWeekday(calendar, 'BR', parts)) return false;
+  if (flagOn(calendar, 'BR', key, 'closesPreparation')) return false;
   return true;
 }
 
-function usPrepValid(parts, rows, transitDays) {
-  const day = weekday(parts.year, parts.month, parts.day);
-  if (day < 1 || day > 5) return false;
+// The United States also needs a weekday UPS pickup the next day and a weekday delivery, so an open Friday or
+// Saturday never prepares, and an open Sunday does (pickup on Monday).
+function usPrepValid(parts, calendar, transitDays) {
+  if (!openWeekday(calendar, 'US', parts)) return false;
   const key = dateKey(parts.year, parts.month, parts.day);
-  if (flagOn(rows, 'US', key, 'closesPreparation')) return false;
+  if (flagOn(calendar, 'US', key, 'closesPreparation')) return false;
   const pickup = addCalendarDays(parts.year, parts.month, parts.day, 1);
-  if (isWeekend(pickup) || flagOn(rows, 'US', dateKey(pickup.year, pickup.month, pickup.day), 'closesPickup')) {
+  if (isWeekend(pickup) || flagOn(calendar, 'US', dateKey(pickup.year, pickup.month, pickup.day), 'closesPickup')) {
     return false;
   }
   const delivery = addCalendarDays(pickup.year, pickup.month, pickup.day, transitDays);
-  if (isWeekend(delivery) || flagOn(rows, 'US', dateKey(delivery.year, delivery.month, delivery.day), 'closesDelivery')) {
+  if (isWeekend(delivery) || flagOn(calendar, 'US', dateKey(delivery.year, delivery.month, delivery.day), 'closesDelivery')) {
     return false;
   }
   return true;
 }
 
-function deliveryForPrep(market, parts, transitDays) {
+// Brazil: the business days after preparation, skipping Saturday, Sunday and the days that close delivery.
+function brazilDeliveryForPrep(parts, calendar) {
+  let delivery = parts;
+  for (let left = brDeliveryDays; left > 0;) {
+    delivery = addCalendarDays(delivery.year, delivery.month, delivery.day, 1);
+    if (!isWeekend(delivery) && !flagOn(calendar, 'BR', dateKey(delivery.year, delivery.month, delivery.day), 'closesDelivery')) {
+      left -= 1;
+    }
+  }
+  return delivery;
+}
+
+// `rows` (the calendar) only matters for Brazil, whose delivery time skips the days that close delivery.
+function deliveryForPrep(market, parts, transitDays, rows = []) {
   if (market === 'BR') {
-    return parts;
+    return brazilDeliveryForPrep(parts, rows);
   }
   const pickup = addCalendarDays(parts.year, parts.month, parts.day, 1);
   return addCalendarDays(pickup.year, pickup.month, pickup.day, transitDays);
 }
 
-function firstPrepDay(market, chargeAt, rows, transitDays) {
+// Minutes after local midnight of an `HH:MM` closing time.
+function minutesOf(hhmm) {
+  const [hour, minute] = String(hhmm || '').split(':').map(Number);
+  return (Number.isFinite(hour) ? hour : 0) * 60 + (Number.isFinite(minute) ? minute : 0);
+}
+
+// The preparation day of a payment (delivery-calendar): the payment's local date when it is a preparation day and
+// the payment comes before that day's closing time (before opening counts, as a renewal charged at 00:00);
+// otherwise the next preparation day.
+function firstPrepDay(market, chargeAt, calendar, transitDays) {
   const timeZone = timeZoneFor(market);
-  const start = localDate(chargeAt, timeZone);
+  const local = zonedParts(chargeAt, timeZone);
+  const start = { year: local.year, month: local.month, day: local.day };
   for (let offset = 0; offset < 21; offset += 1) {
     const parts = addCalendarDays(start.year, start.month, start.day, offset);
-    const midnight = wallTimeToUtc(parts.year, parts.month, parts.day, 0, 0, 0, timeZone);
-    if (midnight.getTime() < chargeAt.getTime()) {
-      continue;
+    if (offset === 0) {
+      const today = weekDay(calendar, market, parts);
+      if (!today || local.hour * 60 + local.minute >= minutesOf(today.closesAt)) {
+        continue;
+      }
     }
     const valid = market === 'BR'
-      ? brazilPrepValid(parts, rows)
-      : usPrepValid(parts, rows, transitDays);
+      ? brazilPrepValid(parts, calendar)
+      : usPrepValid(parts, calendar, transitDays);
     if (valid) {
       return parts;
     }
@@ -334,6 +401,17 @@ function setBrDeliveryRadiusKm(value) {
 
 function currentBrDeliveryRadiusKm() {
   return brDeliveryRadiusKm;
+}
+
+let brDeliveryDays = 0;
+
+function setBrDeliveryDays(value) {
+  const days = Number(value);
+  brDeliveryDays = Number.isInteger(days) && days >= 0 && days <= BR_DELIVERY_DAYS_MAX ? days : 0;
+}
+
+function currentBrDeliveryDays() {
+  return brDeliveryDays;
 }
 
 // The admin edits the US transit limit in the shipping settings; the default holds until settings load.
@@ -385,10 +463,19 @@ function assertInsideDeliveryArea(market, quote = {}) {
 }
 
 module.exports = {
+  WEEKDAYS,
+  calendarOf,
+  isoWeekday,
+  openWeekday,
+  DEFAULT_OPERATING_WEEK,
+  weekOf,
   MAX_TRANSIT_DAYS_US,
   MAX_DELIVERY_RADIUS_KM_BR,
   currentBrDeliveryRadiusKm,
   setBrDeliveryRadiusKm,
+  BR_DELIVERY_DAYS_MAX,
+  currentBrDeliveryDays,
+  setBrDeliveryDays,
   currentUsMaxTransitDays,
   setUsMaxTransitDays,
   TIMEZONE_BR,

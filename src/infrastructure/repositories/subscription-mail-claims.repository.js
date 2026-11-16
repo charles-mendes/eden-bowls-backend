@@ -103,6 +103,16 @@ class SubscriptionMailClaimsRepository {
     return Array.isArray(rows) && rows.length > 0;
   }
 
+  // Any claim blocks a new one for the same key, sent or not, so an unsent claim counts here too.
+  async hasClaim({ subscriptionId, template, referenceId } = {}) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT \`id\` FROM \`${this.tableName}\` WHERE \`stripe_subscription_id\` = ? AND \`template\` = ? AND \`reference_id\` = ? LIMIT 1`,
+      [String(subscriptionId || '').trim(), String(template || '').trim(), String(referenceId || '').trim()]
+    );
+    return Array.isArray(rows) && rows.length > 0;
+  }
+
   async savePayload(id, payload) {
     this.ensureDataSource();
     const claimId = Number(id);

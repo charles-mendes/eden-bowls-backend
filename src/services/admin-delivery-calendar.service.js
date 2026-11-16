@@ -1,5 +1,6 @@
 const { HttpError } = require('../core/http-error');
-const { MOVES } = require('./delivery-calendar-impact.service');
+const { MOVES, OUTCOMES } = require('./delivery-calendar-impact.service');
+const { parseWeek } = require('../core/operating-week');
 const { dateKey, timeZoneFor, usCalendarCoveredThrough, zonedParts } = require('../core/delivery-closed-days');
 
 const UPS_WARNING_DAYS = 90;
@@ -65,6 +66,41 @@ function sameMoment(left, right) {
   return Date.parse(left) === Date.parse(right);
 }
 
+// The moves a week change confirms: every delivery that moves (`moved` or `moved_charge_kept`), as its id and
+// new preparation day. Kept deliveries are left out, so they never make the comparison fail.
+function confirmedMovesOf(impact) {
+  return impact
+    .filter((item) => item.outcome !== OUTCOMES.KEPT)
+    .map((item) => ({
+      stripeSubscriptionId: item.stripeSubscriptionId,
+      deliveryId: item.deliveryId,
+      newPreparationDay: item.newPreparationDay
+    }));
+}
+
+function moveKeys(moves) {
+  return (Array.isArray(moves) ? moves : [])
+    .map((move) => [move && move.stripeSubscriptionId, move && move.deliveryId, move && move.newPreparationDay].join('|'))
+    .sort();
+}
+
+function sameMoves(left, right) {
+  const a = moveKeys(left);
+  const b = moveKeys(right);
+  return a.length === b.length && a.every((key, index) => key === b[index]);
+}
+
+function impactForAudit(impact) {
+  return impact.map((item) => ({
+    stripeSubscriptionId: item.stripeSubscriptionId,
+    deliveryId: item.deliveryId,
+    previousPreparationDay: item.preparationDay,
+    newPreparationDay: item.newPreparationDay,
+    outcome: item.outcome,
+    move: item.move
+  }));
+}
+
 function parseId(value) {
   const id = Number(value);
   if (!Number.isInteger(id) || id <= 0) {
@@ -83,7 +119,84 @@ class AdminDeliveryCalendarService {
     this.billingFor = options.billingFor || null;
     this.syncDelayMinutes = Number(options.syncDelayMinutes) > 0 ? Number(options.syncDelayMinutes) : 15;
     this.dataSource = options.dataSource || null;
+    this.weekRepository = options.weekRepository
+      || (this.calendarRepository && this.calendarRepository.operatingWeek)
+      || null;
     this.now = options.now || (() => new Date());
+  }
+
+  requireWeek() {
+    if (!this.weekRepository) {
+      throw new HttpError(503, 'Delivery operating week is not available.');
+    }
+    return this.weekRepository;
+  }
+
+  // The standard week of one market (delivery-calendar).
+  async getWeek({ marketQuery }) {
+    const market = singleMarket(marketQuery);
+    const days = await this.requireWeek().get(market);
+    return { market, timeZone: timeZoneFor(market), days };
+  }
+
+  // The stored and proposed calendar of one market's week change, and the deliveries it reaches.
+  async weekImpact(market, days, executor) {
+    if (!this.impactService || typeof this.impactService.assessWeek !== 'function') {
+      throw new HttpError(503, 'Delivery calendar impact is not available.');
+    }
+    const { rows, week } = await this.readCalendar(executor);
+    const stored = (week && week[market]) || await this.requireWeek().get(market, executor);
+    const before = { rows, week: { ...(week || {}), [market]: stored } };
+    const after = { rows, week: { ...(week || {}), [market]: days } };
+    const impact = await this.impactService.assessWeek({ market, before, after });
+    return { stored, impact };
+  }
+
+  // What a week would do, without storing anything. The panel saves only after showing this.
+  async previewWeek({ marketQuery, body = {} }) {
+    const market = singleMarket(marketQuery);
+    const days = parseWeek(market, body.days);
+    const { stored, impact } = await this.weekImpact(market, days);
+    return {
+      market,
+      timeZone: timeZoneFor(market),
+      before: stored,
+      after: days,
+      impact,
+      confirmedMoves: confirmedMovesOf(impact)
+    };
+  }
+
+  // Stores the week only when the moves computed now are the ones the operator confirmed from the preview.
+  async saveWeek({ marketQuery, body = {}, identity }) {
+    const market = singleMarket(marketQuery);
+    const days = parseWeek(market, body.days);
+    const weekRepository = this.requireWeek();
+    return this.transaction(async (manager) => {
+      const { stored, impact } = await this.weekImpact(market, days, manager);
+      const moves = confirmedMovesOf(impact);
+      if (!sameMoves(moves, body.confirmedMoves)) {
+        throw new HttpError(409, 'As entregas afetadas mudaram desde a prévia. Veja o impacto de novo.', {
+          code: 'week_impact_changed',
+          confirmedMoves: moves
+        });
+      }
+      const saved = await weekRepository.saveIn(manager, market, days);
+      const syncIds = await this.queueMoves(manager, market, impact.filter((item) => item.outcome === OUTCOMES.MOVED));
+      if (!this.auditRepository || typeof this.auditRepository.createIn !== 'function') {
+        throw new HttpError(503, 'Delivery calendar audit is not available.');
+      }
+      const auditEventId = await this.auditRepository.createIn(manager, {
+        actorUserId: identity && identity.userId,
+        actorEmail: identity && identity.email,
+        action: 'delivery_calendar.week_update',
+        metadata: { market, before: stored, after: saved, impact: impactForAudit(impact), syncIds }
+      });
+      if (syncIds.length > 0) {
+        await this.syncsRepository.linkAuditEvent(manager, syncIds, auditEventId);
+      }
+      return { market, timeZone: timeZoneFor(market), days: saved, impact, syncIds, auditEventId };
+    });
   }
 
   transaction(work) {
@@ -111,13 +224,24 @@ class AdminDeliveryCalendarService {
     return { before: null, after };
   }
 
+  // The closed days and the standard week; a repository without `snapshot` reads with the default week.
+  async readCalendar(executor) {
+    if (typeof this.calendarRepository.snapshot === 'function') return this.calendarRepository.snapshot(executor);
+    return { rows: await this.calendarRepository.listActive(executor), week: undefined };
+  }
+
   async affectedBy(market, before, after, executor) {
     if (!turnsFlagOn(before, after)) return [];
     if (!this.impactService) {
       throw new HttpError(503, 'Delivery calendar impact is not available.');
     }
-    const active = (await this.calendarRepository.listActive(executor)).filter((item) => item.market === market);
-    return this.impactService.assess({ market, rowsBefore: active, rowsAfter: rowsWith(active, after) });
+    const { rows, week } = await this.readCalendar(executor);
+    const active = rows.filter((item) => item.market === market);
+    return this.impactService.assess({
+      market,
+      rowsBefore: { rows: active, week },
+      rowsAfter: { rows: rowsWith(active, after), week }
+    });
   }
 
   // What a change would do, without storing anything.

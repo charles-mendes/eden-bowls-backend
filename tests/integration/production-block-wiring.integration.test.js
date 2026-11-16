@@ -100,13 +100,13 @@ describeIntegration('production block moves trial_end, wired like index.js (MySQ
   }
 
   test('Brazil: a block before preparation moves trial_end to the following preparation day, and a return restores it', async () => {
-    // Current charge Saturday 5 December 2026 at 14:00 (prepared Monday 7). The following charge is Tuesday
-    // 5 January 2027 at 14:00, so its first valid preparation day is Wednesday 6 January.
+    // Current charge Saturday 5 December 2026 at 14:00, before closing on an open Brazil day, so it is prepared
+    // that Saturday. The following charge is Tuesday 5 January 2027 at 14:00, prepared that same Tuesday.
     const chargeAt = wallTimeToUtc(2026, 12, 5, 14, 0, 0, TIMEZONE_BR);
     const id = await subscription('sub_block_br', 'br', chargeAt, { country: 'BR' });
 
     const blocked = await admin.updateStatus(id, { status: 'blocked', note: 'Falta peru', periodEnd: chargeAt.toISOString() }, { userId: 1 });
-    const blockedTrialEnd = unix(wallTimeToUtc(2027, 1, 6, 0, 0, 0, TIMEZONE_BR));
+    const blockedTrialEnd = unix(wallTimeToUtc(2027, 1, 5, 0, 0, 0, TIMEZONE_BR));
     expect(stripe.setTrialEnd).toHaveBeenLastCalledWith({ subscriptionId: 'sub_block_br', trial_end: blockedTrialEnd, proration_behavior: 'none' });
     expect(blocked.productionStatus).toBe('blocked');
 
@@ -114,12 +114,12 @@ describeIntegration('production block moves trial_end, wired like index.js (MySQ
     const row = await ledger.findByStripeSubscriptionId('sub_block_br');
     expect(new Date(row.currentPeriodEnd).getTime()).toBe(blockedTrialEnd * 1000);
     const cycle = await production.findBySubscriptionAndPeriodEnd(id, new Date(blockedTrialEnd * 1000));
-    expect(cycle).toMatchObject({ status: 'blocked', preparationDay: '2026-12-07' });
+    expect(cycle).toMatchObject({ status: 'blocked', preparationDay: '2026-12-05' });
     expect(await production.findBySubscriptionAndPeriodEnd(id, chargeAt)).toBeNull();
 
     // The operator returns it from the queue, with the key the queue now shows.
     await admin.updateStatus(id, { status: 'to_prepare', periodEnd: new Date(blockedTrialEnd * 1000).toISOString() }, { userId: 1 });
-    const restored = unix(wallTimeToUtc(2026, 12, 7, 0, 0, 0, TIMEZONE_BR));
+    const restored = unix(wallTimeToUtc(2026, 12, 5, 0, 0, 0, TIMEZONE_BR));
     expect(stripe.setTrialEnd).toHaveBeenLastCalledWith({ subscriptionId: 'sub_block_br', trial_end: restored, proration_behavior: 'none' });
     expect(await production.findBySubscriptionAndPeriodEnd(id, new Date(restored * 1000))).toMatchObject({ status: 'to_prepare', preparationDay: null });
   });

@@ -12,7 +12,7 @@ function toIso(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-// Automated life-stage email settings per market (automated-email-settings). Read without a cache: the jobs
+// Automated email settings per market (automated-email-settings). Read without a cache: the jobs
 // read the row at the start of each run, so a change applies to the next run in any process.
 class AutomatedEmailSettingsRepository {
   constructor(dataSource, options = {}) {
@@ -31,7 +31,8 @@ class AutomatedEmailSettingsRepository {
     let rows = [];
     try {
       rows = await this.dataSource.query(
-        `SELECT life_stage_change_enabled, announcement_batch_size, announcement_daily_cap, updated_by, updated_at
+        `SELECT life_stage_change_enabled, announcement_batch_size, announcement_daily_cap,
+                renewal_notice_enabled, plan_ending_notice_enabled, plan_notice_days, updated_by, updated_at
          FROM \`${this.tableName}\` WHERE market = ? LIMIT 1`,
         [String(market || '').toUpperCase()]
       );
@@ -48,6 +49,9 @@ class AutomatedEmailSettingsRepository {
       lifeStageChangeEnabled: Boolean(Number(row.life_stage_change_enabled)),
       announcementBatchSize: Number(row.announcement_batch_size),
       announcementDailyCap: Number(row.announcement_daily_cap),
+      renewalNoticeEnabled: Boolean(Number(row.renewal_notice_enabled)),
+      planEndingNoticeEnabled: Boolean(Number(row.plan_ending_notice_enabled)),
+      planNoticeDays: Number(row.plan_notice_days),
       updatedBy: row.updated_by == null ? null : Number(row.updated_by),
       updatedAt: toIso(row.updated_at)
     };
@@ -56,13 +60,16 @@ class AutomatedEmailSettingsRepository {
   async save(market, settings, actorId = null, manager = this.dataSource) {
     this.ensureDataSource();
     await manager.query(
-      `INSERT INTO \`${this.tableName}\` (market, life_stage_change_enabled, announcement_batch_size, announcement_daily_cap, updated_by)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO \`${this.tableName}\` (market, life_stage_change_enabled, announcement_batch_size, announcement_daily_cap,
+         renewal_notice_enabled, plan_ending_notice_enabled, plan_notice_days, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE life_stage_change_enabled = VALUES(life_stage_change_enabled),
          announcement_batch_size = VALUES(announcement_batch_size), announcement_daily_cap = VALUES(announcement_daily_cap),
-         updated_by = VALUES(updated_by)`,
+         renewal_notice_enabled = VALUES(renewal_notice_enabled), plan_ending_notice_enabled = VALUES(plan_ending_notice_enabled),
+         plan_notice_days = VALUES(plan_notice_days), updated_by = VALUES(updated_by)`,
       [String(market || '').toUpperCase(), settings.lifeStageChangeEnabled ? 1 : 0, settings.announcementBatchSize,
-        settings.announcementDailyCap, actorId]
+        settings.announcementDailyCap, settings.renewalNoticeEnabled ? 1 : 0, settings.planEndingNoticeEnabled ? 1 : 0,
+        settings.planNoticeDays, actorId]
     );
   }
 }

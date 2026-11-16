@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { detectRequestIp } = require('../../core/geo-detection');
 const { parseOnboardingSubscriptionCheckoutInput } = require('../validators/onboarding-subscription-checkout.validator');
 
 function registerOnboardingSubscriptionCheckoutRoutes(app, dependencies = {}) {
@@ -15,9 +16,17 @@ function registerOnboardingSubscriptionCheckoutRoutes(app, dependencies = {}) {
       const payload = parseOnboardingSubscriptionCheckoutInput(request.body || {}, {
         idempotencyKey: request.get('Idempotency-Key')
       });
+      // Hashed IP and user agent of the checkout consent, as at sign-in (legal-documents).
+      const requestContext = dependencies.privacyService && typeof dependencies.privacyService.contextFromRequest === 'function'
+        ? dependencies.privacyService.contextFromRequest({
+          ip: detectRequestIp(request, { trustProxy: Boolean(dependencies.trustProxy) }),
+          userAgent: request.headers && request.headers['user-agent']
+        })
+        : {};
       const result = await dependencies.onboardingSubscriptionCheckoutService.checkout({
         userId: request.currentUser.id,
-        payload
+        payload,
+        requestContext
       });
 
       response.status(200).json(result);

@@ -47,11 +47,39 @@ The system SHALL email the customer the existing payment-failed letter when a su
 - **THEN** the customer receives only one payment-failed letter
 
 ### Requirement: Shipment letter stays on US tracking
-The system SHALL email the customer the existing shipped letter when a UPS shipment is created with a tracking number. The letter MUST include the tracking number and a UPS tracking link. The system MUST NOT send that letter for a Brazil production-status change, because that queue has no shipped event and no tracking number.
+The system SHALL email the customer the existing shipped letter when UPS tracking first shows a US shipment in transit, out for delivery, or delivered. Buying the label MUST NOT send the letter. The letter MUST be sent at most once per shipment. The recipient MUST be the subscription's customer email, the same one the order letter uses. The letter MUST include the tracking number and a UPS tracking link. The system MUST NOT send that letter for a Brazil production-status change, because that queue has no shipped event and no tracking number.
 
 #### Scenario: UPS label created
-- **WHEN** a US shipment is stored with a tracking number and the subscription has a customer email
+- **WHEN** a US shipment is stored with a tracking number
+- **THEN** no shipped letter is sent yet
+
+#### Scenario: First read in transit
+- **WHEN** a tracking read first shows the shipment in transit and the subscription has a customer email
 - **THEN** the customer receives one shipped letter for that shipment
+
+#### Scenario: First read already delivered
+- **WHEN** the first tracking read after the purchase shows delivered
+- **THEN** the customer receives one shipped letter, and no other letter for that shipment
+
+#### Scenario: Later reads
+- **WHEN** a shipment whose letter was sent gets more tracking reads
+- **THEN** no second shipped letter is sent
+
+#### Scenario: Label bought before this rule
+- **WHEN** a shipment's letter was sent at purchase and tracking later shows it in transit
+- **THEN** SMTP is not called
+
+#### Scenario: Label voided before pickup
+- **WHEN** a label is voided before any read shows it moving
+- **THEN** no shipped letter is sent
+
+#### Scenario: No customer email
+- **WHEN** the first moving read is stored and the subscription has no customer email
+- **THEN** no letter is sent and the skip is logged with the shipment id and template
+
+#### Scenario: SMTP fails on the first moving read
+- **WHEN** the first in-transit read is stored and the shipped letter's SMTP send fails
+- **THEN** the tracking stays stored and a later tracking read sends that one letter
 
 #### Scenario: Brazil production advances
 - **WHEN** an operator moves a Brazil subscription through the production queue
@@ -116,3 +144,36 @@ A letter MUST be claimed once per subscription, template, and reference before s
 #### Scenario: SMTP is down during pause
 - **WHEN** the pause letter exhausts in-process retries
 - **THEN** the subscription remains paused, the failure is logged, and the customer action response still succeeds
+
+### Requirement: Courier out-for-delivery letter
+
+The system SHALL email the customer an out-for-delivery letter when a courier delivery is registered. The letter MUST name the pet and MUST include the tracking link when the delivery has one. The greeting MUST follow the existing letters and MUST NOT use the recipient name. It MUST be claimed once per delivery record, so a new attempt after a failure sends a new letter. Editing a delivery MUST NOT send a letter. A send failure MUST NOT undo the dispatch and MUST be logged. The letter MUST NOT be resent automatically, because the mail rules allow no background job.
+
+#### Scenario: Dispatch with a link
+
+- **WHEN** an operator registers a courier delivery with a tracking link
+- **THEN** the customer receives the out-for-delivery letter in pt-BR with the link
+
+#### Scenario: Second attempt
+
+- **WHEN** a delivery failed and the invoice is dispatched again
+- **THEN** the customer receives a second out-for-delivery letter for the new attempt
+
+#### Scenario: SMTP down
+
+- **WHEN** the letter fails to send
+- **THEN** the delivery stays out for delivery, the failure is logged, and no later action resends it
+
+### Requirement: Courier delivered letter
+
+The system SHALL email the customer a delivered letter when a courier delivery is marked delivered. It MUST be claimed once per delivery record. Marking a delivery failed or canceled MUST NOT send a letter. A send failure MUST NOT undo the status, MUST be logged, and MUST NOT be resent automatically.
+
+#### Scenario: Delivered
+
+- **WHEN** an operator marks a courier delivery delivered
+- **THEN** the customer receives the delivered letter once
+
+#### Scenario: Failed
+
+- **WHEN** an operator marks a courier delivery failed
+- **THEN** no letter is sent

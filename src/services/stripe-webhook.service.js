@@ -10,8 +10,10 @@ const {
   extractCardFromPaymentMethod
 } = require('../core/stripe-subscription-map');
 const {
+  contractPaid,
   isChargedDeliveryInvoice,
-  lastContractedDeliveryCharged
+  lastContractedDeliveryCharged,
+  startNewContract
 } = require('../core/contract-deliveries');
 
 const WEBHOOK_EVENT_TIMEOUT_MS = 30 * 1000;
@@ -38,12 +40,14 @@ class StripeWebhookService {
     this.webhookSecret = options.webhookSecret || '';
     this.eventsRepository = options.eventsRepository || null;
     this.ledgerRepository = options.ledgerRepository || null;
+    this.addressIssueService = options.addressIssueService || null;
     this.customerStore = options.customerStore || null;
     this.shippingProductId = options.shippingProductId || '';
     this.transactionalMailer = options.transactionalMailer || null;
     this.pendingDeliveryChanges = options.pendingDeliveryChanges || null;
     this.paidCycles = options.paidCycles || null;
     this.customerInvoices = options.customerInvoices || null;
+    this.blingNfe = options.blingNfe || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.withTimeout = options.withTimeout || withTimeout;
   }
@@ -321,6 +325,9 @@ class StripeWebhookService {
       type: event && event.type,
       eventId: event && event.id,
       stripe_account: extra.stripe_account,
+      ...(extra.stored_account ? { stored_account: extra.stored_account } : {}),
+      ...(extra.subscription_id ? { subscription_id: extra.subscription_id } : {}),
+      ...(extra.invoice_id ? { invoice_id: extra.invoice_id } : {}),
       reason
     }, 'Stripe webhook ignored.');
   }
@@ -363,23 +370,46 @@ class StripeWebhookService {
       return;
     }
 
+    const existing = context.ledger || await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
+    // The checkout stored the account from the address. A paid invoice delivered on the other account's endpoint
+    // (one sandbox behind both, or a row stored wrong) writes nothing, before the contract or the ledger.
+    if (existing && existing.stripeAccount && runtime.account && existing.stripeAccount !== runtime.account) {
+      this.warnIgnored(event, 'account_mismatch', {
+        stripe_account: runtime.account,
+        stored_account: existing.stripeAccount,
+        subscription_id: subscriptionId,
+        invoice_id: invoice.id
+      });
+      return;
+    }
+
     const period = extractSubscriptionPeriod(subscription || {});
     const card = this.cardFromSubscription(subscription);
     const item = subscription && subscription.items && Array.isArray(subscription.items.data)
       ? subscription.items.data[0]
       : null;
-    const existing = context.ledger || await this.ledgerRepository.findByStripeSubscriptionId(subscriptionId);
     const promotedPending = existing
       && existing.editPaymentPending
       && existing.editPending
       && existing.editPending.invoice_id
       && existing.editPending.invoice_id === invoice.id;
 
+    // Before the promotion below clears the pending edit, so a retried event still does it.
+    if (promotedPending && existing.editPending.term_changed) {
+      await startNewContract({
+        ledgerRepository: this.ledgerRepository,
+        billing: runtime.stripeBilling || this.stripeBilling,
+        row: existing,
+        subscriptionId
+      });
+    }
+
     await this.ledgerRepository.upsert({
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(invoice.customer || (subscription && subscription.customer) || existing && existing.stripeCustomerId || ''),
-      stripeAccount: runtime.account || (existing && existing.stripeAccount) || 'us',
+      // The checkout chose the account from the address. The endpoint that delivered the event does not change it.
+      stripeAccount: (existing && existing.stripeAccount) || runtime.account || 'us',
       // A skip or a postponement pays a $0 invoice while the charge waits in trial.
       status: subscription && subscription.status === 'trialing' ? 'trialing' : 'active',
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
@@ -397,11 +427,15 @@ class StripeWebhookService {
       } : {})
     });
 
+    // Only the checkout that created this subscription takes its payment: the invoice of an older
+    // subscription of the same customer must not rewrite the customer's latest checkout.
     await this.ledgerRepository.updateCheckoutReference(context.userId, {
       payment_state: 'paid',
       stripe_subscription_id: subscriptionId,
       stripe_invoice_id: invoice.id || undefined
-    });
+    }, { subscriptionId });
+
+    const nfeFailure = await this.recordNfe({ invoice, runtime, userId: context.userId, subscriptionId });
 
     // One delivery estimate for this payment: the confirmation email and the production cycle use the same one.
     const delivery = await this.estimateDelivery(invoice, subscriptionId);
@@ -426,6 +460,26 @@ class StripeWebhookService {
     });
 
     await this.finishCustomerInvoice(invoice, runtime, issued, letter);
+
+    // Only the row failed to save: the steps above went on, and the event comes back to write it.
+    if (nfeFailure) {
+      throw nfeFailure;
+    }
+  }
+
+  // Writes the NF-e row of a paid BR invoice. Nothing here calls Bling; the bling_nfe job does, so Bling being slow
+  // or down never touches this event.
+  async recordNfe({ invoice, runtime, userId, subscriptionId }) {
+    if (!this.blingNfe) {
+      return null;
+    }
+    try {
+      await this.blingNfe.recordPaidInvoice({ invoice, account: runtime.account, userId, subscriptionId });
+      return null;
+    } catch (error) {
+      this.logger.error({ invoiceId: invoice && invoice.id, code: error && error.code }, 'NF-e row could not be saved.');
+      return error;
+    }
   }
 
   // Issues the Eden Bowls invoice PDF of a paid invoice above zero without emailing it. A failure here does not stop
@@ -507,6 +561,10 @@ class StripeWebhookService {
     if (this.paidCycles) {
       await this.paidCycles.recordPaid({ ledgerRow: row, subscription, invoice, estimate: delivery });
     }
+    // delivery-address-issues: a paid cycle whose address its market cannot ship. Only logs its own errors.
+    if (this.addressIssueService && row) {
+      await this.addressIssueService.report({ subscription: row, source: 'payment_check' });
+    }
     if (this.pendingDeliveryChanges) {
       await this.pendingDeliveryChanges.applyAfterCharge({ subscriptionId, subscription, billing });
     }
@@ -521,7 +579,7 @@ class StripeWebhookService {
     }
     const plan = row.planSelection || {};
     const term = Number(row.subscriptionTermMonths || plan.subscription_term_months || 1) || 1;
-    if (!lastContractedDeliveryCharged(row.chargedDeliveries, term)) {
+    if (!lastContractedDeliveryCharged(contractPaid(row.chargedDeliveries, row), term)) {
       return;
     }
     if (!billing || typeof billing.setCancelAtPeriodEnd !== 'function') {
@@ -685,10 +743,14 @@ class StripeWebhookService {
       return;
     }
 
+    // The failure reaches the checkout only when it is that checkout's payment intent or subscription.
     await this.ledgerRepository.updateCheckoutReference(userId, {
       payment_state: 'failed',
       stripe_payment_intent_id: paymentIntentId.startsWith('pi_') ? paymentIntentId : undefined,
       stripe_payment_intent_status: String(object.status || 'canceled')
+    }, {
+      subscriptionId: subscriptionId.startsWith('sub_') ? subscriptionId : '',
+      paymentIntentId: paymentIntentId.startsWith('pi_') ? paymentIntentId : ''
     });
   }
 
@@ -734,11 +796,11 @@ class StripeWebhookService {
       ? subscription.items.data[0]
       : null;
 
-    await this.ledgerRepository.upsert({
+    const saved = await this.ledgerRepository.upsert({
       userId: context.userId,
       stripeSubscriptionId: subscriptionId,
       stripeCustomerId: String(subscription.customer || (context.ledger && context.ledger.stripeCustomerId) || ''),
-      stripeAccount: runtime.account || (context.ledger && context.ledger.stripeAccount) || 'us',
+      stripeAccount: (context.ledger && context.ledger.stripeAccount) || runtime.account || 'us',
       status: mapStripeStatus(subscription),
       stripePriceId: item && item.price && item.price.id ? item.price.id : undefined,
       currentPeriodStart: period.start,
@@ -751,6 +813,12 @@ class StripeWebhookService {
     });
 
     await this.discardPendingAfterFailedCharge(subscription, subscriptionId);
+
+    // close-address-issues-when-subscription-ends: an ended subscription with no paid box left closes its problem.
+    // Only logs its own errors.
+    if (this.addressIssueService && saved && saved.id) {
+      await this.addressIssueService.closeIfEnded(saved.id);
+    }
 
     await this.notifySubscriptionTransition({
       subscription,

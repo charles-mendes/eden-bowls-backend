@@ -24,6 +24,24 @@ Status:
 
 **Não fazer:** ir live só com Ground “no chute”.
 
+**Resposta da UPS (cliente por telefone, 2026-11-09):**
+
+- Ground (`03`) aceita gelo seco. `allowed_service_codes: ['03']` continua correto.
+- O gelo seco precisa ser declarado no envio como Dry Ice / Carbon Dioxide, Solid — UN1845, com a marcação e o processamento que a UPS exige.
+
+- Quantidade: **500 g (0,5 kg) de gelo seco por caixa**, qualquer que seja o tamanho da caixa (especificação Eden Bowls, 2026-11-09). Fica abaixo do limite de 2,5 kg por pacote a partir do qual a UPS exige contrato de Hazardous Materials e documentos de envio no aéreo doméstico. Esse valor é o padrão da configuração no admin.
+
+- Conta UPS: **não precisa** de habilitação Dangerous Goods/Hazmat. Envio doméstico (origem Boca Raton, FL) de produto não perigoso, com gelo seco usado só como refrigerante, é isento do contrato de Dangerous Goods. A declaração continua obrigatória e precisa ser feita por sistema aprovado pela UPS (API, WorldShip, CampusShip).
+- Taxa: o Rate & Service Guide UPS 2026 (atualizado em 17/04/2026) publica **US$ 8,55 por pacote com Dry Ice**. A UPS também diz que o Ground entre os 48 estados contíguos não é regulado para gelo seco, então ainda não se sabe se essa taxa é cobrada no Ground. A Rating API aceita `PackageServiceOptions.DryIce` (`RegulationSet: CFR`, `DryIceWeight` com `UnitOfMeasurement`). Com a declaração, a cotação já traz a taxa, se houver.
+
+**Ainda em aberto:**
+
+- Se os US$ 8,55 são cobrados no Ground. O CIE devolve valores fictícios (ver item 8), então isso só se confirma com um envio de teste controlado em produção, comparando a cotação com a fatura UPS.
+
+**No código (change `ups-dry-ice-declaration`):** a etiqueta e as duas cotações (checkout e simulação do admin) declaram o gelo seco do pacote como UN1845. O bloco é `Package.PackageServiceOptions.DryIce`, com `RegulationSet: 'CFR'` e `DryIceWeight` em kg (código `00`, uma casa decimal). Não vai `MedicalUseIndicator`. O peso vem da configuração `package.dry_ice_kg` em `shipping_us_settings` (coluna `package_dry_ice_kg`): 0,5 kg no deploy, editável no admin de 0,1 a 2,5 kg e nunca maior que o peso do pacote (422 `invalid_dry_ice_kg`). O formato foi conferido no OpenAPI oficial da UPS (`UPS-API/api-documentation`, `Shipping.yaml` e `Rating.yaml`).
+
+**Antes de fechar o gate:** testar no CIE a simulação, uma cotação no formato do checkout (CEP real com a cidade fictícia `City` / `NY` que o checkout manda) e uma etiqueta. A UPS faz checagem de rota (lane check) do gelo seco por CEP e cidade. Se recusar só a cotação do checkout, o checkout precisa passar a mandar cidade e estado reais.
+
 ---
 
 ## 2. Gap cotação (checkout) × custo real (etiqueta) — ACEITO v1
@@ -110,6 +128,32 @@ Arquivo existe mas runtime usa MySQL + defaults em código.
 **Ação:** remover ou marcar DEPRECATED nesta feature para não confundir o próximo dev.
 
 **Feito (2026-10-26):** arquivo removido no change `move-business-data-1-read-from-api`. As configurações de frete vêm só de `shipping_br_settings` / `shipping_us_settings`.
+
+---
+
+## 10. Instruções de entrega na etiqueta UPS — ABERTO (teste manual em CIE)
+
+Change `checkout-delivery-instructions`. O cliente escreve instruções de entrega no checkout (BR e US). No Brasil o entregador lê na fila do painel. Nos EUA a etiqueta **não** leva o texto; a fila de etiquetas mostra para quem embala.
+
+**Conferido no schema oficial** (`UPS-API/api-documentation`, `Shipping.yaml`, endpoint `/api/shipments/v2409/ship`, 2026-11-13):
+
+| Campo | O que o schema diz | Serve para instrução ao motorista? |
+|---|---|---|
+| `ShipTo` | `Name`, `AttentionName`, `Phone`, `FaxNumber`, `EMailAddress`, `Address`, `LocationID`, `TaxIdentificationNumber`. Nenhum campo de instrução. | Não existe |
+| `LabelSpecification.Instruction` | Código `01`/`02` de "EXCHANGE-LIKE ITEM ONLY" / "EXCHANGE-DRIVER INSTRUCTIONS INSIDE". | Só envio de troca |
+| `PackageServiceOptions.HandlingInstructions` | Instrução de manuseio do UPS Premier. | Só UPS Premier (saúde) |
+| `Package.ReferenceNumber` | Até 5 por pacote, `Value` com até 35 caracteres, válido em US/US. Texto do remetente, sai na etiqueta. | Possível, mas é referência do remetente |
+| `ShipTo.Phone.Number` | Obrigatório só em Next Day Air Early e envio internacional. Nos EUA: código de área + 7 dígitos (10 dígitos), com ramal opcional de 4. | — |
+
+**Decisão desta change:** enviar só `ShipTo.Phone` (endereço da assinatura, depois `billing_phone` da conta, normalizado para 10 dígitos; sem número válido, nada é enviado). O texto da instrução não vai para a UPS.
+
+**Teste manual em CIE (pessoa com acesso, a IA não tem):**
+
+1. Comprar uma etiqueta Ground US/US com `Package.ReferenceNumber: [{ Value: "LEAVE AT BACK DOOR" }]`.
+2. Ver se o texto sai na etiqueta GIF e onde. Repetir com 35 caracteres e com acento ("PORTÃO") para ver o que a UPS faz.
+3. Comprar uma etiqueta com `ShipTo.Phone.Number` de 10 dígitos e confirmar que não há aviso.
+
+Se o texto sair legível, abrir uma change separada para mandar a instrução em ASCII, cortada em 35 caracteres. Mesmo assim, o motorista não tem obrigação de ler a referência; o aviso do checkout dos EUA continua.
 
 ---
 

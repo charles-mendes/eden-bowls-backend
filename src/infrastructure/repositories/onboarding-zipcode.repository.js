@@ -7,6 +7,26 @@ class OnboardingZipcodeRepository {
     this.tableName = options.tableName || 'onboarding_user_state';
   }
 
+  // The saved address JSON, or null when the user has none yet.
+  async getAddress(userId) {
+    if (!this.dataSource || !this.dataSource.isInitialized) {
+      throw new HttpError(503, 'Database connection is not initialized.');
+    }
+    const rows = await this.dataSource.query(
+      `SELECT \`address\` FROM \`${this.tableName}\` WHERE \`user_id\` = ? LIMIT 1`,
+      [userId]
+    );
+    const raw = Array.isArray(rows) && rows[0] ? rows[0].address : null;
+    if (!raw) return null;
+    if (typeof raw === 'object') return raw;
+    try {
+      const parsed = JSON.parse(String(raw));
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
   async saveZipcode(userId, payload = {}) {
     if (!this.dataSource || !this.dataSource.isInitialized) {
       throw new HttpError(503, 'Database connection is not initialized.');

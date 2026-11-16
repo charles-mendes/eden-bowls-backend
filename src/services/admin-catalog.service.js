@@ -1,7 +1,7 @@
 const { HttpError } = require('../core/http-error');
-const { labelCompleteness, normalizeRecipeMarket, parseRecipeKey } = require('../core/recipe-content');
+const { labelCompleteness, normalizeRecipeMarket } = require('../core/recipe-content');
+const { parseWeightToGrams } = require('../core/plan-catalog-pricing');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
-const { MAX_LARGE_PACK_LIMIT } = require('../core/simplified-consumption');
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const {
@@ -9,28 +9,9 @@ const {
   assertRecordMarket,
   shouldEnforceMarketScope
 } = require('../core/admin-market-scope');
-const {
-  LIFE_STAGES,
-  SEED_FLAVOR_ALIASES,
-  canonicalFlavorKey,
-  flavorKeyFromLabel,
-  parseFlavorAliases
-} = require('../core/flavors');
+const { LIFE_STAGES, parseFlavorAliases } = require('../core/flavors');
 
 // Small packs a month above which a pet gets the large pack (plan-packaging); null keeps the stored value.
-function parseLargePackLimit(value) {
-  if (value == null || value === '') {
-    return null;
-  }
-  const limit = Number(value);
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LARGE_PACK_LIMIT) {
-    throw new HttpError(422, `Large pack limit must be a whole number from 1 to ${MAX_LARGE_PACK_LIMIT}.`, {
-      code: 'product_large_pack_limit_invalid'
-    });
-  }
-  return limit;
-}
-
 function requiredCurrency(country) {
   if (country === 'US') {
     return 'usd';
@@ -51,63 +32,128 @@ function zoneIdFromCountry(country) {
   return '';
 }
 
-function parseVariationFlavor(value) {
-  if (value == null) {
-    return undefined;
-  }
+const MAX_PRODUCT_NAME_LENGTH = 120;
+const MAX_PRODUCT_CODE_LENGTH = 64;
+const PRODUCT_CODE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const STORE_CATEGORY = 'flavors';
 
-  const flavor = String(value).trim();
-  if (flavor.length > 64) {
-    throw new HttpError(422, 'Variation flavor must be at most 64 characters.');
+function parseProductName(value) {
+  const name = String(value == null ? '' : value).trim();
+  if (!name || name.length > MAX_PRODUCT_NAME_LENGTH) {
+    throw new HttpError(422, `Product name must have 1 to ${MAX_PRODUCT_NAME_LENGTH} characters.`, { code: 'product_name_invalid' });
   }
-
-  return flavor;
+  return name;
 }
 
-function parseVariationFlavorSlug(value, flavor) {
-  const requested = value == null ? '' : flavorKeyFromLabel(value);
-  const inferred = canonicalFlavorKey(requested || flavor || '');
-  if (!inferred) {
-    return undefined;
+function parseProductCode(value) {
+  const code = String(value == null ? '' : value).trim();
+  if (!code || code.length > MAX_PRODUCT_CODE_LENGTH || !PRODUCT_CODE_PATTERN.test(code)) {
+    throw new HttpError(422, 'Product code must be lowercase letters, digits and single hyphens, up to 64 characters.', {
+      code: 'product_code_invalid'
+    });
   }
-  if (inferred.length > 64) {
-    throw new HttpError(422, 'Variation flavor slug must be at most 64 characters.');
-  }
-  return inferred;
+  return code;
 }
 
-function parseVariationFlavorAliases(value, flavorSlug) {
-  if (value == null) {
-    const seeded = SEED_FLAVOR_ALIASES[flavorSlug] || [];
-    return seeded.length > 0 ? seeded.join(',') : undefined;
-  }
-
-  const aliases = parseFlavorAliases(value);
-  return aliases.join(',');
+// Query flags of the products list arrive as strings: 'true' or '1' turns the filter on.
+function isTruthyFlag(value) {
+  return value === true || value === 'true' || value === '1';
 }
 
-function parseVariationLifeStage(value) {
-  if (value == null || value === '') {
-    return undefined;
-  }
-
-  const lifeStage = String(value).trim().toLowerCase();
+function parseProductLifeStage(value) {
+  const lifeStage = String(value == null ? '' : value).trim().toLowerCase();
   if (!LIFE_STAGES.includes(lifeStage)) {
-    throw new HttpError(422, `Variation life stage must be one of ${LIFE_STAGES.join(', ')}.`);
+    throw new HttpError(422, `Life stage must be one of ${LIFE_STAGES.join(', ')}.`, { code: 'product_life_stage_invalid' });
   }
-
   return lifeStage;
 }
 
-function parseShortLabel(value) {
-  if (value == null) {
+// Undefined keeps the stored value; the store reads the aliases as a comma list of slugs.
+function parseProductAliases(value) {
+  if (value === undefined) {
     return undefined;
   }
-  const shortLabel = String(value).trim();
+  const aliases = parseFlavorAliases(value == null ? '' : value).join(',');
+  if (aliases.length > 512) {
+    throw new HttpError(422, 'Flavor aliases must be at most 512 characters.', { code: 'product_aliases_invalid' });
+  }
+  return aliases;
+}
+
+function parseShortLabel(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const shortLabel = String(value == null ? '' : value).trim();
   if (shortLabel.length > 64) {
-    throw new HttpError(422, 'Variation short name must be at most 64 characters.');
+    throw new HttpError(422, 'Short name must be at most 64 characters.', { code: 'product_short_label_invalid' });
   }
   return shortLabel;
+}
+
+// A payload with only the id and a weight, for a variation stored without weight.
+function fillsMissingWeight(item, current) {
+  const keys = Object.keys(item).filter((key) => item[key] !== undefined);
+  return keys.every((key) => key === 'id' || key === 'weight')
+    && String(item.weight == null ? '' : item.weight).trim() !== ''
+    && !(gramsOf(current.weight) > 0);
+}
+
+// Pack weight as the store reads it (300g, 10.6oz). Undefined keeps the stored value; empty clears it.
+function parseVariationWeight(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const weight = String(value == null ? '' : value).trim().toLowerCase().replace(/\s+/g, '');
+  if (!weight) {
+    return '';
+  }
+  if (weight.length > 32 || !(parseWeightToGrams(weight) > 0)) {
+    throw new HttpError(422, 'Variation weight must be like 300g or 10.6oz.', { code: 'variation_weight_invalid' });
+  }
+  return weight;
+}
+
+function gramsOf(weight) {
+  return Math.round(parseWeightToGrams(weight || '')) || 0;
+}
+
+function identityLocked(field) {
+  return new HttpError(422, 'The code and the market of a product cannot change.', { code: 'product_identity_locked', field });
+}
+
+// Variation copies of the product's flavor fields (catalog-products).
+function flavorCopies(content) {
+  return {
+    flavor: content.name,
+    flavorSlug: content.flavorSlug,
+    flavorAliases: content.flavorAliases || '',
+    lifeStage: content.lifeStage,
+    shortLabel: content.shortLabel || ''
+  };
+}
+
+// Absent keeps the stored value. The note carries the 8 digits of the NCM.
+function parseVariationNcm(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const ncm = String(value == null ? '' : value).replace(/[.\s-]/g, '');
+  if (ncm && !/^\d{8}$/.test(ncm)) {
+    throw new HttpError(422, 'NCM must have 8 digits.', { code: 'invalid_ncm' });
+  }
+  return ncm;
+}
+
+function parseVariationOrigin(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const origin = Number(value);
+  if (!Number.isInteger(origin) || origin < 0 || origin > 8) {
+    throw new HttpError(422, 'The origin must be a code from 0 to 8.', { code: 'invalid_origin' });
+  }
+  return origin;
 }
 
 function parseReadinessFlag(value) {
@@ -207,6 +253,7 @@ class AdminCatalogService {
     this.logger = options.logger || null;
     this.auditService = options.auditService || null;
     this.recipeContentRepository = options.recipeContentRepository || null;
+    this.recipeImageStorage = options.recipeImageStorage || null;
     this.lastSync = null;
   }
 
@@ -240,20 +287,75 @@ class AdminCatalogService {
   }
 
   async listProducts(query, pagination, actor = {}) {
+    const markets = this.scopedMarkets(query, actor);
+    const contentMarkets = markets || ['BR', 'US'];
+    let productIds = query.code ? await this.productIdsWithCode(query.code, contentMarkets) : undefined;
+    const lifeStage = query.lifeStage ? parseProductLifeStage(query.lifeStage) : null;
+    const noImage = isTruthyFlag(query.noImage);
+    const labelIncomplete = isTruthyFlag(query.labelIncomplete);
+    let excludeProductIds;
+    if (lifeStage || noImage || labelIncomplete) {
+      const contents = await this.contentsInMarkets(contentMarkets);
+      if (lifeStage) {
+        const stageIds = contents.filter((content) => content.lifeStage === lifeStage).map((content) => content.productId);
+        productIds = productIds ? productIds.filter((id) => stageIds.includes(id)) : stageIds;
+      }
+      // A product without content has no image and no label, so these filters keep it.
+      excludeProductIds = contents
+        .filter((content) => (noImage && content.imageUrl)
+          || (labelIncomplete && labelCompleteness(content.label, normalizeRecipeMarket(content.market)).status === 'complete'))
+        .map((content) => content.productId);
+    }
     const result = await this.repository.listProducts({
       search: query.search,
       market: query.market,
-      markets: this.scopedMarkets(query, actor),
+      markets,
+      productIds,
+      excludeProductIds,
       offset: pagination.offset,
       perPage: pagination.perPage
     });
+    const flagged = await this.annotateDeleteFlags(result.items || []);
 
     return paginatedEnvelope({
-      items: await this.annotateDeleteFlags(result.items || []),
+      items: await Promise.all(flagged.map((product) => this.annotateRecipeContent(product, { summary: true }))),
       total: result.total,
       page: pagination.page,
       perPage: pagination.perPage
     });
+  }
+
+  // Products with this code in the given markets, so an old recipe link can find its product.
+  async productIdsWithCode(code, markets) {
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlug;
+    if (typeof lookup !== 'function') {
+      return [];
+    }
+    const ids = [];
+    for (const market of markets) {
+      const content = await lookup.call(this.recipeContentRepository, market, String(code).trim().toLowerCase());
+      if (content && content.productId) {
+        ids.push(content.productId);
+      }
+    }
+    return ids;
+  }
+
+  // Content rows of the given markets with a product, for the list filters (Fase, Sem imagem, Rótulo incompleto).
+  async contentsInMarkets(markets) {
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.listByMarket;
+    if (typeof lookup !== 'function') {
+      return [];
+    }
+    const contents = [];
+    for (const market of markets) {
+      for (const content of await lookup.call(this.recipeContentRepository, market)) {
+        if (content && content.productId) {
+          contents.push(content);
+        }
+      }
+    }
+    return contents;
   }
 
   async annotateDeleteFlags(products) {
@@ -297,50 +399,74 @@ class AdminCatalogService {
     return this.annotateRecipeContent(annotated);
   }
 
-  // Each variation's recipe content key, stored image, label state and presentation in the product's market (recipe-content).
-  async annotateRecipeContent(product) {
+  // The product's content once (recipe-content), and on each variation the product's image, label state and
+  // presentation, which the activation checks read. The list carries a summary without label and presentation.
+  async annotateRecipeContent(product, { summary = false } = {}) {
     const market = normalizeRecipeMarket(product.planCountry);
-    const variants = (product.variants || []).map((variant) => ({ ...variant, recipeKey: variant.recipeKey || null }));
-    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlugs;
-    const contents = market && typeof lookup === 'function'
-      ? await lookup.call(this.recipeContentRepository, market, variants.map((variant) => variant.recipeKey))
-      : new Map();
+    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByProductId;
+    const content = typeof lookup === 'function' ? await lookup.call(this.recipeContentRepository, product.id) : null;
+    const completeness = labelCompleteness(content ? content.label : null, market);
+    const presented = content
+      ? {
+        code: content.flavorSlug,
+        name: content.name,
+        lifeStage: content.lifeStage,
+        flavorAliases: content.flavorAliases || '',
+        shortLabel: content.shortLabel || '',
+        imageUrl: content.imageUrl,
+        planImageUrl: content.planImageUrl || null,
+        labelStatus: completeness.status,
+        labelMissing: completeness.missing,
+        presentationReady: Boolean(content.presentation),
+        ...(summary ? {} : {
+          label: content.label,
+          labelUpdatedAt: content.labelUpdatedAt || null,
+          imageUpdatedAt: content.imageUpdatedAt || null,
+          planImageUpdatedAt: content.planImageUpdatedAt || null,
+          presentation: content.presentation || null,
+          presentationUpdatedAt: content.presentationUpdatedAt || null
+        })
+      }
+      : null;
     return {
       ...product,
-      variants: variants.map((variant) => {
-        const content = variant.recipeKey ? contents.get(variant.recipeKey) : null;
-        return {
-          ...variant,
-          recipeImageUrl: content ? content.imageUrl : null,
-          recipeLabelStatus: labelCompleteness(content ? content.label : null, market).status,
-          recipePresentationReady: Boolean(content && content.presentation)
-        };
-      })
+      content: presented,
+      variants: (product.variants || []).map((variant) => ({
+        ...variant,
+        recipeImageUrl: content ? content.imageUrl : null,
+        recipeLabelStatus: completeness.status,
+        recipePresentationReady: Boolean(content && content.presentation)
+      }))
     };
   }
 
-  async createProduct(payload = {}) {
-    const name = String(payload.name || payload.namePt || '').trim();
-    if (!name) {
-      throw new HttpError(422, 'Product name is required.');
-    }
-
-    const country = String(payload.planCountry || 'BR').trim().toUpperCase();
+  // A product is one recipe of one market (catalog-products): name, market, code and life stage, created as a draft
+  // in the store category with its content record.
+  async createProduct(payload = {}, actor = {}) {
+    const name = parseProductName(payload.name != null ? payload.name : payload.namePt);
+    const country = String(payload.planCountry || payload.market || '').trim().toUpperCase();
     if (country !== 'BR' && country !== 'US') {
       throw new HttpError(422, 'Plan country must be BR or US.', { code: 'product_country_not_configured' });
     }
-
-    const days = Number(payload.planDays);
-    if (!Number.isFinite(days) || days <= 0) {
-      throw new HttpError(422, 'Plan days must be greater than zero.', { code: 'product_days_not_configured' });
+    const code = parseProductCode(payload.code);
+    const lifeStage = parseProductLifeStage(payload.lifeStage);
+    const codeTaken = () => new HttpError(409, 'A product with this code already exists in the market.', { code: 'product_code_taken' });
+    if (await this.recipeContentRepository.findByMarketAndSlug(country, code)) {
+      throw codeTaken();
     }
 
-    const productId = await this.repository.createProduct({
-      name,
-      slug: payload.slug,
-      planCountry: country,
-      planDays: days
-    });
+    const productId = await this.repository.createProduct({ name, slug: payload.slug || `${code}-${country.toLowerCase()}`, planCountry: country });
+    try {
+      await this.recipeContentRepository.createForProduct({ productId, market: country, flavorSlug: code, name, lifeStage, actorId: actorIdOf(actor) });
+    } catch (error) {
+      // A concurrent create took the code first: the product goes back out.
+      await this.repository.deleteProduct(productId);
+      if (error && (error.code === 'ER_DUP_ENTRY' || error.errno === 1062)) {
+        throw codeTaken();
+      }
+      throw error;
+    }
+    await this.repository.assignCategory(productId, STORE_CATEGORY);
 
     if (this.stripeAccounts || this.stripeBilling) {
       try {
@@ -364,9 +490,11 @@ class AdminCatalogService {
       }
     }
 
+    await this.recordProductAudit(actor, 'catalog.product.create', { id: productId, planCountry: country }, { code, name, lifeStage });
+
     if (Array.isArray(payload.variants) && payload.variants.length > 0) {
       const product = await this.getProduct(productId);
-      await this.saveVariants(product, payload.variants, country);
+      await this.saveVariants(product, payload.variants, country, actor);
       await this.sync({
         productId,
         market: country,
@@ -386,6 +514,15 @@ class AdminCatalogService {
     }
     await this.archiveStripeCatalog(product);
     await this.repository.deleteProduct(product.id);
+    // The content goes with the product, after the Stripe archive succeeded (catalog-product-delete).
+    if (this.recipeContentRepository && typeof this.recipeContentRepository.deleteByProductId === 'function') {
+      await this.recipeContentRepository.deleteByProductId(product.id);
+    }
+    for (const imageUrl of [product.content && product.content.imageUrl, product.content && product.content.planImageUrl]) {
+      if (imageUrl) {
+        await this.deleteImageFile(imageUrl);
+      }
+    }
     return { deleted: true, id: product.id };
   }
 
@@ -450,33 +587,21 @@ class AdminCatalogService {
 
   async patchProduct(productId, payload = {}, actor = {}) {
     const product = await this.getProduct(productId, actor);
-    const largePackLimit = parseLargePackLimit(payload.largePackLimit);
+    const content = product.content;
 
-    if (payload.planCountry) {
-      const country = String(payload.planCountry).trim().toUpperCase();
-      if (country !== 'BR' && country !== 'US') {
-        throw new HttpError(422, 'Plan country must be BR or US.', { code: 'product_country_not_configured' });
-      }
-      await this.repository.upsertPostMeta(product.id, '_cmpb_plan_country', country);
+    // Code and market are set on create (catalog-products).
+    if (payload.planCountry != null && String(payload.planCountry).trim().toUpperCase() !== product.planCountry) {
+      throw identityLocked('planCountry');
+    }
+    if (payload.code != null && (!content || String(payload.code).trim().toLowerCase() !== content.code)) {
+      throw identityLocked('code');
     }
 
-    if (payload.planDays != null) {
-      const days = Number(payload.planDays);
-      if (!Number.isFinite(days) || days <= 0) {
-        throw new HttpError(422, 'Plan days must be greater than zero.', { code: 'product_days_not_configured' });
-      }
-      await this.repository.upsertPostMeta(product.id, '_cmpb_plan_days', String(days));
-    }
-
-    if (largePackLimit != null) {
-      await this.repository.upsertPostMeta(product.id, '_cmpb_large_pack_limit', String(largePackLimit));
-    }
+    await this.saveProductFields(product, payload, actor);
 
     if (Array.isArray(payload.variants)) {
-      const country = payload.planCountry
-        ? String(payload.planCountry).trim().toUpperCase()
-        : product.planCountry;
-      await this.saveVariants(product, payload.variants, country, actor);
+      const country = product.planCountry;
+      await this.saveVariants(await this.getProduct(productId, actor), payload.variants, country, actor);
       if (!(payload.active === true && !product.active)) {
         try {
           await this.sync({
@@ -492,8 +617,8 @@ class AdminCatalogService {
 
     if (payload.active === true && !product.active) {
       const draft = await this.getProduct(productId);
-      if (!draft.planCountry || !draft.planDays) {
-        throw new HttpError(422, 'Plan country and days are required before publishing.', {
+      if (!draft.planCountry) {
+        throw new HttpError(422, 'Plan country is required before publishing.', {
           code: 'product_incomplete'
         });
       }
@@ -534,18 +659,58 @@ class AdminCatalogService {
     return this.getProduct(productId, actor);
   }
 
+  // Name, life stage, aliases and short label of the product: stored on the content and copied to every variation,
+  // active or not, since the copies are derived (catalog-products). Each change is audited.
+  async saveProductFields(product, payload, actor) {
+    const next = {
+      name: payload.name === undefined ? undefined : parseProductName(payload.name),
+      lifeStage: payload.lifeStage === undefined ? undefined : parseProductLifeStage(payload.lifeStage),
+      flavorAliases: parseProductAliases(payload.flavorAliases),
+      shortLabel: parseShortLabel(payload.shortLabel)
+    };
+    const content = product.content;
+    const changes = Object.entries(next)
+      .filter(([, value]) => value !== undefined)
+      .filter(([field, value]) => !content || String(content[field] || '') !== value);
+    if (!changes.length) {
+      return;
+    }
+    if (!content) {
+      throw new HttpError(409, 'This product has no recipe content.', { code: 'product_content_missing' });
+    }
+
+    const fields = Object.fromEntries(changes);
+    if (fields.name !== undefined) {
+      await this.repository.updatePost(product.id, { title: fields.name });
+    }
+    const saved = await this.recipeContentRepository.updateProductFields(product.id, { ...fields, actorId: actorIdOf(actor) });
+    await this.repository.rewriteFlavorCopies(product.id, flavorCopies(saved));
+    for (const [field, value] of changes) {
+      await this.recordProductAudit(actor, 'catalog.product.update', product, { field, from: content[field] || null, to: value || null });
+    }
+  }
+
+  // Variations hold only pack fields; flavor fields come from the product (catalog-products). Every item is
+  // checked before anything is written, so a refused weight changes nothing.
   async saveVariants(product, variants, country, actor = {}) {
     const zoneId = zoneIdFromCountry(country);
     const existingIds = new Set((product.variants || []).map((item) => String(item.id)));
     const existingById = new Map((product.variants || []).map((item) => [String(item.id), item]));
     let menuOrder = (product.variants || []).length;
+    const content = await this.recipeContentRepository.findByProductId(product.id);
+    if (!content) {
+      throw new HttpError(409, 'This product has no recipe content.', { code: 'product_content_missing' });
+    }
+    const copies = flavorCopies(content);
 
-    // A published product keeps its active variations as they are; only inactive ones change.
+    // A published product keeps its active variations as they are; only inactive ones change. The one exception
+    // is a missing weight: sent alone, it can be filled, since without it the pack stays out of the stock.
     if (product.active) {
       const locked = variants
-        .map((item) => (item && item.id != null ? existingById.get(String(item.id).trim()) : null))
-        .filter((current) => current && current.active)
-        .map((current) => String(current.id));
+        .filter((item) => item && item.id != null)
+        .map((item) => ({ item, current: existingById.get(String(item.id).trim()) }))
+        .filter(({ item, current }) => current && current.active && !fillsMissingWeight(item, current))
+        .map(({ current }) => String(current.id));
       if (locked.length > 0) {
         throw new HttpError(409, 'Active variations of a published product cannot be edited.', {
           code: 'variation_active_locked',
@@ -554,83 +719,104 @@ class AdminCatalogService {
       }
     }
 
+    const plans = [];
+    const grams = new Map((product.variants || []).map((item) => [String(item.id), gramsOf(item.weight)]));
     for (const item of variants) {
       if (!item || typeof item !== 'object') {
         continue;
       }
-
       const id = item.id == null ? '' : String(item.id).trim();
-      const name = item.name == null ? undefined : String(item.name);
-      const sku = item.sku == null ? undefined : String(item.sku);
-      const current = existingById.get(id);
-      const flavor = parseVariationFlavor(item.flavor);
-      const flavorSlug = current && current.flavorSlug
-        ? current.flavorSlug
-        : parseVariationFlavorSlug(item.flavorSlug, flavor);
-      const flavorAliases = current && current.flavorSlug && item.flavorAliases == null
-        ? undefined
-        : parseVariationFlavorAliases(item.flavorAliases, flavorSlug);
-      const regularPrice = parseVariationPrice(item.regularPrice);
-      let lifeStage = parseVariationLifeStage(item.lifeStage);
-      const flags = Object.fromEntries(READINESS_FLAGS.map(([key]) => [key, parseReadinessFlag(item[key])]));
-      const shortLabel = parseShortLabel(item.shortLabel);
-      // Explicit link to a recipe: absent keeps it, blank unlinks, a new variation without one has none.
-      const recipeKey = item.recipeKey === undefined ? undefined : parseRecipeKey(item.recipeKey);
-      if (recipeKey) {
-        await this.assertRecipeRegistered(country || product.planCountry, recipeKey);
+      const isNew = isNewVariationId(id, existingIds);
+      const plan = {
+        id,
+        isNew,
+        current: existingById.get(id),
+        name: item.name == null ? undefined : String(item.name),
+        sku: item.sku == null ? undefined : String(item.sku),
+        weight: parseVariationWeight(item.weight),
+        regularPrice: parseVariationPrice(item.regularPrice),
+        flags: Object.fromEntries(READINESS_FLAGS.map(([key]) => [key, parseReadinessFlag(item[key])])),
+        ncm: parseVariationNcm(item.ncm),
+        origin: parseVariationOrigin(item.origin)
+      };
+      if (isNew && !String(plan.name || '').trim() && !String(plan.sku || '').trim()) {
+        throw new HttpError(422, 'New variations require a name or SKU.');
       }
-      // A variation linked to a recipe takes the recipe's life stage (recipe-content).
-      const linkedKey = recipeKey === undefined ? (current && current.recipeKey) || null : recipeKey;
-      const recipeLifeStage = linkedKey ? await this.recipeLifeStage(country || product.planCountry, linkedKey) : null;
-      if (recipeLifeStage) {
-        lifeStage = recipeLifeStage;
+      const slot = isNew ? `new:${plans.length}` : id;
+      if (plan.weight !== undefined) {
+        grams.set(slot, gramsOf(plan.weight));
       }
+      const mine = grams.get(slot) || 0;
+      const taken = mine > 0 && [...grams.entries()].some(([other, value]) => other !== slot && value === mine);
+      if (taken) {
+        throw new HttpError(422, 'Another variation of this product already has this weight.', {
+          code: 'variation_weight_taken',
+          weight: plan.weight
+        });
+      }
+      plans.push(plan);
+    }
 
-      if (isNewVariationId(id, existingIds)) {
-        if (!String(name || '').trim() && !String(sku || '').trim()) {
-          throw new HttpError(422, 'New variations require a name or SKU.');
-        }
-
+    for (const plan of plans) {
+      if (plan.isNew) {
         menuOrder += 1;
         const createdId = await this.repository.createVariation({
           productId: product.id,
-          name: String(name || '').trim(),
-          sku: String(sku || '').trim(),
-          flavor,
-          flavorSlug,
-          flavorAliases,
-          lifeStage: lifeStage || 'adult',
-          shortLabel,
-          recipeKey: recipeKey || null,
-          ...flags,
-          regularPrice,
+          name: String(plan.name || '').trim(),
+          sku: String(plan.sku || '').trim(),
+          weight: plan.weight || undefined,
+          ...copies,
+          recipeKey: copies.flavorSlug,
+          ncm: plan.ncm,
+          origin: plan.origin,
+          ...plan.flags,
+          regularPrice: plan.regularPrice,
           zoneId,
           menuOrder
         });
-        await this.recordFlagChanges(actor, product, { id: createdId }, flags);
-        await this.recordRecipeKeyChange(actor, product, { id: createdId }, recipeKey || null);
+        await this.recordFlagChanges(actor, product, { id: createdId }, plan.flags);
         continue;
       }
 
-      const currentPrice = current && current.regularPrice != null ? Number(current.regularPrice) : null;
+      const currentPrice = plan.current && plan.current.regularPrice != null ? Number(plan.current.regularPrice) : null;
       await this.repository.updateVariation({
-        id,
-        name,
-        sku,
-        flavor,
-        flavorSlug,
-        flavorAliases,
-        lifeStage,
-        shortLabel,
-        recipeKey,
-        ...flags,
-        regularPrice,
+        id: plan.id,
+        name: plan.name,
+        sku: plan.sku,
+        weight: plan.weight,
+        ...copies,
+        recipeKey: copies.flavorSlug,
+        ncm: plan.ncm,
+        origin: plan.origin,
+        ...plan.flags,
+        regularPrice: plan.regularPrice,
         zoneId,
-        priceChanged: regularPrice != null && currentPrice !== regularPrice
+        priceChanged: plan.regularPrice != null && currentPrice !== plan.regularPrice
       });
-      await this.recordFlagChanges(actor, product, current || { id }, flags);
-      if (recipeKey !== undefined) {
-        await this.recordRecipeKeyChange(actor, product, current || { id }, recipeKey);
+      await this.recordFlagChanges(actor, product, plan.current || { id: plan.id }, plan.flags);
+    }
+  }
+
+  async recordProductAudit(actor, action, product, metadata = {}) {
+    if (!this.auditService || typeof this.auditService.record !== 'function') {
+      return;
+    }
+    await this.auditService.record({
+      actor,
+      action,
+      metadata: { productId: String(product.id), market: product.planCountry || null, ...metadata }
+    });
+  }
+
+  async deleteImageFile(imageUrl) {
+    if (!this.recipeImageStorage || typeof this.recipeImageStorage.delete !== 'function') {
+      return;
+    }
+    try {
+      await this.recipeImageStorage.delete(imageUrl);
+    } catch (error) {
+      if (this.logger && typeof this.logger.error === 'function') {
+        this.logger.error({ err: error && error.message }, 'Failed to delete recipe image file.');
       }
     }
   }
@@ -660,40 +846,6 @@ class AdminCatalogService {
       }
       await this.recordAudit(actor, 'catalog.variation.flag', product, current.id, { flag: key, from: previous, to: next });
     }
-  }
-
-  // A variation links only to a recipe registered in its product's market (recipe-content).
-  async assertRecipeRegistered(country, recipeKey) {
-    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlug;
-    if (typeof lookup !== 'function') {
-      return;
-    }
-    const market = normalizeRecipeMarket(country);
-    const registered = market ? await lookup.call(this.recipeContentRepository, market, recipeKey) : null;
-    if (!registered) {
-      throw new HttpError(422, `Recipe ${recipeKey} is not registered in the product market.`, {
-        code: 'recipe_not_registered',
-        recipeKey
-      });
-    }
-  }
-
-  async recipeLifeStage(country, recipeKey) {
-    const lookup = this.recipeContentRepository && this.recipeContentRepository.findByMarketAndSlug;
-    const market = normalizeRecipeMarket(country);
-    if (typeof lookup !== 'function' || !market) {
-      return null;
-    }
-    const registered = await lookup.call(this.recipeContentRepository, market, recipeKey);
-    return registered && registered.lifeStage ? registered.lifeStage : null;
-  }
-
-  async recordRecipeKeyChange(actor, product, current, next) {
-    const previous = (current && current.recipeKey) || null;
-    if (previous === next) {
-      return;
-    }
-    await this.recordAudit(actor, 'catalog.variation.recipe_key', product, current.id, { from: previous, to: next });
   }
 
   // Activates or deactivates one variation without touching the product or its other variations.
@@ -738,6 +890,10 @@ class AdminCatalogService {
       }
       if (country === 'US' && !variant.labelDataReady && variant.recipeLabelStatus !== 'complete') {
         missing.push('label_data');
+      }
+      // Without it, the first NF-e of this variation stops with an error after the customer paid.
+      if (country === 'BR' && !variant.ncm) {
+        missing.push('ncm');
       }
       // The store page of the recipe has no other source, so there is no manual confirmation.
       if (!variant.recipePresentationReady) {
@@ -867,7 +1023,8 @@ class AdminCatalogService {
 
         const nickname = `${product.namePt} - ${variant.name || variant.sku}`;
         const unitAmount = Math.round(Number(variant.regularPrice) * 100);
-        const lookupKey = `eden_${product.id}_${variant.id}_${mappedCurrency}_${unitAmount}`;
+        // A variation moved by the deploy split keeps the lookup key of its old plan product, so no new price is made.
+        const lookupKey = `eden_${variant.lookupProductId || product.id}_${variant.id}_${mappedCurrency}_${unitAmount}`;
         const productMap = variant.stripeProductIdsByCurrency || {};
         const mappedProductId = liveStripeId(productMap[mappedCurrency], 'prod_');
         // The single _stripe_product_id meta predates the BR/US split and was created under the old
@@ -1040,6 +1197,11 @@ class AdminCatalogService {
       .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0];
     return newest ? { ...newest, byMarket } : { status: null, byMarket };
   }
+}
+
+function actorIdOf(actor) {
+  const id = actor && (actor.userId || actor.id);
+  return id ? Number(id) : null;
 }
 
 module.exports = {

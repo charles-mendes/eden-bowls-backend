@@ -57,8 +57,9 @@ class OnboardingRecommendationRepository {
     const annotated = await this.annotatePets(userId, market, pets);
     const energies = await this.energiesFor(market, pets, annotated);
     const parameterSet = await publishedParametersFor(this.nutritionParameters);
+    // The stage of the line (puppy, adult, senior) picks the growth or senior factor of Tabela 1.
     const recommendations = pets.map((pet, index) => buildForPet(
-      pet,
+      withLifeStage(pet, annotated && annotated[index] ? annotated[index].life_stage : null),
       energies[index] ? { nem_kcal_kg: energies[index] } : null,
       market.locale,
       parameterSet.parameters
@@ -80,6 +81,11 @@ class OnboardingRecommendationRepository {
   }
 }
 
+// The resolved line goes to the engine as the physiological state; a pet without one keeps what it sent.
+function withLifeStage(pet, lifeStage) {
+  return lifeStage ? { ...pet, life_stage: lifeStage } : pet;
+}
+
 // Draft pets that already exist in the account age from the account record, which holds age_recorded_at.
 OnboardingRecommendationRepository.prototype.annotatePets = async function annotatePets(userId, market, pets) {
   if (!this.lifeStageService) {
@@ -90,16 +96,13 @@ OnboardingRecommendationRepository.prototype.annotatePets = async function annot
   return this.lifeStageService.annotate(pets, market.country, (pet) => accountById.get(String(pet.pet_id || pet.id || '')) || pet);
 };
 
-// kcal/kg per pet from the mean energyKg of its line, null to keep the engine default (cats, no catalog).
+// kcal/kg per pet from the mean energyKg of its line, null to keep the engine default (no catalog). The store
+// sizes dogs only: a draft pet carries no species.
 OnboardingRecommendationRepository.prototype.energiesFor = async function energiesFor(market, pets, annotated) {
   if (!this.recipeEnergyService) {
     return pets.map(() => null);
   }
-  return Promise.all(pets.map((pet, index) => {
-    const type = String(pet.type || pet.especie || 'dog').toLowerCase();
-    if (type === 'cat' || type === 'gato') {
-      return null;
-    }
+  return Promise.all(pets.map((_pet, index) => {
     const stage = annotated && annotated[index] ? annotated[index].life_stage : null;
     return this.recipeEnergyService.forLifeStage(market.country, stage);
   }));

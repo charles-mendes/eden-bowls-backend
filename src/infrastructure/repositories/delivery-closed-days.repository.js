@@ -3,6 +3,7 @@ const {
   rowType,
   yearHasBrazilNationalRows
 } = require('../../core/delivery-closed-days');
+const { OperatingWeekRepository } = require('./operating-week.repository');
 
 function bit(value) {
   return value ? 1 : 0;
@@ -24,8 +25,16 @@ function mapRow(row) {
 }
 
 class DeliveryClosedDaysRepository {
-  constructor(dataSource) {
+  constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
+    this.operatingWeek = options.operatingWeek || new OperatingWeekRepository(dataSource);
+  }
+
+  // The calendar every date reads (delivery-calendar): the active closed days and the standard week of both
+  // markets, read together.
+  async snapshot(executor) {
+    const [rows, week] = await Promise.all([this.listActive(executor), this.operatingWeek.getBoth(executor)]);
+    return { rows, week };
   }
 
   async listActive(executor) {

@@ -4,6 +4,7 @@ const {
   formatDeliveryAddress,
   planLabelFromLedger
 } = require('./stripe-subscription-map');
+const { parseFiscalName, parseTaxDocument } = require('./tax-document');
 const { canonicalFlavorKey, findCatalogFlavorOption } = require('./flavors');
 const { MARKETS } = require('./market');
 
@@ -176,7 +177,11 @@ function addressFields(address, market) {
     neighborhood: text(address.neighborhood),
     city: text(address.city),
     state: text(address.state),
-    zipcode: text(address.zipcode, address.postal_code, address.postalCode)
+    zipcode: text(address.zipcode, address.postal_code, address.postalCode),
+    // Who receives this subscription's box (delivery-recipient); empty on subscriptions from before the field.
+    recipient_name: text(address.recipient_name),
+    // This subscription's own instructions (delivery-instructions); the customer edits these, never the profile copy.
+    delivery_instructions: text(address.delivery_instructions)
   };
 }
 
@@ -214,7 +219,30 @@ function mapLedgerToDashboardDetail(row, extras = {}) {
     stripe_timeline: Array.isArray(extras.stripeTimeline) ? extras.stripeTimeline : [],
     edit_payment_pending: editPending,
     subscription_term_months: term,
-    stripe_account: list.stripe_account
+    stripe_account: list.stripe_account,
+    // subscription-contract: a stored address of another market cannot be edited in the store.
+    market_mismatch: marketMismatch(row, address),
+    ...(extras.fiscal ? { fiscal: presentFiscal(extras.fiscal) } : {})
+  };
+}
+
+function marketMismatch(row, address) {
+  const country = String(address.country || '').trim().toUpperCase();
+  const accountCountry = String(row.stripeAccount || row.stripe_account || '').toLowerCase() === 'br' ? 'BR' : 'US';
+  return Boolean(country) && country !== accountCountry;
+}
+
+// What the NF-e still needs from a Brazil customer: only the last 4 digits of the CPF leave the API.
+function presentFiscal({ taxDocument, fiscalName } = {}) {
+  const document = parseTaxDocument(taxDocument);
+  const name = parseFiscalName(fiscalName);
+  const missing = [];
+  if (!document) missing.push('tax_document');
+  if (!name) missing.push('fiscal_name');
+  return {
+    tax_document_last4: document ? document.digits.slice(-4) : null,
+    fiscal_name: name,
+    missing
   };
 }
 

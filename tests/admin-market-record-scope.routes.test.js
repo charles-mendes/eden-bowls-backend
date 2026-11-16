@@ -10,6 +10,7 @@ const { AdminCatalogService } = require('../src/services/admin-catalog.service')
 const { FeedbacksService } = require('../src/services/feedbacks.service');
 const { PrivacyService } = require('../src/services/privacy.service');
 const { UpsShipmentService } = require('../src/services/ups-shipment.service');
+const { SubscriptionPaidCyclesService } = require('../src/services/subscription-paid-cycles.service');
 
 const jwt = { secret: 'test-secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
 
@@ -159,5 +160,39 @@ describe('admin market record scope', () => {
     }
     const response = await req;
     expect(response.status).toBe(404);
+  });
+
+  test('a Brazil customer detail lists only the Brazil subscription, with its latest cycle', async () => {
+    const brSubscription = { id: 21, stripeAccount: 'br', stripeSubscriptionId: 'sub_br', status: 'active', cancelAtPeriodEnd: false };
+    const usSubscription = { id: 22, stripeAccount: 'us', stripeSubscriptionId: 'sub_us', status: 'active', cancelAtPeriodEnd: false };
+    const paidCycle = (invoice) => ({ paidInvoiceId: invoice, productionStatus: 'ready', preparationDay: '2026-11-08', deliveryDate: '2026-11-10' });
+    const ledgerRepository = {
+      listByUserId: jest.fn().mockResolvedValue([brSubscription, usSubscription]),
+      listPaidCyclesBySubscription: jest.fn(async (id) => [paidCycle(id === 21 ? 'in_br' : 'in_us')])
+    };
+    const upsShipmentRepository = { listActiveByInvoiceIds: jest.fn().mockResolvedValue([]) };
+    const courierDeliveryRepository = { listByInvoiceIds: jest.fn().mockResolvedValue([]) };
+    const nfeRepository = { listByStripeInvoices: jest.fn().mockResolvedValue([]) };
+    const adminUsersService = new AdminUsersService({
+      usersRepository: {
+        findUserById: jest.fn().mockResolvedValue({ ...usUser(), id: '92', profileMarket: 'BR' }),
+        findFiscalData: jest.fn().mockResolvedValue(null)
+      },
+      ledgerRepository,
+      paidCyclesService: new SubscriptionPaidCyclesService({ ledgerRepository, upsShipmentRepository, courierDeliveryRepository }),
+      nfeRepository
+    });
+
+    const response = await request(appWith({ adminUsersService }))
+      .get('/api/v1/admin/users/92')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+
+    expect(response.status).toBe(200);
+    const subscriptions = (response.body.data || response.body).subscriptions;
+    expect(subscriptions.map((item) => item.stripeSubscriptionId)).toEqual(['sub_br']);
+    expect(subscriptions[0].latestCycle).toMatchObject({ invoiceId: 'in_br', production: { status: 'ready' }, nfe: null });
+    expect(ledgerRepository.listPaidCyclesBySubscription).not.toHaveBeenCalledWith(22, expect.anything());
+    expect(upsShipmentRepository.listActiveByInvoiceIds).toHaveBeenCalledWith(['in_br']);
+    expect(nfeRepository.listByStripeInvoices).toHaveBeenCalledWith([{ stripeAccount: 'br', stripeInvoiceId: 'in_br' }]);
   });
 });

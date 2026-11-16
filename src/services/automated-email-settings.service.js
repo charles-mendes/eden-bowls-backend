@@ -5,9 +5,16 @@ function actorIdOf(actor) {
   return id ? Number(id) : null;
 }
 
-const pick = ({ lifeStageChangeEnabled, announcementBatchSize, announcementDailyCap }) => ({ lifeStageChangeEnabled, announcementBatchSize, announcementDailyCap });
+const pick = ({ lifeStageChangeEnabled, announcementBatchSize, announcementDailyCap, renewalNoticeEnabled, planEndingNoticeEnabled, planNoticeDays }) => ({
+  lifeStageChangeEnabled,
+  announcementBatchSize,
+  announcementDailyCap,
+  renewalNoticeEnabled,
+  planEndingNoticeEnabled,
+  planNoticeDays
+});
 
-// Pause or limit the automated life-stage emails of a market (automated-email-settings). A save is recorded
+// Pause or limit the automated emails of a market (automated-email-settings). A save is recorded
 // in the admin audit log as settings.email.update with the values before and after.
 class AutomatedEmailSettingsService {
   constructor({ repository, auditRepository = null, dataSource = null } = {}) {

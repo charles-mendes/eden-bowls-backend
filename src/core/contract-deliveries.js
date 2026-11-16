@@ -12,6 +12,13 @@ function isChargedDeliveryInvoice(invoice = {}) {
   return CYCLE_BILLING_REASONS.has(invoice.billing_reason) && Number(invoice.subtotal) > 0;
 }
 
+// Deliveries charged since the current contract started. `charged_deliveries` is a lifetime count, and a term
+// change moves `contractStartCharged` to it. An unknown count stays unknown.
+function contractPaid(paidDeliveries, row = {}) {
+  if (paidDeliveries == null) return null;
+  return Math.max(0, (Number(paidDeliveries) || 0) - (Number(row.contractStartCharged) || 0));
+}
+
 // Charged deliveries inside the current contract. With automatic renewal on, a finished contract rolls
 // into the next one at the following renewal; with it off, a finished contract stays finished.
 function contractChargedCount(paidDeliveries, termMonths, autoRenew) {
@@ -28,6 +35,15 @@ function lastContractedDeliveryCharged(paidDeliveries, termMonths) {
   return paid > 0 && paid % term === 0;
 }
 
+// A term change opens a full contract. A plan ending because renewal is off keeps running for it; one the customer
+// cancelled stays cancelled. Both steps are safe to repeat, so they run before the new term is saved.
+async function startNewContract({ ledgerRepository, billing, row, subscriptionId }) {
+  if (row.autoRenew === false && row.cancelAtPeriodEnd) {
+    await billing.setCancelAtPeriodEnd(subscriptionId, false);
+  }
+  await ledgerRepository.startContract(subscriptionId);
+}
+
 function resolveAutoRenew(row = {}) {
   if (row.autoRenew === true || row.autoRenew === false) return row.autoRenew;
   return !row.cancelAtPeriodEnd;
@@ -36,8 +52,10 @@ function resolveAutoRenew(row = {}) {
 module.exports = {
   CYCLE_BILLING_REASONS,
   contractChargedCount,
+  contractPaid,
   isChargedDeliveryInvoice,
   lastContractedDeliveryCharged,
   resolveAutoRenew,
+  startNewContract,
   stripeChargedInvoiceCount
 };

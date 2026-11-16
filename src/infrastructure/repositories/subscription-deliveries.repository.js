@@ -10,6 +10,7 @@ const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 const { dateKey, timeZoneFor, zonedParts } = require('../../core/delivery-closed-days');
 const {
   contractChargedCount,
+  contractPaid,
   resolveAutoRenew,
   stripeChargedInvoiceCount
 } = require('../../core/contract-deliveries');
@@ -47,7 +48,7 @@ function mapDeliverySubscription(row, { cycle = null, paidDeliveries = 1, paidCy
     chargeAt: toDate(row.currentPeriodEnd),
     termMonths,
     autoRenew,
-    chargedCount: contractChargedCount(paidDeliveries, termMonths, autoRenew),
+    chargedCount: contractChargedCount(contractPaid(paidDeliveries, row), termMonths, autoRenew),
     transitDays: market === 'US'
       ? numberOrNull(address.business_days_in_transit != null ? address.business_days_in_transit : shipping.delivery_days)
       : null,

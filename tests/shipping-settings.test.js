@@ -56,5 +56,21 @@ describe('shipping settings helpers', () => {
     expect(settings.br.rule.max_fee).toBeNull();
     expect(settings.us.enabled).toBe(false);
     expect(settings.us.cost).toBe(15.5);
+    expect(settings.us.package.dry_ice_kg).toBe(0.5);
+  });
+
+  test('reads the US dry ice weight from its decimal column', () => {
+    const settings = settingsFromRows(null, { enabled: 1, cost: '12.90', package_dry_ice_kg: '1.2' });
+
+    expect(settings.us.package.dry_ice_kg).toBe(1.2);
+  });
+
+  test('keeps the other package fields when only the dry ice weight changes', () => {
+    const next = nextSettings(
+      { us: { package: { weight_lb: 8, length_in: 14, width_in: 10, height_in: 9, dry_ice_kg: 0.5 } } },
+      { us: { package: { dry_ice_kg: 1.2 } } }
+    );
+
+    expect(next.us.package).toEqual({ weight_lb: 8, length_in: 14, width_in: 10, height_in: 9, dry_ice_kg: 1.2 });
   });
 });

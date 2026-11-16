@@ -1,4 +1,4 @@
-const { allocateCoverage, buildOverview } = require('../src/core/pack-stock');
+const { allocateCoverage, allocateCoverageDetail, buildOverview } = require('../src/core/pack-stock');
 
 function cycle(subscriptionId, lineItems, overrides = {}) {
   return {
@@ -22,6 +22,21 @@ function itemOf(overview, flavorKey, packSizeGrams = 300) {
 }
 
 describe('pack stock core', () => {
+  test('a published catalog entry shows with zero stock, and a draft does not', () => {
+    const overview = buildOverview({
+      stockItems: [{ flavorKey: 'frango', packSizeGrams: 300, onHand: 5, minLevel: null }],
+      catalog: [
+        { flavorKey: 'frango', packSizeGrams: 300, label: 'Frango', published: true },
+        { flavorKey: 'carne', packSizeGrams: 500, label: 'Carne', published: true },
+        { flavorKey: 'peixe', packSizeGrams: 300, label: 'Peixe', published: false }
+      ]
+    });
+
+    expect(overview.items).toHaveLength(2);
+    expect(itemOf(overview, 'frango').onHand).toBe(5);
+    expect(itemOf(overview, 'carne', 500)).toMatchObject({ onHand: 0, available: 0, toProduce: 0, belowMinimum: false });
+  });
+
   test('Kitchen plans the week', () => {
     const overview = buildOverview({
       stockItems: [{ flavorKey: 'frango', packSizeGrams: 300, onHand: 40, minLevel: null }],
@@ -85,6 +100,30 @@ describe('pack stock core', () => {
 
     expect(coverage.get('sooner')).toBe('covered');
     expect(coverage.get('later')).toBe('short');
+  });
+
+  // admin-flow-fixes-5 (PM-09): which recipes are short, and by how many packs.
+  test('the short cycle reports each recipe the stock left over did not cover', () => {
+    const stockItems = [{ flavorKey: 'frango', packSizeGrams: 300, onHand: 5 }, { flavorKey: 'carne', packSizeGrams: 300, onHand: 1 }];
+    const sooner = cycle(2, [line('frango', 4)], { key: 'sooner', dueAt: '2026-10-21T15:00:00.000Z' });
+    const later = cycle(1, [line('frango', 4), line('carne', 2)], { key: 'later', dueAt: '2026-10-23T15:00:00.000Z' });
+
+    const detail = allocateCoverageDetail({ stockItems, cycles: [later, sooner] });
+
+    expect(detail.get('sooner')).toEqual({ coverage: 'covered', shortages: [] });
+    expect(detail.get('later')).toEqual({
+      coverage: 'short',
+      shortages: [
+        { flavorKey: 'frango', packSizeGrams: 300, missing: 3 },
+        { flavorKey: 'carne', packSizeGrams: 300, missing: 1 }
+      ]
+    });
+  });
+
+  test('a negative balance leaves the whole pack missing', () => {
+    const detail = allocateCoverageDetail({ stockItems: [{ flavorKey: 'frango', packSizeGrams: 300, onHand: -2 }], cycles: [cycle(1, [line('frango', 2)], { key: 'a' })] });
+
+    expect(detail.get('a').shortages).toEqual([{ flavorKey: 'frango', packSizeGrams: 300, missing: 2 }]);
   });
 
   test('negative on-hand leaves every cycle short, and non-committing cycles get no coverage', () => {

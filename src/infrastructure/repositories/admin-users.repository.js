@@ -6,6 +6,7 @@ const {
   appendCustomerMarketFilter
 } = require('../../core/admin-market-scope');
 const { INVITE_META_KEYS } = require('../../core/staff-invite');
+const { FISCAL_NAME_META_KEY, TAX_DOCUMENT_META_KEY } = require('../../core/tax-document');
 
 function metaRowId(row) {
   if (!row || typeof row !== 'object') {
@@ -41,7 +42,8 @@ class AdminUsersRepository {
     this.dataSource = dataSource;
     this.tableNames = {
       users: options.usersTableName || 'wp_users',
-      usermeta: options.usermetaTableName || 'wp_usermeta'
+      usermeta: options.usermetaTableName || 'wp_usermeta',
+      onboardingState: options.onboardingStateTableName || 'onboarding_user_state'
     };
   }
 
@@ -64,7 +66,8 @@ class AdminUsersRepository {
       `MAX(CASE WHEN um.meta_key = '${INVITE_META_KEYS.mustChangePassword}' THEN um.meta_value END) AS mustChangePassword,`,
       `MAX(CASE WHEN um.meta_key = '${INVITE_META_KEYS.resendCount}' THEN um.meta_value END) AS inviteResendCount,`,
       `MAX(CASE WHEN um.meta_key = '${INVITE_META_KEYS.resendWindowStart}' THEN um.meta_value END) AS inviteResendWindowStart,`,
-      `MAX(CASE WHEN um.meta_key = '${INVITE_META_KEYS.deletedAt}' THEN um.meta_value END) AS deletedAt`
+      `MAX(CASE WHEN um.meta_key = '${INVITE_META_KEYS.deletedAt}' THEN um.meta_value END) AS deletedAt,`,
+      `(SELECT JSON_UNQUOTE(JSON_EXTRACT(s.address, '$.country')) FROM \`${this.tableNames.onboardingState}\` s WHERE s.user_id = u.ID LIMIT 1) AS addressCountry`
     ].join(' ');
   }
 
@@ -78,6 +81,7 @@ class AdminUsersRepository {
       storedRoles: row.storedRoles == null ? '' : String(row.storedRoles),
       storedMarkets: row.storedMarkets == null ? '' : String(row.storedMarkets),
       profileMarket: row.profileMarket == null ? '' : String(row.profileMarket).trim().toUpperCase(),
+      addressCountry: row.addressCountry == null ? '' : String(row.addressCountry).trim().toUpperCase(),
       inviteMailStatus: row.inviteMailStatus ? String(row.inviteMailStatus) : null,
       inviteExpiresAt: row.inviteExpiresAt ? String(row.inviteExpiresAt) : null,
       mustChangePassword: String(row.mustChangePassword || ''),
@@ -262,6 +266,37 @@ class AdminUsersRepository {
       `UPDATE \`${this.tableNames.users}\` SET \`display_name\` = ? WHERE \`ID\` = ?`,
       [displayName, userId]
     );
+  }
+
+  async findFiscalData(userId) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT \`meta_key\`, \`meta_value\` FROM \`${this.tableNames.usermeta}\`
+       WHERE \`user_id\` = ? AND \`meta_key\` IN (?, ?) ORDER BY \`umeta_id\` ASC`,
+      [userId, FISCAL_NAME_META_KEY, TAX_DOCUMENT_META_KEY]
+    );
+    const meta = Object.fromEntries((rows || []).map((row) => [row.meta_key, row.meta_value]));
+    return {
+      fullName: meta[FISCAL_NAME_META_KEY] || null,
+      cpf: meta[TAX_DOCUMENT_META_KEY] || null
+    };
+  }
+
+  async saveFiscalData(userId, { fullName, cpf }) {
+    this.ensureDataSource();
+    const values = [[FISCAL_NAME_META_KEY, fullName], [TAX_DOCUMENT_META_KEY, cpf]];
+    await this.dataSource.transaction(async (manager) => {
+      for (const [key, value] of values) {
+        await manager.query(
+          `DELETE FROM \`${this.tableNames.usermeta}\` WHERE \`user_id\` = ? AND \`meta_key\` = ?`,
+          [userId, key]
+        );
+        await manager.query(
+          `INSERT INTO \`${this.tableNames.usermeta}\` (\`user_id\`, \`meta_key\`, \`meta_value\`) VALUES (?, ?, ?)`,
+          [userId, key, value]
+        );
+      }
+    });
   }
 
   async updatePassword(userId, passwordHash) {

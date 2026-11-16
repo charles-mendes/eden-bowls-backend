@@ -10,13 +10,15 @@ const {
   flavorKeyFromLabel,
   parseFlavorAliases
 } = require('../../core/flavors');
-const { LARGE_PACK_THRESHOLD } = require('../../core/simplified-consumption');
 
 const FINAL_IMAGE_READY_META = '_final_image_ready';
 const LABEL_DATA_READY_META = '_label_data_ready';
 const { RECIPE_KEY_META } = require('../../core/recipe-content');
 const { parseWeightToGrams } = require('../../core/plan-catalog-pricing');
+const { NCM_META_KEY, ORIGIN_META_KEY } = require('../../core/nfe');
 const SHORT_LABEL_META = '_short_label';
+const WEIGHT_META = 'attribute_pa_weight';
+const LOOKUP_PRODUCT_META = '_stripe_lookup_product_id';
 
 function flagMeta(value) {
   return value ? 'yes' : 'no';
@@ -128,7 +130,9 @@ class AdminCatalogRepository {
     this.tableNames = {
       posts: options.postsTableName || 'wp_posts',
       postmeta: options.postmetaTableName || 'wp_postmeta',
-      termRelationships: options.termRelationshipsTableName || 'wp_term_relationships'
+      termRelationships: options.termRelationshipsTableName || 'wp_term_relationships',
+      termTaxonomy: options.termTaxonomyTableName || 'wp_term_taxonomy',
+      terms: options.termsTableName || 'wp_terms'
     };
   }
 
@@ -138,10 +142,24 @@ class AdminCatalogRepository {
     }
   }
 
-  async listProducts({ search, market, markets, offset, perPage }) {
+  async listProducts({ search, market, markets, productIds, excludeProductIds, offset, perPage }) {
     this.ensureDataSource();
     const where = ["p.post_type = 'product'", "p.post_status IN ('publish', 'draft', 'private', 'pending')"];
     const params = [];
+
+    // A code filter resolves to product ids (catalog-products); an empty list matches nothing.
+    if (Array.isArray(productIds)) {
+      if (!productIds.length) {
+        return { total: 0, items: [] };
+      }
+      appendInFilter(where, params, 'p.ID', productIds.map(Number));
+    }
+
+    // Quick filters (no image, label incomplete) drop the products whose content already has it.
+    if (Array.isArray(excludeProductIds) && excludeProductIds.length) {
+      where.push(`p.ID NOT IN (${excludeProductIds.map(() => '?').join(', ')})`);
+      params.push(...excludeProductIds.map(Number));
+    }
 
     if (search) {
       where.push('(p.post_title LIKE ? OR p.post_name LIKE ?)');
@@ -170,12 +188,10 @@ class AdminCatalogRepository {
       const rows = await this.dataSource.query(
         [
           'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.created_at AS createdAt,',
-          'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays, pm_limit.meta_value AS largePackLimit,',
+          'pm_country.meta_value AS planCountry,',
           'pm_stripe.meta_value AS stripeProductId',
           `FROM \`${this.tableNames.posts}\` p`,
           `LEFT JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
-          `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
-          `LEFT JOIN \`${this.tableNames.postmeta}\` pm_limit ON pm_limit.post_id = p.ID AND pm_limit.meta_key = '_cmpb_large_pack_limit'`,
           `LEFT JOIN \`${this.tableNames.postmeta}\` pm_stripe ON pm_stripe.post_id = p.ID AND pm_stripe.meta_key = '_stripe_product_id'`,
           `WHERE ${where.join(' AND ')}`,
           'ORDER BY p.created_at DESC',
@@ -209,12 +225,10 @@ class AdminCatalogRepository {
     const rows = await this.dataSource.query(
       [
         'SELECT p.ID AS id, p.post_title AS name, p.post_name AS slug, p.post_status AS status, p.created_at AS createdAt,',
-        'pm_country.meta_value AS planCountry, pm_days.meta_value AS planDays, pm_limit.meta_value AS largePackLimit,',
+        'pm_country.meta_value AS planCountry,',
         'pm_stripe.meta_value AS stripeProductId',
         `FROM \`${this.tableNames.posts}\` p`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
-        `LEFT JOIN \`${this.tableNames.postmeta}\` pm_days ON pm_days.post_id = p.ID AND pm_days.meta_key = '_cmpb_plan_days'`,
-        `LEFT JOIN \`${this.tableNames.postmeta}\` pm_limit ON pm_limit.post_id = p.ID AND pm_limit.meta_key = '_cmpb_large_pack_limit'`,
         `LEFT JOIN \`${this.tableNames.postmeta}\` pm_stripe ON pm_stripe.post_id = p.ID AND pm_stripe.meta_key = '_stripe_product_id'`,
         "WHERE p.post_type = 'product' AND p.ID = ?",
         'LIMIT 1'
@@ -283,9 +297,13 @@ class AdminCatalogRepository {
         lifeStage: LIFE_STAGES.includes(storedLifeStage) ? storedLifeStage : 'adult',
         finalImageReady: variation.meta[FINAL_IMAGE_READY_META] === 'yes',
         labelDataReady: variation.meta[LABEL_DATA_READY_META] === 'yes',
+        ncm: String(variation.meta[NCM_META_KEY] || '').trim() || null,
+        origin: Number(variation.meta[ORIGIN_META_KEY]) || 0,
         shortLabel: String(variation.meta[SHORT_LABEL_META] || '').trim() || null,
         recipeKey: String(variation.meta[RECIPE_KEY_META] || '').trim() || null,
         weight: weight || null,
+        // Product id of the Stripe price lookup key, kept by the deploy split for the variations it moved.
+        lookupProductId: String(variation.meta[LOOKUP_PRODUCT_META] || '').trim() || null,
         active: variation.status === 'publish',
         regularPrice: variationRegularPrice(variation.meta, zoneId),
         stripeProductId: stripeProductId || null,
@@ -301,8 +319,6 @@ class AdminCatalogRepository {
 
   mapProduct(row, variations) {
     const country = String(row.planCountry || '').trim().toUpperCase();
-    const days = Number(row.planDays || 0);
-    const largePackLimit = Number(row.largePackLimit || 0);
     const currency = country === 'US' ? 'USD' : country === 'BR' ? 'BRL' : '';
 
     return {
@@ -313,9 +329,6 @@ class AdminCatalogRepository {
       active: row.status === 'publish',
       status: row.status,
       planCountry: country || null,
-      planDays: days > 0 ? days : null,
-      // Small packs a month above which a pet gets the large pack (plan-packaging).
-      largePackLimit: Number.isInteger(largePackLimit) && largePackLimit > 0 ? largePackLimit : LARGE_PACK_THRESHOLD,
       stripeProductId: String(row.stripeProductId || '').trim() || null,
       createdAt: row.createdAt,
       category: { namePt: 'Planos', nameEn: 'Plans' },
@@ -405,41 +418,71 @@ class AdminCatalogRepository {
     return sizes;
   }
 
-  // Variations of one recipe in a market, by content key (recipe-content).
-  async listRecipeVariations(market, recipeKey) {
+  // One entry per product and whole grams the market sells or sold (pack-stock). The product is the recipe and
+  // has one variation per weight, so each entry is one variation, named after its product.
+  async listRecipeCatalog(market) {
     const normalized = String(market || '').trim().toUpperCase();
-    return (await this.recipeVariationRows())
-      .filter((row) => row.market === normalized && row.recipeKey === recipeKey)
-      .map((row) => ({
-        id: row.variationId,
-        name: row.name,
-        sku: row.sku,
-        active: row.active,
-        productId: row.productId,
-        productName: row.productName
-      }));
-  }
-
-  // Every variation of a recipe in a market follows the recipe's life stage (recipe-content).
-  async setRecipeLifeStage(market, recipeKey, lifeStage) {
-    for (const variation of await this.listRecipeVariations(market, recipeKey)) {
-      await this.upsertPostMeta(variation.id, LIFE_STAGE_META, lifeStage);
-    }
-  }
-
-  // Every recipe key of a market with the variations that use it (recipe-content).
-  async listMarketRecipeVariations(market) {
-    const normalized = String(market || '').trim().toUpperCase();
-    const byKey = new Map();
+    const entries = new Map();
     for (const row of await this.recipeVariationRows()) {
-      if (row.market !== normalized || !row.recipeKey) {
+      if (row.market !== normalized || !row.key || !row.packSizeGrams) {
         continue;
       }
-      const list = byKey.get(row.recipeKey) || [];
-      list.push({ id: row.variationId, name: row.name, sku: row.sku, active: row.active, productId: row.productId, productName: row.productName });
-      byKey.set(row.recipeKey, list);
+      const id = `${row.key}|${row.packSizeGrams}`;
+      const current = entries.get(id);
+      // Before the split a key could repeat a size on several variations; the published one names the entry.
+      const named = current && (current.published || !row.published) ? current : null;
+      entries.set(id, {
+        flavorKey: row.key,
+        packSizeGrams: row.packSizeGrams,
+        label: named ? named.label : (row.productName || row.label || row.key),
+        productId: named ? named.productId : row.productId,
+        variationId: named ? named.variationId : row.variationId,
+        sku: named ? named.sku : (row.sku || null),
+        published: Boolean((current && current.published) || row.published)
+      });
     }
-    return byKey;
+    return [...entries.values()].sort((left, right) => (
+      left.label.localeCompare(right.label) || left.packSizeGrams - right.packSizeGrams
+    ));
+  }
+
+  // Variations on sale in the market with no weight: they have no pack size, so the stock cannot list them.
+  async listVariationsWithoutWeight(market) {
+    const normalized = String(market || '').trim().toUpperCase();
+    return (await this.recipeVariationRows())
+      .filter((row) => row.market === normalized && row.published && !row.packSizeGrams)
+      .map((row) => ({
+        productId: row.productId,
+        productName: row.productName || row.label || row.key,
+        lifeStage: row.lifeStage,
+        variationId: row.variationId,
+        name: row.name || null,
+        sku: row.sku || null
+      }))
+      .sort((left, right) => left.productName.localeCompare(right.productName) || Number(left.variationId) - Number(right.variationId));
+  }
+
+  // Variations of one product (recipe-content): the product is the recipe.
+  async listProductVariations(productId) {
+    const id = String(productId);
+    return (await this.recipeVariationRows())
+      .filter((row) => row.productId === id)
+      .map((row) => ({ id: row.variationId, name: row.name, sku: row.sku, active: row.active, productId: row.productId, productName: row.productName }));
+  }
+
+  // Every product of a market with its variations, keyed by product id (recipe-content public list).
+  async listMarketProductVariations(market) {
+    const normalized = String(market || '').trim().toUpperCase();
+    const byProduct = new Map();
+    for (const row of await this.recipeVariationRows()) {
+      if (row.market !== normalized || !row.productId) {
+        continue;
+      }
+      const list = byProduct.get(row.productId) || [];
+      list.push({ id: row.variationId, name: row.name, sku: row.sku, active: row.active, productId: row.productId, productName: row.productName });
+      byProduct.set(row.productId, list);
+    }
+    return byProduct;
   }
 
   // Short and full recipe names per market and flavor key, for the production queue.
@@ -491,22 +534,33 @@ class AdminCatalogRepository {
     return Number(Array.isArray(rows) && rows[0] ? rows[0].nextId : 1);
   }
 
-  async createProduct({ name, slug, planCountry, planDays }) {
+  async createProduct({ name, slug, planCountry }) {
     this.ensureDataSource();
     const id = await this.nextPostId();
     const title = String(name || '').trim();
     const postName = slugify(slug || title || `product-${id}`);
 
+    // A new product goes after every product of its market, so it lands last in that store's flavor order.
+    const orderRows = await this.dataSource.query(
+      [
+        'SELECT COALESCE(MAX(p.`menu_order`), 0) + 1 AS nextOrder',
+        `FROM \`${this.tableNames.posts}\` p`,
+        `INNER JOIN \`${this.tableNames.postmeta}\` pm_country ON pm_country.post_id = p.ID AND pm_country.meta_key = '_cmpb_plan_country'`,
+        "WHERE p.`post_type` = 'product' AND pm_country.meta_value = ?"
+      ].join(' '),
+      [planCountry]
+    );
+    const menuOrder = Number(Array.isArray(orderRows) && orderRows[0] ? orderRows[0].nextOrder : 1) || 1;
+
     await this.dataSource.query(
       [
         `INSERT INTO \`${this.tableNames.posts}\``,
         '(`ID`, `post_parent`, `post_type`, `post_status`, `post_title`, `post_name`, `menu_order`)',
-        "VALUES (?, 0, 'product', 'draft', ?, ?, 0)"
+        "VALUES (?, 0, 'product', 'draft', ?, ?, ?)"
       ].join(' '),
-      [id, title, postName]
+      [id, title, postName, menuOrder]
     );
     await this.upsertPostMeta(id, '_cmpb_plan_country', planCountry);
-    await this.upsertPostMeta(id, '_cmpb_plan_days', String(planDays));
     return String(id);
   }
 
@@ -545,7 +599,7 @@ class AdminCatalogRepository {
   }
 
   // Every new variation starts inactive; the activation route publishes it after its checks.
-  async createVariation({ productId, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, regularPrice, zoneId, menuOrder }) {
+  async createVariation({ productId, name, sku, weight, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, ncm, origin, regularPrice, zoneId, menuOrder }) {
     this.ensureDataSource();
     const id = await this.nextPostId();
     const title = String(name || '').trim();
@@ -563,6 +617,9 @@ class AdminCatalogRepository {
 
     if (code) {
       await this.upsertPostMeta(id, '_sku', code);
+    }
+    if (weight) {
+      await this.upsertPostMeta(id, WEIGHT_META, String(weight));
     }
     if (flavor != null) {
       await this.upsertPostMeta(id, 'attribute_pa_flavor', String(flavor).trim());
@@ -587,6 +644,7 @@ class AdminCatalogRepository {
     if (labelDataReady != null) {
       await this.upsertPostMeta(id, LABEL_DATA_READY_META, flagMeta(labelDataReady));
     }
+    await this.saveTaxMeta(id, { ncm, origin });
     if (regularPrice != null) {
       await this.writeVariationPrice(id, regularPrice, zoneId);
     }
@@ -594,7 +652,17 @@ class AdminCatalogRepository {
     return String(id);
   }
 
-  async updateVariation({ id, name, sku, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, regularPrice, zoneId, priceChanged }) {
+  // Undefined keeps the stored value. A blank NCM clears it.
+  async saveTaxMeta(id, { ncm, origin }) {
+    if (ncm !== undefined) {
+      await this.upsertPostMeta(id, NCM_META_KEY, ncm || '');
+    }
+    if (origin !== undefined) {
+      await this.upsertPostMeta(id, ORIGIN_META_KEY, String(origin));
+    }
+  }
+
+  async updateVariation({ id, name, sku, weight, flavor, flavorSlug, flavorAliases, lifeStage, shortLabel, recipeKey, finalImageReady, labelDataReady, ncm, origin, regularPrice, zoneId, priceChanged }) {
     this.ensureDataSource();
     const title = name == null ? undefined : String(name).trim();
     const code = sku == null ? undefined : String(sku).trim();
@@ -607,6 +675,10 @@ class AdminCatalogRepository {
 
     if (code != null) {
       await this.upsertPostMeta(id, '_sku', code);
+    }
+    // Undefined keeps the stored weight; empty clears it.
+    if (weight !== undefined) {
+      await this.upsertPostMeta(id, WEIGHT_META, weight ? String(weight) : '');
     }
     if (flavor != null) {
       await this.upsertPostMeta(id, 'attribute_pa_flavor', String(flavor).trim());
@@ -633,8 +705,52 @@ class AdminCatalogRepository {
     if (labelDataReady != null) {
       await this.upsertPostMeta(id, LABEL_DATA_READY_META, flagMeta(labelDataReady));
     }
+    await this.saveTaxMeta(id, { ncm, origin });
     if (regularPrice != null && priceChanged !== false) {
       await this.writeVariationPrice(id, regularPrice, zoneId);
+    }
+  }
+
+  // Puts a product in a store category (product_cat), as the store lists only `flavors` (catalog-products).
+  async assignCategory(productId, categorySlug) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      [
+        `SELECT tt.term_taxonomy_id AS id FROM \`${this.tableNames.termTaxonomy}\` tt`,
+        `INNER JOIN \`${this.tableNames.terms}\` t ON t.term_id = tt.term_id`,
+        "WHERE tt.taxonomy = 'product_cat' AND t.slug = ? LIMIT 1"
+      ].join(' '),
+      [categorySlug]
+    );
+    const termTaxonomyId = Array.isArray(rows) && rows[0] ? Number(rows[0].id) : null;
+    if (!termTaxonomyId) {
+      return false;
+    }
+    await this.dataSource.query(
+      `INSERT INTO \`${this.tableNames.termRelationships}\` (\`object_id\`, \`term_taxonomy_id\`) VALUES (?, ?)`,
+      [Number(productId), termTaxonomyId]
+    );
+    return true;
+  }
+
+  // Flavor fields every variation copies from its product (catalog-products); readers still read the copies.
+  async writeFlavorCopies(variationId, { flavor, flavorSlug, flavorAliases, lifeStage, shortLabel }) {
+    await this.upsertPostMeta(variationId, 'attribute_pa_flavor', String(flavor || ''));
+    await this.upsertPostMeta(variationId, FLAVOR_SLUG_META, String(flavorSlug || ''));
+    await this.upsertPostMeta(variationId, RECIPE_KEY_META, String(flavorSlug || ''));
+    await this.upsertPostMeta(variationId, FLAVOR_ALIASES_META, String(flavorAliases || ''));
+    await this.upsertPostMeta(variationId, LIFE_STAGE_META, String(lifeStage || 'adult'));
+    await this.upsertPostMeta(variationId, SHORT_LABEL_META, String(shortLabel || ''));
+  }
+
+  async rewriteFlavorCopies(productId, copies) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT \`ID\` AS id FROM \`${this.tableNames.posts}\` WHERE \`post_parent\` = ? AND \`post_type\` = 'product_variation'`,
+      [Number(productId)]
+    );
+    for (const row of Array.isArray(rows) ? rows : []) {
+      await this.writeFlavorCopies(Number(row.id), copies);
     }
   }
 

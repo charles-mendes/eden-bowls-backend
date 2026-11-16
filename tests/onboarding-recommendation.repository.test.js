@@ -91,9 +91,23 @@ describe('OnboardingRecommendationRepository', () => {
 
     expect(recipeEnergyService.forLifeStage).toHaveBeenCalledWith('BR', 'puppy');
     expect(data.recommendations[0].nem_kcal_kg).toBe(1500);
-    expect(data.recommendations[0].quantidade_g_dia).toBe(107);
+    // The puppy gets the growth factor of Tabela 1 (140 × 2^0,75 = 235 kcal), the adult the matrix (95).
+    expect(data.recommendations[0].decision_trace).toEqual(['growth:CRESCIMENTO_81_100:140']);
+    expect(data.recommendations[0].quantidade_g_dia).toBe(157);
     expect(data.recommendations[1].nem_kcal_kg).toBe(1200);
+    expect(data.recommendations[1].decision_trace).toEqual(['combination:SIM-ALTO-ABAIXO:95']);
     expect(data.simplified.pets[0].life_stage).toBe('puppy');
+  });
+
+  test('a senior dog gets the senior factor of Tabela 1', async () => {
+    const lifeStageService = { annotate: jest.fn(async (pets) => pets.map((pet) => ({ ...pet, life_stage: 'senior' }))) };
+    const repository = new OnboardingRecommendationRepository({ listPets: jest.fn() }, { lifeStageService });
+
+    const data = await repository.getRecommendation(null, MARKETS.BR, [
+      { pet_id: 'old', name: 'Bob', breed: 'Mixed', age_years: 11, weight: 20, weight_unit: 'kg', activity_level: 'low', pet_condition: 'overweight', neutered: true }
+    ]);
+
+    expect(data.recommendations[0].decision_trace).toEqual(['state:SENIOR:95']);
   });
 });
 

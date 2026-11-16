@@ -20,7 +20,10 @@ function setup({ pets = [] } = {}) {
     updateBreed: jest.fn(async (id, changes) => ({ ...GREAT_DANE, ...changes })),
     listSubscribedPets: jest.fn().mockResolvedValue(pets)
   };
-  const auditRepository = { createIn: jest.fn() };
+  const auditRepository = {
+    createIn: jest.fn(),
+    listByActionPrefix: jest.fn().mockResolvedValue([{ id: 1, action: 'life_stage.breed.update', actorEmail: 'op.br@edenbowls.com', metadata: { market: 'BR' } }])
+  };
   const service = new LifeStageSettingsService({
     repository,
     auditRepository,
@@ -34,6 +37,14 @@ const vet = { userId: '5', email: 'vet@edenbowls.com' };
 const dog = (id, months, extra = {}) => ({ id: String(id), breed: '', size: 'medium', age_years: Math.floor(months / 12), age_months: months % 12, age_recorded_at: '2026-10-27T09:00:00.000Z', birth_date: null, ...extra });
 
 describe('LifeStageSettingsService', () => {
+  test('the overview carries who edited the limits and breeds of the market', async () => {
+    const { service, auditRepository } = setup();
+    const overview = await service.overview('BR');
+    expect(auditRepository.listByActionPrefix).toHaveBeenCalledWith({ actionPrefix: 'life_stage.', market: 'BR', limit: 50 });
+    expect(overview.history).toEqual([expect.objectContaining({ actorEmail: 'op.br@edenbowls.com' })]);
+    expect(overview.breeds).toEqual([GREAT_DANE]);
+  });
+
   test('Invalid limits: senior below adult answers 422 and stores nothing', async () => {
     const { service, repository, auditRepository } = setup();
 

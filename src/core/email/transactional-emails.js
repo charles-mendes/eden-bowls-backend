@@ -9,6 +9,8 @@ const {
   wrapEmailHtml
 } = require('./html');
 
+const NFE_PORTAL_URL = 'https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=resumo&tipoConteudo=7PhJ+gAVw2g=';
+
 function joinList(items) {
   return (items || []).filter(Boolean).join(', ');
 }
@@ -261,6 +263,166 @@ function buildShippedEmail({
       preheader: pt
         ? 'Seu pedido foi enviado. O código de rastreio está aqui.'
         : 'Your order has shipped. Your tracking number is here.',
+      kicker: pt ? 'Entrega' : 'Delivery',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
+// Brazil courier delivery (courier-delivery): the box left with a courier. The link is optional, because an
+// operator may not have one; there is never a tracking number.
+function buildCourierOutForDeliveryEmail({
+  firstName,
+  petName,
+  trackingUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  const url = String(trackingUrl || '').trim();
+  const subject = pt
+    ? `A tigela da ${pet} saiu para entrega`
+    : `${pet}'s bowl is out for delivery`;
+  const intro = pt
+    ? `${hello} As refeições da ${pet} saíram para entrega e já estão a caminho da sua porta.`
+    : `${hello} ${pet}'s meals are out for delivery and on their way to your door.`;
+  const follow = url
+    ? (pt ? 'Acompanhe o entregador pelo link abaixo.' : 'Follow the courier with the link below.')
+    : (pt ? 'Avisamos de novo assim que a entrega for concluída.' : "We'll let you know again once it's delivered.");
+  const text = [`${intro} ${follow}`, `Pet: ${pet}`, url].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(`${intro} ${follow}`),
+    detailsTableHtml([{ label: 'Pet', value: pet }]),
+    url ? buttonHtml({ href: url, label: pt ? 'Acompanhar entrega' : 'Track delivery' }) : ''
+  ].join('');
+
+  return {
+    id: 'courier-out-for-delivery',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: pt ? 'Sua tigela saiu para entrega.' : 'Your bowl is out for delivery.',
+      kicker: pt ? 'Entrega' : 'Delivery',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
+function buildCourierDeliveredEmail({
+  firstName,
+  petName,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  const url = String(dashboardUrl || '').trim();
+  const subject = pt
+    ? `A tigela da ${pet} foi entregue`
+    : `${pet}'s bowl has been delivered`;
+  const intro = pt
+    ? `${hello} As refeições da ${pet} foram entregues. Guarde tudo no freezer assim que puder.`
+    : `${hello} ${pet}'s meals have been delivered. Put them in the freezer as soon as you can.`;
+  const text = [intro, `Pet: ${pet}`, url].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(intro),
+    detailsTableHtml([{ label: 'Pet', value: pet }]),
+    url ? buttonHtml({ href: url, label: pt ? 'Ver meu plano' : 'View my plan' }) : ''
+  ].join('');
+
+  return {
+    id: 'courier-delivered',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: pt ? 'Sua tigela chegou.' : 'Your bowl has arrived.',
+      kicker: pt ? 'Entrega' : 'Delivery',
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
+// What each address problem code asks the customer to fix (delivery-address-issues), in plain words.
+const ADDRESS_ISSUE_TEXT = {
+  address_street_missing: ['Falta o nome da rua no endereço de entrega.', 'The street is missing from the delivery address.'],
+  address_number_missing: ['Falta o número no endereço de entrega.', 'The street number is missing from the delivery address.'],
+  address_neighborhood_missing: ['Falta o bairro no endereço de entrega.', 'The neighborhood is missing from the delivery address.'],
+  address_city_missing: ['Falta a cidade no endereço de entrega.', 'The city is missing from the delivery address.'],
+  address_state_missing: ['Falta o estado no endereço de entrega.', 'The state is missing from the delivery address.'],
+  address_zipcode_invalid: ['O CEP do endereço de entrega precisa ter 8 dígitos.', 'The delivery ZIP code is not valid.'],
+  recipient_name_missing: ['Falta o nome de quem vai receber a entrega.', 'The name of the person who receives the box is missing.'],
+  address_incomplete: ['O endereço de entrega está incompleto: confira rua, cidade, estado e CEP.', 'The delivery address is incomplete: check the street, city, state and ZIP code.'],
+  po_box_not_allowed: ['Não entregamos em caixa postal. Informe um endereço com rua e número.', 'We cannot deliver to a PO box. Please enter a street address.'],
+  military_address_not_supported: ['Não entregamos em endereço militar (APO, FPO ou DPO).', 'We cannot deliver to a military address (APO, FPO or DPO).'],
+  courier_address_unusable: ['O entregador não conseguiu entregar no endereço cadastrado. Confira o endereço e o complemento.', 'Our courier could not deliver to the saved address. Please check the address and the apartment or unit.'],
+  tax_document_missing: ['Falta o CPF, que a nota fiscal da sua assinatura exige.', 'The CPF required on the invoice is missing.'],
+  fiscal_name_missing: ['Falta o nome completo para a nota fiscal.', 'The full name for the invoice is missing.']
+};
+
+function addressIssueLines(codes, pt) {
+  return (Array.isArray(codes) ? codes : [])
+    .map((code) => ADDRESS_ISSUE_TEXT[code] && ADDRESS_ISSUE_TEXT[code][pt ? 0 : 1])
+    .filter(Boolean);
+}
+
+// The one letter of an address problem (delivery-address-issues): one paragraph per code and a link to the address
+// step of that subscription in the store, also for the CPF and the fiscal name, which are saved in the same step.
+function buildDeliveryAddressIssueEmail({
+  firstName,
+  codes = [],
+  editUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const url = String(editUrl || '').trim();
+  const lines = addressIssueLines(codes, pt);
+  const subject = pt
+    ? 'Precisamos de um dado para enviar sua tigela'
+    : 'We need one detail to ship your bowl';
+  const intro = pt
+    ? `${hello} Sua próxima entrega está parada até você completar os dados abaixo.`
+    : `${hello} Your next delivery is on hold until you complete the details below.`;
+  const action = pt
+    ? 'Corrija pelo link abaixo. Assim que salvar, a entrega segue normalmente.'
+    : 'Fix it with the link below. As soon as you save, the delivery moves on.';
+  const text = [intro, ...lines, action, url].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    paragraphHtml(intro),
+    ...lines.map((line) => paragraphHtml(line)),
+    paragraphHtml(action),
+    url ? buttonHtml({ href: url, label: pt ? 'Corrigir endereço' : 'Fix my address' }) : ''
+  ].join('');
+
+  return {
+    id: 'delivery-address-issue',
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || 'pt-BR',
+      preheader: pt ? 'Sua entrega está esperando um dado.' : 'Your delivery is waiting for one detail.',
       kicker: pt ? 'Entrega' : 'Delivery',
       title: subject,
       innerHtml,
@@ -618,6 +780,110 @@ function buildAutoRenewOffEmail({
   };
 }
 
+function planNoticeLetter({ id, pt, kicker, subject, sentence, details, buttonLabel, note, url, locale, assetBaseUrl, allowRelativeAssets }) {
+  const rows = details.filter((item) => item.value);
+  const text = [
+    sentence,
+    ...rows.map((item) => `${item.label}: ${item.value}`),
+    note,
+    url
+  ].filter(Boolean).join('\n');
+  const innerHtml = [
+    paragraphHtml(sentence),
+    detailsTableHtml(rows),
+    url ? buttonHtml({ href: url, label: buttonLabel }) : '',
+    mutedHtml(note)
+  ].join('');
+  return {
+    id,
+    subject,
+    text,
+    html: renderLetter({
+      locale: locale || (pt ? 'pt-BR' : 'en-US'),
+      preheader: sentence,
+      kicker,
+      title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
+// Sent before the charge that starts a new contract. Without `totalLabel` the Stripe preview failed.
+function buildRenewalNoticeEmail({
+  firstName,
+  petName,
+  renewsOnLabel,
+  totalLabel,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  return planNoticeLetter({
+    id: 'renewal-notice',
+    pt,
+    kicker: pt ? 'Renovação' : 'Renewal',
+    subject: pt ? `Seu plano renova em ${renewsOnLabel}` : `Your plan renews on ${renewsOnLabel}`,
+    sentence: pt
+      ? `${hello} O plano de ${pet} renova automaticamente em ${renewsOnLabel}.`
+      : `${hello} ${pet}'s plan renews automatically on ${renewsOnLabel}.`,
+    details: [
+      { label: 'Pet', value: pet },
+      { label: pt ? 'Renovação' : 'Renewal date', value: renewsOnLabel },
+      { label: pt ? 'Valor' : 'Amount', value: totalLabel }
+    ],
+    buttonLabel: pt ? 'Ver meu plano' : 'View my plan',
+    note: pt
+      ? 'Para alterar ou desligar a renovação, acesse Meu Plano antes dessa data.'
+      : 'To change your plan or turn renewal off, go to My Plan before that date.',
+    url: String(dashboardUrl || '').trim(),
+    locale,
+    assetBaseUrl,
+    allowRelativeAssets
+  });
+}
+
+// Sent before a contract whose renewal was turned off comes to an end.
+function buildPlanEndingNoticeEmail({
+  firstName,
+  petName,
+  endsOnLabel,
+  dashboardUrl,
+  locale,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const pt = isPortuguese(locale || 'pt-BR');
+  const hello = greet(pt, firstName);
+  const pet = petLabel(pt, petName);
+  return planNoticeLetter({
+    id: 'plan-ending-notice',
+    pt,
+    kicker: pt ? 'Fim do plano' : 'Plan ending',
+    subject: pt ? `Seu plano termina em ${endsOnLabel}` : `Your plan ends on ${endsOnLabel}`,
+    sentence: pt
+      ? `${hello} O plano de ${pet} termina em ${endsOnLabel}, porque a renovação automática está desligada.`
+      : `${hello} ${pet}'s plan ends on ${endsOnLabel}, because automatic renewal is off.`,
+    details: [
+      { label: 'Pet', value: pet },
+      { label: pt ? 'Fim do plano' : 'Plan ends', value: endsOnLabel }
+    ],
+    buttonLabel: pt ? 'Manter meu plano' : 'Keep my plan',
+    note: pt
+      ? 'Para manter o plano, religue a renovação no Meu Plano antes dessa data.'
+      : 'To keep your plan, turn renewal back on in My Plan before that date.',
+    url: String(dashboardUrl || '').trim(),
+    locale,
+    assetBaseUrl,
+    allowRelativeAssets
+  });
+}
+
 function buildPlanChangedEmail({
   firstName,
   petName,
@@ -670,6 +936,69 @@ function buildPlanChangedEmail({
       preheader: pt ? 'Confira os novos sabores e o ciclo.' : 'Check the new recipes and cycle.',
       kicker: pt ? 'Plano' : 'Plan',
       title: subject,
+      innerHtml,
+      assetBaseUrl,
+      allowRelativeAssets
+    })
+  };
+}
+
+// The fiscal note. It is not the Eden Bowls invoice above, and the customer receives both.
+function buildNfeEmail({
+  firstName,
+  number,
+  series,
+  accessKey,
+  authorizedLabel,
+  totalLabel,
+  homologation,
+  assetBaseUrl,
+  allowRelativeAssets
+} = {}) {
+  const hello = greet(true, firstName);
+  const noteLabel = [number, series ? `série ${series}` : ''].filter(Boolean).join(', ');
+  const key = String(accessKey || '').replace(/(\d{4})(?=\d)/g, '$1 ');
+  const test = homologation ? 'Teste, sem valor fiscal. ' : '';
+  const intro = `${hello} A nota fiscal da sua compra foi autorizada pela SEFAZ. O DANFE em PDF e o arquivo XML estão anexados a este e-mail.`;
+  const keep = 'Guarde o XML: ele é a nota fiscal eletrônica. O DANFE é a versão para impressão.';
+  const other = 'Esta nota é diferente da fatura da Eden Bowls, que você recebe em outro e-mail.';
+  const consult = 'Você pode conferir a nota no Portal da NF-e com a chave de acesso.';
+  const text = [
+    test,
+    intro,
+    `Nota fiscal: ${noteLabel}`,
+    authorizedLabel ? `Autorizada em: ${authorizedLabel}` : '',
+    totalLabel ? `Valor: ${totalLabel}` : '',
+    `Chave de acesso: ${key}`,
+    keep,
+    other,
+    `${consult} ${NFE_PORTAL_URL}`
+  ].filter(Boolean).join('\n');
+
+  const innerHtml = [
+    test ? paragraphHtml(test.trim()) : '',
+    paragraphHtml(intro),
+    detailsTableHtml([
+      { label: 'Nota fiscal', value: noteLabel },
+      { label: 'Autorizada em', value: authorizedLabel },
+      { label: 'Valor', value: totalLabel },
+      { label: 'Chave de acesso', value: key }
+    ]),
+    mutedHtml(keep),
+    mutedHtml(other),
+    mutedHtml(consult),
+    buttonHtml({ href: NFE_PORTAL_URL, label: 'Consultar no Portal da NF-e' })
+  ].join('');
+
+  return {
+    id: 'nfe',
+    subject: `${homologation ? '[TESTE] ' : ''}Sua nota fiscal Eden Bowls nº ${number}`,
+    text,
+    html: renderLetter({
+      locale: 'pt-BR',
+      preheader: `Nota fiscal nº ${number} autorizada. DANFE e XML em anexo.`,
+      kicker: 'Nota fiscal',
+      title: 'Sua nota fiscal foi autorizada',
       innerHtml,
       assetBaseUrl,
       allowRelativeAssets
@@ -739,14 +1068,20 @@ function buildInvoiceEmail({
 module.exports = {
   buildAdminNewSubscriptionEmail,
   buildInvoiceEmail,
+  buildNfeEmail,
   buildAutoRenewOffEmail,
   buildCancelledEmail,
+  buildCourierDeliveredEmail,
+  buildCourierOutForDeliveryEmail,
+  buildDeliveryAddressIssueEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,
   buildPausedEmail,
   buildPaymentFailedEmail,
   buildPlanChangedEmail,
+  buildPlanEndingNoticeEmail,
   buildRenewalEmail,
+  buildRenewalNoticeEmail,
   buildResumedEmail,
   buildShippedEmail
 };

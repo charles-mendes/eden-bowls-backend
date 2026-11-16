@@ -3,7 +3,7 @@ const ADMIN_ROLES_META_KEY = '_eden_admin_roles';
 const OPERATIONAL_ROLES = ['admin', 'operator', 'veterinarian', 'readonly'];
 
 const ROLE_PERMISSIONS = {
-  veterinarian: ['nutrition.simulate', 'nutrition.settings.write'],
+  veterinarian: ['nutrition.simulate', 'nutrition.settings.write', 'nutrition.breeds.write', 'nutrition.limits.write'],
   readonly: [
     'nutrition.simulate',
     'onboarding.read',
@@ -16,10 +16,12 @@ const ROLE_PERMISSIONS = {
     'privacy.requests.read',
     'production.read',
     'settings.read',
-    'reports.read'
+    'reports.read',
+    'nfe.read'
   ],
   operator: [
     'nutrition.simulate',
+    'nutrition.breeds.write',
     'onboarding.read',
     'shipping.read',
     'shipping.write',
@@ -30,6 +32,7 @@ const ROLE_PERMISSIONS = {
     'billing.subscribers.read',
     'billing.subscribers.sync',
     'billing.coupons.write',
+    'customers.contact.write',
     'users.read',
     'users.delivery.write',
     'users.status.write',
@@ -40,21 +43,29 @@ const ROLE_PERMISSIONS = {
     'production.read',
     'production.write',
     'settings.read',
+    'settings.company.write',
     'settings.email.write',
+    'legal.write',
     'reports.read',
-    'reports.export'
+    'reports.export',
+    'nfe.read',
+    'nfe.retry',
+    'nfe.edit'
   ]
 };
 
-// Nutrition settings are clinical: the operator does not get them. Company data and legal texts are admin only.
+// Energy factors and life-stage limits are clinical: only the veterinarian changes the limits
+// (nutrition.limits.write), not the operator nor the admin. The operator does create and edit breeds with their own
+// size class, only in the market assigned to them (nutrition.breeds.write).
+// The operator saves the company data and publishes the privacy policy and terms of use only of the markets
+// assigned to them (the routes scope the market).
 ROLE_PERMISSIONS.admin = [
   ...ROLE_PERMISSIONS.operator,
   'users.roles.write',
   'users.access.write',
   'system.health.read',
   'nutrition.settings.write',
-  'settings.company.write',
-  'legal.write'
+  'bling.connect'
 ];
 
 const VALID_ROLES = new Set(['admin', 'operator', 'veterinarian', 'readonly', 'customer']);

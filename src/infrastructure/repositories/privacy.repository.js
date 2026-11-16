@@ -321,7 +321,8 @@ class PrivacyRepository {
   async listSubscriptionSummary(userId) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
-      `SELECT \`id\`, \`status\`, \`stripe_subscription_id\`, \`stripe_customer_id\`, \`current_period_end\`, \`cancel_at_period_end\`
+      `SELECT \`id\`, \`status\`, \`stripe_subscription_id\`, \`stripe_customer_id\`, \`current_period_end\`, \`cancel_at_period_end\`,
+              JSON_UNQUOTE(JSON_EXTRACT(\`address\`, '$.delivery_instructions')) AS \`delivery_instructions\`
        FROM \`${this.tableNames.ledger}\` WHERE \`user_id\` = ?`,
       [userId]
     );
@@ -331,7 +332,9 @@ class PrivacyRepository {
       stripeSubscriptionId: row.stripe_subscription_id ? String(row.stripe_subscription_id) : null,
       stripeCustomerId: row.stripe_customer_id ? String(row.stripe_customer_id) : null,
       currentPeriodEnd: toIso(row.current_period_end),
-      cancelAtPeriodEnd: Boolean(row.cancel_at_period_end)
+      cancelAtPeriodEnd: Boolean(row.cancel_at_period_end),
+      // delivery-instructions: the customer's own text for this subscription address.
+      deliveryInstructions: row.delivery_instructions && row.delivery_instructions !== 'null' ? String(row.delivery_instructions) : null
     }));
   }
 }

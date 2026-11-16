@@ -96,6 +96,34 @@ class PackStockRepository {
     return this.dataSource.transaction(work);
   }
 
+  async lockItem(runner, { market, flavorKey, packSizeGrams }) {
+    await runner.query(
+      `INSERT IGNORE INTO \`${this.itemsTableName}\` (\`market\`, \`flavor_key\`, \`pack_size_grams\`) VALUES (?, ?, ?)`,
+      [market, flavorKey, packSizeGrams]
+    );
+    const rows = await runner.query(
+      `SELECT * FROM \`${this.itemsTableName}\` WHERE \`market\` = ? AND \`flavor_key\` = ? AND \`pack_size_grams\` = ? FOR UPDATE`,
+      [market, flavorKey, packSizeGrams]
+    );
+    const item = mapItem(Array.isArray(rows) ? rows[0] : null);
+    if (!item) {
+      throw new HttpError(500, 'Stock item could not be locked.');
+    }
+    return item;
+  }
+
+  // Moves on-hand to the counted total. A count that matches writes no movement.
+  async applyCount(manager, key, countedQuantity, movement) {
+    const runner = manager || this.dataSource;
+    const item = await this.lockItem(runner, key);
+    const quantity = countedQuantity - item.onHand;
+    if (quantity === 0) {
+      return item;
+    }
+    const [touched] = await this.applyMovements(runner, [{ ...key, ...movement, quantity }]);
+    return touched;
+  }
+
   // Locks each item in key order (creating the missing ones), writes the movements and moves `on_hand` by their
   // sum. Returns the touched items after the change.
   async applyMovements(manager, movements = []) {
@@ -110,19 +138,7 @@ class PackStockRepository {
 
     const touched = [];
     for (const entry of [...byKey.values()].sort((left, right) => compareKeys(left.key, right.key))) {
-      const { market, flavorKey, packSizeGrams } = entry.key;
-      await runner.query(
-        `INSERT IGNORE INTO \`${this.itemsTableName}\` (\`market\`, \`flavor_key\`, \`pack_size_grams\`) VALUES (?, ?, ?)`,
-        [market, flavorKey, packSizeGrams]
-      );
-      const rows = await runner.query(
-        `SELECT * FROM \`${this.itemsTableName}\` WHERE \`market\` = ? AND \`flavor_key\` = ? AND \`pack_size_grams\` = ? FOR UPDATE`,
-        [market, flavorKey, packSizeGrams]
-      );
-      const item = mapItem(Array.isArray(rows) ? rows[0] : null);
-      if (!item) {
-        throw new HttpError(500, 'Stock item could not be locked.');
-      }
+      const item = await this.lockItem(runner, entry.key);
 
       let delta = 0;
       for (const movement of entry.movements) {

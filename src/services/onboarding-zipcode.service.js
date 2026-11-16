@@ -1,4 +1,6 @@
 const { HttpError } = require('../core/http-error');
+const { parseRecipientNameInput } = require('../core/recipient-name');
+const { normalizeDeliveryInstructions, parseDeliveryInstructionsInput } = require('../core/delivery-instructions');
 
 function normalizeCountry(country) {
   const value = String(country || '').trim().toUpperCase();
@@ -71,7 +73,24 @@ class OnboardingZipcodeService {
       throw new HttpError(422, 'State and city are required.', { code: 'invalid_location' });
     }
 
+    // This call replaces the whole saved address, so a missing recipient would erase it: required here.
+    const recipientName = parseRecipientNameInput(
+      payload.recipient_name === undefined ? payload.recipientName : payload.recipient_name,
+      { required: true }
+    );
+
+    // The call replaces the whole address, so omitted instructions are copied from it (delivery-instructions).
+    let deliveryInstructions = parseDeliveryInstructionsInput(
+      payload.delivery_instructions === undefined ? payload.deliveryInstructions : payload.delivery_instructions
+    );
+    if (deliveryInstructions === undefined) {
+      const stored = typeof this.repository.getAddress === 'function' ? await this.repository.getAddress(userId) : null;
+      // A stored value is kept as it is, even one saved before the rule: the customer did not send it now.
+      deliveryInstructions = normalizeDeliveryInstructions(stored && stored.delivery_instructions);
+    }
+
     const normalizedPayload = {
+      recipient_name: recipientName,
       zipcode,
       postal_code: zipcode,
       country,
@@ -83,7 +102,7 @@ class OnboardingZipcodeService {
       complement: String(payload.complement || payload.address_line2 || '').trim(),
       phone: String(payload.phone || '').trim(),
       phone_country: normalizePhoneCountry(payload.phone_country || payload.phoneCountry),
-      delivery_instructions: String(payload.delivery_instructions || payload.deliveryInstructions || '').trim(),
+      delivery_instructions: deliveryInstructions,
       address_line1: String(payload.street || payload.address_line1 || '').trim(),
       address_line2: String(payload.complement || payload.address_line2 || '').trim()
     };

@@ -74,6 +74,48 @@ describe('admin production routes', () => {
     expect(bad.status).toBe(400);
   });
 
+  // production-block-preview (admin-flow-fixes-5).
+  test('previews a block with production.write and the period end in the query', async () => {
+    const adminProductionService = {
+      previewBlock: jest.fn().mockResolvedValue({ charged: false, chargeMovesTo: '2026-10-19T03:00:00.000Z', preparationDay: '2026-10-19' })
+    };
+    const app = adminApp({ adminProductionService });
+    const response = await request(app)
+      .get('/api/v1/admin/production/queue/42/block-preview?periodEnd=2026-09-20T08:00:00.000Z')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ charged: false, chargeMovesTo: '2026-10-19T03:00:00.000Z', preparationDay: '2026-10-19' });
+    expect(adminProductionService.previewBlock).toHaveBeenCalledWith('42', '2026-09-20T08:00:00.000Z', expect.objectContaining({ userId: '7' }));
+  });
+
+  test('the block preview needs a period end and production.write', async () => {
+    const adminProductionService = { previewBlock: jest.fn() };
+    const missing = await request(adminApp({ adminProductionService }))
+      .get('/api/v1/admin/production/queue/42/block-preview')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+    expect(missing.status).toBe(400);
+
+    const readonly = adminApp({
+      adminProductionService,
+      adminIdentityService: { requireOperational: jest.fn().mockResolvedValue({ userId: '8', email: 'ro@edenbowls.com', roles: ['readonly'], permissions: ROLE_PERMISSIONS.readonly }) }
+    });
+    const refused = await request(readonly)
+      .get('/api/v1/admin/production/queue/42/block-preview?periodEnd=2026-09-20T08:00:00.000Z')
+      .set('Authorization', `Bearer ${tokenFor(8)}`);
+    expect(refused.status).toBe(403);
+    expect(adminProductionService.previewBlock).not.toHaveBeenCalled();
+  });
+
+  test('an unknown subscription in the block preview answers 404', async () => {
+    const { HttpError } = require('../src/core/http-error');
+    const adminProductionService = { previewBlock: jest.fn().mockRejectedValue(new HttpError(404, 'Subscription not found.')) };
+    const response = await request(adminApp({ adminProductionService }))
+      .get('/api/v1/admin/production/queue/9/block-preview?periodEnd=2026-09-20T08:00:00.000Z')
+      .set('Authorization', `Bearer ${tokenFor()}`);
+    expect(response.status).toBe(404);
+  });
+
   test('patches production status', async () => {
     const adminProductionService = {
       updateStatus: jest.fn().mockResolvedValue({

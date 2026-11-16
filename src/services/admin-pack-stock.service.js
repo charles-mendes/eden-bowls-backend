@@ -4,8 +4,8 @@ const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { constrainMarketQuery, marketFromStripeAccount } = require('../core/admin-market-scope');
 const { stripeAccountFromMarket } = require('../core/stripe-account');
 const { flavorKeyFromLabel } = require('../core/flavors');
-const { DEFAULT_TIMEZONE, presentProductionQueueItem } = require('../core/production-queue-presenter');
-const { allocateCoverage, buildOverview, cyclePacks } = require('../core/pack-stock');
+const { DEFAULT_TIMEZONE, OVERDUE_DAYS, presentProductionQueueItem } = require('../core/production-queue-presenter');
+const { allocateCoverageDetail, buildOverview, cyclePacks } = require('../core/pack-stock');
 const { measureStockComputation } = require('../core/stock-metrics');
 
 function emptyStock() {
@@ -17,7 +17,7 @@ function windowBounds({ timezone, windowDays, now }) {
   return {
     startOfToday: today.toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     windowEndExclusive: today.plus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
-    overdueFloor: today.minus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
+    overdueFloor: today.minus({ days: OVERDUE_DAYS }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
   };
 }
 
@@ -95,18 +95,50 @@ class AdminPackStockService {
   async overview(query = {}, actor = {}) {
     const market = this.resolveMarket(actor, query.market);
     const windowDays = query.windowDays || 7;
-    const { overview } = await measureStockComputation('overview', async () => {
-      const [stockItems, cycles] = await Promise.all([
+    const { overview, catalog, variationsWithoutWeight } = await measureStockComputation('overview', async () => {
+      const [stockItems, cycles, catalogEntries, withoutWeight] = await Promise.all([
         this.stockRepository.listItems(market),
-        this.loadCycles({ markets: [market], windowDays })
+        this.loadCycles({ markets: [market], windowDays }),
+        this.loadCatalog(market),
+        this.loadVariationsWithoutWeight(market)
       ]);
-      return { overview: buildOverview({ stockItems, cycles }), rowCount: cycles.length };
+      return {
+        overview: buildOverview({ stockItems, cycles, catalog: catalogEntries }),
+        catalog: catalogEntries,
+        variationsWithoutWeight: withoutWeight,
+        rowCount: cycles.length
+      };
     });
     this.warnUnsized(overview.unsizedLines);
-    return { market, windowDays, ...overview };
+    return { market, windowDays, ...overview, catalog, variationsWithoutWeight };
   }
 
-  // Coverage of every committing cycle in the queue window, per market, or null without stock storage.
+  // Variations on sale with no weight stay out of the stock; the screen points to where the weight is filled.
+  async loadVariationsWithoutWeight(market) {
+    if (!this.catalogRepository || typeof this.catalogRepository.listVariationsWithoutWeight !== 'function') {
+      return [];
+    }
+    try {
+      return await this.catalogRepository.listVariationsWithoutWeight(market);
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  // Product names and sizes are extra information: without them the screen still lists by product code.
+  async loadCatalog(market) {
+    if (!this.catalogRepository || typeof this.catalogRepository.listRecipeCatalog !== 'function') {
+      return [];
+    }
+    try {
+      return await this.catalogRepository.listRecipeCatalog(market);
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  // Coverage of every committing cycle in the queue window, per market, as `{ coverage, shortages }`, or null
+  // without stock storage.
   async queueCoverage({ markets, windowDays, timezone }) {
     if (!(await this.isAvailable())) {
       return null;
@@ -119,7 +151,7 @@ class AdminPackStockService {
       const coverage = new Map();
       markets.forEach((market, index) => {
         const marketCycles = cycles.filter((cycle) => cycle.market === market);
-        for (const [key, value] of allocateCoverage({ stockItems: stockByMarket[index], cycles: marketCycles })) {
+        for (const [key, value] of allocateCoverageDetail({ stockItems: stockByMarket[index], cycles: marketCycles })) {
           coverage.set(key, value);
         }
       });
@@ -139,7 +171,7 @@ class AdminPackStockService {
     return paginatedEnvelope({ items: result.items, total: result.total, page: pagination.page, perPage: pagination.perPage });
   }
 
-  // The item exists, or the market's catalog has (or had) a variation with that recipe and grams.
+  // The item exists, or a product of the market has (or had) a variation with those grams.
   async resolveItemKey(body, actor) {
     const market = this.resolveMarket(actor, body.market);
     const key = { market, flavorKey: flavorKeyFromLabel(body.flavorKey), packSizeGrams: Number(body.packSizeGrams) };
@@ -150,7 +182,7 @@ class AdminPackStockService {
       ? await this.catalogRepository.listRecipeSizes(market)
       : new Set();
     if (!sizes.has(`${key.flavorKey}|${key.packSizeGrams}`)) {
-      throw new HttpError(422, 'This recipe and pack size are not sold in this market.', { code: 'stock_item_unknown' });
+      throw new HttpError(422, 'No product of this market has a variation with this pack size.', { code: 'stock_item_unknown' });
     }
     return key;
   }
@@ -183,6 +215,19 @@ class AdminPackStockService {
       reason: body.reason,
       note: body.note || null
     }, 'stock.adjustment');
+  }
+
+  // The counted total replaces on-hand through an adjustment, computed under the item lock.
+  async recordCount(body, actor = {}) {
+    const key = await this.resolveItemKey(body, actor);
+    const item = await this.stockRepository.transaction((manager) => this.stockRepository.applyCount(manager, key, body.countedQuantity, {
+      type: 'adjustment',
+      reason: 'count',
+      note: body.note || null,
+      actorUserId: actorUserId(actor)
+    }));
+    await this.audit(actor, 'stock.count', { ...key, countedQuantity: body.countedQuantity, note: body.note || null });
+    return item;
   }
 
   async setMinimum(body, actor = {}) {

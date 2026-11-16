@@ -47,17 +47,34 @@ describe('processRecipeImage', () => {
     expect((await sharp(result.buffer).metadata()).width).toBe(1024);
   });
 
-  test('refuses another size and says what was received and expected', async () => {
-    const error = await refusal(processRecipeImage({ mimeType: 'image/png', buffer: await image(1200, 800) }));
+  test.each([
+    [1024, 576],
+    [1200, 800],
+    [2048, 1272],
+    [820, 509]
+  ])('resizes a %i x %i banner, close to the size, to exactly 1024 x 636', async (width, height) => {
+    const result = await processRecipeImage({ mimeType: 'image/png', buffer: await image(width, height) });
+    expect(await sharp(result.buffer).metadata()).toMatchObject({ format: 'webp', width: 1024, height: 636 });
+  });
+
+  test.each([
+    [800, 497, 'needs more than 25% of enlargement'],
+    [1024, 512, 'loses more than 15% of the width'],
+    [1024, 800, 'loses more than 15% of the height']
+  ])('refuses a %i x %i banner that %s, saying what was received and expected', async (width, height) => {
+    const error = await refusal(processRecipeImage({ mimeType: 'image/png', buffer: await image(width, height) }));
 
     expect(error.statusCode).toBe(422);
+    expect(error.message).toBe('Image must be 1024 x 636 pixels, or close enough to be resized to it.');
     expect(error.details).toEqual({
       code: 'recipe_image_invalid',
       reason: 'dimensions',
-      width: 1200,
-      height: 800,
+      width,
+      height,
       expectedWidth: 1024,
-      expectedHeight: 636
+      expectedHeight: 636,
+      maxUpscale: 1.25,
+      maxCrop: 0.15
     });
   });
 
