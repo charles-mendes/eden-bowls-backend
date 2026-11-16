@@ -29,7 +29,7 @@ describe('a cycle enters production when its invoice is paid (3.12)', () => {
     return { service: new PaidCyclesService({ productionRepository: { markPaid }, calendar: { listActive: async () => rows } }), markPaid };
   }
 
-  test('a renewal paid on Saturday at 14:00 in Brazil prepares and delivers on Monday', async () => {
+  test('a renewal paid on Saturday at 14:00 in Brazil prepares and delivers that Saturday, inside the hours', async () => {
     const { service, markPaid } = recorder();
     const charge = br(2026, 1, 3, 14);
     await service.recordPaid({
@@ -42,9 +42,20 @@ describe('a cycle enters production when its invoice is paid (3.12)', () => {
       periodEnd: charge,
       paidAt: new Date((unix(charge) + 60) * 1000),
       invoiceId: 'in_1',
-      preparationDay: '2026-01-05',
-      deliveryDate: '2026-01-05'
+      preparationDay: '2026-01-03',
+      deliveryDate: '2026-01-03'
     });
+  });
+
+  test('a renewal paid on Saturday at 21:00 in Brazil, after closing, prepares and delivers on Monday', async () => {
+    const { service, markPaid } = recorder();
+    const charge = br(2026, 1, 3, 21);
+    await service.recordPaid({
+      ledgerRow: ledgerRow(),
+      subscription: { current_period_start: unix(charge) },
+      invoice: { id: 'in_1', status_transitions: { paid_at: unix(charge) + 60 } }
+    });
+    expect(markPaid).toHaveBeenCalledWith(expect.objectContaining({ preparationDay: '2026-01-05', deliveryDate: '2026-01-05' }));
   });
 
   test('a past_due renewal paid late prepares on the first valid day at or after the payment', async () => {
@@ -56,11 +67,11 @@ describe('a cycle enters production when its invoice is paid (3.12)', () => {
       subscription: { current_period_start: unix(failedRenewal) },
       invoice: { id: 'in_1', status_transitions: { paid_at: unix(paidLate) } }
     });
-    // Wednesday 10:00: Wednesday's midnight has passed, so Thursday 8 January.
+    // Wednesday 10:00, inside the hours: Wednesday 7 January.
     expect(markPaid).toHaveBeenCalledWith(expect.objectContaining({
       periodEnd: failedRenewal,
-      preparationDay: '2026-01-08',
-      deliveryDate: '2026-01-08'
+      preparationDay: '2026-01-07',
+      deliveryDate: '2026-01-07'
     }));
   });
 
@@ -69,9 +80,9 @@ describe('a cycle enters production when its invoice is paid (3.12)', () => {
     await service.recordPaid({
       ledgerRow: ledgerRow({ stripeAccount: 'us', address: { country: 'US', business_days_in_transit: 1 } }),
       subscription: { current_period_start: unix(us(2026, 6, 1)) },
-      invoice: { id: 'in_1', status_transitions: { paid_at: unix(us(2026, 6, 3, 9)) } }
+      invoice: { id: 'in_1', status_transitions: { paid_at: unix(us(2026, 6, 3, 21)) } }
     });
-    // Paid Wednesday 3 June at 09:00: Thursday cannot ship (delivery would be Saturday), so Monday 8 June,
+    // Paid Wednesday 3 June at 21:00, after closing: Thursday cannot ship (delivery would be Saturday), so Monday 8 June,
     // pickup Tuesday 9, delivery Wednesday 10.
     expect(markPaid).toHaveBeenCalledWith(expect.objectContaining({ preparationDay: '2026-06-08', deliveryDate: '2026-06-10' }));
   });
@@ -140,9 +151,10 @@ describe('Meu Plano shows the paid delivery on its way (3.12)', () => {
   test('the paid delivery is current and locked with its recalculated date; the actions move to the next renewal', () => {
     const read = buildDeliveryRead({ ...input, rows, now });
     expect(read.delivery).toMatchObject({ id: 'current', date: '2026-01-08', locked: true, actions: false, status: 'in_production', statusLabel: 'Em preparo' });
-    expect(read.actionTarget).toMatchObject({ id: 'following', date: '2026-02-04' });
-    expect(read.later.map((item) => item.deliveryDate)).toEqual(['2026-02-04', '2026-03-04']);
-    expect(read.contractEnd).toBe('2026-03-04');
+    // Renewals on the 3rd at 14:00, inside the hours: prepared and delivered on their charge day.
+    expect(read.actionTarget).toMatchObject({ id: 'following', date: '2026-02-03' });
+    expect(read.later.map((item) => item.deliveryDate)).toEqual(['2026-02-03', '2026-03-03']);
+    expect(read.contractEnd).toBe('2026-03-03');
     // Skipping February: the renewals are 3 March and 3 April; 3 April 2026 is Good Friday, so Saturday 4 April.
     expect(read.contractEndIfSkip).toBe('2026-04-04');
   });

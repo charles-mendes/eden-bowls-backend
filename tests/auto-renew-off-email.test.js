@@ -86,7 +86,7 @@ describe('turning automatic renewal off (3.11)', () => {
     expect(stripeBilling.setCancelAtPeriodEnd).toHaveBeenCalledWith('sub_123', false);
     expect(transactionalMailer.notifyAutoRenewOff).toHaveBeenCalledWith(expect.objectContaining({
       subscriptionId: 'sub_123',
-      endsOn: '2026-02-04',
+      endsOn: '2026-02-03', // the last renewal, Tuesday 3 February at 14:00, prepares that day
       referenceId: `auto_renew_off:${at(2026, 1, 1, 12).toISOString()}`
     }));
   });

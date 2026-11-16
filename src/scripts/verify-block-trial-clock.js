@@ -66,7 +66,7 @@ async function main() {
       warn(payload, message) { warnings.push({ message, reason: payload && payload.reason }); }
     }
   });
-  const rows = await calendar.listActive();
+  const rows = await calendar.snapshot();
   const users = await dataSource.query('SELECT ID AS id FROM wp_users ORDER BY ID ASC LIMIT 1');
   const userId = users[0] && users[0].id;
   if (!userId) throw new Error('No wp_users row to attach the ledger.');

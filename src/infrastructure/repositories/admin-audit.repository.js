@@ -93,7 +93,8 @@ class AdminAuditRepository {
     return rows.map(mapEvent);
   }
 
-  // Calendar events of one market whose date falls in one year, newest first.
+  // Calendar events of one market in one year, newest first: closed-day changes by the year of their date, and
+  // changes of the standard week (which have no date) by the year they were made.
   async listDeliveryCalendar({ market, year, limit = 200 }) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
@@ -101,10 +102,11 @@ class AdminAuditRepository {
          FROM \`${this.tableName}\`
         WHERE action LIKE 'delivery\\_calendar.%'
           AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.market')) = ?
-          AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.closedOn')) LIKE ?
+          AND (JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.closedOn')) LIKE ?
+               OR (action = 'delivery_calendar.week_update' AND YEAR(created_at) = ?))
         ORDER BY created_at DESC, id DESC
         LIMIT ?`,
-      [market, `${year}-%`, limit]
+      [market, `${year}-%`, Number(year), limit]
     );
     return rows.map(mapEvent);
   }

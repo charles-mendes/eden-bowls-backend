@@ -99,6 +99,7 @@ const { NutritionParametersVetDocument1700000000077 } = require('./migrations/17
 const { NutritionDefaultFoodEnergy1700000000078 } = require('./migrations/1700000000078-nutrition-default-food-energy');
 const { NutritionGiantBreeds1700000000079 } = require('./migrations/1700000000079-nutrition-giant-breeds');
 const { AddBrDeliveryDays1700000000080 } = require('./migrations/1700000000080-add-br-delivery-days');
+const { CreateDeliveryOperatingWeek1700000000081 } = require('./migrations/1700000000081-create-delivery-operating-week');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -223,7 +224,8 @@ function buildDataSourceOptions(env) {
       NutritionParametersVetDocument1700000000077,
       NutritionDefaultFoodEnergy1700000000078,
       NutritionGiantBreeds1700000000079,
-      AddBrDeliveryDays1700000000080
+      AddBrDeliveryDays1700000000080,
+      CreateDeliveryOperatingWeek1700000000081
     ],
     synchronize: false,
     logging: false,

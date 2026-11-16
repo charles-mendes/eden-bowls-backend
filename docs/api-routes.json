@@ -237,6 +237,18 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/delivery-calendar/week"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/admin/delivery-calendar/week"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/admin/delivery-calendar/week/preview"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/feedbacks"
   },
   {

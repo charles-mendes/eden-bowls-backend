@@ -417,12 +417,16 @@ class CustomerDeliveriesService {
     return subscription;
   }
 
+  // The calendar of every date here: the closed days and the standard week (delivery-calendar). A calendar
+  // without the week (an older double) reads as the default week.
   async rowsFor(market) {
+    if (this.calendar && typeof this.calendar.snapshot === 'function') {
+      return this.calendar.snapshot();
+    }
     if (!this.calendar || typeof this.calendar.listActive !== 'function') {
       return [];
     }
-    const rows = await this.calendar.listActive();
-    return rows;
+    return this.calendar.listActive();
   }
 
   async read(subscription, userId) {

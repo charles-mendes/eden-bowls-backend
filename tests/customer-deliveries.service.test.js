@@ -333,10 +333,10 @@ function unix(year, month, day, zone) {
   return Math.floor(wallTimeToUtc(year, month, day, 0, 0, 0, zone).getTime() / 1000);
 }
 
-// A Brazil plan charged Saturday 7 February 2026 at 14:00: preparation and delivery Monday 9 February.
+// A Brazil plan charged Saturday 7 February 2026 at 21:00: preparation and delivery Monday 9 February.
 function saturdayPlan(overrides = {}) {
   return subscription({
-    chargeAt: charge(2026, 2, 7, 14, TIMEZONE_BR),
+    chargeAt: charge(2026, 2, 7, 21, TIMEZONE_BR),
     productionDate: null,
     nextShipmentDate: null,
     ...overrides
@@ -431,7 +431,7 @@ describe('postpone dates', () => {
 
   test('8 and 9 February 2027 are not Brazil delivery dates', () => {
     const read = buildDeliveryRead({
-      ...saturdayPlan({ chargeAt: charge(2027, 2, 3, 14, TIMEZONE_BR) }),
+      ...saturdayPlan({ chargeAt: charge(2027, 2, 3, 21, TIMEZONE_BR) }),
       rows,
       now: charge(2027, 1, 30, 12, TIMEZONE_BR)
     });
@@ -445,7 +445,7 @@ describe('postpone dates', () => {
 
   test('United States preparation on 23 November delivers on the 25th and the 24th and 25th are not offered', () => {
     const read = buildDeliveryRead({
-      ...saturdayPlan({ market: 'US', transitDays: 1, chargeAt: charge(2026, 11, 16, 10, TIMEZONE_US) }),
+      ...saturdayPlan({ market: 'US', transitDays: 1, chargeAt: charge(2026, 11, 16, 21, TIMEZONE_US) }),
       rows,
       now: charge(2026, 11, 10, 12, TIMEZONE_US)
     });
@@ -458,7 +458,7 @@ describe('postpone dates', () => {
 
   test('United States preparation on 22 December delivers on the 24th and the 23rd is not offered', () => {
     const read = buildDeliveryRead({
-      ...saturdayPlan({ market: 'US', transitDays: 1, chargeAt: charge(2026, 12, 14, 10, TIMEZONE_US) }),
+      ...saturdayPlan({ market: 'US', transitDays: 1, chargeAt: charge(2026, 12, 14, 21, TIMEZONE_US) }),
       rows,
       now: charge(2026, 12, 10, 12, TIMEZONE_US)
     });
@@ -503,7 +503,7 @@ describe('skip', () => {
   test('moves the charge to midnight of the next valid preparation day without pausing', async () => {
     const { service, stripe } = movingService(saturdayPlan(), now);
     const after = await service.skip(saturdayPlan(), 7, { deliveryId: 'current' });
-    // The following charge is Saturday 7 March at 14:00: Saturday midnight is past and Sunday is closed.
+    // The following charge is Saturday 7 March at 21:00: after closing, and Sunday is closed.
     expect(stripe.setTrialEnd).toHaveBeenCalledWith({
       subscriptionId: 'sub_123',
       trial_end: unix(2026, 3, 9, TIMEZONE_BR),

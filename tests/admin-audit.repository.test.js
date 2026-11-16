@@ -31,3 +31,33 @@ describe('AdminAuditRepository.listByActionPrefix', () => {
     expect(params).toEqual(['nutrition.parameters.%', 50]);
   });
 });
+
+describe('AdminAuditRepository.listDeliveryCalendar', () => {
+  test('History after closing Saturday: week changes are listed by the year they were made', async () => {
+    const weekEvent = {
+      id: '12', actor_user_id: '7', actor_email: 'op@edenbowls.com', action: 'delivery_calendar.week_update',
+      metadata: JSON.stringify({
+        market: 'BR',
+        before: [{ weekday: 6, open: true, opensAt: '09:00', closesAt: '20:00' }],
+        after: [{ weekday: 6, open: false, opensAt: '09:00', closesAt: '20:00' }],
+        impact: [{ stripeSubscriptionId: 'sub_1', deliveryId: 'current', previousPreparationDay: '2026-11-21', newPreparationDay: '2026-11-23', outcome: 'moved', move: 'stripe_sync' }],
+        syncIds: [501]
+      }),
+      created_at: new Date('2026-11-17T15:00:00.000Z')
+    };
+    const { repository, dataSource } = repositoryWith([weekEvent]);
+
+    const events = await repository.listDeliveryCalendar({ market: 'BR', year: 2026 });
+
+    const [sql, params] = dataSource.query.mock.calls[0];
+    expect(sql).toContain("$.closedOn')) LIKE ?");
+    expect(sql).toContain("action = 'delivery_calendar.week_update' AND YEAR(created_at) = ?");
+    expect(sql).toContain('ORDER BY created_at DESC, id DESC');
+    expect(params).toEqual(['BR', '2026-%', 2026, 200]);
+    expect(events[0]).toMatchObject({
+      actorEmail: 'op@edenbowls.com',
+      action: 'delivery_calendar.week_update',
+      metadata: { market: 'BR', after: [{ weekday: 6, open: false }], impact: [{ newPreparationDay: '2026-11-23', outcome: 'moved' }] }
+    });
+  });
+});

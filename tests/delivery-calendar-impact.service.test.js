@@ -14,7 +14,8 @@ function sub(overrides = {}) {
 
 describe('assessImpact', () => {
   test('a renewal at period end moves by projection only', () => {
-    const [item] = assessImpact({ subscriptions: [sub()], rowsBefore: [], rowsAfter: [closeDay('2027-12-21')], now: NOW });
+    // Charged at 20:30 in New York on the 20th, after closing: it prepares on the 21st.
+    const [item] = assessImpact({ subscriptions: [sub({ chargeAt: new Date('2027-12-21T01:30:00Z') })], rowsBefore: [], rowsAfter: [closeDay('2027-12-21')], now: NOW });
     expect(item).toMatchObject({ preparationDay: '2027-12-21', newPreparationDay: '2027-12-22', move: MOVES.PROJECTION_ONLY, locked: false });
   });
 
@@ -66,7 +67,8 @@ describe('assessImpact', () => {
   });
 
   test('Brazil follows its own rule: only a preparation closure moves a delivery', () => {
-    const subscription = sub({ market: 'BR', transitDays: null, chargeAt: new Date('2027-02-05T15:00:00Z') });
+    // Charged on Friday at 20:30 in São Paulo, after closing: it prepares on Saturday.
+    const subscription = sub({ market: 'BR', transitDays: null, chargeAt: new Date('2027-02-05T23:30:00Z') });
     const brDay = (flags) => ({ market: 'BR', closedOn: '2027-02-06', type: 'regional', active: true, ...flags });
     const pickupOnly = assessImpact({ subscriptions: [subscription], rowsBefore: [], rowsAfter: [brDay({ closesPreparation: false, closesPickup: true, closesDelivery: true })], now: new Date('2027-01-20T12:00:00Z') });
     expect(pickupOnly).toEqual([]);

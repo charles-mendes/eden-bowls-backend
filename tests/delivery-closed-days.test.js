@@ -278,3 +278,69 @@ describe('US max transit days (shipping-settings)', () => {
     expect(currentUsMaxTransitDays()).toBe(1);
   });
 });
+
+describe('standard week and hours (delivery-calendar)', () => {
+  const {
+    DEFAULT_OPERATING_WEEK,
+    firstPrepDay: prepDayOf,
+    weekOf
+  } = require('../src/core/delivery-closed-days');
+  const mondayToFriday = { BR: weekOf([1, 2, 3, 4, 5]), US: weekOf([1, 2, 3, 4, 5]) };
+  const key = (parts) => dateKey(parts.year, parts.month, parts.day);
+  const at = (market, y, m, d, h, min) => wallTimeToUtc(y, m, d, h, min, 0, market === 'BR' ? TIMEZONE_BR : 'America/New_York');
+
+  test('Closed weekday: Saturday not open in the BR week is not a preparation day', () => {
+    const saturday = { year: 2026, month: 11, day: 14 };
+    expect(brazilPrepValid(saturday, { rows: [], week: DEFAULT_OPERATING_WEEK })).toBe(true);
+    expect(brazilPrepValid(saturday, { rows: [], week: mondayToFriday })).toBe(false);
+  });
+
+  test('Closed day overrides an open weekday, only on its date', () => {
+    const rows = [{ market: 'BR', closedOn: '2026-11-18', active: true, closesPreparation: true, closesPickup: false, closesDelivery: false }];
+    const calendar = { rows, week: mondayToFriday };
+    expect(brazilPrepValid({ year: 2026, month: 11, day: 18 }, calendar)).toBe(false);
+    expect(brazilPrepValid({ year: 2026, month: 11, day: 25 }, calendar)).toBe(true);
+  });
+
+  test('Opening Friday and Saturday does not make UPS pick up on a weekend', () => {
+    const calendar = { rows: [], week: { US: weekOf([1, 2, 3, 4, 5, 6, 7]) } };
+    expect(usPrepValid({ year: 2026, month: 11, day: 13 }, calendar, 1)).toBe(false);
+    expect(usPrepValid({ year: 2026, month: 11, day: 14 }, calendar, 1)).toBe(false);
+  });
+
+  test('Opening Sunday in the United States prepares on Sunday, with pickup on Monday', () => {
+    const sunday = { year: 2026, month: 11, day: 15 };
+    expect(usPrepValid(sunday, { rows: [], week: { US: weekOf([1, 2, 3, 4, 5]) } }, 1)).toBe(false);
+    expect(usPrepValid(sunday, { rows: [], week: { US: weekOf([1, 2, 3, 4, 5, 7]) } }, 1)).toBe(true);
+  });
+
+  test.each(['BR', 'US'])('%s: paid inside the hours prepares that day', (market) => {
+    const calendar = { rows: [], week: mondayToFriday };
+    expect(key(prepDayOf(market, at(market, 2026, 11, 17, 10, 0), calendar, 1))).toBe('2026-11-17');
+    expect(key(prepDayOf(market, at(market, 2026, 11, 17, 19, 59), calendar, 1))).toBe('2026-11-17');
+  });
+
+  test.each(['BR', 'US'])('%s: paid before opening, as a renewal at midnight, prepares that day', (market) => {
+    const calendar = { rows: [], week: mondayToFriday };
+    expect(key(prepDayOf(market, at(market, 2026, 11, 17, 0, 0), calendar, 1))).toBe('2026-11-17');
+    expect(key(prepDayOf(market, at(market, 2026, 11, 17, 8, 0), calendar, 1))).toBe('2026-11-17');
+  });
+
+  test.each([
+    ['BR', 2026, 11, 13, '2026-11-16'],
+    ['US', 2026, 11, 17, '2026-11-18']
+  ])('%s: paid after closing goes to the next preparation day', (market, y, m, d, expected) => {
+    const calendar = { rows: [], week: mondayToFriday };
+    expect(key(prepDayOf(market, at(market, y, m, d, 20, 0), calendar, 1))).toBe(expected);
+  });
+
+  test.each(['BR', 'US'])('%s: paid on a closed day goes to the next open weekday', (market) => {
+    const calendar = { rows: [], week: mondayToFriday };
+    expect(key(prepDayOf(market, at(market, 2026, 11, 15, 11, 0), calendar, 1))).toBe('2026-11-16');
+  });
+
+  test('the closing time of the week decides, not a fixed 20:00', () => {
+    const early = { rows: [], week: { BR: weekOf([1, 2, 3, 4, 5], '09:00', '18:00') } };
+    expect(key(prepDayOf('BR', at('BR', 2026, 11, 17, 18, 30), early, 0))).toBe('2026-11-18');
+  });
+});

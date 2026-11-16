@@ -46,6 +46,26 @@ function registerAdminDeliveryCalendarRoutes(app, dependencies, { requirePermiss
     }));
   });
 
+  // The standard week of a market (delivery-calendar). Registered before `/:id`, so `week` is never read as an id.
+  app.get('/api/v1/admin/delivery-calendar/week', requirePermission('production.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCalendarService(dependencies).getWeek({ marketQuery: request.marketQuery }));
+  });
+
+  app.post('/api/v1/admin/delivery-calendar/week/preview', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCalendarService(dependencies).previewWeek({
+      marketQuery: request.marketQuery,
+      body: request.body || {}
+    }));
+  });
+
+  app.put('/api/v1/admin/delivery-calendar/week', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => requireCalendarService(dependencies).saveWeek({
+      marketQuery: request.marketQuery,
+      body: request.body || {},
+      identity: request.adminIdentity
+    }));
+  });
+
   // Every write goes through the calendar service, which reschedules and audits in one transaction.
   app.post('/api/v1/admin/delivery-calendar', requirePermission('production.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => requireCalendarService(dependencies).write({
