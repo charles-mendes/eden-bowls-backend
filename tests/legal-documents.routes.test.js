@@ -13,7 +13,9 @@ function tokenFor(userId = 7) {
 
 const IDENTITIES = {
   admin: { userId: '1', email: 'admin@edenbowls.com', roles: ['admin'], permissions: ROLE_PERMISSIONS.admin },
-  operator: { userId: '8', email: 'op@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['BR', 'US'] }
+  operatorBr: { userId: '8', email: 'op.br@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['BR'] },
+  operatorUs: { userId: '9', email: 'op.us@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['US'] },
+  readonly: { userId: '6', email: 'ro@edenbowls.com', roles: ['readonly'], permissions: ROLE_PERMISSIONS.readonly, markets: ['BR', 'US'] }
 };
 
 // An in-memory legal_documents: rows are only inserted, the current one is the last published.
@@ -100,14 +102,39 @@ describe('legal documents routes', () => {
     expect(response.body.details).toEqual({ code: 'legal_version_taken' });
   });
 
-  test('refuses an invalid version id or an empty body, and only the admin publishes', async () => {
+  test('refuses an invalid version id or an empty body', async () => {
     const { app } = setup(IDENTITIES.admin);
     const invalid = await auth(request(app).post('/api/v1/admin/legal/privacy')).send({ market: 'BR', version: '2026-02-30', body_markdown: ' ' });
     expect(invalid.status).toBe(422);
     expect(invalid.body.details).toEqual({ code: 'legal_document_invalid', fields: ['version', 'body_markdown'] });
+  });
 
-    const operator = setup(IDENTITIES.operator);
-    expect((await auth(request(operator.app).get('/api/v1/admin/legal/privacy?market=BR'))).status).toBe(200);
-    expect((await auth(request(operator.app).post('/api/v1/admin/legal/privacy')).send({ market: 'BR', version: '2026-11-01', body_markdown: 'x' })).status).toBe(403);
+  test('the BR operator publishes the BR privacy policy, recorded with who published it, but not the US one', async () => {
+    const { app, auditRepository } = setup(IDENTITIES.operatorBr);
+
+    const published = await auth(request(app).post('/api/v1/admin/legal/privacy')).send({ market: 'BR', version: '2026-11-01', body_markdown: '# Política' });
+    expect(published.status).toBe(200);
+    expect(published.body.current).toMatchObject({ version: '2026-11-01', body_markdown: '# Política' });
+    expect(auditRepository.createIn).toHaveBeenCalledWith({ tx: true }, expect.objectContaining({
+      actorUserId: 8,
+      actorEmail: 'op.br@edenbowls.com',
+      action: 'legal.document.publish',
+      metadata: { market: 'BR', kind: 'privacy', version: '2026-11-01' }
+    }));
+
+    expect((await auth(request(app).post('/api/v1/admin/legal/terms')).send({ market: 'US', version: '2026-11-01', body_markdown: 'x' })).status).toBe(403);
+    expect((await auth(request(app).get('/api/v1/admin/legal/terms?market=US'))).status).toBe(403);
+  });
+
+  test('the US operator publishes the US terms of use but not the BR ones', async () => {
+    const { app } = setup(IDENTITIES.operatorUs);
+    expect((await auth(request(app).post('/api/v1/admin/legal/terms')).send({ market: 'US', version: '2026-11-01', body_markdown: '# Terms' })).status).toBe(200);
+    expect((await auth(request(app).post('/api/v1/admin/legal/terms')).send({ market: 'BR', version: '2026-11-01', body_markdown: '# Termos' })).status).toBe(403);
+  });
+
+  test('readonly reads but does not publish', async () => {
+    const { app } = setup(IDENTITIES.readonly);
+    expect((await auth(request(app).get('/api/v1/admin/legal/privacy?market=BR'))).status).toBe(200);
+    expect((await auth(request(app).post('/api/v1/admin/legal/privacy')).send({ market: 'BR', version: '2026-11-01', body_markdown: 'x' })).status).toBe(403);
   });
 });

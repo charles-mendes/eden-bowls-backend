@@ -5,12 +5,18 @@ const {
   buildAdminNewSubscriptionEmail,
   buildAutoRenewOffEmail,
   buildCancelledEmail,
+  buildCourierDeliveredEmail,
+  buildDeliveryAddressIssueEmail,
+  buildCourierOutForDeliveryEmail,
+  buildNfeEmail,
   buildOrderConfirmedEmail,
   buildPasswordResetEmail,
   buildPausedEmail,
   buildPaymentFailedEmail,
   buildPlanChangedEmail,
+  buildPlanEndingNoticeEmail,
   buildRenewalEmail,
+  buildRenewalNoticeEmail,
   buildResumedEmail,
   buildShippedEmail
 } = require('./transactional-emails');
@@ -36,6 +42,7 @@ const SAMPLE = {
   trackingNumber: '1Z999AA10123456784',
   carrier: 'UPS',
   trackingUrl: 'https://www.ups.com/track?tracknum=1Z999AA10123456784',
+  courierTrackingUrl: 'https://trip.uber.com/abc123',
   nextDeliveryLabel: '02 out 2026',
   resumeAtLabel: '16 out 2026',
   endsAtLabel: '30 set 2026',
@@ -107,6 +114,32 @@ function listEmailPreviews(options = {}) {
       content: buildShippedEmail({ ...sample, ...shell })
     },
     {
+      id: 'courier-out-for-delivery',
+      group: 'P0 · pedido',
+      label: 'Brasil · saiu para entrega',
+      wired: true,
+      content: buildCourierOutForDeliveryEmail({ ...sample, trackingUrl: sample.courierTrackingUrl, ...shell })
+    },
+    {
+      id: 'courier-delivered',
+      group: 'P0 · pedido',
+      label: 'Brasil · entregue',
+      wired: true,
+      content: buildCourierDeliveredEmail({ ...sample, ...shell })
+    },
+    {
+      id: 'delivery-address-issue',
+      group: 'P0 · pedido',
+      label: 'Entrega · dado faltando',
+      wired: true,
+      content: buildDeliveryAddressIssueEmail({
+        ...sample,
+        codes: ['address_neighborhood_missing', 'fiscal_name_missing'],
+        editUrl: 'https://edenbowls.com.br/dashboard/plans/sub_123/edit?step=address',
+        ...shell
+      })
+    },
+    {
       id: 'admin-new-subscription',
       group: 'P0 · operação',
       label: 'Admin · nova assinatura',
@@ -121,11 +154,40 @@ function listEmailPreviews(options = {}) {
       content: buildRenewalEmail({ ...sample, ...shell })
     },
     {
+      id: 'renewal-notice',
+      group: 'P1 · ciclo',
+      label: 'Aviso de renovação',
+      wired: true,
+      content: buildRenewalNoticeEmail({ ...sample, renewsOnLabel: sample.nextDeliveryLabel, ...shell })
+    },
+    {
+      id: 'plan-ending-notice',
+      group: 'P1 · ciclo',
+      label: 'Aviso de fim de plano',
+      wired: true,
+      content: buildPlanEndingNoticeEmail({ ...sample, endsOnLabel: sample.endsAtLabel, ...shell })
+    },
+    {
       id: 'paused',
       group: 'P1 · ciclo',
       label: 'Pausa',
       wired: false,
       content: buildPausedEmail({ ...sample, ...shell })
+    },
+    {
+      id: 'nfe',
+      group: 'P1 · ciclo',
+      label: 'Nota fiscal',
+      wired: true,
+      content: buildNfeEmail({
+        firstName: 'Maria',
+        number: '000158',
+        series: '1',
+        accessKey: '35261165291985000105550010000001581000001589',
+        authorizedLabel: '2 de novembro de 2026',
+        totalLabel: 'R$ 199,00',
+        ...shell
+      })
     },
     {
       id: 'resumed',

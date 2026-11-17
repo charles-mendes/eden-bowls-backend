@@ -64,21 +64,21 @@ describe('admin nutrition parameters routes', () => {
   test('a veterinarian saves a draft and gets 422 for an invalid one', async () => {
     const { app } = setup(IDENTITIES.veterinarian);
     const parameters = defaults();
-    parameters.base.dogue = 190;
+    parameters.combination_giant['NAO-BAIXO-ADEQUADO'] = 90;
 
     const saved = await auth(request(app).put('/api/v1/admin/nutrition/parameters/draft')).send({ parameters });
-    parameters.base.dogue = 500;
+    parameters.combination_giant['NAO-BAIXO-ADEQUADO'] = 500;
     const refused = await auth(request(app).put('/api/v1/admin/nutrition/parameters/draft')).send({ parameters });
 
     expect(saved.status).toBe(200);
-    expect(saved.body.parameters.base.dogue).toBe(190);
+    expect(saved.body.parameters.combination_giant['NAO-BAIXO-ADEQUADO']).toBe(90);
     expect(refused.status).toBe(422);
-    expect(refused.body.details).toMatchObject({ code: 'nutrition_parameters_invalid', fields: ['base.dogue'] });
+    expect(refused.body.details).toMatchObject({ code: 'nutrition_parameters_invalid', fields: ['combination_giant.NAO-BAIXO-ADEQUADO'] });
   });
 
-  test('Simulate with a draft: the draft Dogue factor, while customers keep the published one', async () => {
+  test('Simulate with a draft: the draft giant factor, while customers keep the published one', async () => {
     const parameters = defaults();
-    parameters.base.dogue = 190;
+    parameters.combination_giant['NAO-BAIXO-ADEQUADO'] = 90;
     const { app } = setup(IDENTITIES.veterinarian, { draft: { id: 2, status: 'draft', parameters } });
 
     const draft = await auth(request(app).post('/api/v1/admin/nutrition/simulate')).send({ ...greatDane, parameter_set: 'draft' });
@@ -86,9 +86,9 @@ describe('admin nutrition parameters routes', () => {
 
     expect(draft.status).toBe(200);
     expect(draft.body.data.parameter_set).toEqual({ id: 2, status: 'draft' });
-    expect(draft.body.data.decision_trace).toContain('breed_dogue_group:190');
+    expect(draft.body.data.decision_trace).toEqual(['giant_combination:NAO-BAIXO-ADEQUADO:90']);
     expect(published.body.data.parameter_set).toEqual({ id: 1, status: 'published' });
-    expect(published.body.data.decision_trace).toContain('breed_dogue_group:200');
+    expect(published.body.data.decision_trace).toEqual(['giant_combination:NAO-BAIXO-ADEQUADO:95']);
   });
 
   test('Operator cannot publish nor simulate a draft', async () => {

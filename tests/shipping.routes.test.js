@@ -162,4 +162,29 @@ describe('ShippingService', () => {
       details: { code: 'out_of_coverage', distance: 612.4 }
     });
   });
+
+  test.each([
+    [undefined, 0],
+    [2, 2]
+  ])('quotes Brazil with the delivery days the operator picked (%j), whatever the distance', async (picked, expected) => {
+    const rule = picked === undefined ? settings.br.rule : { ...settings.br.rule, delivery_days: picked };
+    const service = new ShippingService({
+      settings: { ...settings, br: { ...settings.br, rule } },
+      viaCepClient: {
+        lookup: jest.fn().mockResolvedValue({
+          status: 'ok',
+          address: { city: 'Curitiba', state: 'PR', street: 'Rua', neighborhood: 'Centro', zipcode: '80010000' }
+        })
+      },
+      nominatimClient: { geocodeBr: jest.fn().mockResolvedValue({ status: 'ok', lat: -25.43, lng: -49.27 }) },
+      osrmClient: { routeDriving: jest.fn().mockResolvedValue({ status: 'ok', distanceM: 250000, source: 'osrm' }) }
+    });
+
+    const result = await service.calculate({ zipCode: '80010-000', country: 'BR' });
+
+    expect(result.data.distance).toBe(250);
+    expect(result.data.delivery_days).toBe(expected);
+    // The delivery days are process-wide: settle them back on the same day for the other suites.
+    new ShippingService({ settings });
+  });
 });

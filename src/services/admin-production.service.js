@@ -6,12 +6,15 @@ const { toMysqlDateTime } = require('../core/stripe-subscription-map');
 const { mapDeliverySubscription } = require('../infrastructure/repositories/subscription-deliveries.repository');
 const {
   DEFAULT_TIMEZONE,
+  OVERDUE_DAYS,
   dueBucket,
   presentProductionQueueItem
 } = require('../core/production-queue-presenter');
 const {
   constrainMarketQuery,
   assertStripeAccountMarket,
+  effectiveMarkets,
+  isAdminIdentity,
   marketFromStripeAccount,
   shouldEnforceMarketScope
 } = require('../core/admin-market-scope');
@@ -41,7 +44,7 @@ function civilBounds({ timezone, windowDays, now = new Date() }) {
     startOfTomorrow: today.plus({ days: 1 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     startOfDayAfterTomorrow: today.plus({ days: 2 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
     windowEndExclusive: today.plus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss'),
-    overdueFloor: today.minus({ days: windowDays }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
+    overdueFloor: today.minus({ days: OVERDUE_DAYS }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
   };
 }
 
@@ -69,6 +72,21 @@ function stockMoveFor(fromStatus, toStatus) {
   return null;
 }
 
+// A line without a pack size stays out of the boxes, as it stays out of the stock separation.
+function warnUnsizedBoxLines(logger, lines) {
+  if (!logger || typeof logger.warn !== 'function') {
+    return;
+  }
+  for (const line of lines) {
+    logger.warn({
+      event: 'boxes.unsized_line',
+      subscriptionId: line.subscriptionId,
+      periodEnd: line.periodEnd || null,
+      label: line.label
+    }, 'boxes.unsized_line');
+  }
+}
+
 function emptyMetrics() {
   return { today: 0, tomorrow: 0, upcoming: 0, overdue: 0 };
 }
@@ -88,9 +106,37 @@ function bucketMetrics(rows, { timezone, now, includeOverdue }) {
     if (bucket === 'overdue' && !includeOverdue) {
       continue;
     }
+    // keep-ready-orders-dispatchable: overdue counts late kitchen work. A ready cycle the queue keeps past its day
+    // is waiting to leave and is counted by the courier's "a despachar".
+    if (bucket === 'overdue' && item.productionStatus === 'ready') {
+      continue;
+    }
     metrics[bucket] += 1;
   }
   return metrics;
+}
+
+// pack-stock: the coverage of a queue item and, when short, the recipes the stock left over did not cover, named
+// as the stock screen names them.
+function stockCoverageFields(found, item, recipeNames) {
+  const coverage = typeof found === 'string' ? found : (found && found.coverage) || null;
+  const shortages = coverage === 'short' && found && Array.isArray(found.shortages) ? found.shortages : [];
+  const market = String(item.stripeAccount || '').toLowerCase() === 'br' ? 'BR' : 'US';
+  const names = recipeNames && recipeNames[market] ? recipeNames[market] : {};
+  const lines = Array.isArray(item.lineItems) ? item.lineItems : [];
+  return {
+    stockCoverage: coverage,
+    stockShortages: shortages.map((shortage) => {
+      const catalog = names[shortage.flavorKey];
+      const line = lines.find((entry) => entry.flavorKey === shortage.flavorKey);
+      return {
+        flavorKey: shortage.flavorKey,
+        packSizeGrams: shortage.packSizeGrams,
+        recipeName: (catalog && (catalog.shortLabel || catalog.label)) || (line && line.flavor) || shortage.flavorKey,
+        missing: shortage.missing
+      };
+    })
+  };
 }
 
 class AdminProductionService {
@@ -102,6 +148,9 @@ class AdminProductionService {
     this.recipeNamesRepository = options.recipeNamesRepository || null;
     this.packStock = options.packStock || null;
     this.now = options.now || (() => new Date());
+    // The live shipping settings, for the boxes of each cycle (shipping-boxes).
+    this.shippingSettings = options.shippingSettings || (() => null);
+    this.logger = options.logger || null;
   }
 
   // Coverage is extra information: without stock storage, or if it fails, the queue lists as before.
@@ -136,7 +185,9 @@ class AdminProductionService {
       timezone,
       now: this.now(),
       actor,
-      recipeNames
+      recipeNames,
+      shippingSettings: this.shippingSettings(),
+      onUnsizedLines: (lines) => warnUnsizedBoxLines(this.logger, lines)
     });
   }
 
@@ -167,6 +218,8 @@ class AdminProductionService {
       productionStatus: query.productionStatus || undefined,
       due: query.due || undefined,
       q: query.q || undefined,
+      // The search reads the account name only where the queue would show it (admin-market-scope).
+      nameMarkets: shouldEnforceMarketScope(actor) && !isAdminIdentity(actor) ? effectiveMarkets(actor) : null,
       offset: pagination.offset,
       perPage: pagination.perPage
     };
@@ -187,7 +240,8 @@ class AdminProductionService {
       ...paginatedEnvelope({
         items: result.items.map((row) => {
           const item = this.present(row, timezone, actor, recipeNames);
-          return { ...item, stockCoverage: coverage ? (coverage.get(`${item.id}|${item.currentPeriodEnd}`) || null) : null };
+          const found = coverage ? coverage.get(`${item.id}|${item.currentPeriodEnd}`) : null;
+          return { ...item, ...stockCoverageFields(found, item, recipeNames) };
         }),
         total: result.total,
         page: pagination.page,
@@ -201,8 +255,9 @@ class AdminProductionService {
     };
   }
 
-  async updateStatus(id, body, actor = {}) {
-    const timezone = DEFAULT_TIMEZONE;
+  // The cycle a status change (or its preview) acts on, with the same refusals: 404, the market scope, a
+  // subscription out of the queue and a stale period end.
+  async resolveCycle(id, periodEndInput, actor = {}) {
     const row = await this.ledgerRepository.findById(id);
     if (!row) {
       throw new HttpError(404, 'Subscription not found.');
@@ -213,7 +268,7 @@ class AdminProductionService {
 
     // A paid cycle stays workable whatever happens to the renewals after it. An unpaid cycle is the next
     // renewal (for past_due, the renewal that failed) and must still be in the queue.
-    const requested = await this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, body.periodEnd);
+    const requested = await this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, periodEndInput);
     const paid = Boolean(requested && requested.paidAt);
     const unpaidKey = row.status === 'past_due' ? row.currentPeriodStart : row.currentPeriodEnd;
     if (!paid) {
@@ -222,15 +277,41 @@ class AdminProductionService {
           code: 'production_not_eligible'
         });
       }
-      if (!periodEndsMatch(body.periodEnd, unpaidKey)) {
+      if (!periodEndsMatch(periodEndInput, unpaidKey)) {
         throw new HttpError(409, 'Production cycle period end is stale.', {
           code: 'production_period_stale'
         });
       }
     }
 
-    let periodEnd = paid ? requested.periodEnd : unpaidKey;
+    const periodEnd = paid ? requested.periodEnd : unpaidKey;
     const currentCycle = paid ? requested : await this.productionRepository.findBySubscriptionAndPeriodEnd(row.id, periodEnd);
+    return { row, paid, periodEnd, currentCycle };
+  }
+
+  // production-block-preview: where blocking this cycle would move its charge. Reads only.
+  async previewBlock(id, periodEndInput, actor = {}) {
+    const { row, paid, periodEnd } = await this.resolveCycle(id, periodEndInput, actor);
+    if (paid || !this.deliverySchedule || typeof this.deliverySchedule.previewBlock !== 'function') {
+      return { charged: paid, chargeMovesTo: null, preparationDay: null };
+    }
+    const delivery = mapDeliverySubscription(row);
+    return this.deliverySchedule.previewBlock({
+      subscription: {
+        market: delivery.market,
+        chargeAt: new Date(periodEnd),
+        transitDays: delivery.transitDays,
+        stripeSubscriptionId: row.stripeSubscriptionId
+      },
+      alreadyCharged: false
+    });
+  }
+
+  async updateStatus(id, body, actor = {}) {
+    const timezone = DEFAULT_TIMEZONE;
+    const resolved = await this.resolveCycle(id, body.periodEnd, actor);
+    const { row, paid, currentCycle } = resolved;
+    let { periodEnd } = resolved;
     const fromStatus = currentCycle && currentCycle.status ? currentCycle.status : 'to_prepare';
     const allowed = ALLOWED_TRANSITIONS[fromStatus] || new Set();
     if (!allowed.has(body.status)) {

@@ -28,7 +28,7 @@ function plan(overrides = {}) {
     termMonths: 3,
     chargedCount: 1,
     autoRenew: true,
-    chargeAt: at(2026, 1, 3, 14),
+    chargeAt: at(2026, 1, 3, 21), // Saturday after closing: prepared on Monday
     productionStatus: 'in_production',
     packsPerMonth: 8,
     subtotal: 100,
@@ -115,7 +115,7 @@ describe('following delivery routes (3.9)', () => {
     expect(stripe.setTrialEnd).not.toHaveBeenCalled();
     expect(subscriptions.recordPendingChanges).toHaveBeenCalledWith(expect.anything(), {
       charge_move: { kind: 'skip', trial_end: unix(2026, 3, 4) },
-      after_charge_at: at(2026, 1, 3, 14).toISOString(),
+      after_charge_at: at(2026, 1, 3, 21).toISOString(),
       recorded_at: BEFORE_CHARGE.toISOString()
     });
     expect(read.delivery.date).toBe('2026-01-05');

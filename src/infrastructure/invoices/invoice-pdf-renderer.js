@@ -1,32 +1,16 @@
-const path = require('path');
 const PDFDocument = require('pdfkit');
+const {
+  LOGO_PATH,
+  LOGO_RATIO,
+  COLORS,
+  FONT_BODY,
+  FONT_STRONG,
+  FONT_DISPLAY,
+  registerBrandFonts
+} = require('../pdf/brand');
 
-const ASSETS_DIR = path.join(__dirname, 'assets');
-
-// Brand tokens of the approved layout (same palette as the emails in src/core/email/html.js).
-const COLORS = {
-  paper: '#FFFBF4',
-  ink: '#212E25',
-  muted: '#5C6758',
-  clay: '#B08F66',
-  moss: '#7B876F',
-  parchment: '#F5EFE2',
-  rule: '#E3DBC6',
-  tableRule: '#6F766A',
-  panel: '#F4EFE3',
-  panelBorder: '#D9D1B9',
-  badge: '#FBE9C9',
-  badgeText: '#7E5E36',
-  paidBadge: '#E5E9DD',
-  paidBadgeText: '#55614A'
-};
-
-const FONT_BODY = 'EdenBody';
-const FONT_STRONG = 'EdenStrong';
-const FONT_DISPLAY = 'EdenDisplay';
 const MARGIN = 50;
 const LOGO_HEIGHT = 40;
-const LOGO_RATIO = 900 / 317;
 const LABEL = { size: 6.8, spacing: 1.5 };
 const ROW_PAD_TOP = 12;
 const ROW_PAD_BOTTOM = 13;
@@ -58,7 +42,7 @@ function paintPaper(doc) {
 }
 
 function drawTop(doc, model, right, width) {
-  doc.image(path.join(ASSETS_DIR, 'logo-horizontal.png'), MARGIN, 43, {
+  doc.image(LOGO_PATH, MARGIN, 43, {
     height: LOGO_HEIGHT,
     width: LOGO_HEIGHT * LOGO_RATIO
   });
@@ -242,9 +226,7 @@ function renderInvoicePdf(model) {
     doc.on('error', reject);
 
     try {
-      doc.registerFont(FONT_BODY, path.join(ASSETS_DIR, 'Quicksand-Regular.ttf'));
-      doc.registerFont(FONT_STRONG, path.join(ASSETS_DIR, 'Quicksand-SemiBold.ttf'));
-      doc.registerFont(FONT_DISPLAY, path.join(ASSETS_DIR, 'TenorSans-Latin.ttf'));
+      registerBrandFonts(doc);
 
       const right = doc.page.width - MARGIN;
       const width = right - MARGIN;

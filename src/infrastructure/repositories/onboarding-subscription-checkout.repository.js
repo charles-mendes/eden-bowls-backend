@@ -1,4 +1,5 @@
 const { HttpError } = require('../../core/http-error');
+const { FISCAL_NAME_META_KEY, TAX_DOCUMENT_META_KEY } = require('../../core/tax-document');
 const { collectPriceItems } = require('../../core/checkout-state');
 const { discountAmountFromSubtotal } = require('../../core/first-purchase-discount');
 
@@ -27,6 +28,7 @@ class OnboardingSubscriptionCheckoutRepository {
     this.petsTableName = options.petsTableName || 'onboarding_pets';
     this.postmetaTableName = options.postmetaTableName || 'wp_postmeta';
     this.usersTableName = options.usersTableName || 'wp_users';
+    this.usermetaTableName = options.usermetaTableName || 'wp_usermeta';
   }
 
   ensureDataSource() {
@@ -74,6 +76,38 @@ class OnboardingSubscriptionCheckoutRepository {
       recurrence: parseJsonColumn(state && state.recurrence),
       checkoutReference: parseJsonColumn(state && state.checkout_reference)
     };
+  }
+
+  // The account's CPF and fiscal name, as stored (null when absent): the edit and the NF-e read the same metas.
+  async findFiscalData(userId) {
+    this.ensureDataSource();
+    const rows = await this.dataSource.query(
+      `SELECT \`meta_key\`, \`meta_value\` FROM \`${this.usermetaTableName}\`
+       WHERE \`user_id\` = ? AND \`meta_key\` IN (?, ?) ORDER BY \`umeta_id\` ASC`,
+      [userId, TAX_DOCUMENT_META_KEY, FISCAL_NAME_META_KEY]
+    );
+    const meta = Object.fromEntries((rows || []).map((row) => [row.meta_key, row.meta_value]));
+    return { taxDocument: meta[TAX_DOCUMENT_META_KEY] || null, fiscalName: meta[FISCAL_NAME_META_KEY] || null };
+  }
+
+  async saveTaxDocument(userId, document) {
+    await this.replaceUserMeta(userId, TAX_DOCUMENT_META_KEY, document);
+  }
+
+  async saveFiscalName(userId, name) {
+    await this.replaceUserMeta(userId, FISCAL_NAME_META_KEY, name);
+  }
+
+  async replaceUserMeta(userId, key, value) {
+    this.ensureDataSource();
+    await this.dataSource.query(
+      `DELETE FROM \`${this.usermetaTableName}\` WHERE \`user_id\` = ? AND \`meta_key\` = ?`,
+      [userId, key]
+    );
+    await this.dataSource.query(
+      `INSERT INTO \`${this.usermetaTableName}\` (\`user_id\`, \`meta_key\`, \`meta_value\`) VALUES (?, ?, ?)`,
+      [userId, key, value]
+    );
   }
 
   async getUserEmail(userId) {

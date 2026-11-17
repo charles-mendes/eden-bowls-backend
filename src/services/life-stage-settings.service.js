@@ -2,6 +2,8 @@ const { HttpError } = require('../core/http-error');
 const { resolveLifeStage } = require('../core/life-stage');
 const { parseLifeStageBreed, parseLifeStageLimits } = require('../core/life-stage-settings');
 
+const HISTORY_LIMIT = 50;
+
 function actorIdOf(actor) {
   const id = actor && (actor.userId || actor.id);
   return id ? Number(id) : null;
@@ -36,8 +38,15 @@ class LifeStageSettingsService {
     this.now = now;
   }
 
+  // The limits and breeds of the market with the latest edits of both, newest first: who, when and what.
   async overview(market) {
-    return this.repository.listMarket(market);
+    const [stored, history] = await Promise.all([this.repository.listMarket(market), this.history(market)]);
+    return { ...stored, history };
+  }
+
+  async history(market) {
+    if (!this.auditRepository || typeof this.auditRepository.listByActionPrefix !== 'function') return [];
+    return this.auditRepository.listByActionPrefix({ actionPrefix: 'life_stage.', market, limit: HISTORY_LIMIT });
   }
 
   async inTransaction(work) {
@@ -69,7 +78,7 @@ class LifeStageSettingsService {
         after: limits
       });
     });
-    return this.repository.listMarket(market);
+    return this.overview(market);
   }
 
   async createBreed(market, input, actor = {}) {

@@ -22,7 +22,7 @@ function registerAdminNutritionSettingsRoutes(app, dependencies, { requirePermis
   });
 
   app.delete('/api/v1/admin/nutrition/parameters/draft', requirePermission('nutrition.settings.write', { market: 'none' }), async (request, response, next) => {
-    await handle(response, next, async () => requireParametersService(dependencies).discardDraft());
+    await handle(response, next, async () => requireParametersService(dependencies).discardDraft(request.adminIdentity));
   });
 
   app.post('/api/v1/admin/nutrition/parameters/:id/copy-to-draft', requirePermission('nutrition.settings.write', { market: 'none' }), async (request, response, next) => {

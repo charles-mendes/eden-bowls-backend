@@ -128,6 +128,11 @@ function buildShippingBrSettingsEntitySchema(tableName = 'shipping_br_settings')
         name: 'max_days',
         type: Number
       },
+      deliveryDays: {
+        name: 'delivery_days',
+        type: Number,
+        default: 0
+      },
       createdAt: {
         name: 'created_at',
         type: 'datetime',
@@ -225,6 +230,12 @@ function buildShippingUsSettingsEntitySchema(tableName = 'shipping_us_settings')
         length: 2,
         default: 'US'
       },
+      shipFromPhone: {
+        name: 'ship_from_phone',
+        type: String,
+        length: 32,
+        default: ''
+      },
       packageWeightLb: {
         name: 'package_weight_lb',
         type: 'decimal',
@@ -252,6 +263,13 @@ function buildShippingUsSettingsEntitySchema(tableName = 'shipping_us_settings')
         precision: 10,
         scale: 2,
         default: 12
+      },
+      packageDryIceKg: {
+        name: 'package_dry_ice_kg',
+        type: 'decimal',
+        precision: 3,
+        scale: 1,
+        default: 0.5
       },
       allowedServiceCodes: {
         name: 'allowed_service_codes',

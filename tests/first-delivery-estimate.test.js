@@ -10,7 +10,7 @@ const { formatDeliveryDay } = require('../src/infrastructure/mailers/transaction
 const estimator = new DeliveryEstimator({ calendar: { listActive: async () => buildSeedRows() } });
 const unix = (date) => Math.floor(date.getTime() / 1000);
 
-// Wednesday 7 October 2026 at 15:00 in Sao Paulo: Wednesday's midnight has passed, so Thursday 8 October.
+// Wednesday 7 October 2026 at 15:00 in Sao Paulo, inside the hours (09:00–20:00): prepared that Wednesday.
 const BR_PURCHASE = wallTimeToUtc(2026, 10, 7, 15, 0, 0, TIMEZONE_BR);
 // Thursday 8 October 2026 at 10:00 in New York, 1 transit day: Friday cannot ship (pickup Saturday), so
 // preparation Monday 12 October (Columbus Day is a normal UPS day), pickup Tuesday 13, delivery Wednesday 14.
@@ -22,7 +22,7 @@ const MARKETS = [
     query: { country: 'BR' },
     at: BR_PURCHASE,
     ledger: { stripeAccount: 'br', address: { country: 'BR' }, shipping: { distance: 10 } },
-    expected: { preparationDay: '2026-10-08', deliveryDate: '2026-10-08' }
+    expected: { preparationDay: '2026-10-07', deliveryDate: '2026-10-07' }
   },
   {
     name: 'US, bought on a Thursday',
@@ -121,5 +121,24 @@ describe('order confirmation names the first delivery (3.14)', () => {
     const en = buildOrderConfirmedEmail({ petName: 'Luna', firstDeliveryLabel: enLabel, locale: 'en-US' });
     expect(en.text).toContain('Your first delivery is planned for Thursday, October 8.');
     expect(en.text).not.toContain('already started preparing');
+  });
+});
+
+describe('the estimate reads the standard week (delivery-calendar)', () => {
+  const { weekOf } = require('../src/core/delivery-closed-days');
+  const snapshotEstimator = (week) => new DeliveryEstimator({
+    calendar: { snapshot: async () => ({ rows: [], week }) }
+  });
+
+  test('a Brazil payment at 10:00 on an open Tuesday prepares that Tuesday', async () => {
+    const at = wallTimeToUtc(2026, 11, 17, 10, 0, 0, TIMEZONE_BR);
+    const estimate = await snapshotEstimator({ BR: weekOf([1, 2, 3, 4, 5]) }).estimate({ market: 'BR', at, transitDays: 0 });
+    expect(estimate).toEqual({ preparationDay: '2026-11-17', deliveryDate: '2026-11-17' });
+  });
+
+  test('a Brazil payment on Saturday with Saturday closed prepares on Monday', async () => {
+    const at = wallTimeToUtc(2026, 11, 14, 10, 0, 0, TIMEZONE_BR);
+    const estimate = await snapshotEstimator({ BR: weekOf([1, 2, 3, 4, 5]) }).estimate({ market: 'BR', at, transitDays: 0 });
+    expect(estimate.preparationDay).toBe('2026-11-16');
   });
 });

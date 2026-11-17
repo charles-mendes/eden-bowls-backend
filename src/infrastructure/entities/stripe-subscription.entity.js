@@ -100,6 +100,11 @@ function buildStripeSubscriptionEntitySchema(tableName = 'stripe_subscriptions')
         type: 'json',
         nullable: true
       },
+      checkoutSnapshot: {
+        name: 'checkout_snapshot',
+        type: 'json',
+        nullable: true
+      },
       subscriptionTermMonths: {
         name: 'subscription_term_months',
         type: 'tinyint',
@@ -122,6 +127,12 @@ function buildStripeSubscriptionEntitySchema(tableName = 'stripe_subscriptions')
         type: 'int',
         unsigned: true,
         nullable: true
+      },
+      contractStartCharged: {
+        name: 'contract_start_charged',
+        type: 'int',
+        unsigned: true,
+        default: 0
       },
       lastChargedInvoiceId: {
         name: 'last_charged_invoice_id',

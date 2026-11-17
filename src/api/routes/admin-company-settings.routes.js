@@ -22,8 +22,8 @@ function singleMarket(request) {
   return market;
 }
 
-// Settings pages of the admin, per market. Company profile (company-profile): reading needs settings.read,
-// saving settings.company.write (admin only). Automated emails (automated-email-settings): reading needs
+// Settings pages of the admin, per market. Company profile (company-profile): reading needs settings.read and
+// returns the edit history, saving settings.company.write (admin, and the operator in an assigned market). Automated emails (automated-email-settings): reading needs
 // settings.read, saving settings.email.write (admin and operator).
 function registerAdminCompanySettingsRoutes(app, dependencies, { requirePermission, handle }) {
   app.get('/api/v1/admin/settings/company', requirePermission('settings.read', { market: 'query' }), async (request, response, next) => {

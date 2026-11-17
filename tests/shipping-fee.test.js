@@ -1,18 +1,16 @@
 const {
   applyShippingFee,
   billableDistanceKm,
-  deliveryDays,
   formatBrZipcode,
   haversineMeters
 } = require('../src/core/shipping-fee');
 
 describe('shipping-fee', () => {
-  test('applies per_km and clamps delivery days to the minimum', () => {
+  test('applies per_km', () => {
     const fee = applyShippingFee(18.5, { per_km: 0.95, min_fee: 0 });
     expect(fee.shipping).toBe(17.58);
     expect(fee.raw).toBe(17.58);
     expect(fee.minimumApplied).toBe(false);
-    expect(deliveryDays(18.5, { km_per_day: 80, min_days: 2, max_days: 10 })).toBe(2);
   });
 
   test('multiplies haversine distance by the road factor', () => {

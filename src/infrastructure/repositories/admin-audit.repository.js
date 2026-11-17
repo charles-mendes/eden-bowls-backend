@@ -1,5 +1,16 @@
 const { HttpError } = require('../../core/http-error');
 
+function mapEvent(row) {
+  return {
+    id: Number(row.id),
+    actorUserId: row.actor_user_id == null ? null : Number(row.actor_user_id),
+    actorEmail: row.actor_email || null,
+    action: row.action,
+    metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata || {}),
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at
+  };
+}
+
 class AdminAuditRepository {
   constructor(dataSource, options = {}) {
     this.dataSource = dataSource;
@@ -60,7 +71,30 @@ class AdminAuditRepository {
     return { id: Number(rows[0].id), action: rows[0].action, metadata };
   }
 
-  // Calendar events of one market whose date falls in one year, newest first.
+  // Events whose action starts with `actionPrefix` (`life_stage.`, `nutrition.parameters.`), newest first. With
+  // `market`, only events whose metadata names that market.
+  async listByActionPrefix({ actionPrefix, market = null, limit = 50 }) {
+    this.ensureDataSource();
+    const prefix = String(actionPrefix || '').replace(/[\\%_]/g, (character) => `\\${character}`);
+    const where = ['action LIKE ?'];
+    const params = [`${prefix}%`];
+    if (market) {
+      where.push("JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.market')) = ?");
+      params.push(market);
+    }
+    const rows = await this.dataSource.query(
+      `SELECT id, actor_user_id, actor_email, action, metadata, created_at
+         FROM \`${this.tableName}\`
+        WHERE ${where.join(' AND ')}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?`,
+      [...params, Number(limit)]
+    );
+    return rows.map(mapEvent);
+  }
+
+  // Calendar events of one market in one year, newest first: closed-day changes by the year of their date, and
+  // changes of the standard week (which have no date) by the year they were made.
   async listDeliveryCalendar({ market, year, limit = 200 }) {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
@@ -68,19 +102,13 @@ class AdminAuditRepository {
          FROM \`${this.tableName}\`
         WHERE action LIKE 'delivery\\_calendar.%'
           AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.market')) = ?
-          AND JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.closedOn')) LIKE ?
+          AND (JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.closedOn')) LIKE ?
+               OR (action = 'delivery_calendar.week_update' AND YEAR(created_at) = ?))
         ORDER BY created_at DESC, id DESC
         LIMIT ?`,
-      [market, `${year}-%`, limit]
+      [market, `${year}-%`, Number(year), limit]
     );
-    return rows.map((row) => ({
-      id: Number(row.id),
-      actorUserId: row.actor_user_id == null ? null : Number(row.actor_user_id),
-      actorEmail: row.actor_email || null,
-      action: row.action,
-      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata || {}),
-      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at
-    }));
+    return rows.map(mapEvent);
   }
 }
 

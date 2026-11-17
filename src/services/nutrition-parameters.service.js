@@ -1,5 +1,29 @@
 const { HttpError } = require('../core/http-error');
-const { parseNutritionParameters } = require('../core/nutrition-parameters');
+const { parseNutritionParameters, upgradeNutritionParameters } = require('../core/nutrition-parameters');
+
+const HISTORY_LIMIT = 50;
+const VALUE_SECTIONS = ['base', 'state', 'combination', 'nem'];
+
+// Each factor and breed group that differs between two parameter sets, as `{ field, from, to }`.
+function changesBetween(before, after) {
+  const changes = [];
+  if (!before || !after) return changes;
+  for (const section of VALUE_SECTIONS) {
+    const keys = new Set([...Object.keys(before[section] || {}), ...Object.keys(after[section] || {})]);
+    for (const key of keys) {
+      const from = before[section] ? before[section][key] : undefined;
+      const to = after[section] ? after[section][key] : undefined;
+      if (from !== to) changes.push({ field: `${section}.${key}`, from: from === undefined ? null : from, to: to === undefined ? null : to });
+    }
+  }
+  const groups = new Set([...Object.keys(before.breed_groups || {}), ...Object.keys(after.breed_groups || {})]);
+  for (const group of groups) {
+    const from = ((before.breed_groups || {})[group] || []).join(', ');
+    const to = ((after.breed_groups || {})[group] || []).join(', ');
+    if (from !== to) changes.push({ field: `breed_groups.${group}`, from, to });
+  }
+  return changes;
+}
 
 function actorIdOf(actor) {
   const id = actor && (actor.userId || actor.id);
@@ -16,12 +40,25 @@ class NutritionParametersService {
   }
 
   async overview() {
-    const [published, draft, history] = await Promise.all([
+    const [published, draft, history, audit] = await Promise.all([
       this.repository.published(),
       this.repository.draft(),
-      this.repository.history()
+      this.repository.history(),
+      this.auditLog()
     ]);
-    return { published, draft, history };
+    return { published, draft, history, audit };
+  }
+
+  // Draft saves, discards, copies and publications, newest first: who, when and what changed.
+  async auditLog() {
+    if (!this.auditRepository || typeof this.auditRepository.listByActionPrefix !== 'function') return [];
+    return this.auditRepository.listByActionPrefix({ actionPrefix: 'nutrition.parameters.', limit: HISTORY_LIMIT });
+  }
+
+  // An audit event outside a transaction: the draft is not what customers get, so a failed write does not undo it.
+  async record(actor, action, metadata) {
+    if (!this.auditRepository || typeof this.auditRepository.create !== 'function') return;
+    await this.auditRepository.create({ actorUserId: actorIdOf(actor), actorEmail: (actor && actor.email) || null, action, metadata });
   }
 
   // Parameters for a calculation: the published set, or the draft when asked (falls back to the published one).
@@ -39,7 +76,11 @@ class NutritionParametersService {
 
   async saveDraft(input, actor = {}) {
     const parameters = parseNutritionParameters(input);
-    return this.repository.saveDraft({ parameters, actorId: actorIdOf(actor) });
+    const [draft, published] = await Promise.all([this.repository.draft(), this.repository.published()]);
+    const before = draft ? draft.parameters : published.parameters;
+    const saved = await this.repository.saveDraft({ parameters, actorId: actorIdOf(actor) });
+    await this.record(actor, 'nutrition.parameters.draft.save', { set_id: saved && saved.id, changes: changesBetween(before, parameters) });
+    return saved;
   }
 
   // A previous set as the new draft, to publish it again.
@@ -48,11 +89,15 @@ class NutritionParametersService {
     if (!set || set.status === 'draft') {
       throw new HttpError(404, 'Nutrition parameter set not found.', { code: 'nutrition_parameter_set_not_found' });
     }
-    return this.repository.saveDraft({ parameters: parseNutritionParameters(set.parameters), actorId: actorIdOf(actor) });
+    const saved = await this.repository.saveDraft({ parameters: parseNutritionParameters(upgradeNutritionParameters(set.parameters)), actorId: actorIdOf(actor) });
+    await this.record(actor, 'nutrition.parameters.copy_to_draft', { from_set_id: set.id, set_id: saved && saved.id });
+    return saved;
   }
 
-  async discardDraft() {
+  async discardDraft(actor = {}) {
+    const draft = await this.repository.draft();
     await this.repository.deleteDraft();
+    if (draft) await this.record(actor, 'nutrition.parameters.draft.discard', { set_id: draft.id });
     return { discarded: true };
   }
 
@@ -71,7 +116,7 @@ class NutritionParametersService {
           actorUserId: actorIdOf(actor),
           actorEmail: (actor && actor.email) || null,
           action: 'nutrition.parameters.publish',
-          metadata: { from_set_id: previous.id, to_set_id: draft.id }
+          metadata: { from_set_id: previous.id, to_set_id: draft.id, changes: changesBetween(previous.parameters, draft.parameters) }
         });
       }
     };

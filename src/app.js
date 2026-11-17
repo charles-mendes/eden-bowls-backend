@@ -37,6 +37,7 @@ const { registerSubscriptionsLifeStageNoticesRoutes } = require('./api/routes/su
 const { registerSubscriptionsEditCommitRoutes } = require('./api/routes/subscriptions-edit-commit.routes');
 const { registerCustomerDeliveriesRoutes } = require('./api/routes/customer-deliveries.routes');
 const { registerCustomerInvoicesRoutes } = require('./api/routes/customer-invoices.routes');
+const { registerBlingRoutes } = require('./api/routes/bling.routes');
 const { registerSubscriptionsEditPreviewRoutes } = require('./api/routes/subscriptions-edit-preview.routes');
 const { registerSubscriptionsRoutes } = require('./api/routes/subscriptions.routes');
 const { registerStripeWebhookRoutes } = require('./api/routes/stripe-webhook.routes');
@@ -121,7 +122,10 @@ function createApp(dependencies = {}) {
       return express.json({ limit: '5mb' })(request, response, next);
     }
     // A 5 MB recipe image is about 6.7 MB in base64.
-    if (request.method === 'PUT' && /^\/api\/v1\/admin\/catalog\/recipe-content\/[^/]+\/(plan-)?image\/?$/.test(request.path)) {
+    if (request.method === 'PUT' && /^\/api\/v1\/admin\/catalog\/products\/[^/]+\/content\/(plan-)?image\/?$/.test(request.path)) {
+      return express.json({ limit: '8mb' })(request, response, next);
+    }
+    if (request.method === 'POST' && /^\/api\/v1\/admin\/media\/?$/.test(request.path)) {
       return express.json({ limit: '8mb' })(request, response, next);
     }
     next();
@@ -219,6 +223,7 @@ function createApp(dependencies = {}) {
   registerSubscriptionsEditCommitRoutes(app, dependencies);
   registerCustomerDeliveriesRoutes(app, dependencies);
   registerCustomerInvoicesRoutes(app, dependencies);
+  registerBlingRoutes(app, dependencies);
   registerSubscriptionsRoutes(app, dependencies);
   registerStripeWebhookRoutes(app, dependencies);
   registerOnboardingPetImageRoutes(app, dependencies);

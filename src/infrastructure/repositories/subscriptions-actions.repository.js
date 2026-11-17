@@ -4,6 +4,7 @@ const { mapLedgerToActionSummary } = require('../../core/subscription-dashboard'
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 const {
+  contractPaid,
   lastContractedDeliveryCharged,
   resolveAutoRenew,
   stripeChargedInvoiceCount
@@ -36,7 +37,12 @@ class SubscriptionsActionsRepository {
     if (action === 'pause') {
       await stripeBilling.pauseSubscription(subscriptionId);
     } else if (action === 'reactivate') {
-      await stripeBilling.resumeSubscription(subscriptionId);
+      // The store offers Reactivate on a plan that is paused or set to cancel, so both are undone here.
+      const cancelPending = Boolean(row.cancelAtPeriodEnd);
+      await stripeBilling.resumeSubscription(subscriptionId, { clearCancelAtPeriodEnd: cancelPending });
+      if (cancelPending && typeof this.ledgerRepository.setAutoRenew === 'function') {
+        await this.ledgerRepository.setAutoRenew(subscriptionId, true);
+      }
     } else if (action === 'cancel') {
       // Cancel at period end so the current cycle remains usable until Stripe confirms via webhook.
       await stripeBilling.cancelSubscription(subscriptionId);
@@ -107,7 +113,7 @@ class SubscriptionsActionsRepository {
     }
     const plan = row.planSelection || {};
     const term = Number(row.subscriptionTermMonths || plan.subscription_term_months || 1) || 1;
-    return lastContractedDeliveryCharged(paid, term);
+    return lastContractedDeliveryCharged(contractPaid(paid, row), term);
   }
 
   async updateCardSnapshot(row, paymentMethodId, stripeBilling) {

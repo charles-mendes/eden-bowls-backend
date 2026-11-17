@@ -1,33 +1,17 @@
 const { HttpError } = require('../core/http-error');
+const { assertRecordMarket, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const {
+  MEDIA_ASSET_INVALID,
   RECIPE_CONTENT_IN_USE,
-  RECIPE_IMAGE_INVALID,
   labelCompleteness,
-  RECIPE_KEY_INVALID,
   normalizeRecipeMarket,
-  parseRecipeKey,
   parseRecipeLabel,
   parseRecipePresentation,
   recipeKeyOf
 } = require('../core/recipe-content');
-const { LIFE_STAGES } = require('../core/flavors');
 
-const MAX_RECIPE_NAME_LENGTH = 120;
-
-function parseRecipeName(value) {
-  const name = String(value == null ? '' : value).trim();
-  if (!name || name.length > MAX_RECIPE_NAME_LENGTH) {
-    throw new HttpError(422, `Recipe name must have 1 to ${MAX_RECIPE_NAME_LENGTH} characters.`, { code: 'recipe_name_invalid' });
-  }
-  return name;
-}
-
-function parseRecipeLifeStage(value) {
-  const lifeStage = String(value == null ? '' : value).trim().toLowerCase();
-  if (!LIFE_STAGES.includes(lifeStage)) {
-    throw new HttpError(422, `Recipe life stage must be one of ${LIFE_STAGES.join(', ')}.`, { code: 'recipe_life_stage_invalid' });
-  }
-  return lifeStage;
+function productNotFound() {
+  return new HttpError(404, 'Product not found.', { code: 'product_not_found' });
 }
 
 function notFound() {
@@ -46,147 +30,67 @@ function marketOf(market) {
   }
   return normalized;
 }
-const { processRecipeImage } = require('../infrastructure/imaging/recipe-image');
 
-function decodeImageBase64(imageBase64) {
-  const raw = String(imageBase64 || '');
-  const buffer = raw && !/data:|,/.test(raw) ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
-  if (!buffer.length) {
-    throw new HttpError(422, 'Invalid image data.', { code: RECIPE_IMAGE_INVALID, reason: 'data' });
-  }
-  return buffer;
-}
-
-// Image and label of a recipe per market and flavor (recipe-content), shared by every size of that flavor.
+// Content of a product (recipe-content): image, plan image, label and presentation, shared by every size of the
+// product. Name, life stage, aliases and short label change through the product PATCH (admin-catalog). Its banner
+// and plan thumbnail are library images (plan-image-library): nothing here deletes an image file.
 class RecipeContentService {
   constructor(options = {}) {
     this.repository = options.repository;
     this.catalogRepository = options.catalogRepository;
-    this.imageStorage = options.imageStorage || null;
-    this.processImage = options.processImage || processRecipeImage;
+    this.mediaLibraryService = options.mediaLibraryService || null;
     this.auditService = options.auditService || null;
-    this.logger = options.logger || null;
   }
 
-  // A registered recipe of the market, by its key as sent, with the variations that use it.
-  async resolve(market, recipeKey) {
-    const normalizedMarket = marketOf(market);
-    const key = plainKey(recipeKey);
-    const content = key ? await this.repository.findByMarketAndSlug(normalizedMarket, key) : null;
+  // A product's content with the product's variations; a staff session reaches only its markets.
+  async resolve(productId, actor = {}) {
+    const id = Number(productId);
+    const content = Number.isInteger(id) && id > 0 ? await this.repository.findByProductId(id) : null;
     if (!content) {
-      throw notFound();
+      throw productNotFound();
     }
-    const variations = await this.catalogRepository.listRecipeVariations(normalizedMarket, key);
-    return { market: normalizedMarket, key, variations, content };
+    if (shouldEnforceMarketScope(actor)) {
+      assertRecordMarket(actor, content.market);
+    }
+    const variations = await this.catalogRepository.listProductVariations(id);
+    return { productId: String(id), market: content.market, key: content.flavorSlug, variations, content };
   }
 
-  // The store's view: the key as sent or, with no variation using it, the key its alias resolves to
-  // (chicken to turkey). Only a recipe with an active variation in the market is exposed.
+  // The store's view: the product of the market with the code as sent or, without one, with the code the key's
+  // alias resolves to (chicken to turkey). Only a product with an active variation is exposed.
   async resolveLaunched(market, recipeKey) {
     const normalizedMarket = marketOf(market);
     const candidates = [plainKey(recipeKey), recipeKeyOf(recipeKey, normalizedMarket)];
     for (const key of [...new Set(candidates.filter(Boolean))]) {
-      const variations = await this.catalogRepository.listRecipeVariations(normalizedMarket, key);
-      if (variations.length > 0) {
-        if (!variations.some((variation) => variation.active)) {
-          break;
-        }
-        return { market: normalizedMarket, key, variations };
+      const content = await this.repository.findByMarketAndSlug(normalizedMarket, key);
+      if (!content || !content.productId) {
+        continue;
       }
+      const variations = await this.catalogRepository.listProductVariations(content.productId);
+      if (!variations.some((variation) => variation.active)) {
+        break;
+      }
+      return { market: normalizedMarket, key, variations, content };
     }
     throw notFound();
   }
 
-  // Every registered recipe of the market with its variations and content state, for the admin.
-  async list(market) {
-    const normalizedMarket = marketOf(market);
-    const recipes = await this.repository.listByMarket(normalizedMarket);
-    const byKey = await this.catalogRepository.listMarketRecipeVariations(normalizedMarket);
-    const items = recipes.map((recipe) => ({
-      key: recipe.flavorSlug,
-      name: recipe.name,
-      lifeStage: recipe.lifeStage,
-      imageUrl: recipe.imageUrl,
-      planImageUrl: recipe.planImageUrl || null,
-      labelStatus: labelCompleteness(recipe.label, normalizedMarket).status,
-      variations: byKey.get(recipe.flavorSlug) || []
-    }));
-    return { market: normalizedMarket, items };
-  }
-
-  async create(market, input = {}, actor = {}) {
-    const normalizedMarket = marketOf(market);
-    const key = parseRecipeKey(input.key);
-    if (!key) {
-      throw new HttpError(422, 'Recipe key is required.', { code: RECIPE_KEY_INVALID });
-    }
-    const name = parseRecipeName(input.name);
-    const lifeStage = input.lifeStage == null ? 'adult' : parseRecipeLifeStage(input.lifeStage);
-    if (await this.repository.findByMarketAndSlug(normalizedMarket, key)) {
-      throw new HttpError(409, 'A recipe with this key already exists in the market.', { code: 'recipe_key_taken' });
-    }
-    let content;
-    try {
-      content = await this.repository.createRecipe({ market: normalizedMarket, flavorSlug: key, name, lifeStage, actorId: actorId(actor) });
-    } catch (error) {
-      if (error && (error.code === 'ER_DUP_ENTRY' || error.errno === 1062)) {
-        throw new HttpError(409, 'A recipe with this key already exists in the market.', { code: 'recipe_key_taken' });
-      }
-      throw error;
-    }
-    const recipe = { market: normalizedMarket, key, variations: await this.catalogRepository.listRecipeVariations(normalizedMarket, key) };
-    await this.recordAudit(actor, 'catalog.recipe.create', recipe, { name, lifeStage });
-    return this.present(recipe, content);
-  }
-
-  // Renames the recipe and/or changes its life stage; every variation of the recipe follows the new stage.
-  async update(market, recipeKey, input = {}, actor = {}) {
-    const recipe = await this.resolve(market, recipeKey);
-    const name = input.name === undefined ? undefined : parseRecipeName(input.name);
-    const lifeStage = input.lifeStage === undefined ? undefined : parseRecipeLifeStage(input.lifeStage);
-    if (name === undefined && lifeStage === undefined) {
-      throw new HttpError(422, 'Send the recipe name or life stage.', { code: 'recipe_update_empty' });
-    }
-    const content = await this.repository.updateRecipe({ market: recipe.market, flavorSlug: recipe.key, name, lifeStage, actorId: actorId(actor) });
-    if (name !== undefined && name !== recipe.content.name) {
-      await this.recordAudit(actor, 'catalog.recipe.rename', recipe, { from: recipe.content.name, to: name });
-    }
-    if (lifeStage !== undefined && lifeStage !== recipe.content.lifeStage) {
-      await this.catalogRepository.setRecipeLifeStage(recipe.market, recipe.key, lifeStage);
-      await this.recordAudit(actor, 'catalog.recipe.life_stage', recipe, { from: recipe.content.lifeStage, to: lifeStage });
-    }
-    return this.present(recipe, content);
-  }
-
-  async remove(market, recipeKey, actor = {}) {
-    const recipe = await this.resolve(market, recipeKey);
-    if (recipe.variations.length > 0) {
-      throw new HttpError(409, 'A recipe used by variations cannot be deleted.', {
-        code: 'recipe_in_use',
-        variations: recipe.variations.map((variation) => ({ id: variation.id, sku: variation.sku, name: variation.name }))
-      });
-    }
-    await this.repository.deleteRecipe({ market: recipe.market, flavorSlug: recipe.key });
-    for (const imageUrl of [recipe.content.imageUrl, recipe.content.planImageUrl]) {
-      if (imageUrl) {
-        await this.deleteFile(imageUrl);
-      }
-    }
-    await this.recordAudit(actor, 'catalog.recipe.delete', recipe);
-    return { deleted: true, market: recipe.market, flavorSlug: recipe.key };
-  }
-
-  present({ market, key, variations }, content) {
+  present({ productId, market, key, variations }, content) {
     const label = content ? content.label : null;
     const completeness = labelCompleteness(label, market);
     return {
+      productId,
       market,
       flavorSlug: key,
       name: content ? content.name : key,
       lifeStage: content ? content.lifeStage : 'adult',
+      flavorAliases: content ? content.flavorAliases || '' : '',
+      shortLabel: content ? content.shortLabel || '' : '',
       imageUrl: content ? content.imageUrl : null,
+      imageAssetId: content ? content.imageAssetId || null : null,
       imageUpdatedAt: content ? content.imageUpdatedAt : null,
       planImageUrl: content ? content.planImageUrl || null : null,
+      planImageAssetId: content ? content.planImageAssetId || null : null,
       planImageUpdatedAt: content ? content.planImageUpdatedAt || null : null,
       label,
       labelUpdatedAt: content ? content.labelUpdatedAt : null,
@@ -198,18 +102,13 @@ class RecipeContentService {
     };
   }
 
-  async get(market, flavorSlug) {
-    const recipe = await this.resolve(market, flavorSlug);
-    return this.present(recipe, recipe.content);
-  }
-
   // Store view of the market's launched recipes, by the same rule as getPublic: an active variation.
   async listPublic(market) {
     const normalizedMarket = marketOf(market);
     const recipes = await this.repository.listByMarket(normalizedMarket);
-    const byKey = await this.catalogRepository.listMarketRecipeVariations(normalizedMarket);
+    const byProduct = await this.catalogRepository.listMarketProductVariations(normalizedMarket);
     const items = recipes
-      .filter((recipe) => (byKey.get(recipe.flavorSlug) || []).some((variation) => variation.active))
+      .filter((recipe) => (byProduct.get(String(recipe.productId)) || []).some((variation) => variation.active))
       // The presentation title and short name let the store footer and plan chips name a recipe without one
       // request per recipe.
       .map((recipe) => ({
@@ -225,7 +124,7 @@ class RecipeContentService {
   // Store view of a launched recipe: a flavor with no active variation in the market stays hidden.
   async getPublic(key, market) {
     const recipe = await this.resolveLaunched(market, key);
-    const content = await this.repository.findByMarketAndSlug(recipe.market, recipe.key);
+    const { content } = recipe;
     return {
       key: recipe.key,
       market: recipe.market,
@@ -237,136 +136,116 @@ class RecipeContentService {
     };
   }
 
-  async uploadImage(market, flavorSlug, payload = {}, actor = {}) {
-    if (!this.imageStorage || typeof this.imageStorage.write !== 'function') {
-      throw new HttpError(503, 'Recipe image storage is not available.');
-    }
-    const recipe = await this.resolve(market, flavorSlug);
-    const processed = await this.processImage({
-      mimeType: payload.mimeType,
-      buffer: decodeImageBase64(payload.imageBase64)
-    });
-
-    const previous = recipe.content;
-    const imageUrl = await this.imageStorage.write({ market: recipe.market, flavorSlug: recipe.key, buffer: processed.buffer });
-    let content;
-    try {
-      content = await this.repository.upsertImage({ market: recipe.market, flavorSlug: recipe.key, imageUrl, actorId: actorId(actor) });
-    } catch (error) {
-      await this.deleteFile(imageUrl);
-      throw error;
-    }
-    // The old file goes only after the new row points elsewhere, so the store never links to a missing file.
-    if (previous && previous.imageUrl && previous.imageUrl !== imageUrl) {
-      await this.deleteFile(previous.imageUrl);
-    }
-
-    await this.recordAudit(actor, 'catalog.recipe.image.update', recipe);
+  // Store banner, as a library image (kind banner): `{ assetId }` of an image already there, or an upload that goes
+  // into the library first. The banner linked before stays in the library.
+  async uploadImage(productId, payload = {}, actor = {}) {
+    const recipe = await this.resolve(productId, actor);
+    const asset = await this.resolveLinkedAsset(recipe, 'banner', payload, actor);
+    const content = await this.repository.setImage({ productId: recipe.productId, assetId: asset.id, actorId: actorId(actor) });
+    await this.recordAudit(actor, 'catalog.recipe.image.update', recipe, { assetId: asset.id });
     return this.present(recipe, content);
   }
 
-  // Package thumbnail of the plan flavor picker. Optional: without it the plan shows the banner image.
-  async uploadPlanImage(market, flavorSlug, payload = {}, actor = {}) {
-    if (!this.imageStorage || typeof this.imageStorage.write !== 'function') {
-      throw new HttpError(503, 'Recipe image storage is not available.');
-    }
-    const recipe = await this.resolve(market, flavorSlug);
-    const processed = await this.processImage({
-      mimeType: payload.mimeType,
-      buffer: decodeImageBase64(payload.imageBase64),
-      kind: 'plan'
-    });
-
-    const previous = recipe.content.planImageUrl;
-    const imageUrl = await this.imageStorage.write({ market: recipe.market, flavorSlug: `${recipe.key}-plan`, buffer: processed.buffer });
-    let content;
-    try {
-      content = await this.repository.setPlanImage({ market: recipe.market, flavorSlug: recipe.key, imageUrl, actorId: actorId(actor) });
-    } catch (error) {
-      await this.deleteFile(imageUrl);
-      throw error;
-    }
-    if (previous && previous !== imageUrl) {
-      await this.deleteFile(previous);
-    }
-
-    await this.recordAudit(actor, 'catalog.recipe.plan_image.update', recipe);
+  // Package thumbnail of the plan flavor picker, as a library image (plan-image-library): `{ assetId }` of an
+  // image already there, or an upload that goes into the library first. Optional: without it the plan shows the
+  // banner image. The image linked before stays in the library.
+  async uploadPlanImage(productId, payload = {}, actor = {}) {
+    const recipe = await this.resolve(productId, actor);
+    const asset = await this.resolveLinkedAsset(recipe, 'plan', payload, actor);
+    const content = await this.repository.setPlanImage({ productId: recipe.productId, assetId: asset.id, actorId: actorId(actor) });
+    await this.recordAudit(actor, 'catalog.recipe.plan_image.update', recipe, { assetId: asset.id });
     return this.present(recipe, content);
   }
 
-  async removePlanImage(market, flavorSlug, actor = {}) {
-    const recipe = await this.resolve(market, flavorSlug);
-    const previous = recipe.content.planImageUrl;
-    if (!previous) {
+  // The library image a link request points at: an existing one by id, or a new upload of that kind. Either way it
+  // must be of the kind asked and of the product's market.
+  async resolveLinkedAsset(recipe, kind, payload, actor) {
+    const hasAssetId = payload.assetId !== undefined && payload.assetId !== null && payload.assetId !== '';
+    const hasUpload = payload.imageBase64 !== undefined && payload.imageBase64 !== null && payload.imageBase64 !== '';
+    if (hasAssetId === hasUpload) {
+      throw new HttpError(422, 'Send either assetId of a library image or a new image.', { code: MEDIA_ASSET_INVALID, reason: 'body' });
+    }
+    if (!this.mediaLibraryService) {
+      throw new HttpError(503, 'Image library is not available.');
+    }
+
+    const asset = hasAssetId
+      ? await this.mediaLibraryService.get(payload.assetId, actor)
+      : (await this.mediaLibraryService.upload({
+        kind,
+        market: recipe.market,
+        originalFilename: payload.originalFilename || `${recipe.key}-${kind}`,
+        mimeType: payload.mimeType,
+        imageBase64: payload.imageBase64
+      }, actor)).asset;
+    if (asset.kind !== kind || asset.market !== recipe.market) {
+      throw new HttpError(422, `The library image must be a ${kind === 'plan' ? 'plan thumbnail' : 'banner'} of the product market.`, {
+        code: MEDIA_ASSET_INVALID,
+        reason: asset.kind !== kind ? 'kind' : 'market',
+        assetMarket: asset.market,
+        assetKind: asset.kind
+      });
+    }
+    return asset;
+  }
+
+  // Unlinks the thumbnail only: the library image and its file stay.
+  async removePlanImage(productId, actor = {}) {
+    const recipe = await this.resolve(productId, actor);
+    const previous = recipe.content.planImageAssetId || null;
+    if (!previous && !recipe.content.planImageUrl) {
       return this.present(recipe, recipe.content);
     }
-    const content = await this.repository.setPlanImage({ market: recipe.market, flavorSlug: recipe.key, imageUrl: null, actorId: actorId(actor) });
-    await this.deleteFile(previous);
-    await this.recordAudit(actor, 'catalog.recipe.plan_image.delete', recipe);
+    const content = await this.repository.setPlanImage({ productId: recipe.productId, assetId: null, actorId: actorId(actor) });
+    await this.recordAudit(actor, 'catalog.recipe.plan_image.delete', recipe, { assetId: previous });
     return this.present(recipe, content);
   }
 
-  // Saves a label as sent, complete or not. A US flavor with an active variation must keep a complete label.
-  async saveLabel(market, flavorSlug, input, actor = {}) {
-    const recipe = await this.resolve(market, flavorSlug);
+  async saveLabel(productId, input, actor = {}) {
+    const recipe = await this.resolve(productId, actor);
     const label = parseRecipeLabel(input);
     const completeness = labelCompleteness(label, recipe.market);
     const active = recipe.variations.filter((variation) => variation.active);
     if (recipe.market === 'US' && active.length > 0 && completeness.status !== 'complete') {
-      throw new HttpError(409, 'The label of a US recipe with an active variation must stay complete.', {
+      throw new HttpError(409, 'The label of a US product with an active variation must stay complete.', {
         code: RECIPE_CONTENT_IN_USE,
         activeVariations: active.map((variation) => variation.id),
         missing: completeness.missing
       });
     }
 
-    const content = await this.repository.upsertLabel({ market: recipe.market, flavorSlug: recipe.key, label, actorId: actorId(actor) });
+    const content = await this.repository.setLabel({ productId: recipe.productId, label, actorId: actorId(actor) });
     await this.recordAudit(actor, 'catalog.recipe.label.update', recipe);
     return this.present(recipe, content);
   }
 
   // Replaces the store presentation whole; an invalid one is refused before anything is stored.
-  async savePresentation(market, flavorSlug, input, actor = {}) {
-    const recipe = await this.resolve(market, flavorSlug);
+  async savePresentation(productId, input, actor = {}) {
+    const recipe = await this.resolve(productId, actor);
     const presentation = parseRecipePresentation(input);
-    const content = await this.repository.upsertPresentation({
-      market: recipe.market, flavorSlug: recipe.key, presentation, actorId: actorId(actor)
-    });
+    const content = await this.repository.setPresentation({ productId: recipe.productId, presentation, actorId: actorId(actor) });
     await this.recordAudit(actor, 'catalog.recipe.presentation.update', recipe);
     return this.present(recipe, content);
   }
 
-  async removeImage(market, flavorSlug, actor = {}) {
-    const recipe = await this.resolve(market, flavorSlug);
+  async removeImage(productId, actor = {}) {
+    const recipe = await this.resolve(productId, actor);
     const active = recipe.variations.filter((variation) => variation.active);
     if (active.length > 0) {
-      throw new HttpError(409, 'The image of a recipe with an active variation cannot be removed.', {
+      throw new HttpError(409, 'The image of a product with an active variation cannot be removed.', {
         code: RECIPE_CONTENT_IN_USE,
         activeVariations: active.map((variation) => variation.id)
       });
     }
 
-    const previous = recipe.content;
-    if (!previous.imageUrl) {
-      return this.present(recipe, previous);
+    // Unlinks the banner only: the library image and its file stay.
+    const previous = recipe.content.imageAssetId || null;
+    if (!previous && !recipe.content.imageUrl) {
+      return this.present(recipe, recipe.content);
     }
-    const content = await this.repository.clearImage({ market: recipe.market, flavorSlug: recipe.key, actorId: actorId(actor) });
-    await this.deleteFile(previous.imageUrl);
-    await this.recordAudit(actor, 'catalog.recipe.image.delete', recipe);
+    const content = await this.repository.setImage({ productId: recipe.productId, assetId: null, actorId: actorId(actor) });
+    await this.recordAudit(actor, 'catalog.recipe.image.delete', recipe, { assetId: previous });
     return this.present(recipe, content);
-  }
-
-  async deleteFile(imageUrl) {
-    if (!this.imageStorage || typeof this.imageStorage.delete !== 'function') {
-      return;
-    }
-    try {
-      await this.imageStorage.delete(imageUrl);
-    } catch (error) {
-      if (this.logger && typeof this.logger.error === 'function') {
-        this.logger.error({ err: error && error.message }, 'Failed to delete recipe image file.');
-      }
-    }
   }
 
   async recordAudit(actor, action, recipe, extra = {}) {
@@ -376,7 +255,7 @@ class RecipeContentService {
     await this.auditService.record({
       actor,
       action,
-      metadata: { market: recipe.market, flavorSlug: recipe.key, ...extra }
+      metadata: { productId: recipe.productId, market: recipe.market, flavorSlug: recipe.key, ...extra }
     });
   }
 }

@@ -13,7 +13,9 @@ function tokenFor(userId = 7) {
 
 const IDENTITIES = {
   admin: { userId: '1', email: 'admin@edenbowls.com', roles: ['admin'], permissions: ROLE_PERMISSIONS.admin },
-  operator: { userId: '8', email: 'op@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['BR', 'US'] },
+  operatorBr: { userId: '8', email: 'op.br@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['BR'] },
+  operatorUs: { userId: '9', email: 'op.us@edenbowls.com', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['US'] },
+  readonly: { userId: '6', email: 'ro@edenbowls.com', roles: ['readonly'], permissions: ROLE_PERMISSIONS.readonly, markets: ['BR', 'US'] },
   veterinarian: { userId: '5', email: 'vet@edenbowls.com', roles: ['veterinarian'], permissions: ROLE_PERMISSIONS.veterinarian }
 };
 
@@ -22,7 +24,7 @@ function setup(identity) {
     forMarket: jest.fn(async (market) => ({ ...COMPANY_PROFILE_SEED[market], updatedAt: null })),
     save: jest.fn()
   };
-  const auditRepository = { createIn: jest.fn() };
+  const auditRepository = { createIn: jest.fn(), listByActionPrefix: jest.fn(async () => []) };
   const app = createApp({
     corsOrigins: ['http://localhost:5174'],
     jwt,
@@ -39,16 +41,52 @@ const brProfile = (changes = {}) => {
 };
 
 describe('admin company settings routes', () => {
-  test('Operator reads but cannot save', async () => {
-    const { app, repository } = setup(IDENTITIES.operator);
+  test('the BR operator saves the BR company, recorded with who saved it', async () => {
+    const { app, repository, auditRepository } = setup(IDENTITIES.operatorBr);
 
     const read = await auth(request(app).get('/api/v1/admin/settings/company?market=BR'));
     expect(read.status).toBe(200);
     expect(read.body).toMatchObject({ market: 'BR', legal_name: 'C. C. J. Lovato Ltda', tax_id: '65.291.985/0001-05', city: 'Curitiba' });
 
-    const save = await auth(request(app).put('/api/v1/admin/settings/company')).send({ market: 'BR', profile: brProfile() });
-    expect(save.status).toBe(403);
+    const save = await auth(request(app).put('/api/v1/admin/settings/company')).send({ market: 'BR', profile: brProfile({ complement: 'Sala 2' }) });
+    expect(save.status).toBe(200);
+    expect(repository.save).toHaveBeenCalledWith('BR', expect.objectContaining({ complement: 'Sala 2' }), 8, { tx: true });
+    expect(auditRepository.createIn).toHaveBeenCalledWith({ tx: true }, expect.objectContaining({
+      actorUserId: 8,
+      actorEmail: 'op.br@edenbowls.com',
+      action: 'settings.company.update'
+    }));
+  });
+
+  test('the BR operator cannot read nor save the US company, and the US operator not the BR one', async () => {
+    const { app, repository } = setup(IDENTITIES.operatorBr);
+    const { market, ...us } = companyProfilePayload('US', COMPANY_PROFILE_SEED.US);
+    expect((await auth(request(app).put('/api/v1/admin/settings/company')).send({ market: 'US', profile: us })).status).toBe(403);
+    expect((await auth(request(app).get('/api/v1/admin/settings/company?market=US'))).status).toBe(403);
+
+    const usOperator = setup(IDENTITIES.operatorUs);
+    expect((await auth(request(usOperator.app).put('/api/v1/admin/settings/company')).send({ market: 'US', profile: us })).status).toBe(200);
+    expect((await auth(request(usOperator.app).put('/api/v1/admin/settings/company')).send({ market: 'BR', profile: brProfile() })).status).toBe(403);
     expect(repository.save).not.toHaveBeenCalled();
+    expect(usOperator.repository.save).toHaveBeenCalledTimes(1);
+  });
+
+  test('readonly reads but cannot save', async () => {
+    const { app, repository } = setup(IDENTITIES.readonly);
+    expect((await auth(request(app).get('/api/v1/admin/settings/company?market=BR'))).status).toBe(200);
+    expect((await auth(request(app).put('/api/v1/admin/settings/company')).send({ market: 'BR', profile: brProfile() })).status).toBe(403);
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  test('the read returns the edit history of the market', async () => {
+    const { app, auditRepository } = setup(IDENTITIES.operatorBr);
+    const event = { id: 3, actorUserId: 8, actorEmail: 'op.br@edenbowls.com', action: 'settings.company.update', metadata: { market: 'BR', fields: ['city'] }, createdAt: '2026-11-15T12:00:00.000Z' };
+    auditRepository.listByActionPrefix.mockResolvedValue([event]);
+
+    const read = await auth(request(app).get('/api/v1/admin/settings/company?market=BR'));
+
+    expect(read.body.history).toEqual([event]);
+    expect(auditRepository.listByActionPrefix).toHaveBeenCalledWith({ actionPrefix: 'settings.company.', market: 'BR', limit: 50 });
   });
 
   test('the veterinarian does not read the company settings', async () => {
@@ -77,7 +115,7 @@ describe('admin company settings routes', () => {
     expect(repository.save).toHaveBeenCalledWith('BR', expect.objectContaining({ city: 'São Paulo', state: 'SP', taxId: '65.291.985/0001-05' }), 1, { tx: true });
     expect(auditRepository.createIn).toHaveBeenCalledWith({ tx: true }, expect.objectContaining({
       action: 'settings.company.update',
-      metadata: { market: 'BR', fields: ['city', 'state'] }
+      metadata: { market: 'BR', fields: ['city', 'state'], before: { city: 'Curitiba', state: 'PR' }, after: { city: 'São Paulo', state: 'SP' } }
     }));
   });
 

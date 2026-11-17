@@ -143,10 +143,26 @@ function hasUncoveredCheckoutPets(currentPets = [], subscribedPets = []) {
   return current.some((id) => !subscribed.has(id));
 }
 
+function allCheckoutPetsSubscribed(currentPets = [], subscribedPets = []) {
+  const current = normalizePetIds(currentPets);
+  const subscribed = new Set(normalizePetIds(subscribedPets));
+  return current.length > 0 && current.every((id) => subscribed.has(id));
+}
+
 function evaluateCheckoutReuse(checkoutReference = {}, fingerprint = '', options = {}) {
   const subscriptionId = String(checkoutReference.stripe_subscription_id || '').trim();
   if (!subscriptionId.startsWith('sub_')) {
     return { reuse: false };
+  }
+
+  // The reference outlives its subscription, so an ended one says nothing about this checkout.
+  if (options.storedSubscriptionEnded) {
+    if (allCheckoutPetsSubscribed(options.currentPetIds, options.subscribedPetIds)) {
+      throw new HttpError(409, 'Checkout context does not match the existing subscription.', {
+        code: 'checkout_context_mismatch'
+      });
+    }
+    return { reuse: false, reason: 'subscription_ended' };
   }
 
   const fingerprintOk = fingerprintsMatch(checkoutReference.checkout_context_fingerprint, fingerprint);

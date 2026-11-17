@@ -35,19 +35,49 @@ describe('StripeFirstPurchasePromosRepository', () => {
     );
   });
 
-  test('increments the misconfig metric', async () => {
+  test('increments the misconfig metric of one Stripe account', async () => {
     const dataSource = {
       isInitialized: true,
       query: jest.fn()
         .mockResolvedValueOnce({ affectedRows: 1 })
-        .mockResolvedValueOnce([{ metric_value: 4 }])
+        .mockResolvedValueOnce([{ metric_value: 4, updated_at: new Date('2026-09-29T05:42:49Z') }])
     };
     const repository = new StripeFirstPurchasePromosRepository(dataSource);
 
-    await expect(repository.incrementMisconfigCount()).resolves.toBe(4);
+    await expect(repository.incrementMisconfigCount('br')).resolves.toBe(4);
     expect(dataSource.query).toHaveBeenNthCalledWith(
       1,
-      expect.stringContaining("VALUES ('misconfig_count', 1) ON DUPLICATE KEY UPDATE")
+      expect.stringContaining('VALUES (?, 1) ON DUPLICATE KEY UPDATE'),
+      ['misconfig_count:br']
+    );
+  });
+
+  test('reads the count and the date of the last blocked checkout of an account', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn().mockResolvedValue([{ metric_value: 2, updated_at: new Date('2026-09-29T05:42:49Z') }])
+    };
+    const repository = new StripeFirstPurchasePromosRepository(dataSource);
+
+    await expect(repository.getMisconfig('us')).resolves.toEqual({ count: 2, lastAt: '2026-09-29T05:42:49.000Z' });
+    expect(dataSource.query).toHaveBeenCalledWith(expect.stringContaining('WHERE `metric_key` = ?'), ['misconfig_count:us']);
+  });
+
+  test('reads zero and no date when the account has no row', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValue([]) };
+    const repository = new StripeFirstPurchasePromosRepository(dataSource);
+
+    await expect(repository.getMisconfig('br')).resolves.toEqual({ count: 0, lastAt: null });
+  });
+
+  test('resets only the misconfig row of the account', async () => {
+    const dataSource = { isInitialized: true, query: jest.fn().mockResolvedValue({ affectedRows: 1 }) };
+    const repository = new StripeFirstPurchasePromosRepository(dataSource);
+
+    await repository.resetMisconfigCount('br');
+    expect(dataSource.query).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM `stripe_first_purchase_promo_metrics` WHERE `metric_key` = ?'),
+      ['misconfig_count:br']
     );
   });
 });

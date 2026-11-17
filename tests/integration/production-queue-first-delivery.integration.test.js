@@ -11,7 +11,7 @@ const describeIntegration = runIntegration ? describe : describe.skip;
 
 // The first delivery is produced from the queue: the invoice.paid of subscription_create records a paid cycle.
 // The operations email stays a notice. Checkout is paid on Wednesday 7 October 2026 at 15:00 in Sao Paulo,
-// after Wednesday's midnight, so preparation and delivery are Thursday 8 October.
+// before Wednesday's 20:00 closing on an open Brazil day, so preparation and delivery are that Wednesday.
 describeIntegration('the first delivery enters the production queue (MySQL, 3.12)', () => {
   const suffix = Date.now();
   const ledgerTable = `it_${suffix}_first_stripe_subscriptions`;
@@ -132,7 +132,7 @@ describeIntegration('the first delivery enters the production queue (MySQL, 3.12
     const first = queue.items.filter((item) => item.stripeSubscriptionId === 'sub_first');
     // Only the paid first delivery: the next renewal is a month out, outside the window.
     expect(first).toHaveLength(1);
-    expect(first[0]).toMatchObject({ paymentState: 'paid', productionStatus: 'to_prepare', preparationDay: '2026-10-08', deliveryDate: '2026-10-08' });
+    expect(first[0]).toMatchObject({ paymentState: 'paid', productionStatus: 'to_prepare', preparationDay: '2026-10-07', deliveryDate: '2026-10-07' });
     expect(new Date(first[0].cyclePeriodEnd).getTime()).toBe(START * 1000);
 
     // Meu Plano reads the same cycle, so the customer sees the date the queue works to.
@@ -142,6 +142,6 @@ describeIntegration('the first delivery enters the production queue (MySQL, 3.12
       now: () => PAID
     });
     const subscription = await deliveries.findForUser('sub_first', 7);
-    expect(subscription.paidCycle).toMatchObject({ preparationDay: '2026-10-08', deliveryDate: '2026-10-08' });
+    expect(subscription.paidCycle).toMatchObject({ preparationDay: '2026-10-07', deliveryDate: '2026-10-07' });
   });
 });

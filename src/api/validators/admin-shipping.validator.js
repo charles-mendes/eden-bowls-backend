@@ -27,7 +27,8 @@ const shippingSettingsSchema = z.object({
       max_distance_km: optionalNumber,
       km_per_day: optionalNumber,
       min_days: optionalNumber,
-      max_days: optionalNumber
+      max_days: optionalNumber,
+      delivery_days: optionalNumber
     }).optional()
   }).optional(),
   us: z.object({
@@ -45,13 +46,33 @@ const shippingSettingsSchema = z.object({
       city: z.string().optional(),
       state: z.string().optional(),
       zipcode: z.string().optional(),
-      country: z.string().optional()
+      country: z.string().optional(),
+      phone: z.string().max(32).optional()
     }).optional(),
     package: z.object({
       weight_lb: optionalNumber,
       length_in: optionalNumber,
       width_in: optionalNumber,
-      height_in: optionalNumber
+      height_in: optionalNumber,
+      dry_ice_kg: optionalNumber
+    }).optional(),
+    boxes: z.object({
+      starter: z.object({
+        label: z.string().max(64).optional(),
+        length_in: optionalNumber,
+        width_in: optionalNumber,
+        height_in: optionalNumber,
+        empty_weight_kg: optionalNumber,
+        max_packs: optionalNumber
+      }).optional(),
+      monthly: z.object({
+        label: z.string().max(64).optional(),
+        length_in: optionalNumber,
+        width_in: optionalNumber,
+        height_in: optionalNumber,
+        empty_weight_kg: optionalNumber,
+        max_packs: optionalNumber
+      }).optional()
     }).optional(),
     allowed_service_codes: z.union([z.array(z.string()), z.string()]).optional(),
     max_transit_days: optionalNumber

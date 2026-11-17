@@ -4,11 +4,14 @@ const { RecipeContentService } = require('../src/services/recipe-content.service
 
 function appFor({ variations = {}, contents = {} } = {}) {
   const recipeContentService = new RecipeContentService({
+    // Each content is a product, identified here by its market and code.
     repository: {
-      findByMarketAndSlug: jest.fn(async (market, key) => contents[`${market}:${key}`] || null)
+      findByMarketAndSlug: jest.fn(async (market, key) => (contents[`${market}:${key}`]
+        ? { productId: `${market}:${key}`, ...contents[`${market}:${key}`] }
+        : null))
     },
     catalogRepository: {
-      listRecipeVariations: jest.fn(async (market, key) => variations[`${market}:${key}`] || [])
+      listProductVariations: jest.fn(async (productId) => variations[productId] || [])
     }
   });
   return createApp({ corsOrigins: ['http://localhost:5173'], recipeContentService });
@@ -30,12 +33,15 @@ describe('GET /api/v1/recipes/:key', () => {
   });
 
   test('returns null content for a launched recipe with nothing stored', async () => {
-    const app = appFor({ variations: { 'BR:pork': [{ id: '21', name: 'Porco 300g', sku: 'P', active: true }] } });
+    const app = appFor({
+      variations: { 'BR:pork': [{ id: '21', name: 'Porco 300g', sku: 'P', active: true }] },
+      contents: { 'BR:pork': { name: 'Porco', imageUrl: null, label: null } }
+    });
 
     const response = await request(app).get('/api/v1/recipes/pork?market=br');
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ key: 'pork', market: 'BR', name: 'pork', imageUrl: null, planImageUrl: null, label: null, presentation: null });
+    expect(response.body).toEqual({ key: 'pork', market: 'BR', name: 'Porco', imageUrl: null, planImageUrl: null, label: null, presentation: null });
   });
 
   test('returns the stored label whole', async () => {
@@ -89,7 +95,7 @@ describe('GET /api/v1/recipes/:key', () => {
     expect(response.body.imageUrl).toBeUndefined();
   });
 
-  test('hides a registered recipe that no variation uses', async () => {
+  test('hides a product without variations', async () => {
     const app = appFor({ contents: { 'BR:senior-lamb': { imageUrl: '/recipe-images/lamb.webp', label: null } } });
 
     const response = await request(app).get('/api/v1/recipes/senior-lamb?market=BR');
@@ -104,17 +110,17 @@ describe('GET /api/v1/recipes/:key', () => {
 });
 
 describe('GET /api/v1/recipes', () => {
-  // Registered recipes per market and the variations of each key, as the market listing reads them.
+  // Products per market (content with its product id) and the variations of each product.
   function listingApp({ recipes = [], variations = {} } = {}) {
     const recipeContentService = new RecipeContentService({
       repository: {
-        listByMarket: jest.fn(async (market) => recipes.filter((recipe) => recipe.market === market))
+        listByMarket: jest.fn(async (market) => recipes
+          .filter((recipe) => recipe.market === market)
+          .map((recipe) => ({ productId: `${recipe.market}:${recipe.flavorSlug}`, ...recipe })))
       },
       catalogRepository: {
-        listMarketRecipeVariations: jest.fn(async (market) => new Map(
-          Object.entries(variations)
-            .filter(([marketKey]) => marketKey.startsWith(`${market}:`))
-            .map(([marketKey, list]) => [marketKey.slice(market.length + 1), list])
+        listMarketProductVariations: jest.fn(async (market) => new Map(
+          Object.entries(variations).filter(([productId]) => productId.startsWith(`${market}:`))
         ))
       }
     });

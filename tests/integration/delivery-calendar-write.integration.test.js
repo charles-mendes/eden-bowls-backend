@@ -3,6 +3,7 @@ const { CreateAdminAuditEvents1700000000016 } = require('../../src/infrastructur
 const { CreateDeliveryClosedDays1700000000021 } = require('../../src/infrastructure/migrations/1700000000021-create-delivery-closed-days');
 const { AddDeliveryClosedDayType1700000000027 } = require('../../src/infrastructure/migrations/1700000000027-add-delivery-closed-day-type');
 const { CreateDeliveryCalendarStripeSyncs1700000000028 } = require('../../src/infrastructure/migrations/1700000000028-create-delivery-calendar-stripe-syncs');
+const { CreateDeliveryOperatingWeek1700000000081 } = require('../../src/infrastructure/migrations/1700000000081-create-delivery-operating-week');
 const { DeliveryClosedDaysRepository } = require('../../src/infrastructure/repositories/delivery-closed-days.repository');
 const { DeliveryCalendarStripeSyncsRepository } = require('../../src/infrastructure/repositories/delivery-calendar-stripe-syncs.repository');
 const { AdminAuditRepository } = require('../../src/infrastructure/repositories/admin-audit.repository');
@@ -55,6 +56,7 @@ describeIntegration('a calendar closure is all or nothing (MySQL)', () => {
     await new CreateDeliveryClosedDays1700000000021().up(runner);
     await new AddDeliveryClosedDayType1700000000027().up(runner);
     await new CreateDeliveryCalendarStripeSyncs1700000000028().up(runner);
+    await new CreateDeliveryOperatingWeek1700000000081().up(runner);
     await runner.release();
 
     syncs = new DeliveryCalendarStripeSyncsRepository(dataSource);

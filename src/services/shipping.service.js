@@ -2,11 +2,10 @@ const { HttpError } = require('../core/http-error');
 const {
   applyShippingFee,
   billableDistanceKm,
-  deliveryDays,
   formatBrZipcode,
   haversineMeters
 } = require('../core/shipping-fee');
-const { setBrDeliveryRadiusKm, setUsMaxTransitDays } = require('../core/delivery-closed-days');
+const { currentBrDeliveryDays, setBrDeliveryDays, setBrDeliveryRadiusKm, setUsMaxTransitDays } = require('../core/delivery-closed-days');
 const { loadShippingSettings } = require('../infrastructure/shipping/shipping-settings');
 const { serviceLabel } = require('../infrastructure/shipping/ups-client');
 
@@ -32,6 +31,8 @@ class ShippingService {
   set settings(value) {
     this.currentSettings = value;
     setBrDeliveryRadiusKm(value && value.br && value.br.rule ? value.br.rule.max_distance_km : null);
+    // Every Brazil delivery date (checkout, emails, queue, the customer's deliveries) counts this many business days.
+    setBrDeliveryDays(value && value.br && value.br.rule ? value.br.rule.delivery_days : null);
     setUsMaxTransitDays(value && value.us ? value.us.max_transit_days : null);
   }
 
@@ -272,7 +273,7 @@ class ShippingService {
     }
 
     const fee = applyShippingFee(distanceKm, br.rule);
-    const days = deliveryDays(distanceKm, br.rule);
+    const days = currentBrDeliveryDays();
 
     return this.withQuoteToken('BR', zipcode, {
       success: true,

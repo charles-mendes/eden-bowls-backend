@@ -1,4 +1,4 @@
-const { buildInvoiceDocument, formatServicePeriod, formatInvoiceMoney } = require('../src/core/invoice/invoice-document');
+const { buildInvoiceDocument, formatServicePeriod, formatInvoiceMoney, invoiceLocale } = require('../src/core/invoice/invoice-document');
 const { formatInvoiceNumber, invoiceYear } = require('../src/core/invoice/invoice-number');
 const { LIFE_STAGE_PREVIEW_CASES, PREVIEW_CASES, sampleInvoice } = require('../src/core/invoice/preview-fixtures');
 
@@ -13,6 +13,14 @@ function build(locale, status = 'open', overrides = {}) {
     issuer: sample.issuer
   });
 }
+
+describe('invoice language', () => {
+  test('follows the Stripe account, not the address', () => {
+    expect(invoiceLocale('br')).toBe('pt-BR');
+    expect(invoiceLocale('us')).toBe('en-US');
+    expect(invoiceLocale('us', { country: 'BR' })).toBe('en-US');
+  });
+});
 
 describe('invoice document (approved layout texts)', () => {
   test('English invoice due prints the approved texts', () => {

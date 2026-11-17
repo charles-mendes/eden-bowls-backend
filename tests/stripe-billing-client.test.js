@@ -141,6 +141,19 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     }));
   });
 
+  test('the Stripe shipping name stays the account name when the address has a recipient', async () => {
+    const { stripe, client } = buildClient();
+
+    await client.createOnboardingSubscription({
+      ...validInput,
+      address: { ...validInput.address, recipient_name: 'João Lima' }
+    });
+
+    const update = stripe.customers.update.mock.calls[0][1];
+    expect(update.shipping.name).toBe('Jane Doe');
+    expect(JSON.stringify(update)).not.toContain('João Lima');
+  });
+
   test('creates a Shipping product and reuses it for the next checkout', async () => {
     const { stripe, client } = buildClient({ shippingProductId: '' });
     stripe.products.create.mockResolvedValueOnce({ id: 'prod_created' });
@@ -811,6 +824,26 @@ describe('extractInvoicePayment', () => {
   });
 });
 
+describe('resumeSubscription', () => {
+  function build() {
+    const update = jest.fn().mockResolvedValue({ id: 'sub_1' });
+    const client = new StripeBillingClient({ client: { subscriptions: { update } } });
+    return { client, update };
+  }
+
+  test('only lifts the pause by default', async () => {
+    const { client, update } = build();
+    await client.resumeSubscription('sub_1');
+    expect(update).toHaveBeenCalledWith('sub_1', { pause_collection: '' });
+  });
+
+  test('also clears a scheduled cancellation when asked', async () => {
+    const { client, update } = build();
+    await client.resumeSubscription('sub_1', { clearCancelAtPeriodEnd: true });
+    expect(update).toHaveBeenCalledWith('sub_1', { pause_collection: '', cancel_at_period_end: false });
+  });
+});
+
 describe('setTrialEnd', () => {
   test('passes the idempotency key as a request option only when given', async () => {
     const update = jest.fn().mockResolvedValue({ id: 'sub_9' });
@@ -947,5 +980,30 @@ describe('StripeBillingClient.ensureRecurringPrice', () => {
       param: 'product',
       message: "No such product: 'prod_LegacyShared'"
     });
+  });
+});
+
+describe('StripeBillingClient.previewUpcomingInvoice', () => {
+  function clientWith(createPreview) {
+    const client = new StripeBillingClient({ secretKey: 'sk_test_x' });
+    client.client = { invoices: { createPreview } };
+    client.ensureClient = () => client.client;
+    return client;
+  }
+
+  test('sends only the subscription id and returns the amount due', async () => {
+    const createPreview = jest.fn().mockResolvedValue({ amount_due: 8990, currency: 'brl', total: 9990 });
+    await expect(clientWith(createPreview).previewUpcomingInvoice('sub_1')).resolves.toEqual({ amount: 8990, currency: 'brl' });
+    expect(createPreview).toHaveBeenCalledWith({ subscription: 'sub_1' });
+  });
+
+  test('a Stripe error reaches the caller', async () => {
+    const createPreview = jest.fn().mockRejectedValue(new Error('stripe down'));
+    await expect(clientWith(createPreview).previewUpcomingInvoice('sub_1')).rejects.toThrow('stripe down');
+  });
+
+  test('a timeout reaches the caller', async () => {
+    const createPreview = jest.fn(() => new Promise(() => {}));
+    await expect(clientWith(createPreview).previewUpcomingInvoice('sub_1', { timeoutMs: 5 })).rejects.toBeDefined();
   });
 });

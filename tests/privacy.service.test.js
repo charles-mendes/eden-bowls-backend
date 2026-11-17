@@ -154,6 +154,48 @@ describe('PrivacyService', () => {
       expect(logger.warn.mock.calls[0][0]).toEqual({ market: 'BR', kind: 'privacy', received: '2020-01-01', recorded: '2026-09-13' });
     });
 
+    test('Checkout with a version the store loaded before a publication', async () => {
+      const { service, repository } = createService({ options: { legalDocuments } });
+
+      await service.recordCheckoutConsents({ userId: 77, market: 'BR', privacyVersion: '2026-09-13', termsVersion: '2026-09-13', renewalVersion: '2026-11-10', ipHash: 'abc', userAgent: 'jest' });
+
+      expect(repository.insertConsent).toHaveBeenCalledTimes(3);
+      expect(repository.insertConsent.mock.calls.map(([input]) => [input.consentType, input.status, input.documentVersion, input.source, input.ipHash, input.userAgent])).toEqual([
+        ['privacy_policy', 'granted', '2026-09-13', 'checkout', 'abc', 'jest'],
+        ['terms', 'granted', '2026-09-13', 'checkout', 'abc', 'jest'],
+        ['auto_renewal', 'granted', '2026-11-10', 'checkout', 'abc', 'jest']
+      ]);
+    });
+
+    test('Accepted checkout without a renewal version records checkout-v1 after the terms', async () => {
+      const { service, repository } = createService({ options: { legalDocuments } });
+
+      await service.recordCheckoutConsents({ userId: 77, market: 'US', privacyVersion: '2026-09-13', termsVersion: '2026-09-13' });
+
+      expect(repository.insertConsent.mock.calls.map(([input]) => input.consentType)).toEqual(['privacy_policy', 'terms', 'auto_renewal']);
+      expect(repository.insertConsent.mock.calls[2][0]).toMatchObject({ consentType: 'auto_renewal', documentVersion: 'checkout-v1', source: 'checkout' });
+    });
+
+    test('a renewal version unknown to the legal documents is recorded as sent', async () => {
+      const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+      const { service, repository } = createService({ options: { legalDocuments, logger } });
+
+      await service.recordCheckoutConsents({ userId: 77, market: 'US', privacyVersion: '2026-09-13', termsVersion: '2026-09-13', renewalVersion: '2030-01-01' });
+
+      expect(repository.insertConsent.mock.calls[2][0].documentVersion).toBe('2030-01-01');
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    test('Checkout with an unknown version', async () => {
+      const logger = { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
+      const { service, repository } = createService({ options: { legalDocuments, logger } });
+
+      await service.recordCheckoutConsents({ userId: 77, market: 'US', privacyVersion: '2020-01-01', termsVersion: '2026-09-13' });
+
+      expect(versions(repository)).toEqual(['2026-09-13', '2026-09-13']);
+      expect(logger.warn.mock.calls[0][0]).toEqual({ market: 'US', kind: 'privacy', received: '2020-01-01', recorded: '2026-09-13' });
+    });
+
     test('a version of another market is not recorded: a consent without market reads as US', async () => {
       const { service, repository } = createService({ options: { legalDocuments } });
       await service.recordOtpConsents({ userId: 77, termsVersion: '2026-11-01' });
@@ -293,5 +335,117 @@ describe('PrivacyService customer note', () => {
     await expect(service.updateOwnRequestNote({ userId: 78, requestId: 11, note: 'x' }))
       .rejects.toMatchObject({ statusCode: 404 });
     expect(repository.updateRequest).not.toHaveBeenCalled();
+  });
+
+  test('the export carries the recorded contacts with the note and without the operator', async () => {
+    const customerContactsRepository = {
+      listByUser: jest.fn().mockResolvedValue([{
+        subscription_id: '42', reason: 'payment_failed', outcome: 'no_answer', note: 'Mandei mensagem',
+        actor_email: 'ops@edenbowls.com', created_at: new Date('2026-11-04T14:05:00Z')
+      }])
+    };
+    const { service } = createService({ options: { customerContactsRepository } });
+
+    const pack = await service.buildExportPackage(77);
+
+    expect(customerContactsRepository.listByUser).toHaveBeenCalledWith(77);
+    expect(pack.customerContacts).toEqual([{
+      subscriptionId: '42', channel: 'whatsapp', reason: 'payment_failed', outcome: 'no_answer', note: 'Mandei mensagem', createdAt: '2026-11-04T14:05:00.000Z'
+    }]);
+    expect(JSON.stringify(pack)).not.toContain('ops@edenbowls.com');
+  });
+
+  test('the export lists the address problems with their codes and dates', async () => {
+    const deliveryAddressIssuesRepository = {
+      listByUser: jest.fn().mockResolvedValue([{
+        id: 3, subscriptionId: 5, stripeSubscriptionId: 'sub_5', userId: 77, codes: ['address_number_missing'], source: 'courier_check',
+        open: false, openedAt: new Date('2026-11-03T12:00:00Z'), emailSentAt: new Date('2026-11-03T12:00:05Z'),
+        resolvedAt: new Date('2026-11-04T09:00:00Z'), resolvedBy: 'customer'
+      }])
+    };
+    const { service } = createService({ options: { deliveryAddressIssuesRepository } });
+
+    const pack = await service.buildExportPackage(77);
+
+    expect(deliveryAddressIssuesRepository.listByUser).toHaveBeenCalledWith(77);
+    expect(pack.addressIssues).toEqual([{
+      subscriptionId: 'sub_5', codes: ['address_number_missing'], source: 'courier_check',
+      openedAt: '2026-11-03T12:00:00.000Z', emailSentAt: '2026-11-03T12:00:05.000Z', resolvedAt: '2026-11-04T09:00:00.000Z', resolvedBy: 'customer'
+    }]);
+  });
+});
+
+describe('PrivacyService export PDF (privacy-data-export)', () => {
+  const storedPack = { exportedAt: '2026-01-01T00:00:00.000Z', profile: { fullName: 'Jane' } };
+
+  function pdfService(row) {
+    const renderExportPdf = jest.fn().mockResolvedValue({ buffer: Buffer.from('%PDF-'), filename: 'eden-bowls-dados-11.pdf' });
+    const created = createService({
+      repository: { findRequestById: jest.fn().mockResolvedValue(row) },
+      options: { renderExportPdf }
+    });
+    return { ...created, renderExportPdf };
+  }
+
+  test('renders the stored package of the customer own request in its locale', async () => {
+    const row = requestRow({ type: 'access', status: 'completed', locale: 'en-US', payload: { package: storedPack } });
+    const { service, renderExportPdf, profileService } = pdfService(row);
+
+    const result = await service.downloadOwnPdf({ userId: 77, requestId: 11 });
+
+    expect(result.filename).toBe('eden-bowls-dados-11.pdf');
+    expect(renderExportPdf).toHaveBeenCalledWith({ pack: storedPack, requestId: 11, type: 'access', locale: 'en' });
+    expect(profileService.getProfile).not.toHaveBeenCalled();
+  });
+
+  test('gives the PDF and the JSON the same package', async () => {
+    const row = requestRow({ type: 'portability', status: 'completed', payload: { package: storedPack } });
+    const { service, renderExportPdf } = pdfService(row);
+
+    const json = await service.downloadOwnPackage({ userId: 77, requestId: 11 });
+    await service.downloadOwnPdf({ userId: 77, requestId: 11 });
+
+    expect(renderExportPdf.mock.calls[0][0].pack).toBe(json);
+  });
+
+  test('answers 404 for a request of another customer', async () => {
+    const { service, renderExportPdf } = pdfService(requestRow({ type: 'access', userId: 88 }));
+
+    await expect(service.downloadOwnPdf({ userId: 77, requestId: 11 })).rejects.toMatchObject({ statusCode: 404 });
+    expect(renderExportPdf).not.toHaveBeenCalled();
+  });
+
+  test('answers no_export_package for a correction', async () => {
+    const { service } = pdfService(requestRow({ type: 'correction' }));
+
+    await expect(service.downloadAdminPdf(11, { roles: ['admin'] })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'no_export_package' }
+    });
+  });
+
+  test('answers identity_unverified for an e-mail request not yet verified', async () => {
+    const { service } = pdfService(requestRow({ type: 'access', channel: 'email', identityStatus: 'unverified' }));
+
+    await expect(service.downloadAdminPdf(11, { roles: ['admin'] })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'identity_unverified' }
+    });
+  });
+
+  test('follows the market when the panel opened the request without a locale', async () => {
+    const row = requestRow({ type: 'access', market: 'US', locale: null, payload: { package: storedPack } });
+    const { service, renderExportPdf } = pdfService(row);
+
+    await service.downloadAdminPdf(11, { roles: ['operator'], markets: ['US'] });
+
+    expect(renderExportPdf).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en' }));
+  });
+
+  test('keeps the panel PDF inside the operator markets', async () => {
+    const { service, renderExportPdf } = pdfService(requestRow({ type: 'access', market: 'US', payload: { package: storedPack } }));
+
+    await expect(service.downloadAdminPdf(11, { roles: ['operator'], markets: ['BR'] })).rejects.toMatchObject({ statusCode: 404 });
+    expect(renderExportPdf).not.toHaveBeenCalled();
   });
 });

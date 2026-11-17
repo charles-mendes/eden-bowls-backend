@@ -14,6 +14,13 @@ const MOVES = {
   PROJECTION_ONLY: 'projection_only'
 };
 
+// What a change of the standard week does to one scheduled delivery (delivery-calendar).
+const OUTCOMES = {
+  KEPT: 'kept',
+  MOVED_CHARGE_KEPT: 'moved_charge_kept',
+  MOVED: 'moved'
+};
+
 function partsOf(isoDate) {
   const [year, month, day] = String(isoDate).split('-').map(Number);
   return { year, month, day };
@@ -147,6 +154,68 @@ function assessImpact({ subscriptions, rowsBefore, rowsAfter, now }) {
   return (subscriptions || []).flatMap((subscription) => assessSubscription(subscription, { rowsBefore, rowsAfter, now }));
 }
 
+// The outcome of a delivery a week change reaches: paid, in production, ready or blocked keeps its stored date;
+// unpaid past the edit deadline keeps its charge and moves preparation and delivery; anything else moves.
+function weekOutcome(reason) {
+  if (reason === 'paid' || LOCKED_STATUSES.has(reason)) return OUTCOMES.KEPT;
+  if (reason === 'past_editable_until') return OUTCOMES.MOVED_CHARGE_KEPT;
+  return OUTCOMES.MOVED;
+}
+
+function assessWeekSubscription(subscription, { before, after, now }) {
+  const market = subscription.market;
+  const timeZone = timeZoneFor(market);
+  if (!timeZone || !subscription.chargeAt) return [];
+  const { deliveries, transitDays } = scheduledDeliveries(subscription, before, now);
+  const projectedAfter = new Map(scheduledDeliveries(subscription, after, now).deliveries.map((item) => [item.id, item]));
+  const affected = [];
+  for (const delivery of deliveries) {
+    const next = projectedAfter.get(delivery.id);
+    const reason = lockReason(subscription, delivery, timeZone, now);
+    const outcome = weekOutcome(reason);
+    const changes = next && next.preparationDay !== delivery.preparationDay;
+    // A kept delivery shows when the week would have moved it: its projection changes or its stored day closes.
+    const reached = outcome === OUTCOMES.KEPT
+      ? changes || !prepValid(market, delivery.preparationDay, after, transitDays)
+      : changes;
+    if (!reached) continue;
+    const item = {
+      stripeSubscriptionId: subscription.stripeSubscriptionId,
+      ledgerId: subscription.ledgerId,
+      userId: subscription.userId,
+      deliveryId: delivery.id,
+      chargeAt: delivery.chargeAt ? new Date(delivery.chargeAt).toISOString() : null,
+      preparationDay: delivery.preparationDay,
+      deliveryDate: delivery.deliveryDate,
+      newPreparationDay: outcome === OUTCOMES.KEPT ? delivery.preparationDay : next.preparationDay,
+      newDeliveryDate: outcome === OUTCOMES.KEPT ? delivery.deliveryDate : next.deliveryDate,
+      outcome,
+      lockReason: reason,
+      // Only a `moved` charge held at 00:00 of its preparation day moves in Stripe (or in a pending change).
+      move: outcome === OUTCOMES.MOVED ? moveFor(subscription, delivery, timeZone) : MOVES.PROJECTION_ONLY
+    };
+    if (item.move === MOVES.STRIPE_SYNC) {
+      item.expectedTrialEnd = new Date(subscription.chargeAt).toISOString();
+      item.targetTrialEnd = prepMidnight(item.newPreparationDay, timeZone).toISOString();
+    }
+    if (item.move === MOVES.PENDING_CHANGE) {
+      item.pendingTrialEnd = {
+        previous: pendingMoveAt(subscription).toISOString(),
+        next: prepMidnight(item.newPreparationDay, timeZone).toISOString()
+      };
+    }
+    affected.push(item);
+  }
+  return affected;
+}
+
+// The deliveries a change of the standard week reaches: every scheduled delivery whose projected preparation day
+// differs between `before` and `after` (snapshots that differ only in the week), earlier or later, plus the
+// kept ones whose stored day stops preparing. It reads only.
+function assessWeekImpact({ subscriptions, before, after, now }) {
+  return (subscriptions || []).flatMap((subscription) => assessWeekSubscription(subscription, { before, after, now }));
+}
+
 class DeliveryCalendarImpactService {
   constructor(options = {}) {
     this.subscriptions = options.subscriptions;
@@ -162,10 +231,22 @@ class DeliveryCalendarImpactService {
       now: this.now()
     });
   }
+
+  async assessWeek({ market, before, after }) {
+    const subscriptions = await this.subscriptions.listForMarket(market);
+    return assessWeekImpact({
+      subscriptions: subscriptions.filter((item) => item.market === market),
+      before,
+      after,
+      now: this.now()
+    });
+  }
 }
 
 module.exports = {
   MOVES,
+  OUTCOMES,
+  assessWeekImpact,
   DeliveryCalendarImpactService,
   assessImpact,
   prepMidnight

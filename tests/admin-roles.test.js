@@ -1,15 +1,26 @@
 const { ROLE_PERMISSIONS, parseRoles, permissionsForRoles, resolveAdminRoles } = require('../src/core/admin-roles');
 
 describe('admin roles', () => {
-  test('maps veterinarian to simulate and nutrition settings only', () => {
-    expect(permissionsForRoles(['veterinarian'])).toEqual(['nutrition.simulate', 'nutrition.settings.write']);
+  test('maps veterinarian to simulate, nutrition settings, breeds and limits only', () => {
+    expect(permissionsForRoles(['veterinarian'])).toEqual(['nutrition.simulate', 'nutrition.settings.write', 'nutrition.breeds.write', 'nutrition.limits.write']);
+  });
+
+  test('lets the operator write breeds but neither the limits nor the energy factors; only the veterinarian writes limits', () => {
+    expect(ROLE_PERMISSIONS.operator).toContain('nutrition.breeds.write');
+    expect(ROLE_PERMISSIONS.operator).not.toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.admin).not.toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.veterinarian).toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.readonly).not.toContain('nutrition.limits.write');
+    expect(ROLE_PERMISSIONS.operator).not.toContain('nutrition.settings.write');
+    expect(ROLE_PERMISSIONS.admin).toContain('nutrition.breeds.write');
+    expect(ROLE_PERMISSIONS.readonly).not.toContain('nutrition.breeds.write');
   });
 
   test('gives each role exactly the new settings permissions of phase 3', () => {
     const NEW = ['nutrition.settings.write', 'settings.read', 'settings.company.write', 'settings.email.write', 'legal.write'];
     const granted = (role) => NEW.filter((permission) => ROLE_PERMISSIONS[role].includes(permission));
     expect(granted('admin')).toEqual(NEW);
-    expect(granted('operator')).toEqual(['settings.read', 'settings.email.write']);
+    expect(granted('operator')).toEqual(['settings.read', 'settings.company.write', 'settings.email.write', 'legal.write']);
     expect(granted('readonly')).toEqual(['settings.read']);
     expect(granted('veterinarian')).toEqual(['nutrition.settings.write']);
     expect(ROLE_PERMISSIONS.veterinarian.some((permission) => permission.startsWith('catalog.') || permission.startsWith('settings.'))).toBe(false);
@@ -90,6 +101,14 @@ describe('admin roles', () => {
     expect(parseRoles('nutritionist,readonly')).toEqual(['veterinarian', 'readonly']);
     expect(parseRoles(['nutritionist', 'veterinarian'])).toEqual(['veterinarian']);
     expect(resolveAdminRoles({ storedRoles: '["nutritionist"]', email: 'lia@edenbowls.com' })).toEqual(['veterinarian']);
-    expect(permissionsForRoles(parseRoles('["nutritionist"]'))).toEqual(['nutrition.simulate', 'nutrition.settings.write']);
+    expect(permissionsForRoles(parseRoles('["nutritionist"]'))).toEqual(['nutrition.simulate', 'nutrition.settings.write', 'nutrition.breeds.write', 'nutrition.limits.write']);
+  });
+
+  test('only operator and admin can record a customer contact', () => {
+    expect(permissionsForRoles(['operator'])).toContain('customers.contact.write');
+    expect(permissionsForRoles(['admin'])).toContain('customers.contact.write');
+    expect(permissionsForRoles(['readonly'])).not.toContain('customers.contact.write');
+    expect(permissionsForRoles(['veterinarian'])).not.toContain('customers.contact.write');
+    expect(ROLE_PERMISSIONS.readonly).toContain('billing.subscribers.read');
   });
 });
