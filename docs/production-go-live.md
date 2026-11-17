@@ -104,4 +104,17 @@ Before dropping the old host binds, copy the existing files into the new volumes
 - `public/recipe-images` (`RECIPE_IMAGE_DIR`; empty until the first recipe image is uploaded in the admin)
 - the current UPS label directory (`UPS_LABEL_DIR`, default `./data/ups-labels`)
 
+### Recipe image library backup
+
+The recipe images volume holds the image library of the admin (`media_assets`): the plan thumbnails and the home banners of the recipes. The API never deletes a file in this volume: replacing or unlinking a thumbnail or a banner, deleting a recipe and archiving an image all keep the file, so the volume only grows. The rows in `media_assets` point at these files by URL, so a database dump without the volume, or the volume without the dump, restores broken thumbnails and banners. The same backup covers both kinds.
+
+Back up the volume on the same schedule as the database dump. Compose prefixes the volume with the project name, so find it with `docker volume ls | grep recipe-images`, then copy it out:
+
+```bash
+docker run --rm -v <project>_eden-bowls-recipe-images:/data:ro -v "$PWD":/backup alpine \
+  tar czf /backup/recipe-images-$(date +%F).tgz -C /data .
+```
+
+To restore, stop the `api` service, extract the archive into the same volume (`tar xzf /backup/recipe-images-<date>.tgz -C /data` with the volume mounted read-write), then start it again. Keep the archive next to the matching `mysqldump`.
+
 Docker healthchecks stay on `GET /health`.

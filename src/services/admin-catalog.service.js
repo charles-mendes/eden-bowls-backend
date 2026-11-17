@@ -253,7 +253,6 @@ class AdminCatalogService {
     this.logger = options.logger || null;
     this.auditService = options.auditService || null;
     this.recipeContentRepository = options.recipeContentRepository || null;
-    this.recipeImageStorage = options.recipeImageStorage || null;
     this.lastSync = null;
   }
 
@@ -421,7 +420,9 @@ class AdminCatalogService {
         ...(summary ? {} : {
           label: content.label,
           labelUpdatedAt: content.labelUpdatedAt || null,
+          imageAssetId: content.imageAssetId || null,
           imageUpdatedAt: content.imageUpdatedAt || null,
+          planImageAssetId: content.planImageAssetId || null,
           planImageUpdatedAt: content.planImageUpdatedAt || null,
           presentation: content.presentation || null,
           presentationUpdatedAt: content.presentationUpdatedAt || null
@@ -518,11 +519,8 @@ class AdminCatalogService {
     if (this.recipeContentRepository && typeof this.recipeContentRepository.deleteByProductId === 'function') {
       await this.recipeContentRepository.deleteByProductId(product.id);
     }
-    for (const imageUrl of [product.content && product.content.imageUrl, product.content && product.content.planImageUrl]) {
-      if (imageUrl) {
-        await this.deleteImageFile(imageUrl);
-      }
-    }
+    // The banner and the plan thumbnail are library images (plan-image-library): the deleted content only drops
+    // the links, and the images and their files stay.
     return { deleted: true, id: product.id };
   }
 
@@ -808,18 +806,6 @@ class AdminCatalogService {
     });
   }
 
-  async deleteImageFile(imageUrl) {
-    if (!this.recipeImageStorage || typeof this.recipeImageStorage.delete !== 'function') {
-      return;
-    }
-    try {
-      await this.recipeImageStorage.delete(imageUrl);
-    } catch (error) {
-      if (this.logger && typeof this.logger.error === 'function') {
-        this.logger.error({ err: error && error.message }, 'Failed to delete recipe image file.');
-      }
-    }
-  }
 
   async recordAudit(actor, action, product, variationId, metadata = {}) {
     if (!this.auditService || typeof this.auditService.record !== 'function') {

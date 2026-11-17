@@ -20,18 +20,46 @@ function dataSourceReturning(...results) {
   return { isInitialized: true, query };
 }
 
+// A transaction that locks the library image row, then updates the product row; the read-back goes to the data source.
+function linkingDataSource(assetRows, readBack) {
+  const manager = { query: jest.fn() };
+  if (assetRows) manager.query.mockResolvedValueOnce(assetRows);
+  manager.query.mockResolvedValueOnce([]);
+  return {
+    isInitialized: true,
+    manager,
+    transaction: jest.fn(async (work) => work(manager)),
+    query: jest.fn().mockResolvedValueOnce(readBack)
+  };
+}
+
+const URL = 'https://api.example/recipe-images/recipe-br-senior-beef-abc.webp';
+
 describe('RecipeContentRepository', () => {
-  test('Two sizes share one image: the image is written on the product row', async () => {
-    const dataSource = dataSourceReturning([], [row({ product_id: 500 })]);
-    const repository = new RecipeContentRepository(dataSource);
+  test('Two sizes share one image: the banner link is written on the product row, after locking the image', async () => {
+    const dataSource = linkingDataSource([{ url: URL, archived_at: null }], [row({ product_id: 500, image_url: URL, image_asset_id: 31 })]);
 
-    const content = await repository.setImage({ productId: '500', imageUrl: row().image_url, actorId: 7 });
+    const content = await new RecipeContentRepository(dataSource).setImage({ productId: '500', assetId: 31, actorId: 7 });
 
-    const [sql, params] = dataSource.query.mock.calls[0];
-    expect(sql).toContain('SET image_url = ?, image_updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE product_id = ?');
-    expect(params).toEqual([row().image_url, 7, 500]);
-    expect(dataSource.query.mock.calls[1][1]).toEqual([500]);
-    expect(content).toMatchObject({ productId: '500', market: 'BR', flavorSlug: 'senior-beef', imageUrl: row().image_url, label: null });
+    expect(dataSource.manager.query.mock.calls[0]).toEqual([expect.stringContaining('FROM `media_assets` WHERE id = ? FOR UPDATE'), [31]]);
+    const [sql, params] = dataSource.manager.query.mock.calls[1];
+    expect(sql).toContain('SET image_url = ?, image_asset_id = ?, image_updated_at = CURRENT_TIMESTAMP, updated_by = ?');
+    expect(sql).toContain('WHERE product_id = ?');
+    expect(params).toEqual([URL, 31, 7, 500]);
+    expect(dataSource.query.mock.calls[0][1]).toEqual([500]);
+    expect(content).toMatchObject({ productId: '500', flavorSlug: 'senior-beef', imageUrl: URL, imageAssetId: 31 });
+  });
+
+  test('refuses an archived image and an unknown one, writing nothing', async () => {
+    const archived = linkingDataSource([{ url: URL, archived_at: new Date() }], []);
+    await expect(new RecipeContentRepository(archived).setImage({ productId: 500, assetId: 31 }))
+      .rejects.toMatchObject({ statusCode: 409, details: { code: 'media_asset_archived' } });
+    expect(archived.manager.query).toHaveBeenCalledTimes(1);
+
+    const unknown = linkingDataSource([], []);
+    await expect(new RecipeContentRepository(unknown).setPlanImage({ productId: 500, assetId: 99 }))
+      .rejects.toMatchObject({ statusCode: 404 });
+    expect(unknown.manager.query).toHaveBeenCalledTimes(1);
   });
 
   test('reads one market only, so BR and US content of the same flavor stay apart', async () => {
@@ -64,29 +92,27 @@ describe('RecipeContentRepository', () => {
     expect(dataSource.query).not.toHaveBeenCalled();
   });
 
-  test('clears the image of one product', async () => {
-    const dataSource = dataSourceReturning([], [row({ image_url: null })]);
-    const content = await new RecipeContentRepository(dataSource).setImage({ productId: 500, imageUrl: null, actorId: 7 });
+  test('unlinks the banner of one product without reading any image', async () => {
+    const dataSource = linkingDataSource(null, [row({ image_url: null })]);
+    const content = await new RecipeContentRepository(dataSource).setImage({ productId: 500, assetId: null, actorId: 7 });
 
-    expect(dataSource.query.mock.calls[0][1]).toEqual([null, 7, 500]);
+    expect(dataSource.manager.query).toHaveBeenCalledTimes(1);
+    expect(dataSource.manager.query.mock.calls[0][1]).toEqual([null, null, 7, 500]);
     expect(content.imageUrl).toBeNull();
+    expect(content.imageAssetId).toBeNull();
   });
 
-  test('sets and clears the plan thumbnail apart from the banner', async () => {
-    const dataSource = dataSourceReturning(
-      [], [row({ plan_image_url: '/recipe-images/recipe-br-senior-beef-plan-1.webp' })],
-      [], [row({ plan_image_url: null })]
-    );
-    const repository = new RecipeContentRepository(dataSource);
+  test('links the plan thumbnail apart from the banner', async () => {
+    const planUrl = '/recipe-images/recipe-br-plan-1.webp';
+    const dataSource = linkingDataSource([{ url: planUrl, archived_at: null }], [row({ plan_image_url: planUrl, plan_image_asset_id: 12 })]);
 
-    const set = await repository.setPlanImage({ productId: 500, imageUrl: '/recipe-images/recipe-br-senior-beef-plan-1.webp', actorId: 7 });
-    const cleared = await repository.setPlanImage({ productId: 500, imageUrl: null, actorId: 7 });
+    const set = await new RecipeContentRepository(dataSource).setPlanImage({ productId: 500, assetId: 12, actorId: 7 });
 
-    expect(dataSource.query.mock.calls[0][0]).toContain('SET plan_image_url = ?, plan_image_updated_at = CURRENT_TIMESTAMP');
-    expect(dataSource.query.mock.calls[0][1]).toEqual(['/recipe-images/recipe-br-senior-beef-plan-1.webp', 7, 500]);
-    expect(dataSource.query.mock.calls[2][1]).toEqual([null, 7, 500]);
-    expect(set.planImageUrl).toBe('/recipe-images/recipe-br-senior-beef-plan-1.webp');
-    expect(cleared.planImageUrl).toBeNull();
+    const [sql, params] = dataSource.manager.query.mock.calls[1];
+    expect(sql).toContain('SET plan_image_url = ?, plan_image_asset_id = ?, plan_image_updated_at = CURRENT_TIMESTAMP');
+    expect(sql).not.toContain(' image_url = ?, image_asset_id');
+    expect(params).toEqual([planUrl, 12, 7, 500]);
+    expect(set).toMatchObject({ planImageUrl: planUrl, planImageAssetId: 12 });
   });
 
   test('stores the label as JSON on the product row', async () => {

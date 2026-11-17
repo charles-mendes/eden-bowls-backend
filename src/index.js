@@ -59,6 +59,8 @@ const { LocalAvatarStorage } = require('./infrastructure/storage/local-avatar-st
 const { LocalFeedbackPhotoStorage } = require('./infrastructure/storage/local-feedback-photo-storage');
 const { LocalPetPhotoStorage } = require('./infrastructure/storage/local-pet-photo-storage');
 const { LocalRecipeImageStorage } = require('./infrastructure/storage/local-recipe-image-storage');
+const { MediaAssetRepository } = require('./infrastructure/repositories/media-asset.repository');
+const { MediaLibraryService } = require('./services/media-library.service');
 const { AuthService } = require('./services/auth.service');
 const { createOtpMailer } = require('./infrastructure/mailers/otp-mailer');
 const { BreedsService } = require('./services/breeds.service');
@@ -869,15 +871,18 @@ async function bootstrap() {
     syncRunsRepository: new CatalogSyncRunsRepository(dataSource),
     auditService: adminAuditService,
     recipeContentRepository,
-    recipeImageStorage,
     logger
+  });
+  const mediaLibraryService = new MediaLibraryService({
+    repository: new MediaAssetRepository(dataSource),
+    imageStorage: recipeImageStorage,
+    auditService: adminAuditService
   });
   const recipeContentService = new RecipeContentService({
     repository: recipeContentRepository,
     catalogRepository: adminCatalogRepository,
-    imageStorage: recipeImageStorage,
-    auditService: adminAuditService,
-    logger
+    mediaLibraryService,
+    auditService: adminAuditService
   });
   const adminSystemHealthService = new AdminSystemHealthService({
     marketConflictsRepository: new MarketConflictsRepository(dataSource, {
@@ -1021,6 +1026,7 @@ async function bootstrap() {
     blingNfeService,
     adminCatalogService,
     recipeContentService,
+    mediaLibraryService,
     adminSystemHealthService,
     adminUsersService,
     stripeCouponService,

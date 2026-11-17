@@ -49,11 +49,12 @@ The API MUST accept a recipe image only as PNG, JPEG or WebP of at most 5 MB who
 #### Scenario: Valid image replaces the old one
 
 - **WHEN** an operator uploads a 1024 × 636 JPEG for a flavor that already has an image
-- **THEN** the API returns a new image URL ending in `.webp`, the new URL serves a 1024 × 636 image, and the previous file is no longer served
+- **THEN** the API returns a new image URL ending in `.webp`, the new URL serves a 1024 × 636 image, and the recipe reports the new URL
+- **AND** the previous image is still listed in the market's `banner` library and its URL still serves the file
 
 ### Requirement: Image of an active recipe cannot be removed
 
-The API MUST refuse to remove a product's image with HTTP 409 `recipe_content_in_use` while any variation of that product is active. Replacing the image MUST remain allowed while variations are active.
+The API MUST refuse to remove a product's image with HTTP 409 `recipe_content_in_use` while any variation of that product is active. Replacing the image MUST remain allowed while variations are active. Removing the image MUST only unlink it: the product MUST then report `imageUrl` and `imageAssetId` as null, and the library banner and its file MUST be kept.
 
 #### Scenario: Remove with an active variation
 
@@ -64,6 +65,7 @@ The API MUST refuse to remove a product's image with HTTP 409 `recipe_content_in
 
 - **WHEN** an operator removes the image of the BR `senior-beef` product and all its variations are inactive
 - **THEN** the image is removed and the content reports no image
+- **AND** the banner is still listed in the BR `banner` library, with no product in `usedBy`, and its URL still serves the file
 
 ### Requirement: Label data is stored per market in the market language
 
@@ -132,7 +134,7 @@ The admin product detail MUST return the product's content (code, name, life sta
 
 ### Requirement: Content changes follow catalog permissions and market scope
 
-Reading recipe content MUST require `catalog.read` and changing it MUST require `catalog.write`, both limited to the session's markets. Every image upload, image removal and label save MUST be recorded in the admin audit log with the market and the flavor.
+Reading recipe content MUST require `catalog.read` and changing it MUST require `catalog.write`, both limited to the session's markets. Every image upload, image link, image removal and label save MUST be recorded in the admin audit log with the market and the flavor, and an image change also with the library image id.
 
 #### Scenario: Readonly cannot upload
 
@@ -143,6 +145,11 @@ Reading recipe content MUST require `catalog.read` and changing it MUST require 
 
 - **WHEN** a session limited to BR requests the US content of `beef`
 - **THEN** the API returns 403
+
+#### Scenario: Banner link is audited
+
+- **WHEN** an operator links the banner of BR recipe `senior-beef` to library banner 31
+- **THEN** the audit log records the image update with market BR, key `senior-beef` and image id 31
 
 ### Requirement: Public route serves launched recipe content
 
@@ -242,3 +249,113 @@ Activating a variation MUST be refused while its product has no stored presentat
 
 - **WHEN** the operator saves the presentation of `adult-lamb` and activates the variation
 - **THEN** the activation succeeds, `adult-lamb` appears in `GET /api/v1/recipes?market=BR`, and its public route returns the presentation
+
+### Requirement: An uploaded banner goes into the library
+
+A banner sent as an upload to `PUT /api/v1/admin/catalog/products/:productId/content/image` MUST follow the banner size rule above and the library upload rules of kind `banner`, including same-bytes deduplication, MUST create or reuse a library banner of the product's market, and MUST link the product to it. A refused upload MUST leave the current banner unchanged.
+
+#### Scenario: Upload replaces the linked banner
+
+- **WHEN** the BR `beef` product links to banner A and an operator uploads a new 1024 × 636 JPEG as its image
+- **THEN** a new BR library banner B is created and `beef` reports banner B's URL as `imageUrl`
+- **AND** banner A is still listed in the BR `banner` library and its URL still serves the file
+
+### Requirement: Banner links a product to a library image
+
+`PUT /api/v1/admin/catalog/products/:productId/content/image` MUST link the product's banner to a library image, given either `{ assetId }` of an existing image or a new image upload, and refuse both or neither with 422 `media_asset_invalid`. The image MUST be of kind `banner`, of the product's market, and not archived. The product content MUST then report that image's URL as `imageUrl` and its id as `imageAssetId`. A previously linked banner MUST stay in the library.
+
+#### Scenario: Link an existing library banner
+
+- **WHEN** an operator links the banner of the BR `senior-beef` product to BR banner 31
+- **THEN** the content reports `imageAssetId` 31 and `imageUrl` equal to banner 31's URL
+- **AND** the public content of `senior-beef` in BR reports the same `imageUrl`
+
+#### Scenario: Plan thumbnail as a banner
+
+- **WHEN** an operator links the banner of the BR `beef` product to a BR library image of kind `plan`
+- **THEN** the API returns 422 `media_asset_invalid` and the current banner is kept
+
+#### Scenario: Banner of another market
+
+- **WHEN** an operator links the banner of the BR `beef` product to a US banner
+- **THEN** the API returns 422 `media_asset_invalid` and the current banner is kept
+
+#### Scenario: Archived banner
+
+- **WHEN** an operator links the banner of the BR `beef` product to an archived BR banner
+- **THEN** the API returns 409 `media_asset_archived` and the current banner is kept
+
+#### Scenario: Unknown image
+
+- **WHEN** an operator links the banner of the BR `beef` product to an image id that does not exist
+- **THEN** the API returns 404 and the current banner is kept
+
+### Requirement: Plan thumbnail links a product to a library image
+
+`PUT /api/v1/admin/catalog/products/:productId/content/plan-image` MUST link the product to a library image, given either `{ assetId }` of an existing image or a new image upload. The image MUST be of kind `plan`, of the product's market, and not archived. The content MUST then report that image's URL as `planImageUrl` and its id as `planImageAssetId`. A previously linked image MUST stay in the library. An upload MUST follow the library upload rules (400 × 400, PNG, JPEG or WebP, up to 5 MB, stored as WebP, same-bytes deduplication); a refused upload MUST leave the current thumbnail unchanged.
+
+#### Scenario: Link an existing library image
+
+- **WHEN** an operator links the BR `beef` product to BR plan image 12
+- **THEN** the content reports `planImageAssetId` 12 and `planImageUrl` equal to image 12's URL
+
+#### Scenario: Image of another market
+
+- **WHEN** an operator links the BR `beef` product to a US plan image
+- **THEN** the API returns 422 `media_asset_invalid` and the current thumbnail is kept
+
+#### Scenario: 200 × 200 upload is refused
+
+- **WHEN** an operator uploads a 200 × 200 PNG to the plan image of `beef`
+- **THEN** the API returns 422 `recipe_image_invalid` and `beef` keeps its current thumbnail
+
+### Requirement: Unlinking a plan thumbnail keeps the image
+
+`DELETE /api/v1/admin/catalog/products/:productId/content/plan-image` MUST only unlink the product from its plan image. The content MUST then report `planImageUrl` and `planImageAssetId` as null. The library image and its file MUST be kept, and the image MAY be linked again.
+
+#### Scenario: Unlink and link again
+
+- **WHEN** an operator unlinks the plan image of the BR `beef` product and later links `beef` to the same image id
+- **THEN** after unlinking `beef` reports no `planImageUrl` and the image is still in the BR library
+- **AND** after linking again `beef` reports the same URL as before
+
+### Requirement: Deleting a product keeps its library images
+
+Deleting a product MUST remove its content row, and its banner and plan thumbnail MUST only be unlinked: the library images and their files MUST be kept.
+
+#### Scenario: Delete a product with a banner and a thumbnail
+
+- **WHEN** an operator deletes a BR draft product that links to banner 31 and plan image 12
+- **THEN** banner 31 and image 12 are still listed in the BR library, with no product in `usedBy`, and their URLs still serve the files
+
+### Requirement: Existing images become library images
+
+Every content row that had a banner or a plan thumbnail before the library existed MUST be linked to a library image of its market and kind (`banner` or `plan`), with the same URL, so the store keeps showing the same file and the variation activation checks keep seeing a stored image.
+
+#### Scenario: Backfill of a stored banner
+
+- **WHEN** the BR `turkey` product had banner `/recipe-images/recipe-br-turkey-<id>.webp` before the migration
+- **THEN** after the migration `turkey` links to a BR `banner` library image with that URL, and its `imageUrl` is unchanged
+
+#### Scenario: Backfilled banner is not deleted on replace
+
+- **WHEN** an operator uploads a new banner for the BR `turkey` product after the migration
+- **THEN** the backfilled image is still listed in the BR `banner` library and `/recipe-images/recipe-br-turkey-<id>.webp` still serves the file
+
+### Requirement: Store plan card falls back from the plan thumbnail
+
+The public content MUST keep reporting `planImageUrl` as the linked library image's URL, or null without one. The store plan card MUST show `planImageUrl`, else the banner `imageUrl`, else the image bundled with the store.
+
+#### Scenario: Product without a plan thumbnail
+
+- **WHEN** the BR `senior-beef` product has a banner and no plan thumbnail
+- **THEN** the public content reports `planImageUrl` null and the plan card shows the banner image
+
+### Requirement: Image changes are audited
+
+Every banner and plan thumbnail link and unlink MUST be recorded in the admin audit log with the product id, the market, the code and the library image id.
+
+#### Scenario: Link is audited
+
+- **WHEN** an operator links the BR `beef` product to plan image 12
+- **THEN** the audit log records the plan image update with market BR, code `beef` and image id 12

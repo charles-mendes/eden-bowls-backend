@@ -25,21 +25,24 @@ describe('processRecipeImage', () => {
     expect(metadata).toMatchObject({ format: 'webp', width: 1024, height: 636, hasAlpha: true });
   });
 
-  test.each([400, 200])('accepts a %i px square plan thumbnail', async (side) => {
-    const result = await processRecipeImage({ mimeType: 'image/png', buffer: await image(side, side), kind: 'plan' });
-    expect(await sharp(result.buffer).metadata()).toMatchObject({ format: 'webp', width: side, height: side });
+  test('accepts a 400 px square plan thumbnail and reports the stored size', async () => {
+    const result = await processRecipeImage({ mimeType: 'image/png', buffer: await image(400, 400), kind: 'plan' });
+    expect(result).toMatchObject({ width: 400, height: 400 });
+    expect(await sharp(result.buffer).metadata()).toMatchObject({ format: 'webp', width: 400, height: 400 });
   });
 
-  test('refuses the banner size as a plan thumbnail, naming the accepted sizes', async () => {
-    const error = await refusal(processRecipeImage({ mimeType: 'image/png', buffer: await image(1024, 636), kind: 'plan' }));
+  // plan-image-library: the thumbnail is 400 x 400 only.
+  test.each([[200, 200], [1024, 636]])('refuses a %i x %i plan thumbnail, naming 400 x 400', async (width, height) => {
+    const error = await refusal(processRecipeImage({ mimeType: 'image/png', buffer: await image(width, height), kind: 'plan' }));
 
-    expect(error.message).toBe('Image must be 400 x 400 or 200 x 200 pixels.');
-    expect(error.details).toMatchObject({
-      reason: 'dimensions',
-      expectedWidth: 400,
-      expectedHeight: 400,
-      acceptedSizes: [{ width: 400, height: 400 }, { width: 200, height: 200 }]
-    });
+    expect(error.message).toBe('Image must be 400 x 400 pixels.');
+    expect(error.details).toMatchObject({ reason: 'dimensions', width, height, expectedWidth: 400, expectedHeight: 400 });
+    expect(error.details.acceptedSizes).toBeUndefined();
+  });
+
+  test('reports the stored size of a close banner, which is resized to 1024 x 636', async () => {
+    const result = await processRecipeImage({ mimeType: 'image/png', buffer: await image(1024, 576) });
+    expect(result).toMatchObject({ width: 1024, height: 636 });
   });
 
   test('accepts JPEG at the banner size', async () => {

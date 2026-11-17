@@ -1,0 +1,20 @@
+Imagens de destaque da tela inicial (carrossel "Nossas receitas para caes")
+Linhas Adulto, Filhote e Senior, 1024 x 636 px, PNG. Embalagem em portugues (pt/, site .com.br) e em ingles (en/, site .com).
+O canto inferior esquerdo fica livre para titulo, descricao, ingredientes e botao.
+
+Sobem pelo painel em Biblioteca de imagens > Destaques: pt/ -> BR e en/ -> US.
+Nenhum arquivo enviado e apagado pela API: trocar ou desvincular deixa a imagem na biblioteca.
+Change OpenSpec: openspec/changes/add-banner-image-library
+
+Linha     pt/ (BR)                          en/ (US)                         receita
+Adulto    adulto/receita-carne-pt           adult/recipe-beef                beef
+Adulto    adulto/receita-frango-pt          adult/recipe-chicken             turkey
+Adulto    adulto/receita-peixe-pt           adult/recipe-fish                fish
+Adulto    adulto/receita-porco-pt           adult/recipe-pork                pork
+Filhote   filhote/filhote-carne-frango      puppy/puppy-beef-chicken         puppy-beef-chicken
+Filhote   filhote/filhote-frango-porco      puppy/puppy-chicken-pork         puppy-chicken-pork
+Senior    senior/senior-carne               senior/senior-beef               senior-beef
+Senior    senior/senior-frango              senior/senior-chicken            senior-chicken
+
+Os 4 de en/adult/ sao identicos as imagens que ja vem com a loja (eden-bowls/public/images/recipe-*.png).
+Um banner so aparece na loja quando a receita tem variacao ativa naquele mercado.
