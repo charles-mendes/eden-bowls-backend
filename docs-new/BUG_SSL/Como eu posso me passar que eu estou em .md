@@ -1,3 +1,5 @@
+> **Nota:** os paths `/qa-app`, `/qa-admin` e `/qa-api` citados aqui são históricos e não são mais usados. O QA agora roda apenas em `qa.edenbowls.com` (loja), `qa-admin.edenbowls.com` (painel) e `qa-api.edenbowls.com` (API).
+
 Como eu posso me passar que eu estou em boca raton para verificar erro de SSL Minha cliente esta reclamando de erro Mas no Brasil não da erro
 
 Sim. E, no seu caso, testar como se estivesse em Boca Raton faz sentido, porque o problema pode estar relacionado ao caminho de rede, ISP, IPv6, CDN ou ao comportamento de algum dispositivo/cliente nos EUA — e não necessariamente ao certificado em si.

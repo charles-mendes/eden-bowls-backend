@@ -1,5 +1,7 @@
 # Eden Bowls — Estratégia de Ambientes QA e Produção
 
+> **Status:** migração concluída. Os paths `/qa-app`, `/qa-admin` e `/qa-api` não são mais usados, e os redirects foram removidos do Caddy. O QA agora roda apenas em `qa.edenbowls.com`, `qa-admin.edenbowls.com` e `qa-api.edenbowls.com`.
+
 ## Objetivo
 
 Definir uma estrutura simples, segura e profissional para o Eden Bowls, priorizando o ambiente de **QA** para desenvolvimento, validação e testes, enquanto o domínio principal permanece com uma página estática de apresentação.
@@ -11,39 +13,28 @@ O site de produção atualmente apresenta uma página estática de lançamento:
 
 As aplicações em desenvolvimento devem permanecer separadas dessa página pública.
 
-O QA de hoje **não é um único site**. São três aplicações distintas no mesmo host, por path. Esta estratégia move cada uma para o próprio subdomínio.
+O QA **não é um único site**. São três aplicações distintas, cada uma no próprio subdomínio.
 
 ---
 
 ## 1. Situação atual
 
-O Caddy público em `edenbowls.com` encaminha três prefixos para três upstreams:
+O Caddy público encaminha cada host para um upstream:
 
-| Path público | Projeto | Upstream atual |
+| Host público | Projeto | Upstream |
 |---|---|---|
-| `/` | Página estática | arquivos em `/srv/edenbowls` |
-| `/qa-app/` | Loja (`eden-bowls`) | `127.0.0.1:4173` |
-| `/qa-admin/` | Painel (`eden-bowls-admin`) | `127.0.0.1:4174` |
-| `/qa-api/` | API (`eden-bowls-backend`) | API Node |
+| `edenbowls.com` | Página estática | arquivos em `/srv/edenbowls` |
+| `qa.edenbowls.com` | Loja (`eden-bowls`) | `127.0.0.1:4173` |
+| `qa-admin.edenbowls.com` | Painel (`eden-bowls-admin`) | `127.0.0.1:4174` |
+| `qa-api.edenbowls.com` | API (`eden-bowls-backend`) | API Node |
 
-URLs atuais:
-
-```text
-https://edenbowls.com/              Página estática de produção
-https://edenbowls.com/qa-app/       Loja de QA
-https://edenbowls.com/qa-admin/     Painel de QA
-https://edenbowls.com/qa-api/       API de QA
-```
-
-O painel **não** é uma rota da loja. São SPAs diferentes, com `VITE_APP_BASE_PATH` próprio (`/qa-app/` e `/qa-admin/`). A API compartilha o mesmo origin, com cookie de refresh em `/qa-api/api/v1/auth`.
-
-Esse modelo funciona, mas mistura QA e produção no mesmo hostname. Cookie, CORS, SEO, cache e SSL ficam acoplados à página pública.
+O painel **não** é uma rota da loja. São SPAs diferentes, cada uma na raiz do próprio host (`VITE_APP_BASE_PATH=/`). A API também tem host próprio, com cookie de refresh em `/api/v1/auth`.
 
 ---
 
 ## 2. Estrutura recomendada
 
-Um host por aplicação de QA. A produção deixa de conhecer esses paths, exceto por redirects temporários.
+Um host por aplicação de QA. A produção não conhece o QA.
 
 ```text
 https://edenbowls.com
@@ -53,21 +44,21 @@ https://edenbowls.com
     Indexável pelos mecanismos de busca
 
 https://qa.edenbowls.com
-    QA da loja (ex /qa-app/)
+    QA da loja
     Aplicação completa do cliente
     Dados e integrações de teste
     Não indexável
     Preferencialmente protegido por senha
 
 https://qa-admin.edenbowls.com
-    QA do painel (ex /qa-admin/)
+    QA do painel
     Back-office interno
     Não indexável
     Protegido por autenticação do painel
     Preferencialmente também protegido no proxy
 
 https://qa-api.edenbowls.com
-    QA da API (ex /qa-api/)
+    QA da API
     Backend compartilhado pela loja e pelo painel
     Não indexável
 
@@ -90,9 +81,9 @@ localhost
 
 Não colocar o admin em `qa.edenbowls.com/admin`.
 
-Isso recria o modelo atual (dois SPAs no mesmo host + `BASE_PATH`) e mistura o painel com a loja. O admin continua sendo o projeto `eden-bowls-admin`, em host próprio.
+Isso coloca dois SPAs no mesmo host, com `BASE_PATH`, e mistura o painel com a loja. O admin continua sendo o projeto `eden-bowls-admin`, em host próprio.
 
-Não deixar a API em `edenbowls.com/qa-api` enquanto as UIs vão para subdomínio. Cookie, issuer, CORS e URLs públicas de avatar/fotos ficariam no meio do caminho.
+Não servir a API por path no domínio principal. Cookie, issuer, CORS e URLs públicas de avatar/fotos ficam em `qa-api.edenbowls.com`.
 
 ---
 
@@ -129,7 +120,7 @@ Projeto: `eden-bowls`.
 
 - Onboarding, receitas, calculador, checkout, conta e assinatura
 - Stripe em modo de teste
-- `VITE_APP_BASE_PATH=/` (raiz do host, sem `/qa-app/`)
+- `VITE_APP_BASE_PATH=/` (raiz do host)
 - Consome `https://qa-api.edenbowls.com`
 
 ```text
@@ -153,7 +144,7 @@ Projeto: `eden-bowls-admin`.
 
 - Usuários, pedidos, onboarding operacional, catálogo, billing, nutrição
 - Autenticação e permissões próprias do painel (`/admin/me`, papéis, `readonly`)
-- `VITE_APP_BASE_PATH=/` (raiz do host, sem `/qa-admin/`)
+- `VITE_APP_BASE_PATH=/` (raiz do host)
 - Consome `https://qa-api.edenbowls.com/api/v1`
 
 ```text
@@ -172,7 +163,7 @@ Projeto: `eden-bowls-backend`.
 
 - Backend compartilhado pela loja e pelo painel
 - Banco, Stripe test, e-mails e webhooks de teste
-- Sem prefixo `/qa-api` no path público
+- API na raiz do host, sem prefixo no path público
 - Cookie de refresh em `/api/v1/auth`
 
 ### Características comuns do QA
@@ -218,7 +209,7 @@ O QA pode ter configurações próprias de:
 - Logs
 - Monitoramento
 
-A página estática deixa de carregar regras de `/qa-app`, `/qa-admin` e `/qa-api`.
+A página estática não carrega regras de QA.
 
 #### Maior flexibilidade
 
@@ -245,12 +236,12 @@ api.qa.edenbowls.com
 
 O comportamento é o mesmo. Exige DNS aninhado (`admin.qa`) ou wildcard `*.qa.edenbowls.com`.
 
-A recomendação desta estratégia é o paralelo mais simples com os names atuais:
+A estratégia adotada são os três hosts irmãos:
 
 ```text
-/qa-app    → qa.edenbowls.com
-/qa-admin  → qa-admin.edenbowls.com
-/qa-api    → qa-api.edenbowls.com
+qa.edenbowls.com
+qa-admin.edenbowls.com
+qa-api.edenbowls.com
 ```
 
 ---
@@ -322,9 +313,7 @@ Os valores reais devem ser armazenados de forma segura, como em variáveis prote
 
 #### 6.4 CORS e cookies
 
-Hoje loja, admin e API compartilham `edenbowls.com`. Por isso `CORS_ORIGINS` aponta para o domínio principal e o cookie usa path `/qa-api/api/v1/auth`.
-
-Com subdomínios, as UIs e a API passam a ser **origens diferentes** no **mesmo site** (`edenbowls.com`):
+As UIs e a API são **origens diferentes** no **mesmo site** (`edenbowls.com`):
 
 - `SameSite=Lax` continua adequado;
 - o cookie pode permanecer host-only em `qa-api.edenbowls.com` (as UIs não leem o cookie);
@@ -401,9 +390,6 @@ O sitemap não deve conter:
 https://qa.edenbowls.com/...
 https://qa-admin.edenbowls.com/...
 https://qa-api.edenbowls.com/...
-https://edenbowls.com/qa-app/...
-https://edenbowls.com/qa-admin/...
-https://edenbowls.com/qa-api/...
 ```
 
 ---
@@ -506,32 +492,19 @@ Opções de certificado:
 
 ## 10. Proxy (Caddy)
 
-Hoje um único bloco de `edenbowls.com` faz `handle_path` para `/qa-app`, `/qa-admin` e `/qa-api`.
-
-O alvo é um virtual host por hostname. A produção fica só com a página estática e, por um período, com redirects das URLs antigas.
+Um virtual host por hostname. A produção fica só com a página estática.
 
 ```text
 edenbowls.com            → página estática
-                         → redirects temporários de /qa-app, /qa-admin e /qa-api
 
 qa.edenbowls.com         → proxy 127.0.0.1:4173   (loja)
 qa-admin.edenbowls.com   → proxy 127.0.0.1:4174   (admin)
 qa-api.edenbowls.com     → proxy da API Node
 ```
 
-Cada frontend volta a servir assets e rotas na raiz. O `handle_path` que remove o prefixo deixa de ser necessário nesses hosts.
+Cada frontend serve assets e rotas na raiz do próprio host.
 
-### Redirects das URLs antigas
-
-Enquanto existirem bookmarks, e-mails ou links internos:
-
-```text
-https://edenbowls.com/qa-app/*      →  https://qa.edenbowls.com/{path}
-https://edenbowls.com/qa-admin/*    →  https://qa-admin.edenbowls.com/{path}
-https://edenbowls.com/qa-api/*      →  https://qa-api.edenbowls.com/{path}
-```
-
-Depois da validação, esses redirects podem ser removidos para a produção voltar a ser apenas a página estática.
+Os redirects das URLs antigas (`/qa-app`, `/qa-admin`, `/qa-api`) foram removidos. Esses paths não são mais usados.
 
 ---
 
@@ -633,25 +606,13 @@ sk_live_...
 
 As chaves nunca devem ser compartilhadas entre os ambientes.
 
-Callbacks e webhooks do Stripe de QA devem apontar para `https://qa-api.edenbowls.com`, não para `https://edenbowls.com/qa-api`.
+Callbacks e webhooks do Stripe de QA devem apontar para `https://qa-api.edenbowls.com`.
 
 ---
 
-## 14. Migração a partir dos paths atuais
+## 14. Migração para subdomínios (concluída)
 
-As URLs atuais não estão tecnicamente erradas. Elas fazem sentido quando o mesmo domínio hospeda tudo e o isolamento não é prioridade.
-
-Para o Eden Bowls, os subdomínios são mais adequados porque o QA é um ambiente separado da página estática, e porque loja e admin já são aplicações distintas.
-
-### De
-
-```text
-https://edenbowls.com/qa-app/
-https://edenbowls.com/qa-admin/
-https://edenbowls.com/qa-api/
-```
-
-### Para
+O QA saiu dos paths `/qa-app`, `/qa-admin` e `/qa-api` em `edenbowls.com`, que não são mais usados, e agora roda apenas em:
 
 ```text
 https://qa.edenbowls.com
@@ -659,7 +620,9 @@ https://qa-admin.edenbowls.com
 https://qa-api.edenbowls.com
 ```
 
-A migração deve ser feita somente depois de:
+Para o Eden Bowls, os subdomínios são mais adequados porque o QA é um ambiente separado da página estática, e porque loja e admin já são aplicações distintas.
+
+Pré-requisitos da migração:
 
 - Configurar o DNS dos três hosts;
 - Configurar os virtual hosts no Caddy;
@@ -668,7 +631,6 @@ A migração deve ser feita somente depois de:
 - Ajustar URLs da API, CORS, issuer e cookie;
 - Validar rotas, assets, autenticação e integrações;
 - Configurar `noindex` na loja, no admin e na API;
-- Configurar redirects das URLs antigas;
 - Confirmar que a produção continua exibindo só a página estática.
 
 ---
@@ -689,8 +651,7 @@ A migração deve ser feita somente depois de:
 - [ ] Virtual host da loja → upstream da loja
 - [ ] Virtual host do admin → upstream do admin
 - [ ] Virtual host da API → upstream da API
-- [ ] Produção deixa de fazer `handle_path` de QA, salvo redirects
-- [ ] Redirects de `/qa-app`, `/qa-admin` e `/qa-api`
+- [ ] Produção sem nenhuma regra de QA
 - [ ] Separar variáveis de ambiente
 - [ ] Separar logs
 - [ ] Separar banco de dados, quando aplicável
@@ -747,7 +708,6 @@ A migração deve ser feita somente depois de:
 - [ ] Login do admin funciona
 - [ ] Rotas da loja e do admin funcionam na raiz
 - [ ] Checkout de teste funciona
-- [ ] Redirects das URLs antigas funcionam
 - [ ] QA não aparece no Google
 - [ ] Não há vazamento de dados entre QA e produção
 
@@ -762,15 +722,15 @@ https://edenbowls.com
     Página estática de produção
 
 https://qa.edenbowls.com
-    Loja de QA (ex /qa-app/)
+    Loja de QA
 
 https://qa-admin.edenbowls.com
-    Painel de QA (ex /qa-admin/)
+    Painel de QA
 
 https://qa-api.edenbowls.com
-    API de QA (ex /qa-api/)
+    API de QA
 ```
 
 Essa abordagem mantém a produção simples e estável, preserva a separação já existente entre loja e admin, e tira cookie, CORS e proxy do caminho da página pública.
 
-As URLs `edenbowls.com/qa-app/`, `edenbowls.com/qa-admin/` e `edenbowls.com/qa-api/` podem continuar funcionando temporariamente via redirect. Os subdomínios são a opção recomendada para o ambiente de QA.
+As URLs `edenbowls.com/qa-app/`, `edenbowls.com/qa-admin/` e `edenbowls.com/qa-api/` não são mais usadas. O QA roda apenas nos três subdomínios.

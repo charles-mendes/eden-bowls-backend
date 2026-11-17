@@ -33,32 +33,6 @@
   }
 }
 
-(legacy_qa_redirects) {
-  @old_qa_app path /qa-app /qa-app/*
-  handle @old_qa_app {
-    route {
-      uri strip_prefix /qa-app
-      redir https://qa.edenbowls.com{uri} 308
-    }
-  }
-
-  @old_qa_admin path /qa-admin /qa-admin/*
-  handle @old_qa_admin {
-    route {
-      uri strip_prefix /qa-admin
-      redir https://qa-admin.edenbowls.com{uri} 308
-    }
-  }
-
-  @old_qa_api path /qa-api /qa-api/*
-  handle @old_qa_api {
-    route {
-      uri strip_prefix /qa-api
-      redir https://qa-api.edenbowls.com{uri} 308
-    }
-  }
-}
-
 (landing_static_cache) {
   @public_media path /favicon.ico /favicon-16x16.png /favicon-32x32.png /apple-touch-icon.png /fonts/*
   header @public_media Cache-Control "public, max-age=604800"
@@ -72,7 +46,6 @@ http://edenbowls.com, http://www.edenbowls.com, http://edenbowls.com.br, http://
 www.edenbowls.com {
   encode zstd gzip
   import security_headers
-  import legacy_qa_redirects
 
   handle {
     redir https://edenbowls.com{uri} 301
@@ -82,7 +55,6 @@ www.edenbowls.com {
 edenbowls.com {
   encode zstd gzip
   import security_headers
-  import legacy_qa_redirects
   import landing_static_cache
   header Link "</sitemap.xml>; rel=\"sitemap\""
 

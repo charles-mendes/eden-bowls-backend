@@ -1,3 +1,5 @@
+> **Nota:** os paths `/qa-app`, `/qa-admin` e `/qa-api` citados aqui são históricos e não são mais usados. O QA agora roda apenas em `qa.edenbowls.com` (loja), `qa-admin.edenbowls.com` (painel) e `qa-api.edenbowls.com` (API).
+
 # Rota geo context para o frontend
 
 ## Endpoint

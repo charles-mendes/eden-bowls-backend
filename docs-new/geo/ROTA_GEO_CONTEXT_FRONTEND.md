@@ -10,7 +10,7 @@ GET /api/v1/geo/context
 
 Local: `http://localhost:3000/api/v1/geo/context`
 
-Em QA, depois do proxy apontar para o Express: a rota REST continua `/api/v1/geo/context`. O prefixo `/qa-api` (se existir) e rewrite, nao parte do path Express.
+Em QA: `https://qa-api.edenbowls.com/api/v1/geo/context`.
 
 O front chama o Node:
 

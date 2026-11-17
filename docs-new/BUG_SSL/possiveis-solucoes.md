@@ -1,3 +1,5 @@
+> **Nota:** os paths `/qa-app`, `/qa-admin` e `/qa-api` citados aqui são históricos e não são mais usados. O QA agora roda apenas em `qa.edenbowls.com` (loja), `qa-admin.edenbowls.com` (painel) e `qa-api.edenbowls.com` (API).
+
 # Eden Bowls — possíveis soluções (SSL / filtro nos EUA)
 
 Documento gerado a partir da investigação de setembro/2026. Serve para decidir o que já está feito e o que ainda vale aplicar.
@@ -93,7 +95,7 @@ O filtro deixa de ver o IP da Hostinger (faixa de VPS “barata”) e passa a ve
 - `A`/`CNAME` com **proxy laranja**
 - SSL **Full (strict)** apontando para o Caddy em `72.62.100.188`
 - Não desligar o Caddy; ele continua sendo a origem
-- Cuidado para não quebrar `/qa-app`, `/qa-api`, `/qa-admin`
+- Cuidado para não quebrar `qa.edenbowls.com`, `qa-admin.edenbowls.com` e `qa-api.edenbowls.com`
 
 Aplicar em `edenbowls.com` e `edenbowls.com.br`.
 
