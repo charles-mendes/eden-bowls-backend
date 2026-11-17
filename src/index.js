@@ -176,6 +176,7 @@ const { GeoService } = require('./services/geo.service');
 const { PrivacyRepository } = require('./infrastructure/repositories/privacy.repository');
 const { PrivacyService } = require('./services/privacy.service');
 const { createPrivacyMailer } = require('./infrastructure/mailers/privacy-mailer');
+const { runMigrationsExclusively } = require('./infrastructure/migration-lock');
 
 async function bootstrap() {
   const env = parseEnv();
@@ -183,7 +184,7 @@ async function bootstrap() {
   const dataSource = createDataSource(env);
 
   await dataSource.initialize();
-  await dataSource.runMigrations();
+  await runMigrationsExclusively(dataSource, { logger });
 
   const breedsRepository = new BreedsRepository(dataSource, {
     tableName: env.BREEDS_TABLE_NAME
