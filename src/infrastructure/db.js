@@ -100,6 +100,9 @@ const { NutritionDefaultFoodEnergy1700000000078 } = require('./migrations/170000
 const { NutritionGiantBreeds1700000000079 } = require('./migrations/1700000000079-nutrition-giant-breeds');
 const { AddBrDeliveryDays1700000000080 } = require('./migrations/1700000000080-add-br-delivery-days');
 const { CreateDeliveryOperatingWeek1700000000081 } = require('./migrations/1700000000081-create-delivery-operating-week');
+const { CreateMediaAssets1700000000082 } = require('./migrations/1700000000082-create-media-assets');
+const { LinkRecipePlanImageAsset1700000000083 } = require('./migrations/1700000000083-link-recipe-plan-image-asset');
+const { LinkRecipeBannerImageAsset1700000000084 } = require('./migrations/1700000000084-link-recipe-banner-image-asset');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -225,7 +228,10 @@ function buildDataSourceOptions(env) {
       NutritionDefaultFoodEnergy1700000000078,
       NutritionGiantBreeds1700000000079,
       AddBrDeliveryDays1700000000080,
-      CreateDeliveryOperatingWeek1700000000081
+      CreateDeliveryOperatingWeek1700000000081,
+      CreateMediaAssets1700000000082,
+      LinkRecipePlanImageAsset1700000000083,
+      LinkRecipeBannerImageAsset1700000000084
     ],
     synchronize: false,
     logging: false,

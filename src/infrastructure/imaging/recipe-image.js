@@ -34,7 +34,7 @@ function checkPlanSize(metadata) {
       height: metadata.height,
       expectedWidth: PLAN_SIZES[0].width,
       expectedHeight: PLAN_SIZES[0].height,
-      acceptedSizes: PLAN_SIZES
+      ...(PLAN_SIZES.length > 1 ? { acceptedSizes: PLAN_SIZES } : {})
     });
   }
 }
@@ -110,7 +110,10 @@ async function processRecipeImage({ mimeType, buffer, kind = 'banner' }) {
   return {
     buffer: output,
     mimeType: RECIPE_IMAGE_OUTPUT_MIME,
-    ext: RECIPE_IMAGE_OUTPUT_EXT
+    ext: RECIPE_IMAGE_OUTPUT_EXT,
+    // Size of the stored file: a banner is resized to the exact size, a plan thumbnail keeps its own.
+    width: kind === 'plan' ? metadata.width : RECIPE_IMAGE_WIDTH,
+    height: kind === 'plan' ? metadata.height : RECIPE_IMAGE_HEIGHT
   };
 }
 

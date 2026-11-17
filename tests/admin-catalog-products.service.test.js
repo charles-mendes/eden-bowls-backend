@@ -364,7 +364,7 @@ describe('Product detail reports each variation content', () => {
 });
 
 describe('Delete removes the content with the product', () => {
-  test('Product content goes with the product', async () => {
+  test('Product content goes with the product, and its library images stay', async () => {
     const stripeBilling = { archiveCatalogProduct: jest.fn().mockResolvedValue(true) };
     const { service, repository, recipeContentRepository, recipeImageStorage } = setup({
       stripeBilling,
@@ -375,7 +375,8 @@ describe('Delete removes the content with the product', () => {
     await expect(service.deleteProduct('100')).resolves.toEqual({ deleted: true, id: '100' });
     expect(repository.deleteProduct).toHaveBeenCalledWith('100');
     expect(recipeContentRepository.deleteByProductId).toHaveBeenCalledWith('100');
-    expect(recipeImageStorage.delete.mock.calls.map(([url]) => url)).toEqual(['/recipe-images/beef.webp', '/recipe-images/beef-plan.webp']);
+    // plan-image-library: the banner and the thumbnail are library images, so their files stay.
+    expect(recipeImageStorage.delete).not.toHaveBeenCalled();
   });
 
   test('Archive failure keeps the catalog', async () => {

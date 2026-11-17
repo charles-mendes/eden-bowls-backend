@@ -20,16 +20,18 @@ function appFor({ role = 'operator', markets = ['BR'] } = {}) {
   const save = (fields) => jest.fn(async ({ productId, ...values }) => ({ ...CONTENTS[productId], ...fields(values) }));
   const repository = {
     findByProductId: jest.fn(async (productId) => CONTENTS[productId] || null),
-    setImage: save(({ imageUrl }) => ({ imageUrl })),
-    setPlanImage: save(({ imageUrl }) => ({ planImageUrl: imageUrl })),
+    setImage: save(({ assetId }) => ({ imageUrl: assetId ? `/recipe-images/library-${assetId}.webp` : null, imageAssetId: assetId })),
+    setPlanImage: save(({ assetId }) => ({ planImageUrl: assetId ? `/recipe-images/library-${assetId}.webp` : null, planImageAssetId: assetId })),
     setLabel: save(({ label }) => ({ label })),
     setPresentation: save(({ presentation }) => ({ presentation }))
   };
   const recipeContentService = new RecipeContentService({
     repository,
     catalogRepository: { listProductVariations: jest.fn(async () => [{ id: '301', name: 'Sênior Carne 300g', sku: 'S-300', active: false }]) },
-    imageStorage: { write: jest.fn(async () => '/recipe-images/new.webp'), delete: jest.fn() },
-    processImage: jest.fn(async () => ({ buffer: Buffer.from('webp') }))
+    mediaLibraryService: {
+      upload: jest.fn(async ({ kind, market }) => ({ asset: { id: 100, kind, market, url: '/recipe-images/library-100.webp' }, duplicate: false })),
+      get: jest.fn()
+    }
   });
   const app = createApp({
     corsOrigins: ['http://localhost:5174'],

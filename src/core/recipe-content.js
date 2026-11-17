@@ -11,8 +11,9 @@ const RECIPE_IMAGE_HEIGHT = 636;
 // (so the proportion stays close). It is then resized and centre-cropped to the exact size.
 const RECIPE_IMAGE_MAX_UPSCALE = 1.25;
 const RECIPE_IMAGE_MAX_CROP = 0.15;
-// Square package thumbnail of the plan flavor picker (recipe-content): 400 px for retina screens, or 200 px.
-const RECIPE_PLAN_IMAGE_SIZES = [400, 200];
+// Square package thumbnail of the plan flavor picker (plan-image-library): 400 px only, which covers retina
+// screens at the card size.
+const RECIPE_PLAN_IMAGE_SIZES = [400];
 const MAX_RECIPE_IMAGE_BYTES = 5 * 1024 * 1024;
 const RECIPE_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 // sharp's decoded format for each accepted type, so a renamed GIF is refused.
@@ -22,6 +23,11 @@ const RECIPE_IMAGE_OUTPUT_EXT = 'webp';
 const RECIPE_IMAGE_WEBP_QUALITY = 85;
 const RECIPE_IMAGE_INVALID = 'recipe_image_invalid';
 const RECIPE_CONTENT_IN_USE = 'recipe_content_in_use';
+// Image library (plan-image-library).
+const MEDIA_ASSET_KINDS = ['plan', 'banner'];
+const MEDIA_ASSET_INVALID = 'media_asset_invalid';
+const MEDIA_ASSET_IN_USE = 'media_asset_in_use';
+const MEDIA_ASSET_ARCHIVED = 'media_asset_archived';
 
 // How a width x height image covers the banner: the scale applied and the share of the scaled
 // image cut off on its longer side. ok when both stay within the accepted range.
@@ -248,5 +254,9 @@ module.exports = {
   RECIPE_IMAGE_OUTPUT_EXT,
   RECIPE_IMAGE_WEBP_QUALITY,
   RECIPE_IMAGE_INVALID,
-  RECIPE_CONTENT_IN_USE
+  RECIPE_CONTENT_IN_USE,
+  MEDIA_ASSET_KINDS,
+  MEDIA_ASSET_INVALID,
+  MEDIA_ASSET_IN_USE,
+  MEDIA_ASSET_ARCHIVED
 };
