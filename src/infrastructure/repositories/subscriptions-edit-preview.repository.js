@@ -14,6 +14,7 @@ const { roundMoney } = require('../../core/plan-catalog-pricing');
 const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 const { verifiedEditShipping } = require('../../core/shipping-quote-token');
+const { editShipping } = require('../../core/customer-shipping');
 const { resolveMarket } = require('../../core/market');
 const { assertPackOnlyChange, buildPackAdjustment, withStoredPets } = require('../../core/pack-adjustment');
 
@@ -62,7 +63,8 @@ class SubscriptionsEditPreviewRepository {
     );
     parseEditFiscal(payload, row);
     const currentTerm = Number(row.subscriptionTermMonths || 1);
-    const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
+    // A subscription keeps the shipping condition it was checked out with (customer-shipping-charge).
+    const shipping = editShipping(row.shipping, verifiedEditShipping(this.shippingQuoteSigner, row, payload));
 
     const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
     const subscription = await stripeBilling.retrieveSubscription(subscriptionId);
@@ -135,6 +137,13 @@ class SubscriptionsEditPreviewRepository {
       },
       proration: packMode ? NO_PRORATION(currency) : mapProrationFromInvoice(prorationInvoice, currency),
       next_cycle: nextCycle,
+      // customer-shipping-charge: what the edit's shipping is and what the customer pays for it; the store shows
+      // the original struck through and FREE when a US subscription has free shipping.
+      shipping: {
+        original_amount: shipping && shipping.original_amount != null ? Number(shipping.original_amount) : shippingCost,
+        charged_amount: shippingCost,
+        charge_enabled: !(shipping && shipping.shipping_waived === true)
+      },
       ...(packMode
         ? {
           packs: buildPackAdjustment({

@@ -9,6 +9,7 @@ const {
 } = require('../core/checkout-state');
 const { resolveMarket } = require('../core/market');
 const { assertVerifiedDeliveryArea } = require('../core/shipping-quote-token');
+const { checkoutShipping } = require('../core/customer-shipping');
 const { resolveStripeAccountFromCountry } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const { applyFirstPurchaseDiscount } = require('../core/first-purchase-discount');
@@ -127,6 +128,8 @@ class OnboardingSubscriptionCheckoutService {
     this.planPreviewRepository = options.planPreviewRepository || null;
     this.petsSyncRepository = options.petsSyncRepository || null;
     this.shippingQuoteSigner = options.shippingQuoteSigner || null;
+    // The US charge switch is read from the table when a checkout is placed (customer-shipping-charge).
+    this.shippingSettingsRepository = options.shippingSettingsRepository || null;
     this.lifeStageService = options.lifeStageService || null;
     this.petsRepository = options.petsRepository || null;
     // Bound after construction in index.js, like AuthService (legal-documents).
@@ -221,6 +224,8 @@ class OnboardingSubscriptionCheckoutService {
     assertVerifiedDeliveryArea(this.shippingQuoteSigner, deliveryMarket, context.shipping || {}, {
       zipcode: deliveryAddress.zipcode
     });
+    // The signed quote is checked above; from here on the shipping is what the customer pays.
+    const shipping = await this.chargedShipping(deliveryMarket, context.shipping || {});
     // A saved plan may predate a stage change or a publication: check each pet's line before any charge.
     if (this.lifeStageService) {
       await this.lifeStageService.assertPlanWithinLines({
@@ -311,7 +316,7 @@ class OnboardingSubscriptionCheckoutService {
       subscriptionTermMonths: termMonths,
       lineItems: catalogPricing && catalogPricing.line_items,
       pets: buildPetsSnapshot(nextPlanSelection, context.pets).pet_ids,
-      shipping: context.shipping || {},
+      shipping,
       address,
       promotionCodeId
     });
@@ -371,7 +376,7 @@ class OnboardingSubscriptionCheckoutService {
           appliedPercent,
           promotion,
           nextPlanSelection,
-          shipping: context.shipping || {},
+          shipping,
           checkout: reusedCheckout
         });
         return { success: true, data: presentCheckout(data) };
@@ -388,7 +393,7 @@ class OnboardingSubscriptionCheckoutService {
         paymentMethodId,
         items,
         address,
-        shipping: context.shipping || {},
+        shipping,
         currency: checkoutCurrency(stripeAccount, catalogPricing),
         promotionCodeId,
         subscriptionTermMonths: termMonths,
@@ -428,7 +433,7 @@ class OnboardingSubscriptionCheckoutService {
         created,
         items,
         nextPlanSelection,
-        context,
+        context: { ...context, shipping },
         termMonths,
         email: checkout.billing.email
       });
@@ -442,7 +447,7 @@ class OnboardingSubscriptionCheckoutService {
         appliedPercent,
         promotion,
         nextPlanSelection,
-        shipping: context.shipping || {},
+        shipping,
         checkout
       });
 
@@ -450,6 +455,26 @@ class OnboardingSubscriptionCheckoutService {
     } finally {
       releaseLock();
     }
+  }
+
+  async readChargeShipping() {
+    if (!this.shippingSettingsRepository || typeof this.shippingSettingsRepository.get !== 'function') {
+      return false;
+    }
+    const settings = await this.shippingSettingsRepository.get();
+    return Boolean(settings && settings.us && settings.us.charge_shipping);
+  }
+
+  async chargedShipping(market, shipping) {
+    if (String(market || '').toUpperCase() !== 'US') {
+      return checkoutShipping({ market, shipping, chargeEnabled: true });
+    }
+    return checkoutShipping({
+      market,
+      shipping,
+      chargeEnabled: await this.readChargeShipping(),
+      currency: 'USD'
+    });
   }
 
   mapPlanPetToSyncPayload(pet = {}) {

@@ -25,6 +25,8 @@ function normalizeShippingPayload(payload = {}) {
   if (!rateId && !methodId) {
     throw new HttpError(422, 'Shipping selection is invalid.', { code: 'invalid_shipping' });
   }
+  const originalAmount = normalizeNonNegativeNumber(payload.original_amount, cost);
+  const chargeEnabled = payload.charge_enabled == null ? true : payload.charge_enabled === true;
 
   return {
     rate_id: rateId || methodId,
@@ -46,6 +48,13 @@ function normalizeShippingPayload(payload = {}) {
     per_km: perKm,
     zipcode,
     quote_token: String(payload.quote_token || '').trim(),
+    // What the quote said the customer pays (customer-shipping-charge). The checkout recomputes it with the switch
+    // read when it is placed; these are kept to show the selection as it was quoted.
+    original_amount: originalAmount,
+    charged_amount: normalizeNonNegativeNumber(payload.charged_amount, cost),
+    charge_enabled: chargeEnabled,
+    company_cost: chargeEnabled ? null : originalAmount,
+    source: ['ups', 'fixed', 'fallback'].includes(String(payload.source || '')) ? String(payload.source) : null,
     snapshot: true
   };
 }

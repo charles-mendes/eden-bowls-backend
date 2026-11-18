@@ -4,6 +4,7 @@ const { issueJwtToken } = require('../src/core/jwt-token');
 const { ROLE_PERMISSIONS } = require('../src/core/admin-roles');
 const { HttpError } = require('../src/core/http-error');
 const { StripeCouponService } = require('../src/services/stripe-coupon.service');
+const { AdminShippingService } = require('../src/services/admin-shipping.service');
 
 const jwt = { secret: 'test-secret', algorithm: 'HS256', issuer: 'http://localhost:3000' };
 
@@ -221,5 +222,53 @@ describe('admin shipping and coupon routes', () => {
 
     expect(response.status).toBe(200);
     expect(stripeCouponService.mappingHealth).toHaveBeenCalledWith('br');
+  });
+
+  test('US operator turns charges on through the settings route, with the audit event', async () => {
+    const stored = { br: { enabled: true }, us: { cost: 12.9, charge_shipping: false } };
+    const auditRepository = { createIn: jest.fn().mockResolvedValue(undefined), listByActionPrefix: jest.fn().mockResolvedValue([]) };
+    const adminShippingService = new AdminShippingService({
+      repository: {
+        get: jest.fn().mockResolvedValue(stored),
+        save: jest.fn(async (payload) => ({ ...stored, us: { ...stored.us, ...payload.us } }))
+      },
+      shippingService: { settings: stored },
+      auditRepository,
+      dataSource: { transaction: async (work) => work({ query: jest.fn() }) }
+    });
+    const app = createApp({
+      corsOrigins: ['http://localhost:5174'],
+      jwt,
+      adminShippingService,
+      adminIdentityService: {
+        requireOperational: jest.fn().mockResolvedValue({
+          userId: '12',
+          email: 'ana@edenbowls.com',
+          roles: ['operator'],
+          markets: ['US'],
+          permissions: [...ROLE_PERMISSIONS.operator, 'market.us']
+        })
+      }
+    });
+
+    const response = await request(app)
+      .put('/api/v1/admin/shipping/settings')
+      .set('Authorization', `Bearer ${tokenFor(12)}`)
+      .send({ us: { charge_shipping: true } });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.settings.us.charge_shipping).toBe(true);
+    expect(auditRepository.createIn.mock.calls[0][1].action).toBe('shipping.us.charge.enable');
+  });
+
+  test('a non-boolean charge_shipping answers 422 invalid_charge_shipping', async () => {
+    const adminShippingService = new AdminShippingService({ repository: { get: jest.fn(), save: jest.fn() } });
+    const response = await request(adminApp({ adminShippingService }))
+      .put('/api/v1/admin/shipping/settings')
+      .set('Authorization', `Bearer ${tokenFor()}`)
+      .send({ us: { charge_shipping: 'yes' } });
+
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body)).toContain('invalid_charge_shipping');
   });
 });

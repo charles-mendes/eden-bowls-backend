@@ -931,6 +931,11 @@ class StripeBillingClient {
     if (couponId) {
       metadata.hsr_coupon_id = couponId;
     }
+    // The US shipping condition the subscription keeps on every renewal (customer-shipping-charge).
+    if (typeof shipping.shipping_waived === 'boolean') {
+      metadata.shipping_waived = String(shipping.shipping_waived);
+      metadata.shipping_original_minor = String(Math.max(0, Math.round(Number(shipping.shipping_original_minor) || 0)));
+    }
 
     const subscriptionParams = {
       customer: customerId,

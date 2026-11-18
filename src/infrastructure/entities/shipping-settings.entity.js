@@ -281,6 +281,12 @@ function buildShippingUsSettingsEntitySchema(tableName = 'shipping_us_settings')
         type: 'int',
         default: 1
       },
+      chargeShipping: {
+        name: 'charge_shipping',
+        type: 'tinyint',
+        width: 1,
+        default: 0
+      },
       createdAt: {
         name: 'created_at',
         type: 'datetime',

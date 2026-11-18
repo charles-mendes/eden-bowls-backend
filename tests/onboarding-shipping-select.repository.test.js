@@ -12,4 +12,31 @@ describe('OnboardingShippingSelectRepository', () => {
       [7, JSON.stringify(shipping)]
     );
   });
+
+  test('the selection keeps the quoted charge fields, the company cost and the source', () => {
+    const { normalizeShippingPayload } = require('../src/services/onboarding-shipping-select.service');
+    const shipping = normalizeShippingPayload({
+      rate_id: 'ups:03',
+      cost: 18.4,
+      original_amount: 18.4,
+      charged_amount: 0,
+      charge_enabled: false,
+      source: 'ups'
+    });
+    expect(shipping).toMatchObject({
+      cost: 18.4,
+      original_amount: 18.4,
+      charged_amount: 0,
+      charge_enabled: false,
+      company_cost: 18.4,
+      source: 'ups'
+    });
+    expect(normalizeShippingPayload({ rate_id: 'br:1', cost: 15 })).toMatchObject({
+      original_amount: 15,
+      charged_amount: 15,
+      charge_enabled: true,
+      company_cost: null,
+      source: null
+    });
+  });
 });

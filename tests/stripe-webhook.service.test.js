@@ -468,6 +468,75 @@ describe('StripeWebhookService', () => {
     });
   });
 
+  describe('renewal shipping condition (customer-shipping-charge)', () => {
+    function renewal(metadata, { ledgerShipping = null, account } = {}) {
+      const logger = { error() {}, warn: jest.fn(), info: jest.fn() };
+      const ledgerRepository = {
+        findByStripeSubscriptionId: jest.fn().mockResolvedValue(ledgerShipping ? { shipping: ledgerShipping } : null)
+      };
+      const built = buildService({ logger, ledgerRepository });
+      built.stripeBilling.constructEvent.mockReturnValue({
+        id: 'evt_cycle',
+        type: 'invoice.created',
+        data: { object: { id: 'in_cycle', status: 'draft', billing_reason: 'subscription_cycle', customer: 'cus_1', subscription: 'sub_123', currency: account === 'br' ? 'brl' : 'usd' } }
+      });
+      built.stripeBilling.retrieveSubscription.mockResolvedValue({ id: 'sub_123', metadata });
+      return { ...built, logger };
+    }
+
+    test('Free US subscription renews with no shipping item and an info line', async () => {
+      const { service, stripeBilling, logger } = renewal(
+        { shipping_waived: 'true', shipping_original_minor: '1840', shipping_product_id: 'prod_ship' },
+        { ledgerShipping: { cost: 0, shipping_waived: true } }
+      );
+
+      await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+      expect(stripeBilling.addShippingInvoiceItem).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ subscriptionId: 'sub_123' }),
+        'invoice.created skipped shipping: shipping is waived for this subscription.'
+      );
+    });
+
+    test('a charged US subscription renews with its stored amount, whatever the current switch', async () => {
+      const { service, stripeBilling } = renewal({
+        shipping_waived: 'false',
+        shipping_amount_minor: '1840',
+        shipping_currency: 'usd',
+        shipping_product_id: 'prod_ship'
+      });
+
+      await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+      expect(stripeBilling.addShippingInvoiceItem).toHaveBeenCalledWith(expect.objectContaining({ amount: 1840 }));
+    });
+
+    test('US subscription created before the change (no shipping_waived) keeps paying shipping', async () => {
+      const { service, stripeBilling } = renewal({
+        shipping_amount_minor: '1290',
+        shipping_currency: 'usd',
+        shipping_product_id: 'prod_ship'
+      });
+
+      await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+      expect(stripeBilling.addShippingInvoiceItem).toHaveBeenCalledWith(expect.objectContaining({ amount: 1290 }));
+    });
+
+    test('BR renewal charges the BR fee as before', async () => {
+      const { service, stripeBilling } = renewal({
+        shipping_amount_minor: '1500',
+        shipping_currency: 'brl',
+        shipping_product_id: 'prod_ship_br'
+      }, { account: 'br' });
+
+      await service.handle({ rawBody: Buffer.from('{}'), signature: 'sig' });
+
+      expect(stripeBilling.addShippingInvoiceItem).toHaveBeenCalledWith(expect.objectContaining({ amount: 1500, currency: 'brl' }));
+    });
+  });
+
   test('uses the subscription shipping product id instead of a cached one', async () => {
     const logger = { error() {}, warn: jest.fn(), info() {} };
     const { service, stripeBilling } = buildService({

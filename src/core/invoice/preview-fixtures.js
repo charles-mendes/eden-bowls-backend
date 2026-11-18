@@ -38,9 +38,9 @@ function shippingLine(currency) {
   };
 }
 
-function sampleInvoice({ currency, status = 'open', customerName = 'Ana Mendes' }) {
+function sampleInvoice({ currency, status = 'open', customerName = 'Ana Mendes', freeShipping = false }) {
   const paid = status === 'paid';
-  return {
+  const invoice = {
     id: currency === 'brl' ? 'in_preview_br' : 'in_preview_us',
     object: 'invoice',
     status,
@@ -71,6 +71,17 @@ function sampleInvoice({ currency, status = 'open', customerName = 'Ana Mendes' 
       ],
       has_more: false
     }
+  };
+  if (!freeShipping) return invoice;
+  // Free US shipping: no shipping line, and the totals are the recipes only.
+  return {
+    ...invoice,
+    subtotal: 13750,
+    total: 13750,
+    amount_due: 13750,
+    amount_paid: paid ? 13750 : 0,
+    amount_remaining: paid ? 0 : 13750,
+    lines: { ...invoice.lines, data: invoice.lines.data.filter((line) => line.id !== 'il_shipping') }
   };
 }
 
@@ -137,7 +148,17 @@ const LIFE_STAGE_PREVIEW_CASES = {
   }
 };
 
+// A US subscription checked out with free shipping (customer-invoices): the shipping row prints "FREE".
+const FREE_SHIPPING_PREVIEW_CASES = {
+  'en-US': {
+    ...PREVIEW_CASES['en-US'],
+    invoice: (status) => sampleInvoice({ currency: 'usd', status, freeShipping: true }),
+    ledger: { ...PREVIEW_CASES['en-US'].ledger, shipping: { cost: 0, shipping_waived: true, shipping_original_minor: 700 } }
+  }
+};
+
 module.exports = {
+  FREE_SHIPPING_PREVIEW_CASES,
   LIFE_STAGE_PREVIEW_CASES,
   PREVIEW_CASES,
   sampleInvoice

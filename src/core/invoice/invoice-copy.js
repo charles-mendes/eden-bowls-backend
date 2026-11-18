@@ -35,6 +35,8 @@ const INVOICE_COPY = {
     subtotal: 'Subtotal',
     discount: 'Discount',
     shipping: 'Shipping',
+    // Printed on the shipping row when the customer pays no shipping (customer-invoices).
+    shippingFree: 'FREE',
     tax: 'Tax',
     total: 'Total',
     credit: 'Credit applied',
@@ -71,6 +73,7 @@ const INVOICE_COPY = {
     subtotal: 'Subtotal',
     discount: 'Desconto',
     shipping: 'Frete',
+    shippingFree: 'GRÁTIS',
     tax: 'Impostos',
     total: 'Total',
     credit: 'Crédito aplicado',

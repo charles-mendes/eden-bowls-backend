@@ -187,6 +187,34 @@ describe('StripeBillingClient.createOnboardingSubscription', () => {
     expect(stripe.subscriptions.create.mock.calls[0][0].add_invoice_items).toBeUndefined();
   });
 
+  test('Charges off: a waived US shipping adds no shipping item and stores the condition in the metadata', async () => {
+    const { stripe, client } = buildClient();
+
+    const result = await client.createOnboardingSubscription({
+      ...validInput,
+      shipping: { cost: 0, total: 0, shipping_waived: true, shipping_original_minor: 1840 }
+    });
+
+    const params = stripe.subscriptions.create.mock.calls[0][0];
+    expect(params.add_invoice_items).toBeUndefined();
+    expect(params.metadata.shipping_amount_minor).toBeUndefined();
+    expect(params.metadata).toMatchObject({ shipping_waived: 'true', shipping_original_minor: '1840' });
+    expect(result.checkout.shipping_total).toBe(0);
+  });
+
+  test('Charges on: a charged US shipping keeps its item and stores shipping_waived false', async () => {
+    const { stripe, client } = buildClient();
+
+    await client.createOnboardingSubscription({
+      ...validInput,
+      shipping: { cost: 18.4, total: 18.4, shipping_waived: false, shipping_original_minor: 1840 }
+    });
+
+    const params = stripe.subscriptions.create.mock.calls[0][0];
+    expect(params.add_invoice_items[0].price_data.unit_amount).toBe(1840);
+    expect(params.metadata).toMatchObject({ shipping_amount_minor: '1840', shipping_waived: 'false' });
+  });
+
   test('creates the BR shipping product on the BR client', async () => {
     const us = buildClient({ account: 'us', shippingProductId: '' });
     const br = buildClient({ account: 'br', automaticTaxEnabled: false, shippingProductId: '' });

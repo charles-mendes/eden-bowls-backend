@@ -15,6 +15,7 @@ const { ledgerStripeAccount } = require('../../core/stripe-account');
 const { resolveStripeBilling } = require('../stripe/stripe-accounts');
 const { extractInvoicePayment } = require('../stripe/stripe-billing-client');
 const { verifiedEditShipping } = require('../../core/shipping-quote-token');
+const { editShipping } = require('../../core/customer-shipping');
 const { resolveMarket } = require('../../core/market');
 const { assertPackOnlyChange, withStoredPets } = require('../../core/pack-adjustment');
 
@@ -99,7 +100,8 @@ class SubscriptionsEditCommitRepository {
       row
     );
     const fiscal = parseEditFiscal(payload, row);
-    const shipping = verifiedEditShipping(this.shippingQuoteSigner, row, payload);
+    // A subscription keeps the shipping condition it was checked out with (customer-shipping-charge).
+    const shipping = editShipping(row.shipping, verifiedEditShipping(this.shippingQuoteSigner, row, payload));
 
     const stripeBilling = resolveStripeBilling(this, ledgerStripeAccount(row));
     const subscription = await stripeBilling.retrieveSubscription(subscriptionId);
@@ -187,6 +189,10 @@ class SubscriptionsEditCommitRepository {
     };
     if (!metadata.eden_env) {
       throw new HttpError(500, 'EDEN_RUNTIME must be local, qa, or production.');
+    }
+    if (shipping && shipping.shipping_waived === true) {
+      metadata.shipping_waived = 'true';
+      metadata.shipping_original_minor = String(Math.max(0, Math.round(Number(shipping.shipping_original_minor) || 0)));
     }
     if (shippingCost > 0) {
       metadata.shipping_amount_minor = String(Math.round(shippingCost * 100));

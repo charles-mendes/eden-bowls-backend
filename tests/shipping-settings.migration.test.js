@@ -2,6 +2,7 @@ const { CreateShippingSettingsTables1700000000010 } = require('../src/infrastruc
 const { AddUsMaxTransitDays1700000000047 } = require('../src/infrastructure/migrations/1700000000047-add-us-max-transit-days');
 const { AddUsDryIceKg1700000000069 } = require('../src/infrastructure/migrations/1700000000069-add-us-dry-ice-kg');
 const { AddBrDeliveryDays1700000000080 } = require('../src/infrastructure/migrations/1700000000080-add-br-delivery-days');
+const { AddUsShippingCharge1700000000087 } = require('../src/infrastructure/migrations/1700000000087-add-us-shipping-charge');
 
 describe('CreateShippingSettingsTables1700000000010', () => {
   test('creates BR and US shipping settings tables and seeds defaults', async () => {
@@ -117,5 +118,37 @@ describe('AddBrDeliveryDays1700000000080', () => {
     const queryRunner = runner({ hasColumn: true });
     await new AddBrDeliveryDays1700000000080().down(queryRunner);
     expect(queryRunner.query).toHaveBeenCalledWith('ALTER TABLE `shipping_br_settings` DROP COLUMN `delivery_days`');
+  });
+});
+
+describe('AddUsShippingCharge1700000000087', () => {
+  function runner({ hasTable = true, hasColumn = false } = {}) {
+    return {
+      hasTable: jest.fn().mockResolvedValue(hasTable),
+      hasColumn: jest.fn().mockResolvedValue(hasColumn),
+      query: jest.fn().mockResolvedValue(undefined)
+    };
+  }
+
+  test('Value after deploy: adds charge_shipping off, once', async () => {
+    const first = runner({ hasColumn: false });
+    await new AddUsShippingCharge1700000000087().up(first);
+    expect(first.query).toHaveBeenCalledWith('ALTER TABLE `shipping_us_settings` ADD COLUMN `charge_shipping` TINYINT(1) NOT NULL DEFAULT 0');
+
+    const again = runner({ hasColumn: true });
+    await new AddUsShippingCharge1700000000087().up(again);
+    expect(again.query).not.toHaveBeenCalled();
+  });
+
+  test('down drops the column', async () => {
+    const queryRunner = runner({ hasColumn: true });
+    await new AddUsShippingCharge1700000000087().down(queryRunner);
+    expect(queryRunner.query).toHaveBeenCalledWith('ALTER TABLE `shipping_us_settings` DROP COLUMN `charge_shipping`');
+  });
+
+  test('is registered last', () => {
+    const { buildDataSourceOptions } = require('../src/infrastructure/db');
+    const names = buildDataSourceOptions({}).migrations.map((migration) => migration.name);
+    expect(names[names.length - 1]).toBe('AddUsShippingCharge1700000000087');
   });
 });

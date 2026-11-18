@@ -3,6 +3,7 @@ const { addressField, brazilAddressIssues } = require('../core/delivery-address-
 const { parseRecipientNameInput } = require('../core/recipient-name');
 const { parseDeliveryInstructionsInput, resolveDeliveryInstructions } = require('../core/delivery-instructions');
 const { accountNameOf, shownName } = require('../core/production-queue-presenter');
+const { isShippingWaived } = require('../core/customer-shipping');
 const { HttpError } = require('../core/http-error');
 const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { ledgerStripeAccount, parseStripeAccountInput } = require('../core/stripe-account');
@@ -61,6 +62,24 @@ function presentSubscription(item, secretKey, actor = {}) {
       months: item.subscriptionTermMonths || 0
     },
     dashboardUrl: dashboardUrl(secretKey, `/subscriptions/${item.stripeSubscriptionId}`)
+  };
+}
+
+function usShippingCondition(market, rawShipping) {
+  if (market !== 'US') {
+    return { shipping_waived: null, company_shipping_cost: null };
+  }
+  let shipping = rawShipping || {};
+  if (typeof shipping === 'string') {
+    try { shipping = JSON.parse(shipping); } catch { shipping = {}; }
+  }
+  const waived = shipping.shipping_waived == null ? null : isShippingWaived(shipping.shipping_waived);
+  const cost = shipping.company_cost && typeof shipping.company_cost === 'object' ? shipping.company_cost : null;
+  return {
+    shipping_waived: waived,
+    company_shipping_cost: waived && cost
+      ? { amount: Number(cost.amount) || 0, currency: String(cost.currency || 'USD').toUpperCase(), source: cost.source || null }
+      : null
   };
 }
 
@@ -139,6 +158,9 @@ class AdminBillingService {
       // keep-ready-orders-dispatchable: what the courier dispatch would refuse for this address, before anyone
       // fills the dispatch; null outside the Brazil shipping market. A read: it opens no problem and sends no email.
       subscription.courier_issues = subscription.shipment_market === 'BR' ? brazilAddressIssues(item.address) : null;
+      // customer-shipping-charge: a US subscription shows whether the customer pays shipping and, when not, the
+      // quote the company pays. Null outside the US shipping market and for subscriptions created before the rule.
+      Object.assign(subscription, usShippingCondition(subscription.shipment_market, item.shipping));
     }
     if (detail) {
       // operator-fills-recipient-name: the account name the panel suggests, and where the shown name comes from.

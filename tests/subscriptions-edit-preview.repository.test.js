@@ -14,7 +14,7 @@ function signedShipping({ cost = 12.9, deliveryDays = 1 } = {}) {
   };
 }
 
-function buildRepo() {
+function buildRepo({ ledgerShipping = { cost: 12.9 } } = {}) {
   const stripeBilling = {
     retrieveSubscription: jest.fn().mockResolvedValue({
       id: 'sub_123',
@@ -30,7 +30,7 @@ function buildRepo() {
         status: 'active',
         subscriptionTermMonths: 1,
         address: { country: 'US' },
-        shipping: { cost: 12.9 }
+        shipping: ledgerShipping
       })
     },
     stripeBilling,
@@ -100,5 +100,21 @@ describe('SubscriptionsEditPreviewRepository market and address checks', () => {
     const repository = buildRepo();
     await expect(repository.preview(7, 'sub_123', payload({ ...US_EDIT_ADDRESS, city: '' })))
       .rejects.toMatchObject({ statusCode: 422, details: { code: 'address_incomplete', fields: ['city'] } });
+  });
+});
+
+describe('SubscriptionsEditPreviewRepository shipping condition (customer-shipping-charge)', () => {
+  test('Switch turned on after a free checkout: the edit preview shows shipping 0', async () => {
+    const repository = buildRepo({ ledgerShipping: { cost: 0, shipping_waived: true, shipping_original_minor: 1290 } });
+    const result = await repository.preview(7, 'sub_123', { ...basePayload, shipping: signedShipping({ cost: 14.25 }) });
+    expect(result.next_cycle.total).toBeCloseTo(30, 2);
+    expect(result.shipping).toEqual({ original_amount: 14.25, charged_amount: 0, charge_enabled: false });
+  });
+
+  test('Switch turned off after a charged checkout: the edit is priced with its quote', async () => {
+    const repository = buildRepo({ ledgerShipping: { cost: 12.9, shipping_waived: false } });
+    const result = await repository.preview(7, 'sub_123', { ...basePayload, shipping: signedShipping({ cost: 14.25 }) });
+    expect(result.next_cycle.total).toBeCloseTo(44.25, 2);
+    expect(result.shipping).toEqual({ original_amount: 14.25, charged_amount: 14.25, charge_enabled: true });
   });
 });

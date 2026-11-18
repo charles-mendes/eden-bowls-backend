@@ -27,7 +27,7 @@ describe('AdminShippingService', () => {
     const result = await service.saveSettings({ br: { enabled: false } });
 
     expect(repository.save).toHaveBeenCalledWith({ br: { enabled: false } });
-    expect(result.data.settings).toEqual(saved);
+    expect(result.data.settings).toEqual({ ...saved, us: { ...saved.us, charge_shipping_history: [] } });
     expect(shippingService.settings).toEqual(saved);
   });
 
@@ -42,6 +42,17 @@ describe('AdminShippingService', () => {
     });
     expect(repository.save).not.toHaveBeenCalled();
     expect(shippingService.settings.us.max_transit_days).toBe(1);
+  });
+
+  test.each(['yes', 1, null])('charge_shipping %j is refused with 422 invalid_charge_shipping and nothing is stored', async (value) => {
+    const repository = { save: jest.fn(), get: jest.fn() };
+    const service = new AdminShippingService({ repository, shippingService: { settings: null } });
+
+    await expect(service.saveSettings({ us: { charge_shipping: value } })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'invalid_charge_shipping' }
+    });
+    expect(repository.save).not.toHaveBeenCalled();
   });
 
   test.each([-1, 4, 1.5, 'two'])('Out of range: Brazil delivery_days %j is refused with 422 and nothing is stored', async (days) => {
@@ -279,6 +290,21 @@ describe('AdminShippingService › US simulation', () => {
       { service_code: '01', label: 'UPS Next Day Air', amount: 62, currency: 'USD', delivery_days: null, allowed: false }
     ]);
     expect(result.data.ups.selected).toMatchObject({ service_code: '03', amount: 14.1 });
+    // Charges off: the simulated quote is the original and the customer pays 0.
+    expect(result.data).toMatchObject({ original_amount: 14.1, charged_amount: 0, charge_enabled: false });
+  });
+
+  test('with charges on, the simulation says the customer pays the quote', async () => {
+    const charged = { ...us, quote_mode: 'fixed', charge_shipping: true };
+    const service = new AdminShippingService({
+      repository: { get: jest.fn().mockResolvedValue({ us: charged }) },
+      shippingService: { settings: { us: charged }, calculate: jest.fn().mockResolvedValue({ data: { shipping: 18.4 } }) },
+      upsSandboxClient: { isConfigured: () => false }
+    });
+
+    const result = await service.test({ zipCode: '94105', country: 'US' });
+
+    expect(result.data).toMatchObject({ original_amount: 18.4, charged_amount: 18.4, charge_enabled: true });
   });
 
   test('reports missing UPS credentials as a failed step', async () => {
@@ -335,5 +361,107 @@ describe('AdminShippingService › US simulation', () => {
       });
       expect(repository.save).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('AdminShippingService › US shipping charge switch', () => {
+  const usOperator = { userId: '12', email: 'ana@edenbowls.com', roles: ['operator'], markets: ['US'] };
+  const brOperator = { userId: '13', email: 'rui@edenbowls.com', roles: ['operator'], markets: ['BR'] };
+
+  function setup({ charge = false, createIn = jest.fn().mockResolvedValue(undefined), history = [] } = {}) {
+    let stored = { br: { enabled: true }, us: { cost: 12.9, charge_shipping: charge } };
+    const manager = { query: jest.fn() };
+    const repository = {
+      get: jest.fn(async () => stored),
+      save: jest.fn(async (payload) => ({ ...stored, us: { ...stored.us, ...(payload.us || {}) } }))
+    };
+    const dataSource = {
+      transaction: jest.fn(async (work) => {
+        const before = stored;
+        const result = await work(manager);
+        return result === undefined ? before : result;
+      })
+    };
+    const auditRepository = { createIn, listByActionPrefix: jest.fn().mockResolvedValue(history) };
+    const shippingService = { settings: stored };
+    const service = new AdminShippingService({ repository, shippingService, auditRepository, dataSource });
+    return { service, repository, auditRepository, dataSource, manager, shippingService, setStored: (value) => { stored = value; } };
+  }
+
+  test('US operator turns charges on: setting and audit event saved in one transaction', async () => {
+    const { service, repository, auditRepository, dataSource, manager } = setup();
+
+    const result = await service.saveSettings({ us: { charge_shipping: true } }, usOperator);
+
+    expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+    expect(repository.save).toHaveBeenCalledWith({ us: { charge_shipping: true } }, manager);
+    expect(auditRepository.createIn).toHaveBeenCalledWith(manager, {
+      actorUserId: 12,
+      actorEmail: 'ana@edenbowls.com',
+      action: 'shipping.us.charge.enable',
+      metadata: { market: 'US', enabled: true }
+    });
+    expect(result.data.settings.us.charge_shipping).toBe(true);
+  });
+
+  test('turning charges off records shipping.us.charge.disable', async () => {
+    const { service, auditRepository } = setup({ charge: true });
+
+    await service.saveSettings({ us: { charge_shipping: false } }, usOperator);
+
+    expect(auditRepository.createIn.mock.calls[0][1].action).toBe('shipping.us.charge.disable');
+  });
+
+  test('Brazil-only operator: the US switch is not changed and nothing is audited', async () => {
+    const { service, repository, auditRepository } = setup();
+
+    const result = await service.saveSettings({ us: { charge_shipping: true }, br: { enabled: true } }, brOperator);
+
+    expect(repository.save).toHaveBeenCalledWith({ br: { enabled: true } });
+    expect(auditRepository.createIn).not.toHaveBeenCalled();
+    expect(result.data.settings.us).toBeUndefined();
+  });
+
+  test('Same value saved again: no audit event and no transaction', async () => {
+    const { service, auditRepository, dataSource } = setup({ charge: true });
+
+    await service.saveSettings({ us: { charge_shipping: true } }, usOperator);
+
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(auditRepository.createIn).not.toHaveBeenCalled();
+  });
+
+  test('a failed audit insert leaves the setting unchanged', async () => {
+    const { service, shippingService } = setup({ createIn: jest.fn().mockRejectedValue(new Error('insert failed')) });
+    const before = shippingService.settings;
+
+    await expect(service.saveSettings({ us: { charge_shipping: true } }, usOperator)).rejects.toThrow('insert failed');
+
+    expect(shippingService.settings).toBe(before);
+    expect(shippingService.settings.us.charge_shipping).toBe(false);
+  });
+
+  test('without the audit log a change is refused, never stored without its history', async () => {
+    const repository = { get: jest.fn().mockResolvedValue({ us: { charge_shipping: false } }), save: jest.fn() };
+    const service = new AdminShippingService({ repository, shippingService: { settings: null } });
+
+    await expect(service.saveSettings({ us: { charge_shipping: true } }, usOperator)).rejects.toMatchObject({ statusCode: 503 });
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
+  test('the read returns us.charge_shipping_history, newest first, from the audit log', async () => {
+    const history = [
+      { action: 'shipping.us.charge.disable', actorEmail: 'rui@edenbowls.com', createdAt: '2026-11-19T14:30:00.000Z' },
+      { action: 'shipping.us.charge.enable', actorEmail: 'ana@edenbowls.com', createdAt: '2026-11-18T15:00:00.000Z' }
+    ];
+    const { service, auditRepository } = setup({ history });
+
+    const result = await service.getSettings(usOperator);
+
+    expect(auditRepository.listByActionPrefix).toHaveBeenCalledWith({ actionPrefix: 'shipping.us.charge.', market: 'US', limit: 50 });
+    expect(result.data.settings.us.charge_shipping_history).toEqual([
+      { enabled: false, actor_email: 'rui@edenbowls.com', changed_at: '2026-11-19T14:30:00.000Z' },
+      { enabled: true, actor_email: 'ana@edenbowls.com', changed_at: '2026-11-18T15:00:00.000Z' }
+    ]);
   });
 });

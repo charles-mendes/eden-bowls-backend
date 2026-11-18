@@ -561,6 +561,7 @@ async function bootstrap() {
     planPreviewRepository: onboardingPlanPreviewRepository,
     petsSyncRepository: onboardingPetCreateRepository,
     shippingQuoteSigner,
+    shippingSettingsRepository,
     lifeStageService,
     petsRepository: onboardingPetsRepository
   });
@@ -771,6 +772,8 @@ async function bootstrap() {
   const adminShippingService = new AdminShippingService({
     shippingService,
     repository: shippingSettingsRepository,
+    auditRepository: new AdminAuditRepository(dataSource),
+    dataSource,
     upsSandboxClient,
     zippopotamClient,
     headquartersService: new ShippingHeadquartersService({

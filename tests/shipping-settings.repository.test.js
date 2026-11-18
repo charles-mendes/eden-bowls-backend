@@ -127,7 +127,48 @@ describe('ShippingSettingsRepository', () => {
     expect(saved.us.max_transit_days).toBe(2);
     const [sql, params] = dataSource.query.mock.calls.find(([text]) => text.includes('INSERT INTO `shipping_us_settings`'));
     expect(sql).toContain('`max_transit_days` = VALUES(`max_transit_days`)');
-    expect(params[params.length - 3]).toBe(2);
+    expect(params[params.length - 4]).toBe(2);
+  });
+
+  test('Value after deploy: a US row without charge_shipping reads as off', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([brRow])
+        .mockResolvedValueOnce([usRow])
+        .mockResolvedValueOnce([])
+    };
+    const repository = new ShippingSettingsRepository(dataSource);
+
+    expect((await repository.get()).us.charge_shipping).toBe(false);
+  });
+
+  test('Restart: charge_shipping is saved to the table and read back from it', async () => {
+    const dataSource = {
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([brRow])
+        .mockResolvedValueOnce([usRow])
+        .mockResolvedValueOnce([])
+        .mockResolvedValue({ affectedRows: 1 })
+    };
+    const repository = new ShippingSettingsRepository(dataSource);
+
+    const saved = await repository.save({ us: { charge_shipping: true } });
+
+    expect(saved.us.charge_shipping).toBe(true);
+    const [sql, params] = dataSource.query.mock.calls.find(([text]) => text.includes('INSERT INTO `shipping_us_settings`'));
+    expect(sql).toContain('`charge_shipping` = VALUES(`charge_shipping`)');
+    expect(params[params.length - 1]).toBe(1);
+
+    const reloaded = new ShippingSettingsRepository({
+      isInitialized: true,
+      query: jest.fn()
+        .mockResolvedValueOnce([brRow])
+        .mockResolvedValueOnce([{ ...usRow, charge_shipping: 1 }])
+        .mockResolvedValueOnce([])
+    });
+    expect((await reloaded.get()).us.charge_shipping).toBe(true);
   });
 
   test('throws 503 when datasource is not initialized', async () => {
@@ -159,7 +200,7 @@ describe('ShippingSettingsRepository', () => {
     expect(saved.us.ship_from.phone).toBe('305 555 0199');
     const [sql, params] = dataSource.query.mock.calls.find(([text]) => text.includes('INSERT INTO `shipping_us_settings`'));
     expect(sql).toContain('`ship_from_phone` = VALUES(`ship_from_phone`)');
-    expect(params[params.length - 2]).toBe('305 555 0199');
+    expect(params[params.length - 3]).toBe('305 555 0199');
   });
 
   test('reads and saves the US dry ice weight per box, 0.5 for a row without it', async () => {
@@ -183,7 +224,7 @@ describe('ShippingSettingsRepository', () => {
     expect(saved.us.package.weight_lb).toBe(37.5);
     const [sql, params] = dataSource.query.mock.calls.find(([text]) => text.includes('INSERT INTO `shipping_us_settings`'));
     expect(sql).toContain('`package_dry_ice_kg` = VALUES(`package_dry_ice_kg`)');
-    expect(params[params.length - 1]).toBe(1.2);
+    expect(params[params.length - 2]).toBe(1.2);
   });
 
   describe('US boxes', () => {
