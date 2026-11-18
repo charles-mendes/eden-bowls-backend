@@ -103,6 +103,7 @@ const { CreateDeliveryOperatingWeek1700000000081 } = require('./migrations/17000
 const { CreateMediaAssets1700000000082 } = require('./migrations/1700000000082-create-media-assets');
 const { LinkRecipePlanImageAsset1700000000083 } = require('./migrations/1700000000083-link-recipe-plan-image-asset');
 const { LinkRecipeBannerImageAsset1700000000084 } = require('./migrations/1700000000084-link-recipe-banner-image-asset');
+const { AddUsShippingCharge1700000000087 } = require('./migrations/1700000000087-add-us-shipping-charge');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -231,7 +232,8 @@ function buildDataSourceOptions(env) {
       CreateDeliveryOperatingWeek1700000000081,
       CreateMediaAssets1700000000082,
       LinkRecipePlanImageAsset1700000000083,
-      LinkRecipeBannerImageAsset1700000000084
+      LinkRecipeBannerImageAsset1700000000084,
+      AddUsShippingCharge1700000000087
     ],
     synchronize: false,
     logging: false,

@@ -1,5 +1,6 @@
 const { HttpError } = require('../core/http-error');
 const { withTimeout } = require('../core/with-timeout');
+const { isShippingWaived } = require('../core/customer-shipping');
 const { parseStripeAccountInput } = require('../core/stripe-account');
 const { resolveStripeBilling } = require('../infrastructure/stripe/stripe-accounts');
 const { isSubscribedStripeEvent } = require('../infrastructure/stripe/stripe-webhook-events');
@@ -649,6 +650,16 @@ class StripeWebhookService {
     const subscriptionId = extractSubscriptionIdFromInvoice(invoice);
     const subscription = await this.retrieveSubscriptionSafe(subscriptionId, runtime.stripeBilling);
     const metadata = (subscription && subscription.metadata) || {};
+    // A US subscription checked out with free shipping renews free, whatever the current switch
+    // (customer-shipping-charge). The company pays the UPS label; the customer's invoice has no shipping item.
+    if (isShippingWaived(metadata.shipping_waived)) {
+      this.logger.info({
+        invoiceId: invoice.id,
+        subscriptionId,
+        stripe_account: runtime.account
+      }, 'invoice.created skipped shipping: shipping is waived for this subscription.');
+      return;
+    }
     let amountMinor = Number(metadata.shipping_amount_minor || 0);
     let currency = metadata.shipping_currency || invoice.currency || 'usd';
     const productId = metadata.shipping_product_id;

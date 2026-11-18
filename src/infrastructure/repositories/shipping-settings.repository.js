@@ -55,7 +55,8 @@ const US_COLUMNS = [
   'allowed_service_codes',
   'max_transit_days',
   'ship_from_phone',
-  'package_dry_ice_kg'
+  'package_dry_ice_kg',
+  'charge_shipping'
 ];
 
 class ShippingSettingsRepository {
@@ -91,14 +92,16 @@ class ShippingSettingsRepository {
     return settingsFromRows(brRow, usRow, boxRows);
   }
 
-  async save(payload = {}) {
+  // `manager` lets a caller run the writes inside its transaction (the US charge switch and its audit event).
+  async save(payload = {}, manager = null) {
     this.ensureDataSource();
+    const runner = manager || this.dataSource;
 
     const current = await this.get();
     const next = nextSettings(current, payload);
 
     await Promise.all([
-      this.dataSource.query(
+      runner.query(
         [
           `INSERT INTO \`${this.brTableName}\` (\`id\`, ${BR_COLUMNS.map((column) => `\`${column}\``).join(', ')})`,
           `VALUES (1, ${BR_COLUMNS.map(() => '?').join(', ')})`,
@@ -106,7 +109,7 @@ class ShippingSettingsRepository {
         ].join(' '),
         brToParams(next.br)
       ),
-      this.dataSource.query(
+      runner.query(
         [
           `INSERT INTO \`${this.usTableName}\` (\`id\`, ${US_COLUMNS.map((column) => `\`${column}\``).join(', ')})`,
           `VALUES (1, ${US_COLUMNS.map(() => '?').join(', ')})`,
@@ -114,7 +117,7 @@ class ShippingSettingsRepository {
         ].join(' '),
         usToParams(next.us)
       ),
-      ...boxesToParams(next.us.boxes).map((params) => this.dataSource.query(
+      ...boxesToParams(next.us.boxes).map((params) => runner.query(
         [
           `INSERT INTO \`${this.boxesTableName}\` (\`key\`, \`label\`, \`length_in\`, \`width_in\`, \`height_in\`, \`empty_weight_kg\`, \`max_packs\`)`,
           'VALUES (?, ?, ?, ?, ?, ?, ?)',

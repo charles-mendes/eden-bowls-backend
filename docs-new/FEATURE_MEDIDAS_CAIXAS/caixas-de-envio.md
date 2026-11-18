@@ -60,6 +60,6 @@ Peso = gramas dos pacotes + caixa vazia + gelo seco.
 
 ## Limitação: a cotação do checkout
 
-A cotação do checkout e a simulação do painel não usam `planBoxes`. Elas continuam usando o `package` das configurações dos EUA, a "Caixa da cotação do checkout" no painel, porque o frete grátis ainda está em aberto com o cliente.
+A cotação do checkout e a simulação do painel não usam `planBoxes`. Elas continuam usando o `package` das configurações dos EUA, a "Caixa da cotação do checkout" no painel. Com a cobrança de frete dos EUA desligada (`charge_shipping`, change `us-company-paid-shipping`), o cliente paga 0 e essa cotação vira o custo da empresa (`company_cost`) gravado na assinatura, com `shipping_waived` true. No Brasil o frete continua uma taxa por pedido, pela distância, qualquer que seja o número de caixas.
 
 Enquanto isso, essa caixa deve ser a mensal com peso cheio: 18 × 14 × 12″ e 37,5 lb, com o gelo seco já incluído. A migração `1700000000070` faz essa troca sozinha, mas só se a caixa ainda estiver no valor antigo (12 × 12 × 12″, 10 lb). Uma caixa que o operador já mudou fica como está.

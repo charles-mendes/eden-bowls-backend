@@ -1,4 +1,5 @@
 const { HttpError } = require('../core/http-error');
+const { customerShipping } = require('../core/customer-shipping');
 const { constrainMarketQuery, shouldEnforceMarketScope } = require('../core/admin-market-scope');
 const { BR_DELIVERY_DAYS_MAX } = require('../core/delivery-closed-days');
 const { mapRatedShipments, pickRate } = require('../infrastructure/shipping/ups-client');
@@ -30,6 +31,16 @@ async function timed(run) {
   }
 }
 
+const CHARGE_ACTION_PREFIX = 'shipping.us.charge.';
+const CHARGE_ENABLE_ACTION = 'shipping.us.charge.enable';
+const CHARGE_DISABLE_ACTION = 'shipping.us.charge.disable';
+const CHARGE_HISTORY_LIMIT = 50;
+
+function actorIdOf(actor) {
+  const id = actor && (actor.userId || actor.id);
+  return id ? Number(id) : null;
+}
+
 const MIN_US_TRANSIT_DAYS = 1;
 const MAX_US_TRANSIT_DAYS = 10;
 
@@ -42,6 +53,18 @@ function assertUsMaxTransitDays(us) {
   if (!Number.isInteger(days) || days < MIN_US_TRANSIT_DAYS || days > MAX_US_TRANSIT_DAYS) {
     throw new HttpError(422, `US max transit days must be a whole number from ${MIN_US_TRANSIT_DAYS} to ${MAX_US_TRANSIT_DAYS}.`, {
       code: 'invalid_max_transit_days'
+    });
+  }
+}
+
+// The US shipping charge switch is a boolean (customer-shipping-charge); anything else stores nothing.
+function assertUsChargeShipping(us) {
+  if (!us || us.charge_shipping === undefined) {
+    return;
+  }
+  if (typeof us.charge_shipping !== 'boolean') {
+    throw new HttpError(422, 'US charge_shipping must be true or false.', {
+      code: 'invalid_charge_shipping'
     });
   }
 }
@@ -133,6 +156,9 @@ class AdminShippingService {
     // Always UPS CIE: the admin simulation never quotes against production.
     this.upsSandboxClient = options.upsSandboxClient || null;
     this.zippopotamClient = options.zippopotamClient || null;
+    // The US charge switch is saved with its audit event in one transaction (shipping-settings).
+    this.auditRepository = options.auditRepository || null;
+    this.dataSource = options.dataSource || null;
   }
 
   ensureRepository() {
@@ -187,8 +213,61 @@ class AdminShippingService {
 
     return {
       success: true,
-      data: { settings: this.scopedSettings(settings, actor) }
+      data: { settings: this.scopedSettings(await this.withChargeHistory(settings), actor) }
     };
+  }
+
+  // Latest changes of the US charge switch, newest first, from the admin audit log.
+  async chargeHistory() {
+    if (!this.auditRepository || typeof this.auditRepository.listByActionPrefix !== 'function') {
+      return [];
+    }
+    const events = await this.auditRepository.listByActionPrefix({
+      actionPrefix: CHARGE_ACTION_PREFIX,
+      market: 'US',
+      limit: CHARGE_HISTORY_LIMIT
+    });
+    return events.map((event) => ({
+      enabled: event.action === CHARGE_ENABLE_ACTION,
+      actor_email: event.actorEmail || null,
+      changed_at: event.createdAt || null
+    }));
+  }
+
+  async withChargeHistory(settings) {
+    if (!settings || !settings.us) {
+      return settings;
+    }
+    return { ...settings, us: { ...settings.us, charge_shipping_history: await this.chargeHistory() } };
+  }
+
+  // Saves the settings; a changed US charge switch is written with its audit event in the same transaction, so a
+  // change without its history is never stored.
+  async persistSettings(scoped, actor) {
+    const nextCharge = scoped.us ? scoped.us.charge_shipping : undefined;
+    let changed = false;
+    if (typeof nextCharge === 'boolean') {
+      const current = await this.repository.get();
+      changed = Boolean(current && current.us && current.us.charge_shipping) !== nextCharge;
+    }
+    if (!changed) {
+      return this.repository.save(scoped);
+    }
+    if (!this.auditRepository || typeof this.auditRepository.createIn !== 'function'
+      || !this.dataSource || typeof this.dataSource.transaction !== 'function') {
+      throw new HttpError(503, 'The US shipping charge change cannot be recorded.', { code: 'charge_shipping_audit_unavailable' });
+    }
+    let settings = null;
+    await this.dataSource.transaction(async (manager) => {
+      settings = await this.repository.save(scoped, manager);
+      await this.auditRepository.createIn(manager, {
+        actorUserId: actorIdOf(actor),
+        actorEmail: (actor && actor.email) || null,
+        action: nextCharge ? CHARGE_ENABLE_ACTION : CHARGE_DISABLE_ACTION,
+        metadata: { market: 'US', enabled: nextCharge }
+      });
+    });
+    return settings;
   }
 
   // A changed headquarters address is validated and, in Brazil, geocoded before it is stored.
@@ -242,16 +321,17 @@ class AdminShippingService {
   async saveSettings(payload = {}, actor = {}) {
     this.ensureRepository();
     assertUsMaxTransitDays(payload.us);
+    assertUsChargeShipping(payload.us);
     assertBrDeliveryDays(payload.br);
     await assertUsDryIce(payload.us, this.repository);
     await assertUsBoxes(payload.us, this.repository);
     const scoped = await this.resolveHeadquarters(this.scopedPayload(payload, actor));
-    const settings = await this.repository.save(scoped);
+    const settings = await this.persistSettings(scoped, actor);
     this.applyToShippingService(settings);
 
     return {
       success: true,
-      data: { settings: this.scopedSettings(settings, actor) }
+      data: { settings: this.scopedSettings(await this.withChargeHistory(settings), actor) }
     };
   }
 
@@ -271,13 +351,22 @@ class AdminShippingService {
       const quote = await this.shippingService.calculate(payload);
       fixed = quote.data;
     }
+    const ups = await this.simulateUps(payload.zipCode, us);
+    // What the customer would pay for the quote the checkout uses (customer-shipping-charge).
+    const quoted = fixed ? fixed.shipping : (ups.selected ? ups.selected.amount : null);
+    const charge = quoted == null
+      ? { original_amount: null, charged_amount: null, charge_enabled: Boolean(us.charge_shipping) }
+      : customerShipping({ market: 'US', quote: quoted, chargeEnabled: Boolean(us.charge_shipping) });
     return {
       success: true,
       data: {
         country: 'US',
         quote_mode: us.quote_mode || 'fixed',
         fixed,
-        ups: await this.simulateUps(payload.zipCode, us)
+        ups,
+        original_amount: charge.original_amount,
+        charged_amount: charge.charged_amount,
+        charge_enabled: charge.charge_enabled
       }
     };
   }

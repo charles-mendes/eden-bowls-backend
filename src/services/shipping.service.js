@@ -1,3 +1,4 @@
+const { customerShipping } = require('../core/customer-shipping');
 const { HttpError } = require('../core/http-error');
 const {
   applyShippingFee,
@@ -42,7 +43,24 @@ class ShippingService {
     }
   }
 
+  // Every quote carries what the customer pays (customer-shipping-charge): `shipping` stays the signed quote, and
+  // original_amount / charged_amount / charge_enabled say whether it is charged. The store shows only these fields.
+  withCustomerShipping(country, data) {
+    const us = this.settings && this.settings.us;
+    const charge = customerShipping({
+      market: country,
+      quote: data.shipping,
+      chargeEnabled: Boolean(us && us.charge_shipping)
+    });
+    data.original_amount = charge.original_amount;
+    data.charged_amount = charge.charged_amount;
+    data.charge_enabled = charge.charge_enabled;
+  }
+
   withQuoteToken(country, zipcode, result) {
+    if (result && result.data) {
+      this.withCustomerShipping(country, result.data);
+    }
     if (!this.quoteSigner || !result || !result.data) {
       return result;
     }

@@ -14,4 +14,17 @@ describe('OnboardingSubscriptionPreviewRepository', () => {
       [7]
     );
   });
+
+  test('the US preview is priced from the plan items only, so a waived shipping never reaches the preview', async () => {
+    const stripeBilling = { previewSubscriptionInvoice: jest.fn().mockResolvedValue({ total: 40 }) };
+    const repository = new OnboardingSubscriptionPreviewRepository({ isInitialized: true }, { stripeBilling });
+
+    await repository.preview({ address: { country: 'US' }, priceIds: ['price_123'], shipping: { cost: 18.4 } });
+
+    expect(stripeBilling.previewSubscriptionInvoice).toHaveBeenCalledWith({
+      address: { country: 'US' },
+      items: [{ price: 'price_123', quantity: 1 }]
+    });
+  });
 });
+

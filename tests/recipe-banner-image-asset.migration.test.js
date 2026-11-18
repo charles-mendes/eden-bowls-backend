@@ -84,8 +84,9 @@ describe('LinkRecipeBannerImageAsset1700000000084', () => {
     expect(runner.dropColumn).toHaveBeenCalledWith('recipe_contents', 'image_asset_id');
   });
 
-  test('is registered last, after the plan thumbnail link', () => {
+  test('is registered right after the plan thumbnail link', () => {
     const names = buildDataSourceOptions({}).migrations.map((migration) => migration.name);
-    expect(names.slice(-2)).toEqual(['LinkRecipePlanImageAsset1700000000083', 'LinkRecipeBannerImageAsset1700000000084']);
+    const index = names.indexOf('LinkRecipeBannerImageAsset1700000000084');
+    expect(names[index - 1]).toBe('LinkRecipePlanImageAsset1700000000083');
   });
 });

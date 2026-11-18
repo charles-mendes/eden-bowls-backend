@@ -1,6 +1,6 @@
 const { buildInvoiceDocument, formatServicePeriod, formatInvoiceMoney, invoiceLocale } = require('../src/core/invoice/invoice-document');
 const { formatInvoiceNumber, invoiceYear } = require('../src/core/invoice/invoice-number');
-const { LIFE_STAGE_PREVIEW_CASES, PREVIEW_CASES, sampleInvoice } = require('../src/core/invoice/preview-fixtures');
+const { FREE_SHIPPING_PREVIEW_CASES, LIFE_STAGE_PREVIEW_CASES, PREVIEW_CASES, sampleInvoice } = require('../src/core/invoice/preview-fixtures');
 
 function build(locale, status = 'open', overrides = {}) {
   const sample = PREVIEW_CASES[locale];
@@ -232,5 +232,40 @@ describe('invoice lines of the life-stage recipes (2.15)', () => {
   test('without a catalog name, the key', () => {
     const model = build('pt-BR', 'open', { variants: new Map([['price_first', { flavorKey: 'senior-beef', grams: 300 }]]) });
     expect(model.items[0].description).toBe('Fresh Bowl · senior-beef 300 g');
+  });
+});
+
+describe('invoice shipping row (customer-invoices)', () => {
+  const totalsOf = (sample, status = 'paid', ledger = sample.ledger) => buildInvoiceDocument({
+    invoice: sample.invoice(status),
+    invoiceNumber: 'EB-2026-000418',
+    stripeAccount: sample.stripeAccount,
+    ledger,
+    variants: sample.variants,
+    issuer: sample.issuer
+  }).totals;
+
+  test('US invoice with free shipping prints "FREE" in English, in the same row position', () => {
+    const totals = totalsOf(FREE_SHIPPING_PREVIEW_CASES['en-US']);
+    expect(totals.map((row) => row.label)).toEqual(['Subtotal', 'Shipping', 'Tax', 'Total', 'Amount paid', 'Amount due']);
+    expect(totals[1]).toEqual({ label: 'Shipping', value: 'FREE' });
+    expect(totals[3]).toEqual({ label: 'Total', value: '$137.50', kind: 'total' });
+    expect(JSON.stringify(totals)).not.toContain('$7.00');
+  });
+
+  test('US invoice with charged shipping prints the amount', () => {
+    const sample = PREVIEW_CASES['en-US'];
+    const totals = totalsOf(sample, 'paid', { ...sample.ledger, shipping: JSON.stringify({ cost: 7, shipping_waived: false }) });
+    expect(totals[1]).toEqual({ label: 'Shipping', value: '$7.00' });
+  });
+
+  test('BR invoice prints the fee as before', () => {
+    expect(totalsOf(PREVIEW_CASES['pt-BR'])[1]).toEqual({ label: 'Frete', value: 'R$ 7,00' });
+  });
+
+  test('both languages carry the free label', () => {
+    const { INVOICE_COPY } = require('../src/core/invoice/invoice-copy');
+    expect(INVOICE_COPY['en-US'].shippingFree).toBe('FREE');
+    expect(INVOICE_COPY['pt-BR'].shippingFree).toBe('GRÁTIS');
   });
 });

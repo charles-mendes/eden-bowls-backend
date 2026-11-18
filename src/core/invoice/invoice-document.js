@@ -1,5 +1,6 @@
 const { DateTime } = require('luxon');
 const { parseJsonColumn } = require('../stripe-subscription-map');
+const { isShippingWaived } = require('../customer-shipping');
 const { formatPackSizeLabel } = require('../plan-catalog-pricing');
 const { INVOICE_COPY, FLAVOR_RECIPE_LABELS } = require('./invoice-copy');
 
@@ -213,6 +214,8 @@ function buildInvoiceDocument({
   const money = (value) => formatInvoiceMoney(value, currency, locale);
 
   const paid = String(invoice.status || '') === 'paid';
+  const ledgerShipping = parseJsonColumn(ledger.shipping) || {};
+  const shippingWaived = isShippingWaived(ledgerShipping.shipping_waived);
   const issuedAt = invoice.status_transitions && invoice.status_transitions.finalized_at || invoice.created;
   const dueAt = invoice.due_date || issuedAt;
   const paidAt = invoice.status_transitions && invoice.status_transitions.paid_at || null;
@@ -255,7 +258,9 @@ function buildInvoiceDocument({
   const totals = [
     { label: copy.subtotal, value: money(itemsMinor) },
     ...(discountMinor > 0 ? [{ label: copy.discount, value: money(-discountMinor) }] : []),
-    { label: copy.shipping, value: money(shippingMinor) },
+    // A subscription checked out with free shipping (ledger shipping_waived) prints the free label, not $0.00;
+    // the company's own shipping cost is never printed.
+    { label: copy.shipping, value: shippingWaived && shippingMinor === 0 ? copy.shippingFree : money(shippingMinor) },
     { label: copy.tax, value: money(taxMinor(invoice)) },
     { label: copy.total, value: money(total), kind: 'total' },
     ...(creditMinor !== 0 ? [{ label: copy.credit, value: money(-creditMinor) }] : []),

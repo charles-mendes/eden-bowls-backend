@@ -62,7 +62,9 @@ const DEFAULT_SETTINGS = {
     },
     allowed_service_codes: ['03'],
     // A US address whose UPS transit is longer than this is outside the delivery area.
-    max_transit_days: 1
+    max_transit_days: 1,
+    // Whether new US checkouts charge the shipping quote (customer-shipping-charge). Off: the company pays it.
+    charge_shipping: false
   }
 };
 
@@ -238,7 +240,8 @@ function mergeSettings(base, overlay) {
         fileUs.allowed_service_codes,
         parseServiceCodes(baseUs.allowed_service_codes, ['03'])
       ),
-      max_transit_days: toNumber(fileUs.max_transit_days, toNumber(baseUs.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days))
+      max_transit_days: toNumber(fileUs.max_transit_days, toNumber(baseUs.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days)),
+      charge_shipping: toBoolean(fileUs.charge_shipping, toBoolean(baseUs.charge_shipping, DEFAULT_SETTINGS.us.charge_shipping))
     }
   };
 }
@@ -354,7 +357,8 @@ function usFromRow(row) {
       dry_ice_kg: toNumber(row.package_dry_ice_kg, DEFAULT_SETTINGS.us.package.dry_ice_kg)
     },
     allowed_service_codes: parseServiceCodes(row.allowed_service_codes, DEFAULT_SETTINGS.us.allowed_service_codes),
-    max_transit_days: toNumber(row.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days)
+    max_transit_days: toNumber(row.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days),
+    charge_shipping: toBoolean(row.charge_shipping, DEFAULT_SETTINGS.us.charge_shipping)
   };
 }
 
@@ -415,7 +419,8 @@ function usToParams(us) {
     JSON.stringify(parseServiceCodes(us.allowed_service_codes, ['03'])),
     toNumber(us.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days),
     String(us.ship_from?.phone || '').slice(0, 32),
-    toNumber(us.package?.dry_ice_kg, DEFAULT_SETTINGS.us.package.dry_ice_kg)
+    toNumber(us.package?.dry_ice_kg, DEFAULT_SETTINGS.us.package.dry_ice_kg),
+    toBoolean(us.charge_shipping, DEFAULT_SETTINGS.us.charge_shipping) ? 1 : 0
   ];
 }
 

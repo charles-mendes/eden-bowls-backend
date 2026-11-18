@@ -788,4 +788,42 @@ describe('SubscriptionsEditCommitRepository', () => {
       expect(rows[0]).toMatchObject({ open: false, resolvedBy: 'customer' });
     });
   });
+
+  describe('shipping condition (customer-shipping-charge)', () => {
+    const commitWith = (repository, ledgerShipping) => repository.commit(7, 'sub_123', {
+      subscription_term_months: 1,
+      expected_current_hash: buildCurrentHash({
+        items: [{ price: 'price_abc', quantity: 1 }],
+        termMonths: 1,
+        address: { country: 'US' },
+        shipping: ledgerShipping
+      }),
+      pets: [{ pet_name: 'Milo', enabled: true, selected_flavors: ['chicken'], flavor_weights: [100] }],
+      address: US_EDIT_ADDRESS,
+      shipping: signedShipping({ cost: 14.25 })
+    });
+
+    test('Switch turned on after a free checkout: the edit commit stays at 0 and keeps the waived condition', async () => {
+      const ledgerShipping = { cost: 0, shipping_waived: true, shipping_original_minor: 1290 };
+      const repository = buildRepo({ ledgerRow: { shipping: ledgerShipping } });
+
+      await commitWith(repository, ledgerShipping);
+
+      const { metadata } = repository.stripeBilling.updateSubscriptionItems.mock.calls[0][0];
+      expect(metadata.shipping_amount_minor).toBeUndefined();
+      expect(metadata).toMatchObject({ shipping_waived: 'true', shipping_original_minor: '1425' });
+      const saved = repository.ledgerRepository.upsert.mock.calls[0][0].shipping;
+      expect(saved).toMatchObject({ cost: 0, shipping_waived: true, company_cost: { amount: 14.25, currency: 'USD' } });
+    });
+
+    test('Switch turned off after a charged checkout: the edit commit charges the edit quote', async () => {
+      const ledgerShipping = { cost: 12.9, shipping_waived: false };
+      const repository = buildRepo({ ledgerRow: { shipping: ledgerShipping } });
+
+      await commitWith(repository, ledgerShipping);
+
+      const { metadata } = repository.stripeBilling.updateSubscriptionItems.mock.calls[0][0];
+      expect(metadata.shipping_amount_minor).toBe('1425');
+    });
+  });
 });

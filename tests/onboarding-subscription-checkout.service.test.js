@@ -100,7 +100,8 @@ function buildService(overrides = {}) {
       planPreviewRepository: overrides.planPreviewRepository || null,
       petsSyncRepository,
       privacyService,
-      shippingQuoteSigner: overrides.shippingQuoteSigner || quoteSigner
+      shippingQuoteSigner: overrides.shippingQuoteSigner || quoteSigner,
+      shippingSettingsRepository: overrides.shippingSettingsRepository || null
     }),
     petsSyncRepository,
     privacyService,
@@ -1588,7 +1589,10 @@ describe('OnboardingSubscriptionCheckoutService', () => {
         ...validContext,
         shipping: quoted(US_ADDRESS, { rate_id: 'ups:03', cost: 12.9, delivery_days: 1 }, recent)
       };
-      const run = buildService({ repository: contextRepository(context) });
+      const run = buildService({
+        repository: contextRepository(context),
+        shippingSettingsRepository: { get: jest.fn().mockResolvedValue({ us: { charge_shipping: true } }) }
+      });
       const result = await run.service.checkout({ userId: 7, payload });
       expect(result.success).toBe(true);
       expect(run.stripeBilling.createOnboardingSubscription).toHaveBeenCalledWith(expect.objectContaining({
@@ -1725,5 +1729,128 @@ describe('OnboardingSubscriptionCheckoutService', () => {
       new ShippingService({ settings: usSettings('ups'), production: true }).reportQuoteModeAtStartup(quiet);
       expect(quiet.error).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('OnboardingSubscriptionCheckoutService › US shipping charge (customer-shipping-charge)', () => {
+  const settingsWith = (charge) => ({ get: jest.fn().mockResolvedValue({ us: { charge_shipping: charge } }) });
+  const usQuote = quoted(US_ADDRESS, { rate_id: 'ups:03', cost: 18.4, delivery_days: 1, source: 'ups' });
+
+  function usRun(charge) {
+    const context = { ...validContext, shipping: usQuote };
+    const ledgerRepository = { listByUserId: jest.fn().mockResolvedValue([]), upsert: jest.fn().mockResolvedValue({}) };
+    const run = buildService({
+      shippingSettingsRepository: settingsWith(charge),
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, body) => body.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(context.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue(context),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_abc', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+    run.service.ledgerRepository = ledgerRepository;
+    return { ...run, ledgerRepository };
+  }
+
+  test('Charges off: Stripe gets no shipping, the subscription keeps shipping_waived and the original', async () => {
+    const run = usRun(false);
+    await run.service.checkout({ userId: 7, payload });
+
+    const { shipping } = run.stripeBilling.createOnboardingSubscription.mock.calls[0][0];
+    expect(shipping).toMatchObject({
+      cost: 0,
+      total: 0,
+      original_amount: 18.4,
+      charged_amount: 0,
+      charge_enabled: false,
+      shipping_waived: true,
+      shipping_original_minor: 1840
+    });
+  });
+
+  test('Cost recorded: the unpaid quote is the company cost, and the ledger shipping cost is 0', async () => {
+    const run = usRun(false);
+    await run.service.checkout({ userId: 7, payload });
+
+    const { shipping, checkoutSnapshot } = run.ledgerRepository.upsert.mock.calls[0][0];
+    expect(shipping.cost).toBe(0);
+    expect(shipping.company_cost).toEqual({ amount: 18.4, currency: 'USD', source: 'ups' });
+    expect(checkoutSnapshot.shipping).toMatchObject({ shipping_waived: true, shipping_original_minor: 1840 });
+  });
+
+  test('Charges on: the customer is charged the quote and the subscription stores shipping_waived false', async () => {
+    const run = usRun(true);
+    await run.service.checkout({ userId: 7, payload });
+
+    const { shipping } = run.stripeBilling.createOnboardingSubscription.mock.calls[0][0];
+    expect(shipping).toMatchObject({ cost: 18.4, charged_amount: 18.4, shipping_waived: false, company_cost: null });
+  });
+
+  test('a switch missing from the table reads as off', async () => {
+    const run = usRun(undefined);
+    await run.service.checkout({ userId: 7, payload });
+
+    expect(run.stripeBilling.createOnboardingSubscription.mock.calls[0][0].shipping.cost).toBe(0);
+  });
+
+  function brRun(planSelection) {
+    const brContext = {
+      ...validContext,
+      address: BR_ADDRESS,
+      shipping: quoted(BR_ADDRESS, { rate_id: 'br:1', cost: 15, distance: 12, delivery_days: 0 }),
+      planSelection
+    };
+    const brBilling = {
+      automaticTaxEnabled: false,
+      createOnboardingSubscription: jest.fn().mockResolvedValue({
+        customerId: 'cus_br',
+        subscription: { id: 'sub_br', status: 'incomplete' },
+        checkout: { order_id: 0, payment_state: 'requires_confirmation', stripe_client_secret: 's', stripe_subscription_id: 'sub_br', status: 'incomplete' }
+      }),
+      retrievePaymentIntent: jest.fn(),
+      resolvePaymentState: jest.fn().mockReturnValue('requires_confirmation')
+    };
+    const stripeAccounts = { getForCreation: jest.fn(() => brBilling), get: jest.fn(() => brBilling) };
+    const settings = settingsWith(false);
+    const run = buildService({
+      stripeAccounts,
+      stripeBrEnabled: true,
+      shippingSettingsRepository: settings,
+      repository: {
+        checkout: jest.fn().mockImplementation(async (_userId, body) => body.checkout),
+        getPlanSelection: jest.fn().mockResolvedValue(brContext.planSelection),
+        getCheckoutContext: jest.fn().mockResolvedValue(brContext),
+        resolveSubscriptionItems: jest.fn().mockResolvedValue([{ price: 'price_brl', quantity: 1 }]),
+        getUserEmail: jest.fn().mockResolvedValue({ email: 'jane@example.com', name: 'Jane Doe' })
+      }
+    });
+    return { ...run, brBilling, settings };
+  }
+
+  const brPlan = (quantity) => ({
+    ...validContext.planSelection,
+    catalog_pricing: {
+      ...validContext.planSelection.catalog_pricing,
+      currency: 'brl',
+      line_items: [{ stripe_price_id: 'price_brl', quantity }]
+    }
+  });
+
+  test('BR checkout with US charges off: the BR fee is charged as before', async () => {
+    const run = brRun(brPlan(10));
+    await run.service.checkout({ userId: 7, payload });
+
+    const { shipping } = run.brBilling.createOnboardingSubscription.mock.calls[0][0];
+    expect(shipping).toMatchObject({ cost: 15, original_amount: 15, charged_amount: 15, charge_enabled: true });
+    expect(shipping).not.toHaveProperty('shipping_waived');
+    expect(run.settings.get).not.toHaveBeenCalled();
+  });
+
+  test('BR order of two boxes: 45 packs per delivery still pay one BR fee', async () => {
+    const run = brRun(brPlan(45));
+    await run.service.checkout({ userId: 7, payload });
+
+    expect(run.brBilling.createOnboardingSubscription.mock.calls[0][0].shipping.cost).toBe(15);
   });
 });

@@ -63,4 +63,27 @@ describe('OnboardingSalesTaxQuoteService', () => {
       details: { code: 'sales_tax_unavailable', reason: 'missing_address' }
     });
   });
+
+  test('US tax without shipping when waived: the quote is on the plan subtotal only, never on shipping', async () => {
+    const repository = buildRepository();
+    const service = new OnboardingSalesTaxQuoteService(repository, { automaticTaxEnabled: true });
+
+    const result = await service.quote({
+      userId: 7,
+      payload: { address: { country: 'US', state: 'CA', postal_code: '94105' }, shipping: { cost: 18.4 } }
+    });
+
+    expect(result.data.subtotal).toBe(40);
+    expect(repository.quote.mock.calls[0][0]).not.toHaveProperty('shipping');
+  });
+
+  test('BR unchanged: a Brazil address quotes zero tax on the plan subtotal', async () => {
+    const repository = buildRepository();
+    const service = new OnboardingSalesTaxQuoteService(repository, { automaticTaxEnabled: true });
+
+    const result = await service.quote({ userId: 7, payload: { address: { country: 'BR', state: 'PR', postal_code: '80010000' } } });
+
+    expect(result.data).toMatchObject({ subtotal: 40, product_tax: 0, tax_jurisdiction: 'BR-ZERO' });
+  });
 });
+

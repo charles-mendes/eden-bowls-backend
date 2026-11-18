@@ -4,7 +4,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const { buildInvoiceDocument } = require('../core/invoice/invoice-document');
-const { LIFE_STAGE_PREVIEW_CASES, PREVIEW_CASES } = require('../core/invoice/preview-fixtures');
+const { FREE_SHIPPING_PREVIEW_CASES, LIFE_STAGE_PREVIEW_CASES, PREVIEW_CASES } = require('../core/invoice/preview-fixtures');
 const { renderInvoicePdf } = require('../infrastructure/invoices/invoice-pdf-renderer');
 
 async function main() {
@@ -12,7 +12,8 @@ async function main() {
   await fs.mkdir(outputDir, { recursive: true });
   const cases = [
     ...Object.entries(PREVIEW_CASES).map(([locale, sample]) => [locale, sample, ['open', 'paid']]),
-    ...Object.entries(LIFE_STAGE_PREVIEW_CASES).map(([locale, sample]) => [`${locale}-life-stage`, sample, ['open']])
+    ...Object.entries(LIFE_STAGE_PREVIEW_CASES).map(([locale, sample]) => [`${locale}-life-stage`, sample, ['open']]),
+    ...Object.entries(FREE_SHIPPING_PREVIEW_CASES).map(([locale, sample]) => [`${locale}-free-shipping`, sample, ['paid']])
   ];
   for (const [locale, sample, statuses] of cases) {
     for (const status of statuses) {

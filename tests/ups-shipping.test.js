@@ -97,6 +97,8 @@ describe('ShippingService US calculate', () => {
     expect(result.data.source).toBe('ups');
     expect(result.data.shipping).toBe(19.25);
     expect(result.data.rate_id).toBe('ups:03');
+    // Quote with charges off: the UPS rate is the original the store strikes through; the customer pays 0.
+    expect(result.data).toMatchObject({ original_amount: 19.25, charged_amount: 0, charge_enabled: false });
     // Checkout quote: the stored package, dry ice included, reaches UPS (ups-dry-ice).
     expect(upsClient.rate).toHaveBeenCalledWith(expect.objectContaining({
       package: expect.objectContaining({ weight_lb: 10, dry_ice_kg: 0.5 })

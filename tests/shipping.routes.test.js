@@ -132,6 +132,37 @@ describe('ShippingService', () => {
     expect(result.data.shipping).toBe(12.9);
   });
 
+  test('Quote with charges off: the US quote is the original and the customer is charged 0', async () => {
+    const service = new ShippingService({ settings });
+    const result = await service.calculate({ zipCode: '94105', country: 'US' });
+    expect(result.data).toMatchObject({ shipping: 12.9, original_amount: 12.9, charged_amount: 0, charge_enabled: false });
+  });
+
+  test('Quote with charges on: the US customer is charged the quote', async () => {
+    const service = new ShippingService({ settings: { ...settings, us: { ...settings.us, charge_shipping: true } } });
+    const result = await service.calculate({ zipCode: '94105', country: 'US' });
+    expect(result.data).toMatchObject({ original_amount: 12.9, charged_amount: 12.9, charge_enabled: true });
+  });
+
+  test('BR quote: original and charged are the same distance fee, whatever the US switch', async () => {
+    const service = new ShippingService({
+      settings,
+      viaCepClient: {
+        lookup: jest.fn().mockResolvedValue({
+          status: 'ok',
+          address: { city: 'Curitiba', state: 'PR', street: 'Rua', neighborhood: 'Centro', zipcode: '80010000' }
+        })
+      },
+      nominatimClient: { geocodeBr: jest.fn().mockResolvedValue({ status: 'ok', lat: -25.43, lng: -49.27 }) },
+      osrmClient: { routeDriving: jest.fn().mockResolvedValue({ status: 'ok', distanceM: 10000, source: 'osrm' }) }
+    });
+    const result = await service.calculate({ zipCode: '80010-000', country: 'BR' });
+    expect(result.data.shipping).toBeGreaterThan(0);
+    expect(result.data.original_amount).toBe(result.data.shipping);
+    expect(result.data.charged_amount).toBe(result.data.shipping);
+    expect(result.data.charge_enabled).toBe(true);
+  });
+
   test('returns 400 for unsupported country calculate', async () => {
     const service = new ShippingService({ settings });
     await expect(service.calculate({ zipCode: '75001', country: 'FR' })).rejects.toMatchObject({
