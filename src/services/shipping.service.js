@@ -15,6 +15,8 @@ function usStateCode(value) {
   return /^[A-Z]{2}$/.test(code) ? code : '';
 }
 
+const US_READINESS_TTL_MS = 5 * 60 * 1000;
+
 class ShippingService {
   constructor(options = {}) {
     this.settings = options.settings || loadShippingSettings();
@@ -43,6 +45,60 @@ class ShippingService {
     setUsMaxTransitDays(value && value.us ? value.us.max_transit_days : null);
     // Every UPS request (quotes, the admin simulation, labels) reads the CIE dry ice switch from here.
     setSkipDryIceInTest(Boolean(value && value.us && value.us.skip_dry_ice_in_test));
+    // Saved settings may fix (or break) the US quote, so the checkout readiness probe asks UPS again.
+    this.usReadinessProbe = null;
+  }
+
+  // Whether a United States checkout would get a UPS quote with transit days (admin checkout readiness). `code` names
+  // the first reason it would not; `unverified` means UPS could not be reached now. The live probe rates the ship-from
+  // address to itself and is reused for US_READINESS_TTL_MS. Never returns credentials.
+  async usCheckoutReadiness() {
+    const us = (this.settings && this.settings.us) || {};
+    const upsConfigured = Boolean(this.upsClient && this.upsClient.isConfigured());
+    const result = (code, unverified = false) => ({ ups_configured: upsConfigured, code, unverified });
+
+    if ((us.quote_mode || 'fixed') !== 'ups') {
+      return result('us_shipping_fixed');
+    }
+    if (!upsConfigured) {
+      return result('us_ups_not_configured');
+    }
+    const shipFrom = us.ship_from || {};
+    if (!String(shipFrom.zipcode || '').replace(/\D/g, '')) {
+      return result('us_ship_from_missing');
+    }
+
+    const now = Date.now();
+    if (this.usReadinessProbe && now - this.usReadinessProbe.at < US_READINESS_TTL_MS) {
+      return result(this.usReadinessProbe.code);
+    }
+
+    let code = null;
+    try {
+      const rated = await this.upsClient.rate({
+        shipFrom,
+        shipTo: { ...shipFrom, name: 'Checkout readiness', country: 'US' },
+        package: us.package,
+        allowedServiceCodes: us.allowed_service_codes,
+        withTransit: true
+      });
+      if (!rated || !(Number(rated.deliveryDays) > 0)) {
+        code = 'us_ups_quote_fallback';
+      }
+    } catch (error) {
+      const unreachable = Boolean(
+        error?.upsTimeout
+        || error?.upsNetwork
+        || error?.details?.code === 'ups_timeout'
+        || error?.details?.code === 'ups_network_error'
+      );
+      if (unreachable) {
+        return result(null, true);
+      }
+      code = 'us_ups_quote_fallback';
+    }
+    this.usReadinessProbe = { at: now, code };
+    return result(code);
   }
 
   reportQuoteModeAtStartup(logger) {

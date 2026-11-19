@@ -105,6 +105,7 @@ const { LinkRecipePlanImageAsset1700000000083 } = require('./migrations/17000000
 const { LinkRecipeBannerImageAsset1700000000084 } = require('./migrations/1700000000084-link-recipe-banner-image-asset');
 const { AddUsShippingCharge1700000000087 } = require('./migrations/1700000000087-add-us-shipping-charge');
 const { AddUsSkipDryIceInTest1700000000088 } = require('./migrations/1700000000088-add-us-skip-dry-ice-in-test');
+const { AddCatalogSyncRunStripeAccount1700000000089 } = require('./migrations/1700000000089-add-catalog-sync-run-stripe-account');
 const { buildPackStockItemEntitySchema, buildPackStockMovementEntitySchema } = require('./entities/pack-stock.entity');
 const { buildBackgroundJobCursorEntitySchema } = require('./entities/background-job-cursor.entity');
 const { buildDeliveryClosedDayEntitySchema } = require('./entities/delivery-closed-day.entity');
@@ -235,7 +236,8 @@ function buildDataSourceOptions(env) {
       LinkRecipePlanImageAsset1700000000083,
       LinkRecipeBannerImageAsset1700000000084,
       AddUsShippingCharge1700000000087,
-      AddUsSkipDryIceInTest1700000000088
+      AddUsSkipDryIceInTest1700000000088,
+      AddCatalogSyncRunStripeAccount1700000000089
     ],
     synchronize: false,
     logging: false,

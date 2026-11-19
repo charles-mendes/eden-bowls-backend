@@ -254,6 +254,10 @@ class AdminCatalogService {
     this.auditService = options.auditService || null;
     this.recipeContentRepository = options.recipeContentRepository || null;
     this.lastSync = null;
+    // Price sample of the Stripe account check, per market, kept for PRICE_SAMPLE_TTL_MS. A completed sync of the
+    // market drops it.
+    this.priceSamples = new Map();
+    this.now = options.now || (() => Date.now());
   }
 
   billingFor(country, { forCreation = false } = {}) {
@@ -962,7 +966,11 @@ class AdminCatalogService {
     const progress = { countries: new Map() };
     try {
       const result = await this.runSync(args, startedAt, progress);
-      await this.recordRuns(this.runsFor(args, startedAt, progress));
+      const runs = this.runsFor(args, startedAt, progress);
+      await this.recordRuns(runs);
+      for (const run of runs) {
+        this.priceSamples.delete(run.market);
+      }
       return result;
     } catch (error) {
       await this.recordRuns(this.failedRunsFor(args, startedAt, progress, error));
@@ -1005,6 +1013,10 @@ class AdminCatalogService {
         }
         if (!stripeBilling) {
           continue;
+        }
+        if (!tally.accountLookedUp) {
+          tally.accountLookedUp = true;
+          tally.stripeAccountId = await this.accountIdOf(stripeBilling, country);
         }
 
         const nickname = `${product.namePt} - ${variant.name || variant.sku}`;
@@ -1078,6 +1090,22 @@ class AdminCatalogService {
     return this.lastSync;
   }
 
+  // The acct_ id behind the market's key, or null when Stripe cannot say. A failed lookup never fails the sync; the
+  // run is then stored without an account and the readiness check falls back to the price sample.
+  async accountIdOf(stripeBilling, country) {
+    if (!stripeBilling || typeof stripeBilling.currentAccountId !== 'function') {
+      return null;
+    }
+    try {
+      return await stripeBilling.currentAccountId();
+    } catch (error) {
+      if (this.logger) {
+        this.logger.warn({ err: error, market: country }, 'Could not read the Stripe account of the catalog sync key.');
+      }
+      return null;
+    }
+  }
+
   runsFor({ productId, market, currency } = {}, startedAt, progress) {
     const finishedAt = new Date().toISOString();
     const tallies = [...progress.countries.entries()];
@@ -1092,6 +1120,7 @@ class AdminCatalogService {
       productId,
       status: tally.skipped.length && tally.created + tally.updated === 0 ? 'completed_with_skips' : 'completed',
       summary: { created: tally.created, updated: tally.updated, skipped: tally.skipped },
+      stripeAccountId: tally.stripeAccountId || null,
       startedAt,
       finishedAt
     }));
@@ -1160,13 +1189,117 @@ class AdminCatalogService {
       }
     }
 
+    const country = market === 'US' ? 'US' : 'BR';
+    const marketVariants = (products.items || [])
+      .filter((product) => !product.planCountry || product.planCountry === country)
+      .flatMap((product) => product.variants || []);
+
     return {
       market: market || 'BR',
       currency: mappedCurrency.toUpperCase(),
       totalExpected: variants.length,
       totalMapped: mapped,
-      gaps
+      gaps,
+      stripe_account: await this.stripeAccountStatus(country, marketVariants, mappedCurrency)
     };
+  }
+
+  // Whether the market's catalog belongs to the Stripe account its key points at. Read-only: one account lookup per
+  // process and a sample of at most PRICE_SAMPLE_SIZE prices every PRICE_SAMPLE_TTL_MS. Never throws: a Stripe
+  // problem is `unverified`, so the health keeps answering.
+  async stripeAccountStatus(country, variants = [], currency) {
+    const result = {
+      status: 'unverified',
+      current_account_id: null,
+      synced_account_id: null,
+      synced_at: null,
+      sampled_prices: 0,
+      missing_variation_ids: []
+    };
+
+    let billing;
+    try {
+      billing = this.billingFor(country, { forCreation: true });
+    } catch (error) {
+      if (error && error.details && error.details.code === 'stripe_br_disabled') {
+        return { ...result, status: 'disabled' };
+      }
+      return result;
+    }
+    if (!billing || typeof billing.currentAccountId !== 'function') {
+      return result;
+    }
+
+    try {
+      result.current_account_id = await billing.currentAccountId();
+    } catch (_error) {
+      return result;
+    }
+
+    if (variants.length === 0) {
+      return { ...result, status: 'ok' };
+    }
+
+    let lastRun = null;
+    if (this.syncRunsRepository && typeof this.syncRunsRepository.latestCompletedByMarket === 'function') {
+      try {
+        lastRun = (await this.syncRunsRepository.latestCompletedByMarket([country]))[country] || null;
+      } catch (_error) {
+        return result;
+      }
+    }
+    if (!lastRun) {
+      return { ...result, status: 'never_synced' };
+    }
+    result.synced_account_id = lastRun.stripeAccountId || null;
+    result.synced_at = lastRun.updatedAt || null;
+    if (result.synced_account_id && result.synced_account_id !== result.current_account_id) {
+      return { ...result, status: 'account_changed' };
+    }
+
+    const sample = await this.priceSample(country, billing, result.current_account_id, variants, currency);
+    if (!sample) {
+      return result;
+    }
+    result.sampled_prices = sample.sampled;
+    result.missing_variation_ids = sample.missing;
+    return { ...result, status: sample.missing.length ? 'prices_missing' : 'ok' };
+  }
+
+  // The lowest variation ids with a price_ id, so the same prices are checked on every read. A price_seed_ placeholder
+  // is missing without asking Stripe. Returns null when Stripe answers anything but "no such price".
+  async priceSample(country, billing, accountId, variants, currency) {
+    const cached = this.priceSamples.get(country);
+    if (cached && cached.accountId === accountId && this.now() - cached.at < PRICE_SAMPLE_TTL_MS) {
+      return cached.result;
+    }
+
+    const mapped = variants
+      .map((variant) => ({ id: variant.id, priceId: String(((variant.stripePriceIdsByCurrency || {})[currency]) || variant.stripePriceId || '') }))
+      .filter((item) => item.priceId.startsWith('price_'))
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .slice(0, PRICE_SAMPLE_SIZE);
+
+    const missing = [];
+    for (const item of mapped) {
+      if (item.priceId.startsWith('price_seed_')) {
+        missing.push(item.id);
+        continue;
+      }
+      try {
+        await billing.ensureClient().prices.retrieve(item.priceId);
+      } catch (error) {
+        if (isStripeResourceMissing(error)) {
+          missing.push(item.id);
+          continue;
+        }
+        return null;
+      }
+    }
+
+    const result = { sampled: mapped.length, missing };
+    this.priceSamples.set(country, { at: this.now(), accountId, result });
+    return result;
   }
 
   // Newest run within the caller's markets on top (the shape the panel already reads) plus the
@@ -1183,6 +1316,14 @@ class AdminCatalogService {
       .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0];
     return newest ? { ...newest, byMarket } : { status: null, byMarket };
   }
+}
+
+const PRICE_SAMPLE_SIZE = 3;
+const PRICE_SAMPLE_TTL_MS = 5 * 60 * 1000;
+
+function isStripeResourceMissing(error) {
+  const code = error && (error.code || (error.raw && error.raw.code));
+  return code === 'resource_missing';
 }
 
 function actorIdOf(actor) {

@@ -954,6 +954,16 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  // Admin only (system.health.read): what would make store checkout fail in Brazil or the United States.
+  app.get('/api/v1/admin/checkout/readiness', requirePermission('system.health.read', { market: 'none' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminCheckoutReadinessService) {
+        throw new HttpError(503, 'Checkout readiness service is not available.');
+      }
+      return dependencies.adminCheckoutReadinessService.read();
+    });
+  });
+
   app.get('/api/v1/admin/stripe/first-purchase-promos', requirePermission('billing.coupons.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.stripeCouponService) {

@@ -181,6 +181,21 @@ class StripeBillingClient {
     throw this.httpError(503, `${secretName} is not configured.`, { code: 'stripe_secret_missing' });
   }
 
+  // The id (acct_...) of the account this key belongs to. A key is read once at boot, so the id is kept after the first
+  // successful lookup; a failed lookup is not kept and the next call asks Stripe again.
+  async currentAccountId() {
+    if (this.accountIdCache) {
+      return this.accountIdCache;
+    }
+    const account = await this.ensureClient().accounts.retrieve();
+    const id = account && typeof account.id === 'string' ? account.id : '';
+    if (!id.startsWith('acct_')) {
+      throw this.httpError(502, 'Stripe did not return the account of this key.', { code: 'stripe_account_unknown' });
+    }
+    this.accountIdCache = id;
+    return id;
+  }
+
   // recreateMissingProduct is only set for a legacy product id that may belong to another account.
   // Any other missing product fails, so a wrong key cannot quietly duplicate the catalog.
   async ensureRecurringPrice({ lookupKey, currency, unitAmount, nickname, stripeProductId, recreateMissingProduct = false }) {

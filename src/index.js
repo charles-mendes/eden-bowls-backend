@@ -141,6 +141,7 @@ const { AdminReportsService } = require('./services/admin-reports.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
+const { AdminCheckoutReadinessService } = require('./services/admin-checkout-readiness.service');
 const { RecipeContentService } = require('./services/recipe-content.service');
 const { RecipeContentRepository } = require('./infrastructure/repositories/recipe-content.repository');
 const { LifeStageService } = require('./services/life-stage.service');
@@ -876,6 +877,15 @@ async function bootstrap() {
     recipeContentRepository,
     logger
   });
+  // Admin-only list of what would break checkout; gets whether each key is set, never the key itself.
+  const adminCheckoutReadinessService = new AdminCheckoutReadinessService({
+    adminCatalogService,
+    stripeCouponService,
+    shippingService,
+    stripeBrEnabled: env.STRIPE_BR_ENABLED,
+    stripeSecretKeyPresent: { BR: Boolean(env.STRIPE_BR_SECRET_KEY), US: Boolean(env.STRIPE_US_SECRET_KEY) },
+    logger
+  });
   const mediaLibraryService = new MediaLibraryService({
     repository: new MediaAssetRepository(dataSource),
     imageStorage: recipeImageStorage,
@@ -1031,6 +1041,7 @@ async function bootstrap() {
     recipeContentService,
     mediaLibraryService,
     adminSystemHealthService,
+    adminCheckoutReadinessService,
     adminUsersService,
     stripeCouponService,
     feedbacksService,

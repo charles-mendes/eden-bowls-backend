@@ -1035,3 +1035,34 @@ describe('StripeBillingClient.previewUpcomingInvoice', () => {
     await expect(clientWith(createPreview).previewUpcomingInvoice('sub_1', { timeoutMs: 5 })).rejects.toBeDefined();
   });
 });
+
+describe('StripeBillingClient.currentAccountId', () => {
+  test('asks Stripe once for the key account and keeps the id', async () => {
+    const retrieve = jest.fn().mockResolvedValue({ id: 'acct_LOCALUS' });
+    const { client } = buildClient({ stripe: { accounts: { retrieve } } });
+
+    await expect(client.currentAccountId()).resolves.toBe('acct_LOCALUS');
+    await expect(client.currentAccountId()).resolves.toBe('acct_LOCALUS');
+
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledWith();
+  });
+
+  test('does not keep a failed lookup', async () => {
+    const retrieve = jest.fn()
+      .mockRejectedValueOnce(new Error('timeout'))
+      .mockResolvedValueOnce({ id: 'acct_LOCALUS' });
+    const { client } = buildClient({ stripe: { accounts: { retrieve } } });
+
+    await expect(client.currentAccountId()).rejects.toThrow('timeout');
+    await expect(client.currentAccountId()).resolves.toBe('acct_LOCALUS');
+
+    expect(retrieve).toHaveBeenCalledTimes(2);
+  });
+
+  test('refuses an answer without an account id', async () => {
+    const { client } = buildClient({ stripe: { accounts: { retrieve: jest.fn().mockResolvedValue({}) } } });
+
+    await expect(client.currentAccountId()).rejects.toMatchObject({ details: expect.objectContaining({ code: 'stripe_account_unknown' }) });
+  });
+});
