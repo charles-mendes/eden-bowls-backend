@@ -295,6 +295,13 @@ class StripeCouponService {
   async persistMapping(mapping = {}, coupons = {}, account) {
     this.ensureRepository();
     const sanitized = this.sanitizeMapping(mapping, coupons);
+    // The upsert overwrites coupon_id: a term saved again with the same promotion code keeps its stored coupon.
+    const stored = await this.repository.getMapping(this.accountOf(account));
+    for (const term of Object.keys(sanitized.mapping)) {
+      if (!sanitized.coupons[term] && stored.coupons[term] && stored.mapping[term] === sanitized.mapping[term]) {
+        sanitized.coupons[term] = stored.coupons[term];
+      }
+    }
     await this.repository.saveMapping(sanitized.mapping, sanitized.coupons, this.accountOf(account));
     this.readinessCache.delete(this.accountOf(account));
     const health = await this.mappingHealth(account);

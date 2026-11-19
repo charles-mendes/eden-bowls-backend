@@ -415,7 +415,31 @@ describe('StripeCouponService', () => {
     await service.persistMapping({ 1: 'promo_br_1m' }, {}, 'br');
 
     expect(repository.getMapping).toHaveBeenCalledWith('br');
-    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_br_1m' }, {}, 'br');
+    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_br_1m' }, { 1: 'coupon_br' }, 'br');
+  });
+
+  test('saving one term keeps the stored coupon of the other terms', async () => {
+    const repository = {
+      getMapping: jest.fn().mockResolvedValue({
+        mapping: { 1: 'promo_us_1m', 3: 'promo_us_3m', 6: 'promo_us_6m_old' },
+        coupons: { 1: 'coupon_1m', 3: 'coupon_3m', 6: 'coupon_6m_old' }
+      }),
+      saveMapping: jest.fn().mockResolvedValue(undefined),
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
+    };
+    const service = new StripeCouponService(repository);
+
+    await service.persistMapping(
+      { 1: 'promo_us_1m', 3: 'promo_us_3m', 6: 'promo_us_6m_new' },
+      { 6: 'coupon_6m_new' },
+      'us'
+    );
+
+    expect(repository.saveMapping).toHaveBeenCalledWith(
+      { 1: 'promo_us_1m', 3: 'promo_us_3m', 6: 'promo_us_6m_new' },
+      { 1: 'coupon_1m', 3: 'coupon_3m', 6: 'coupon_6m_new' },
+      'us'
+    );
   });
 });
 
