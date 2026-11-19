@@ -50,6 +50,7 @@ const { registerAdminNutritionSettingsRoutes } = require('./admin-nutrition-sett
 const { registerAdminLifeStageSettingsRoutes } = require('./admin-life-stage-settings.routes');
 const { registerAdminCompanySettingsRoutes } = require('./admin-company-settings.routes');
 const { registerAdminLegalRoutes } = require('./legal.routes');
+const { registerAdminPurchaseTrailRoutes } = require('./admin-purchase-trail.routes');
 
 // The delivery range of a shipping queue (`from`, `to`); the service validates it.
 function deliveryRangeQuery(query = {}) {
@@ -1215,6 +1216,7 @@ function registerAdminRoutes(app, dependencies = {}) {
   registerAdminLifeStageSettingsRoutes(app, dependencies, { requirePermission, handle });
   registerAdminCompanySettingsRoutes(app, dependencies, { requirePermission, handle });
   registerAdminLegalRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminPurchaseTrailRoutes(app, dependencies, { requirePermission, handle });
 }
 
 module.exports = {

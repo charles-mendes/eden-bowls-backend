@@ -167,6 +167,8 @@ const { MarketConflictsRepository } = require('./infrastructure/repositories/mar
 const { CatalogSyncRunsRepository } = require('./infrastructure/repositories/catalog-sync-runs.repository');
 const { AdminUsersService } = require('./services/admin-users.service');
 const { AdminAuditRepository } = require('./infrastructure/repositories/admin-audit.repository');
+const { CustomerPurchaseTrailRepository } = require('./infrastructure/repositories/customer-purchase-trail.repository');
+const { CustomerPurchaseTrailService } = require('./services/customer-purchase-trail.service');
 const { AdminAuditService } = require('./services/admin-audit.service');
 const { createInviteMailer } = require('./infrastructure/mailers/invite-mailer');
 const { FeedbacksRepository } = require('./infrastructure/repositories/feedbacks.repository');
@@ -330,7 +332,14 @@ async function bootstrap() {
   const firstPurchaseTermDiscountsRepository = new FirstPurchaseTermDiscountsRepository(dataSource);
   // Published nutrition parameter set, cached 60 s in each process (the API and the cron see a publication within it).
   const nutritionParameterSetsRepository = new NutritionParameterSetsRepository(dataSource);
+  // customer-purchase-trail: best-effort writes, never on the path of an answer.
+  const customerPurchaseTrailService = new CustomerPurchaseTrailService({
+    repository: new CustomerPurchaseTrailRepository(dataSource),
+    ledgerRepository: subscriptionLedgerRepository,
+    logger
+  });
   const stripeCouponService = new StripeCouponService(stripeFirstPurchasePromosRepository, {
+    purchaseTrail: customerPurchaseTrailService,
     termDiscounts: firstPurchaseTermDiscountsRepository,
     auditRepository: new AdminAuditRepository(dataSource),
     dataSource,
@@ -538,6 +547,7 @@ async function bootstrap() {
     logger
   });
   const stripeWebhookService = new StripeWebhookService({
+    purchaseTrail: customerPurchaseTrailService,
     addressIssueService,
     stripeAccounts,
     stripeBilling,
@@ -969,6 +979,7 @@ async function bootstrap() {
     trustProxy: env.GEO_TRUST_PROXY_HEADERS
   });
   const app = createApp({
+    customerPurchaseTrailService,
     authService,
     customerDeliveriesService,
     authCookie: {
@@ -1069,6 +1080,7 @@ async function bootstrap() {
     logger,
     onSchedule: () => startBackgroundJobs({
       dataSource,
+      customerPurchaseTrailService,
       logger,
       stripeWebhookService,
       stripeAccounts,

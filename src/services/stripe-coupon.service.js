@@ -127,6 +127,7 @@ class StripeCouponService {
     this.repository = repository;
     this.termDiscounts = options.termDiscounts || null;
     this.auditRepository = options.auditRepository || null;
+    this.purchaseTrail = options.purchaseTrail || null;
     this.dataSource = options.dataSource || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
@@ -538,10 +539,20 @@ class StripeCouponService {
         });
       }
     };
-    if (this.dataSource && typeof this.dataSource.transaction === 'function') {
-      return this.dataSource.transaction(work);
+    const result = this.dataSource && typeof this.dataSource.transaction === 'function'
+      ? await this.dataSource.transaction(work)
+      : await work(null);
+    // customer-purchase-trail: the percent of a term is a config event of that market, after the audit committed.
+    if (this.purchaseTrail && typeof this.purchaseTrail.recordConfig === 'function') {
+      await this.purchaseTrail.recordConfig({
+        market: account,
+        actorId: actorIdOf(actor),
+        action: 'first_purchase_percent.update',
+        targetRef: `term_${termMonths}`,
+        outcome: 'ok'
+      });
     }
-    return work(null);
+    return result;
   }
 
   // A new percent needs a new coupon, since Stripe cannot change a coupon's percent: existing subscriptions keep

@@ -28,6 +28,8 @@ function registerOnboardingPetUpdateRoutes(app, dependencies = {}) {
 
       response.status(200).json(result);
     } catch (error) {
+      // customer-purchase-trail reads the code here: some answers below leave it out of the body.
+      response.locals.purchaseTrailError = error;
       if (error instanceof HttpError && error.details && error.details.code) {
         // The confirmation needs the new stage and the affected plans; other errors keep their short body.
         const body = { success: false, code: error.details.code, message: error.message };

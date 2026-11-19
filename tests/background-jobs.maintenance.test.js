@@ -109,4 +109,51 @@ describe('daily maintenance jobs', () => {
     expect(query.mock.calls[0][1]).toEqual([LOCKS.webhook_retention]);
     expect(deleteProcessedBefore).toHaveBeenCalled();
   });
+
+  // customer-purchase-trail
+  describe('purchase_trail_retention', () => {
+    const { CustomerPurchaseTrailService } = require('../src/services/customer-purchase-trail.service');
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = new Date('2026-11-19T00:00:00Z');
+
+    function rows() {
+      return [
+        { id: 1, market: 'br', started_at: new Date(now.getTime() - 181 * DAY) },
+        { id: 2, market: 'us', started_at: new Date(now.getTime() - 181 * DAY) },
+        { id: 3, market: 'us', started_at: new Date(now.getTime() - 179 * DAY) }
+      ];
+    }
+
+    test('runs daily on its own lock and deletes 181-day rows of both markets, keeping a 179-day one', async () => {
+      let table = rows();
+      const repository = {
+        deleteOlderThan: jest.fn(async (cutoff, batch) => {
+          const before = table.length;
+          table = table.filter((row) => row.started_at >= cutoff);
+          return { attempts: Math.min(before - table.length, batch), events: 0, config_events: 0 };
+        })
+      };
+      const customerPurchaseTrailService = new CustomerPurchaseTrailService({ repository, now: () => now });
+      const jobs = createJobDefinitions({
+        customerPurchaseTrailService,
+        eventsRepository: {},
+        refreshTokenRepository: {},
+        stripeWebhookService: {},
+        transactionalMailer: {},
+        ledgerRepository: {},
+        cursorRepository: { get: jest.fn(), set: jest.fn() },
+        upsShipmentRepository: {},
+        upsClient: {}
+      });
+      const job = jobs.find((item) => item.name === 'purchase_trail_retention');
+      expect(job.intervalMs).toBe(DAY);
+      expect(job.lockName).toBe(LOCKS.purchase_trail_retention);
+      expect(new Set(Object.values(LOCKS)).size).toBe(Object.values(LOCKS).length);
+
+      await expect(job.run()).resolves.toMatchObject({ attempts: 2 });
+      expect(table.map((row) => row.id)).toEqual([3]);
+      // Idempotent: a second tick deletes nothing more.
+      await expect(job.run()).resolves.toMatchObject({ attempts: 0 });
+    });
+  });
 });

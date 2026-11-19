@@ -49,6 +49,7 @@ class StripeWebhookService {
     this.paidCycles = options.paidCycles || null;
     this.customerInvoices = options.customerInvoices || null;
     this.blingNfe = options.blingNfe || null;
+    this.purchaseTrail = options.purchaseTrail || null;
     this.logger = options.logger || { error() {}, warn() {}, info() {} };
     this.withTimeout = options.withTimeout || withTimeout;
   }
@@ -104,6 +105,8 @@ class StripeWebhookService {
     const pending = {
       eventId: event.id,
       stripeAccount,
+      type: event.type,
+      payloadSummary: this.summarize(event),
       attempts: 0,
       createdAt: new Date()
     };
@@ -123,7 +126,9 @@ class StripeWebhookService {
       await this.dispatch(event, runtime);
       await this.eventsRepository.markProcessed({ eventId: event.id, stripeAccount });
     } catch (error) {
-      await this.noteFailure(pending, error);
+      if (await this.noteFailure(pending, error)) {
+        await this.trailTerminalFailure(pending, error);
+      }
       this.logger.error({
         err: error,
         eventId: event.id,
@@ -176,9 +181,12 @@ class StripeWebhookService {
           attempts: Number(row.attempts || 0),
           lastError: 'stripe_event_missing'
         });
+        await this.trailTerminalFailure(row, error);
         return { ok: false, terminal: true };
       }
-      await this.noteFailure(row, error);
+      if (await this.noteFailure(row, error)) {
+        await this.trailTerminalFailure(row, error);
+      }
       return { ok: false };
     }
   }
@@ -210,7 +218,7 @@ class StripeWebhookService {
         attempts,
         lastError
       });
-      return;
+      return true;
     }
     await this.eventsRepository.scheduleRetry({
       eventId: row.eventId,
@@ -218,6 +226,63 @@ class StripeWebhookService {
       attempts,
       lastError,
       nextAttemptAt: new Date(now.getTime() + WEBHOOK_RETRY_GAP_MS)
+    });
+    return false;
+  }
+
+  // customer-purchase-trail. Best effort: the trail never changes how an event is processed or answered.
+  async trail(input) {
+    if (!this.purchaseTrail || typeof this.purchaseTrail.recordWebhook !== 'function') {
+      return;
+    }
+    try {
+      await this.purchaseTrail.recordWebhook(input);
+    } catch (_error) {
+      // recordWebhook logs its own failures.
+    }
+  }
+
+  // Only a terminal failure is written: a delivery that will be retried may still end processed.
+  async trailTerminalFailure(row, error) {
+    let summary = row.payloadSummary || {};
+    if (typeof summary === 'string') {
+      try {
+        summary = JSON.parse(summary);
+      } catch (_error) {
+        summary = {};
+      }
+    }
+    const subscriptionId = typeof summary.subscription === 'string' && summary.subscription.startsWith('sub_') ? summary.subscription : null;
+    const customerId = typeof summary.customer === 'string' ? summary.customer : null;
+    let userId = null;
+    try {
+      userId = (await this.resolveUserContext({ subscriptionId, customerId })).userId;
+    } catch (_error) {
+      userId = null;
+    }
+    const code = (error && error.details && error.details.code) || (error && typeof error.code === 'string' && error.code) || 'dispatch_failed';
+    await this.trail({
+      market: row.stripeAccount,
+      eventId: row.eventId,
+      eventType: row.type,
+      step: 'webhook_failed',
+      outcome: 'failed',
+      userId,
+      subscriptionId,
+      error: { code }
+    });
+  }
+
+  async trailUnresolved(event, runtime, subscriptionId) {
+    await this.trail({
+      market: runtime.account,
+      eventId: event && event.id,
+      eventType: event && event.type,
+      step: 'customer_not_resolved',
+      outcome: 'failed',
+      userId: null,
+      subscriptionId: subscriptionId || null,
+      error: { code: 'customer_not_resolved' }
     });
   }
 
@@ -247,15 +312,15 @@ class StripeWebhookService {
         this.warnIgnored(event, 'marker_mismatch', { stripe_account: runtime.account });
         return;
       }
-      await this.handlePaymentIntentUpdate(object);
+      await this.handlePaymentIntentUpdate(object, { ...runtime, event });
       return;
     }
     if (event.type === 'payment_intent.payment_failed') {
-      await this.handlePaymentFailed(object, event.type, { sendMail: false });
+      await this.handlePaymentFailed(object, event.type, { sendMail: false, runtime: { ...runtime, event } });
       return;
     }
     if (event.type === 'invoice.payment_failed') {
-      await this.handlePaymentFailed(object, event.type, { sendMail: true });
+      await this.handlePaymentFailed(object, event.type, { sendMail: true, runtime: { ...runtime, event } });
       return;
     }
     if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
@@ -368,6 +433,7 @@ class StripeWebhookService {
         subscriptionId,
         stripe_account: runtime.account
       }, 'invoice.paid skipped: user not resolved.');
+      await this.trailUnresolved(event, runtime, subscriptionId);
       return;
     }
 
@@ -435,6 +501,19 @@ class StripeWebhookService {
       stripe_subscription_id: subscriptionId,
       stripe_invoice_id: invoice.id || undefined
     }, { subscriptionId });
+
+    // The server's word that the purchase is paid: closes the checkout attempt that created this subscription.
+    await this.trail({
+      market: runtime.account,
+      eventId: event && event.id,
+      eventType: event && event.type,
+      step: 'invoice_paid',
+      outcome: 'ok',
+      userId: context.userId,
+      subscriptionId,
+      attemptId: context.checkoutReference && context.checkoutReference.attempt_id,
+      transition: 'paid'
+    });
 
     const nfeFailure = await this.recordNfe({ invoice, runtime, userId: context.userId, subscriptionId });
 
@@ -699,7 +778,7 @@ class StripeWebhookService {
     });
   }
 
-  async handlePaymentIntentUpdate(paymentIntent) {
+  async handlePaymentIntentUpdate(paymentIntent, runtime = {}) {
     const paymentIntentId = String(paymentIntent.id || '');
     const status = String(paymentIntent.status || '');
     if (!paymentIntentId.startsWith('pi_')) {
@@ -715,6 +794,21 @@ class StripeWebhookService {
       stripe_payment_intent_id: paymentIntentId,
       stripe_payment_intent_status: status
     });
+
+    if (status === 'succeeded') {
+      const reference = state.checkoutReference || {};
+      await this.trail({
+        market: runtime.account,
+        eventId: runtime.event && runtime.event.id,
+        eventType: runtime.event && runtime.event.type,
+        step: 'payment_intent_succeeded',
+        outcome: 'ok',
+        userId: state.userId,
+        subscriptionId: reference.stripe_subscription_id,
+        attemptId: reference.attempt_id,
+        transition: 'paid'
+      });
+    }
   }
 
   async handlePaymentFailed(object, type, options = {}) {
@@ -725,10 +819,12 @@ class StripeWebhookService {
       || (typeof object.subscription === 'string' ? object.subscription : '');
 
     let userId = null;
+    let attemptId = null;
     if (paymentIntentId.startsWith('pi_')) {
       const state = await this.ledgerRepository.findUserStateByPaymentIntentId(paymentIntentId);
       if (state) {
         userId = state.userId;
+        attemptId = state.checkoutReference && state.checkoutReference.attempt_id;
       }
     }
     if (!userId && subscriptionId.startsWith('sub_')) {
@@ -738,6 +834,27 @@ class StripeWebhookService {
       });
       userId = context.userId;
     }
+
+    // Written even when the customer closed the tab: the browser report never left, this is the only trace.
+    const runtime = options.runtime || {};
+    const paymentError = type === 'invoice.payment_failed' ? null : object.last_payment_error;
+    await this.trail({
+      market: runtime.account,
+      eventId: runtime.event && runtime.event.id,
+      eventType: type,
+      step: 'payment_failed',
+      outcome: 'failed',
+      userId,
+      subscriptionId: subscriptionId.startsWith('sub_') ? subscriptionId : null,
+      attemptId,
+      transition: 'failed',
+      error: {
+        code: (paymentError && paymentError.code) || type.replace('.', '_'),
+        stripeCode: paymentError && paymentError.code,
+        stripeType: paymentError && paymentError.type
+      }
+    });
+
     if (!userId) {
       return;
     }
@@ -798,6 +915,7 @@ class StripeWebhookService {
       metadataUserId: metadata.wp_user_id || metadata.user_id
     });
     if (!context.userId) {
+      await this.trailUnresolved(event, runtime, subscriptionId);
       return;
     }
 

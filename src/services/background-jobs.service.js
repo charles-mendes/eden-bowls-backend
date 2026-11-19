@@ -22,6 +22,7 @@ const JOB_INTERVALS = {
   plan_notices: 60 * 60 * 1000,
   refresh_cleanup: DAY_MS,
   webhook_retention: DAY_MS,
+  purchase_trail_retention: DAY_MS,
   delivery_calendar_stripe_sync: 60 * 1000,
   life_stage_change_email: DAY_MS,
   bling_nfe: 60 * 1000,
@@ -37,6 +38,7 @@ const LOCKS = {
   plan_notices: 'eden_job_plan_notices',
   refresh_cleanup: 'eden_job_refresh_cleanup',
   webhook_retention: 'eden_job_webhook_retention',
+  purchase_trail_retention: 'eden_job_purchase_trail_retention',
   delivery_calendar_stripe_sync: 'eden_job_delivery_calendar_stripe_sync',
   life_stage_change_email: 'eden_job_life_stage_change_email',
   bling_nfe: 'eden_job_bling_nfe'
@@ -232,6 +234,13 @@ function createJobDefinitions(deps) {
       lockName: LOCKS.webhook_retention,
       intervalMs: JOB_INTERVALS.webhook_retention,
       run: () => runWebhookRetention(deps)
+    },
+    {
+      // customer-purchase-trail: 180 days, br and us alike.
+      name: 'purchase_trail_retention',
+      lockName: LOCKS.purchase_trail_retention,
+      intervalMs: JOB_INTERVALS.purchase_trail_retention,
+      run: () => (deps.customerPurchaseTrailService ? deps.customerPurchaseTrailService.purgeExpired() : { skipped: true })
     },
     {
       name: 'delivery_calendar_stripe_sync',
