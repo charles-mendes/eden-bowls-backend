@@ -4,7 +4,7 @@
 
 ### Requirement: Each environment uses its own merchant account pair
 
-QA and local development MUST use the QA Brazil sandbox and the QA United States test account. Production MUST use the live Brazil account and the live United States account. The retired shared sandbox MUST NOT be the configured account on QA, production, or a developer machine. QA and local development MUST NOT use live secret keys or live webhook signing secrets. Production MUST NOT use the QA test secret keys. Documentation MUST call the Brazil QA account a sandbox. It MUST NOT call that account a restricted key or an `rk_` credential. "Área Restrita" is only Stripe's Portuguese label for a sandbox.
+QA MUST use the QA Brazil sandbox and the QA United States test account. Local development MUST use the local Brazil sandbox and the local United States sandbox. Local development MUST NOT use the QA accounts, and QA MUST NOT use the local ones. Production MUST use the live Brazil account and the live United States account. The retired shared sandbox MUST NOT be the configured account on QA, production, or a developer machine. QA and local development MUST NOT use live secret keys or live webhook signing secrets. Production MUST NOT use the QA test secret keys. Documentation MUST call the Brazil QA account a sandbox. It MUST NOT call that account a restricted key or an `rk_` credential. "Área Restrita" is only Stripe's Portuguese label for a sandbox.
 
 The Stripe dashboards MUST call only these API destinations:
 
@@ -13,16 +13,16 @@ The Stripe dashboards MUST call only these API destinations:
 - Production Brazil: `https://api.edenbowls.com/stripe/v1/webhook/br`
 - Production United States: `https://api.edenbowls.com/stripe/v1/webhook/us`
 
-A local process MUST verify CLI-forwarded events with the signing secret printed by `stripe listen` for that machine and that QA account. That local secret MUST NOT be the dashboard signing secret of the QA or production endpoint. The QA host MUST verify with the QA dashboard signing secrets. The production host MUST verify with the live dashboard signing secrets.
+A local process MUST verify CLI-forwarded events with the signing secret printed by `stripe listen` for that machine and that local sandbox. That local secret MUST NOT be the dashboard signing secret of the QA or production endpoint. The QA host MUST verify with the QA dashboard signing secrets. The production host MUST verify with the live dashboard signing secrets.
 
-Operator documentation MUST state that the store publishable key for a country and an environment is the publishable key of the same merchant account as that environment's API secret for that country. QA and local store builds use the QA test publishable keys. The production store build uses the live publishable keys.
+Operator documentation MUST state that the store publishable key for a country and an environment is the publishable key of the same merchant account as that environment's API secret for that country. QA store builds use the QA test publishable keys. Local store builds use the publishable keys of the local sandboxes. The production store build uses the live publishable keys.
 
 Secret keys, publishable keys, and webhook signing secrets MUST NOT appear on the HEAD of PR1 or PR2, in documentation at that HEAD, in env templates, or in this change. `.env.example` and `.env.qa.example` MUST keep the regional names and empty values. Commits before PR1 may still contain the retired sandbox account fragment `TObKd` and the placeholder suffixes `US...` and `BR...`. History is not rewritten. The repository is public. Those historical values are unusable after the rotations in tasks 4.2 and 4.3. The ignore path for this change MUST include both `openspec/changes/cutover-stripe-environment-accounts` and `openspec/changes/archive`.
 
 #### Scenario: QA and local are not the retired sandbox
 
 - **WHEN** an operator reads the Stripe setup doc for QA or for localhost
-- **THEN** it assigns the QA Brazil sandbox and the QA United States test account, and it does not assign the retired shared sandbox or describe that sandbox as a restricted key
+- **THEN** it assigns the QA Brazil sandbox and the QA United States test account to QA, and the local Brazil sandbox and the local United States sandbox to localhost, and it does not assign the retired shared sandbox or describe that sandbox as a restricted key
 
 #### Scenario: Production is the live pair
 
@@ -32,7 +32,7 @@ Secret keys, publishable keys, and webhook signing secrets MUST NOT appear on th
 #### Scenario: Local signing secret is the CLI secret
 
 - **WHEN** an operator follows the localhost webhook doc
-- **THEN** it tells them to put the `stripe listen` signing secret for the QA account of that country into the local env, and it tells them not to paste the QA or production dashboard signing secret there
+- **THEN** it tells them to put the `stripe listen` signing secret for the local sandbox of that country into the local env, and it tells them not to paste the QA or production dashboard signing secret there
 
 #### Scenario: PR1 and PR2 do not contain merchant secrets
 
@@ -44,7 +44,7 @@ Secret keys, publishable keys, and webhook signing secrets MUST NOT appear on th
 
 Checkout MUST keep reading catalog prices from post meta `_stripe_price_id` and `_stripe_price_ids_by_currency`. Those ids, ledger `stripe_customer_id`, `stripe_subscription_id`, and `stripe_price_id`, customer meta `_hsr_stripe_customer_id_br`, `_hsr_stripe_customer_id_us`, and the legacy US fallback `_hsr_stripe_customer_id`, and `coupon_id` / `promotion_code_id` on `stripe_first_purchase_promos` MUST be ids of the merchant account configured for that environment and country. A user MUST be allowed to hold one customer id on the Brazil account and another on the United States account. The API MUST NOT reuse a single customer column for both accounts. The cutover MUST NOT copy a Charles account id onto a QA or live account. Seed values `prod_seed_*` and `price_seed_*` MUST NOT be sent to Stripe as real ids.
 
-Before checkout uses a new account, the catalog and the first-purchase coupons for that account MUST exist on it, and QA rows that still store Charles ids MUST be retired locally so the API does not call the new account with those ids. This cutover MUST NOT add a schema migration.
+Before checkout uses a new account, the catalog and the first-purchase coupons for that account MUST exist on it, and QA and local rows that still store Charles ids MUST be retired so the API does not call the new account with those ids. This cutover MUST NOT add a schema migration.
 
 #### Scenario: Checkout does not send a Charles price to the new account
 
@@ -82,9 +82,9 @@ A Brazil checkout MUST be charged in BRL. A United States checkout MUST be charg
 
 The hourly ledger reconcile reads every `stripe_subscriptions` row by id. No status value skips that read. `stripe_account` stores `br` or `us`, not a merchant account id. QA and local retire MUST delete `stripe_subscriptions` rows with `created_at` before the required cutoff, clear `_hsr_stripe_customer_id_br`, `_hsr_stripe_customer_id_us`, and `_hsr_stripe_customer_id`, and delete matching `subscription_mail_claims` and `ups_shipments` rows. `subscription_production_cycles` follows the ledger through `ON DELETE CASCADE`. The script MUST run only when `EDEN_RUNTIME` is `qa` or `local` and the operator passes `--confirm-delete-ledger` and `--created-before`. It MUST refuse a second run when `background_job_cursors` already has `job_name` `stripe_ledger_retire` with a `cursor` other than `0`. It MUST NOT be a schema migration. A dump of those tables and of the Stripe post meta MUST exist before the script runs. The API MUST refuse to boot when `EDEN_RUNTIME` is missing or is not `local`, `qa`, or `production`. The QA host, each developer machine, and a production API process that is already running MUST have that variable before a build containing the check is deployed. After that build is deployed, an event whose subscription has no `eden_env` MUST NOT be applied. A later cutover after a QA rollback MUST delete `background_job_cursors` where `job_name` is `stripe_ledger_retire` before the retire script runs again. That table is not part of the pre-retire dump. `runLedgerReconcile` reads only `job_name` `ledger_reconcile` and MUST keep doing so.
 
-Catalog sync that creates Stripe products MUST run once, on the QA host, against the QA accounts, and only after that retire. A developer database MUST copy `_stripe_price_id`, `_stripe_price_ids_by_currency`, `_stripe_product_id`, and `_stripe_product_ids_by_currency` by parent `post_name` plus flavor slug and weight, and MUST copy `stripe_first_purchase_promos`. It MUST NOT match on `post_id` alone and MUST NOT run that sync itself. The QA store MUST be stopped from the secret write until that sync finishes.
+Catalog and coupon sync that creates Stripe objects MUST run once in each environment, against that environment's accounts. On the QA host and on each developer database it MUST run only after that environment's retire. Production MUST NOT run the retire script and MUST sync only when `stripe_subscriptions` and the three customer meta keys each count zero. An environment MUST NOT copy `_stripe_price_id`, `_stripe_price_ids_by_currency`, `_stripe_product_id`, `_stripe_product_ids_by_currency` or `stripe_first_purchase_promos` from another environment. The QA store MUST be stopped from the secret write until that sync finishes.
 
-Checkout MUST set Stripe metadata `eden_env` from `EDEN_RUNTIME` on customer create, subscription create, plan-edit metadata, and the PaymentIntent. The client secret MUST NOT be returned until that PaymentIntent update has finished. If the update fails, checkout MUST fail and MUST NOT return a client secret. `invoice.paid` MUST read `eden_env` from the retrieved subscription and, when that key is absent, from `invoice.subscription_details.metadata`. `invoice.paid` and `customer.subscription.updated` / `deleted` MUST apply only when `eden_env` equals the process `EDEN_RUNTIME`. A missing or different marker MUST be acknowledged with 200, MUST NOT attach a user, and MUST log a warning with the event type, event id, `stripe_account`, and `marker_missing` or `marker_mismatch`. A `payment_intent.succeeded` whose marker is present and different MUST NOT be applied. An empty `EDEN_RUNTIME` MUST NOT match a missing marker. Local user ids and QA user ids are not the same person. `stripe listen` forwards QA events to the laptop, and those events MUST NOT be applied locally.
+Checkout MUST set Stripe metadata `eden_env` from `EDEN_RUNTIME` on customer create, subscription create, plan-edit metadata, and the PaymentIntent. The client secret MUST NOT be returned until that PaymentIntent update has finished. If the update fails, checkout MUST fail and MUST NOT return a client secret. `invoice.paid` MUST read `eden_env` from the retrieved subscription and, when that key is absent, from `invoice.subscription_details.metadata`. `invoice.paid` and `customer.subscription.updated` / `deleted` MUST apply only when `eden_env` equals the process `EDEN_RUNTIME`. A missing or different marker MUST be acknowledged with 200, MUST NOT attach a user, and MUST log a warning with the event type, event id, `stripe_account`, and `marker_missing` or `marker_mismatch`. A `payment_intent.succeeded` whose marker is present and different MUST NOT be applied. An empty `EDEN_RUNTIME` MUST NOT match a missing marker. Local user ids and QA user ids are not the same person. A local process MUST NOT apply an event from another environment, including one that `stripe listen` forwards when the CLI is logged into a non-local account.
 
 The retired Charles sandbox MUST have its webhook endpoint removed from `qa-api`, its secret key rolled, and its test subscriptions canceled or the sandbox removed. The pasted Charles secret MUST NOT remain active.
 
@@ -129,10 +129,10 @@ Before production, QA MUST complete one Brazil checkout and one United States ch
 - **WHEN** a ledger row is marked canceled and the hourly reconcile runs
 - **THEN** the job still selects that row, so Charles rows are deleted instead of marked
 
-#### Scenario: A local database does not create QA products
+#### Scenario: A local database syncs its own catalog
 
-- **WHEN** a developer points a local API at the QA secret keys
-- **THEN** the local database copies price and product post meta by parent slug, flavor, and weight, copies promo rows, and does not run catalog sync
+- **WHEN** a developer has pointed both local secret keys at the local sandboxes and run the retire script with `EDEN_RUNTIME=local`
+- **THEN** the catalog and coupon sync creates the prices and promotion codes on the local sandboxes, and no Stripe id is copied from QA
 
 #### Scenario: The API does not boot without a runtime label
 

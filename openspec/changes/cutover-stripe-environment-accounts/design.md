@@ -19,7 +19,7 @@ Checkout does not read a product id from the environment. It reads `_stripe_pric
 - No new route, no account-id allowlist, and no prefix check (`sk_test_` versus `sk_live_`) inside `parseEnv`.
 - No Stripe secrets in GitHub Actions.
 - No edit to the store or admin repositories. Their publishable keys are host env plus a rebuild, described from the backend docs.
-- No fifth Stripe account for localhost.
+- No Stripe id copied from one environment to another. Localhost has its own Brazil and United States sandboxes.
 - No schema migration and no copy of Charles object ids onto the new accounts.
 - This change does not rotate keys in the Dashboard. The operator does that. Publishable keys are not rotated.
 
@@ -86,15 +86,15 @@ Alternative considered: delete only rows whose `stripe_account` is Charles. Reje
 
 Alternative considered: a new `STRIPE_US_ENABLED` flag. Rejected. Stopping the store covers both countries for the cutover window and for production rollback. A second flag would be a new product switch this cutover does not need.
 
-### Local databases copy QA ids by catalog identity, not by post id alone
+### Each local database syncs its own catalog on the local sandboxes
 
-Each developer database still has Charles price ids and ledger rows. Running admin catalog sync on each laptop would create another set of products on the shared QA Stripe account. Sync runs once on the QA host.
+Localhost has its own Brazil sandbox and its own United States sandbox. A Stripe id from QA or from the retired sandbox does not exist on them. Each developer database runs the retire script with `EDEN_RUNTIME=local`, then runs the admin catalog sync and the coupon sync, which create the products, prices and promotion codes on the local sandboxes and write their ids into post meta and `stripe_first_purchase_promos`. The sync runs only after both secret keys in the local `.env` belong to the local sandboxes; a key still on another account would create objects there.
 
-Post meta is keyed by `post_id`. The flavor seed assigns fixed ids (`FLAVOR_CATALOG` product `100` / `200`, variations from `1001` / `2001` in `seed-flavor-catalog.js`) and does not write `_sku`. An admin-created variation gets the next autoincrement id, so a QA `post_id` and a local `post_id` match only for rows the seed owns on both databases. The copy matches parent `post_name` (`flavors-br` or `flavors-us`) plus the variation flavor slug and weight. It writes `_stripe_price_id`, `_stripe_price_ids_by_currency`, `_stripe_product_id`, and `_stripe_product_ids_by_currency`, and it replaces `stripe_first_purchase_promos`. A local variation with no match is reported and skipped. The operator exports those rows from QA after the QA sync; the file stays out of git. Developers do not open the QA database themselves and do not run catalog sync.
+Alternative considered: copy the QA post meta into each local database by parent `post_name`, flavor slug and weight. Rejected. Those prices live on the QA accounts and return "No such price" on the local sandboxes, so the copy would fail at checkout exactly like the Charles ids.
 
 ### Events apply only when eden_env matches the process
 
-`resolveUserContext` uses `metadata.wp_user_id` when the ledger and the customer meta miss. Local user 42 and QA user 42 are different people. `scripts/dev-with-stripe-listen.js` (`npm run dev`) and `npm run stripe:listen` / `npm run stripe:listen:br` run `stripe listen` without `--events`, so they forward every event of the QA account, including a checkout that started on QA, and the inverse is the same bug.
+`resolveUserContext` uses `metadata.wp_user_id` when the ledger and the customer meta miss. Local user 42 and QA user 42 are different people. `scripts/dev-with-stripe-listen.js` (`npm run dev`) and `npm run stripe:listen` / `npm run stripe:listen:br` run `stripe listen` without `--events`, so they forward every event of the account the CLI is logged into. Localhost uses its own sandboxes, so a QA event reaches a laptop only when the CLI is logged into a QA account by mistake. `eden_env` still keeps such an event from being applied, and the inverse is the same bug.
 
 Stripe does not copy subscription metadata onto the PaymentIntent or the charge. `handleInvoicePaid` uses `subscription.metadata` when that object exists, and only otherwise `invoice.subscription_details.metadata`. `handleSubscriptionChanged` reads `subscription.metadata`. `handlePaymentIntentUpdate` does not read metadata; it updates checkout state only when the PaymentIntent id is already stored. `handlePaymentFailed` calls `resolveUserContext` without `metadataUserId`. The other events in `stripe-webhook-events.js` are not in `HANDLED_TYPES`, so `handle` acknowledges them and does not resolve a user.
 
@@ -146,12 +146,12 @@ Production has no previous working Stripe env. If the live cutover fails, keep t
 
 ## Risks / Trade-offs
 
-- [Local and QA share the QA test accounts] → A checkout on a laptop creates `cus_` / `sub_` on the QA Stripe account. The dashboard delivers that event to `qa-api`, and `stripe listen` also delivers QA checkouts to the laptop. Mitigation: `eden_env` must equal `EDEN_RUNTIME` before `invoice.paid` or a subscription change is applied. Do not point live keys at a laptop.
+- [A local `.env` or CLI still points at a QA account] → A laptop checkout creates `cus_` / `sub_` on QA, the dashboard delivers it to `qa-api`, and `stripe listen` delivers QA checkouts to the laptop. Mitigation: `eden_env` must equal `EDEN_RUNTIME` before `invoice.paid` or a subscription change is applied, and the local doc assigns the local sandboxes. Do not point live keys at a laptop.
 - [Pasting the QA dashboard signing secret into a local `.env`] → CLI-signed events return 400. Mitigation: the local doc says to use the secret the CLI prints.
 - [Live keys written into a committed file or left in chat] → The live merchant account is exposed. Mitigation: rotate before the host write; docs and templates stay empty; apply does not write `.env`; tracked files and history are searched without printing secret values. The search ignore list includes the archive path so it still works after this change is archived.
 - [`api.edenbowls.com` is not in this repo's Caddyfile] → A live webhook test against an unpublished host fails and Stripe can disable the endpoint. Mitigation: both live endpoints stay disabled until the external host answers, and the checklist does not add a Caddy site.
 - [Key swap before catalog sync] → Checkout returns "No such price". `STRIPE_BR_ENABLED=false` stops only Brazil. Mitigation: the store stays stopped until sync finishes. A missing customer id is recovered by creating a new customer; a missing price id is not.
-- [Each developer runs catalog sync] → The shared QA account gains a duplicate product set per laptop. Mitigation: sync once on QA. Local databases copy the resulting post meta and promo rows, then run the retire script on their own MySQL.
+- [A developer syncs while a local key still belongs to another account] → The sync creates products and prices on that account (QA, or the retired sandbox). Mitigation: task 7.7 syncs only after both local keys belong to the local sandboxes.
 - [Brazil catalog currency empty] → The checkout service would send `usd` to the Brazil account. Mitigation: that path fails instead of substituting USD.
 - [US legacy customer meta] → `_hsr_stripe_customer_id` can still point at a Charles customer. Mitigation: the QA retire step clears it along with the two regional keys.
 - [Endpoint created with the account default API version] → Payload shape drifts from the SDK pin. Mitigation: each endpoint is checked for `2025-09-30.clover` and the 29 events.
@@ -171,13 +171,12 @@ Production has no previous working Stripe env. If the live cutover fails, keep t
 4. Operator confirms the four endpoints: 29 events and API version `2025-09-30.clover`. The two live endpoints stay disabled.
 5. Operator provisions `api.edenbowls.com` outside this repo. The production signed-event check stays blocked until that is done.
 6. On QA, stop the store, write the rotated secrets with `EDEN_RUNTIME=qa`, restart, dump the Stripe tables, run the retire script, sync catalog and coupons once, then set `STRIPE_BR_ENABLED=true`, start the store, and send a signed test event to each QA URL.
-7. Rebuild the QA store with the QA publishable keys. Complete one Brazil checkout and one United States checkout with the same user, then one Test Clock renewal. On both invoices, confirm `subscription_details.metadata.eden_env` is `qa`. Pause and resume that subscription and confirm the key is still `qa`. Local databases copy the QA Stripe meta by catalog identity and run the retire script. They do not sync the catalog.
+7. Rebuild the QA store with the QA publishable keys. Complete one Brazil checkout and one United States checkout with the same user, then one Test Clock renewal. On both invoices, confirm `subscription_details.metadata.eden_env` is `qa`. Pause and resume that subscription and confirm the key is still `qa`. Each local database runs the retire script and then syncs its own catalog and coupons on the local sandboxes.
 8. On production, after the external host answers and the QA checkouts passed, count ledger rows and customer meta. If either count is not zero, stop. Otherwise stop the store, write the rotated live secrets, restart, enable the live endpoints, sync the live catalog and coupons, set `STRIPE_BR_ENABLED=true`, rebuild and start the store, and send a signed test event.
 9. QA rollback restores the previous `.env` and the dump taken before the retire script. To run the retire script again, delete `background_job_cursors` where `job_name` is `stripe_ledger_retire`. Production rollback keeps the store stopped and sets `STRIPE_BR_ENABLED=false`.
 
 ## Open Questions
 
-- Developer access to the QA MySQL host is not in this repository. The catalog copy depends on an operator export. If that export cannot be produced, local checkout stays on seed ids and fails against the QA accounts.
 - Production ledger and customer-meta counts are not visible from this repo. If either count is not zero, this change does not define a production delete. The retire script refuses `production`.
 - Whether a production API process is already running is not visible in this repository. There is no production workflow and no production compose. Task 1.5 covers that host only when the operator knows one is running.
 - Stripe metadata merge on pause and resume is checked on the QA dashboard in task 7.6. No update path in the current code sends `eden_env` as an empty string. Pause, resume, cancel-at-period-end, and payment-method updates omit `metadata`. `anonymizeCustomer` sends `{ eden_anonymized: '1' }` and does not clear `eden_env`. Plan edit spreads the existing metadata and the new code also sets `eden_env`.
