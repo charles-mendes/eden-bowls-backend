@@ -229,21 +229,124 @@ class CustomerPurchaseTrailRepository {
     };
   }
 
-  async listConfigEvents({ market, limit = 50, before = null }) {
+  // outcome/from/to are optional: without them this is the query the customer tab has always made.
+  async listConfigEvents({ market, limit = 50, before = null, outcome = null, from = null, to = null }) {
     this.ensureDataSource();
     const params = [market];
-    let beforeSql = '';
+    let filterSql = '';
+    if (outcome) {
+      filterSql += ' AND `outcome` = ?';
+      params.push(outcome);
+    }
+    if (from) {
+      filterSql += ' AND `created_at` >= ?';
+      params.push(from);
+    }
+    if (to) {
+      filterSql += ' AND `created_at` < ?';
+      params.push(to);
+    }
     if (before) {
-      beforeSql = ' AND `id` < ?';
+      filterSql += ' AND `id` < ?';
       params.push(before);
     }
     params.push(limit);
     const rows = await this.dataSource.query(
-      `SELECT * FROM \`${CONFIG_EVENTS}\` WHERE \`market\` = ?${beforeSql} ORDER BY \`id\` DESC LIMIT ?`,
+      `SELECT * FROM \`${CONFIG_EVENTS}\` WHERE \`market\` = ?${filterSql} ORDER BY \`id\` DESC LIMIT ?`,
       params
     );
     const events = (Array.isArray(rows) ? rows : []).map(mapConfigEvent);
     return { events, next_before: events.length === limit ? events[events.length - 1].id : null };
+  }
+
+  // purchase-error-monitor: failure rows of one market, newest first. A row is an attempt with a failure (status
+  // failed, or any failed step) dated by the failure shown (its last failed step, or finished_at when only the
+  // outcome failed), or a failed webhook event no attempt claimed, dated by created_at. The area filter is the
+  // attempt's own area; webhook keeps only the unclaimed webhook events. Cursor: (occurred_at, kind, id).
+  async listFailures({ market, from, to, area = null, errorCode = null, limit = 50, cursor = null }) {
+    this.ensureDataSource();
+    const branches = [];
+    const params = [];
+    if (area !== 'webhook') {
+      const codeOnEvents = errorCode ? ' AND `error_code` = ?' : '';
+      const failedOutcome = errorCode ? "(a.`status` = 'failed' AND a.`error_code` = ?)" : "a.`status` = 'failed'";
+      branches.push([
+        "SELECT 'attempt' AS kind, a.`id` AS id, COALESCE(f.failed_at, a.`finished_at`) AS occurred_at",
+        `FROM \`${ATTEMPTS}\` a`,
+        `LEFT JOIN (SELECT \`attempt_row_id\`, MAX(\`created_at\`) AS failed_at FROM \`${EVENTS}\``,
+        `WHERE \`market\` = ? AND \`outcome\` = 'failed' AND \`attempt_row_id\` IS NOT NULL AND \`created_at\` >= ? AND \`created_at\` < ?${codeOnEvents} GROUP BY \`attempt_row_id\`) f`,
+        'ON f.`attempt_row_id` = a.`id`',
+        `WHERE a.\`market\` = ?${area ? ' AND a.`area` = ?' : ''} AND (f.failed_at IS NOT NULL OR ${failedOutcome})`
+      ].join(' '));
+      params.push(market, from, to);
+      if (errorCode) params.push(errorCode);
+      params.push(market);
+      if (area) params.push(area);
+      if (errorCode) params.push(errorCode);
+    }
+    if (!area || area === 'webhook') {
+      branches.push([
+        "SELECT 'webhook' AS kind, e.`id` AS id, e.`created_at` AS occurred_at",
+        `FROM \`${EVENTS}\` e`,
+        "WHERE e.`market` = ? AND e.`area` = 'webhook' AND e.`outcome` = 'failed' AND e.`attempt_row_id` IS NULL",
+        errorCode ? 'AND e.`error_code` = ?' : ''
+      ].join(' '));
+      params.push(market);
+      if (errorCode) params.push(errorCode);
+    }
+
+    let cursorSql = '';
+    if (cursor) {
+      cursorSql = ' AND (u.occurred_at < ? OR (u.occurred_at = ? AND (u.kind < ? OR (u.kind = ? AND u.id < ?))))';
+      params.push(from, to, cursor.t, cursor.t, cursor.k, cursor.k, cursor.id);
+    } else {
+      params.push(from, to);
+    }
+    params.push(limit + 1);
+    const keys = await this.dataSource.query(
+      `SELECT u.kind, u.id, u.occurred_at FROM (${branches.join(' UNION ALL ')}) u WHERE u.occurred_at >= ? AND u.occurred_at < ?${cursorSql} ORDER BY u.occurred_at DESC, u.kind DESC, u.id DESC LIMIT ?`,
+      params
+    );
+    const page = (Array.isArray(keys) ? keys : []).slice(0, limit);
+    const more = Array.isArray(keys) && keys.length > limit;
+
+    const attemptIds = page.filter((row) => row.kind === 'attempt').map((row) => Number(row.id));
+    const webhookIds = page.filter((row) => row.kind === 'webhook').map((row) => Number(row.id));
+    const attempts = new Map();
+    const eventsByAttempt = new Map();
+    const webhooks = new Map();
+    if (attemptIds.length) {
+      const rows = await this.dataSource.query(`SELECT * FROM \`${ATTEMPTS}\` WHERE \`id\` IN (?) AND \`market\` = ?`, [attemptIds, market]);
+      for (const row of rows || []) attempts.set(Number(row.id), mapAttempt(row));
+      const eventRows = await this.dataSource.query(
+        `SELECT * FROM \`${EVENTS}\` WHERE \`attempt_row_id\` IN (?) AND \`market\` = ? ORDER BY \`attempt_row_id\`, \`id\``,
+        [attemptIds, market]
+      );
+      for (const row of eventRows || []) {
+        const list = eventsByAttempt.get(Number(row.attempt_row_id)) || [];
+        if (list.length < MAX_EVENTS_PER_ATTEMPT) list.push(mapEvent(row));
+        eventsByAttempt.set(Number(row.attempt_row_id), list);
+      }
+    }
+    if (webhookIds.length) {
+      const rows = await this.dataSource.query(`SELECT * FROM \`${EVENTS}\` WHERE \`id\` IN (?) AND \`market\` = ?`, [webhookIds, market]);
+      for (const row of rows || []) webhooks.set(Number(row.id), mapEvent(row));
+    }
+
+    const rows = page.map((key) => {
+      const occurredAt = iso(key.occurred_at);
+      if (key.kind === 'attempt') {
+        const attempt = attempts.get(Number(key.id));
+        return attempt ? { kind: 'attempt', id: Number(key.id), occurred_at: occurredAt, attempt, events: eventsByAttempt.get(Number(key.id)) || [] } : null;
+      }
+      const event = webhooks.get(Number(key.id));
+      return event ? { kind: 'webhook', id: Number(key.id), occurred_at: occurredAt, event } : null;
+    }).filter(Boolean);
+    const last = page[page.length - 1];
+    return {
+      rows,
+      next: more && last ? { t: iso(last.occurred_at), k: last.kind, id: Number(last.id) } : null
+    };
   }
 
   // One batch per table; attempts take their events with them (ON DELETE CASCADE). Same cutoff for br and us.

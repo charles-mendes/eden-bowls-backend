@@ -473,6 +473,10 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/purchase-trail/errors"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/reports/acquisition"
   },
   {

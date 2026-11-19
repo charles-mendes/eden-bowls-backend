@@ -1,3 +1,4 @@
+const { HttpError } = require('../core/http-error');
 const {
   ATTEMPT_AREAS,
   EVENT_AREAS,
@@ -15,6 +16,110 @@ const {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_BATCH = 1000;
 const RETENTION_MAX_BATCHES = 50;
+const FAILURE_DEFAULT_DAYS = 7;
+const FAILURE_DEFAULT_LIMIT = 50;
+const FAILURE_MAX_LIMIT = 100;
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseInstant(value, { endOfDay = false } = {}) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return null;
+  }
+  const date = new Date(DATE_ONLY.test(text) ? `${text}T00:00:00.000Z` : text);
+  if (Number.isNaN(date.getTime())) {
+    throw new HttpError(400, 'Invalid period.', { code: 'invalid_period' });
+  }
+  // A plain "to" date includes that whole day.
+  return endOfDay && DATE_ONLY.test(text) ? new Date(date.getTime() + DAY_MS) : date;
+}
+
+function encodeCursor(next) {
+  return next ? Buffer.from(JSON.stringify(next)).toString('base64url') : null;
+}
+
+function decodeCursor(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'));
+    const t = new Date(parsed.t);
+    const id = Number(parsed.id);
+    if (Number.isNaN(t.getTime()) || (parsed.k !== 'attempt' && parsed.k !== 'webhook') || !Number.isSafeInteger(id) || id <= 0) {
+      throw new Error('bad cursor');
+    }
+    return { t, k: parsed.k, id };
+  } catch (_error) {
+    throw new HttpError(400, 'Invalid cursor.', { code: 'invalid_cursor' });
+  }
+}
+
+const FAILURE_AREAS = ['onboarding', 'plan', 'checkout', 'subscription', 'webhook'];
+const ROW_ERROR_FIELDS = ['http_status', 'error_code', 'error_message', 'stripe_code', 'stripe_type', 'stripe_param'];
+
+function pickError(source) {
+  return Object.fromEntries(ROW_ERROR_FIELDS.map((field) => [field, source ? source[field] ?? null : null]));
+}
+
+// The failure a row shows: the last failed step (the last one with the filtered code, when there is one); else the
+// attempt's own outcome.
+function presentFailure(row, errorCode) {
+  if (row.kind === 'webhook') {
+    const event = row.event;
+    return {
+      kind: 'webhook',
+      occurred_at: row.occurred_at,
+      market: event.market,
+      user_id: event.user_id,
+      email: null,
+      area: 'webhook',
+      step: event.step,
+      action: null,
+      attempt_status: null,
+      stripe_event_type: event.stripe_event_type,
+      subscription_id: event.subscription_id,
+      ...pickError(event),
+      attempt: null,
+      events: []
+    };
+  }
+  const { attempt, events } = row;
+  // Up to the row's instant: a later failure outside the period does not replace the one that dated the row.
+  const until = row.occurred_at ? new Date(row.occurred_at).getTime() : Infinity;
+  const failed = events.filter((event) => event.outcome === 'failed'
+    && (!errorCode || event.error_code === errorCode)
+    && (!event.created_at || new Date(event.created_at).getTime() <= until));
+  const shown = failed[failed.length - 1] || null;
+  return {
+    kind: 'attempt',
+    occurred_at: row.occurred_at,
+    market: attempt.market,
+    user_id: attempt.user_id,
+    email: attempt.email,
+    area: attempt.area,
+    step: shown ? shown.step : attempt.final_step,
+    action: shown ? shown.action : null,
+    attempt_status: attempt.status,
+    stripe_event_type: shown ? shown.stripe_event_type : null,
+    subscription_id: attempt.subscription_id,
+    ...pickError(shown || attempt),
+    attempt: {
+      id: attempt.id,
+      area: attempt.area,
+      status: attempt.status,
+      final_step: attempt.final_step,
+      error_code: attempt.error_code,
+      attempt_id: attempt.attempt_id,
+      term_months: attempt.term_months,
+      currency: attempt.currency,
+      subscription_id: attempt.subscription_id,
+      started_at: attempt.started_at,
+      finished_at: attempt.finished_at
+    },
+    events
+  };
+}
 
 function errorColumns(error = {}) {
   const status = Number(error.httpStatus);
@@ -201,8 +306,63 @@ class CustomerPurchaseTrailService {
     return this.repository.listForCustomer({ userId, market, limit, before });
   }
 
-  async listConfigEvents({ market, limit, before }) {
-    return this.repository.listConfigEvents({ market, limit, before });
+  // Validates the period (default the last 7 days, never before the 180-day retention).
+  resolvePeriod({ from, to } = {}) {
+    const now = this.now();
+    const end = parseInstant(to, { endOfDay: true }) || now;
+    const start = parseInstant(from) || new Date(end.getTime() - FAILURE_DEFAULT_DAYS * DAY_MS);
+    if (start.getTime() < now.getTime() - RETENTION_DAYS * DAY_MS) {
+      throw new HttpError(400, 'The period starts before the 180-day retention.', { code: 'period_out_of_retention' });
+    }
+    if (start.getTime() >= end.getTime()) {
+      throw new HttpError(400, 'Invalid period.', { code: 'invalid_period' });
+    }
+    return { from: start, to: end };
+  }
+
+  async listConfigEvents({ market, limit, before, outcome, from, to }) {
+    const filters = {};
+    if (outcome !== undefined && outcome !== null && outcome !== '') {
+      if (outcome !== 'failed' && outcome !== 'ok') {
+        throw new HttpError(400, 'Invalid outcome.', { code: 'invalid_outcome' });
+      }
+      filters.outcome = outcome;
+    }
+    if (from || to) {
+      Object.assign(filters, this.resolvePeriod({ from, to }));
+    }
+    return this.repository.listConfigEvents({ market, limit, before, ...filters });
+  }
+
+  // purchase-error-monitor: failures already in the trail, one market, newest first. Read only.
+  async listFailures({ market, from, to, area, errorCode, limit, before }) {
+    const period = this.resolvePeriod({ from, to });
+    const areaValue = area === undefined || area === null || area === '' ? null : String(area);
+    if (areaValue && !FAILURE_AREAS.includes(areaValue)) {
+      throw new HttpError(400, 'Invalid area.', { code: 'invalid_area' });
+    }
+    const codeValue = errorCode === undefined || errorCode === null || String(errorCode).trim() === '' ? null : safeToken(errorCode);
+    if (errorCode && String(errorCode).trim() && !codeValue) {
+      throw new HttpError(400, 'Invalid error code.', { code: 'invalid_error_code' });
+    }
+    const limitValue = limit === undefined || limit === null || limit === '' ? FAILURE_DEFAULT_LIMIT : Number(limit);
+    if (!Number.isInteger(limitValue) || limitValue < 1 || limitValue > FAILURE_MAX_LIMIT) {
+      throw new HttpError(400, 'Invalid limit.', { code: 'invalid_limit' });
+    }
+    const result = await this.repository.listFailures({
+      market,
+      ...period,
+      area: areaValue,
+      errorCode: codeValue,
+      limit: limitValue,
+      cursor: decodeCursor(before)
+    });
+    return {
+      from: period.from.toISOString(),
+      to: period.to.toISOString(),
+      rows: result.rows.map((row) => presentFailure(row, codeValue)),
+      next_before: encodeCursor(result.next)
+    };
   }
 
   // purchase_trail_retention: 180 days, br and us alike, in bounded batches.

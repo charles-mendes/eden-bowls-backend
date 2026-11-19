@@ -52,7 +52,34 @@ function registerAdminPurchaseTrailRoutes(app, dependencies, { requirePermission
     await handle(response, next, async () => {
       const market = requiredMarket(request);
       const page = pageOf(request, MAX_LIMIT);
-      const data = await requireTrailService(dependencies).listConfigEvents({ market, ...page });
+      const query = request.query || {};
+      // purchase-error-monitor: outcome and period are optional; without them the answer is the one of before.
+      const data = await requireTrailService(dependencies).listConfigEvents({
+        market,
+        ...page,
+        outcome: query.outcome,
+        from: query.from,
+        to: query.to
+      });
+      return { success: true, data: { market, ...data } };
+    });
+  });
+
+  // purchase-error-monitor: the failures of every customer of one market. Its own limit (up to 100) and its own
+  // opaque cursor: pageOf above reads before as a number and caps at 50, which would drop this cursor.
+  app.get('/api/v1/admin/purchase-trail/errors', requirePermission('billing.subscribers.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      const market = requiredMarket(request);
+      const query = request.query || {};
+      const data = await requireTrailService(dependencies).listFailures({
+        market,
+        from: query.from,
+        to: query.to,
+        area: query.area,
+        errorCode: query.error_code,
+        limit: query.limit,
+        before: query.before
+      });
       return { success: true, data: { market, ...data } };
     });
   });

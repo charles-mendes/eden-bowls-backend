@@ -28,7 +28,14 @@ function trailRepository() {
       unlinked_events: [],
       next_before: null
     })),
-    listConfigEvents: jest.fn(async ({ market }) => ({ events: [{ id: 3, market, action: 'shipping_settings.update' }], next_before: null }))
+    listConfigEvents: jest.fn(async ({ market }) => ({ events: [{ id: 3, market, action: 'shipping_settings.update' }], next_before: null })),
+    listFailures: jest.fn(async ({ market, limit }) => ({
+      rows: [
+        { kind: 'attempt', id: 1, occurred_at: '2026-11-18T12:00:00.000Z', attempt: { id: 1, user_id: 5, market: 'br', email: 'c@example.com', area: 'checkout', status: 'paid', final_step: 'payment_intent_ack', error_code: null }, events: [{ id: 9, step: 'zipcode_lookup', outcome: 'failed', error_code: 'invalid_zipcode', http_status: 422, created_at: '2026-11-18T12:00:00.000Z' }] },
+        { kind: 'webhook', id: 2, occurred_at: '2026-11-18T11:00:00.000Z', event: { id: 2, market: 'us', user_id: null, step: 'customer_not_resolved', outcome: 'failed', error_code: 'customer_not_resolved' } }
+      ].filter((row) => (row.attempt || row.event).market === market),
+      next: limit === 1 ? { t: '2026-11-18T12:00:00.000Z', k: 'attempt', id: 1 } : null
+    }))
   };
   return repository;
 }
@@ -141,5 +148,81 @@ describe('purchase trail config events', () => {
     expect(auditRepository.createIn).toHaveBeenCalledWith(null, expect.objectContaining({ action: 'billing.first_purchase.percent.update' }));
     expect(repository.configEvents[0]).toMatchObject({ market: 'br', action: 'first_purchase_percent.update', target_ref: 'term_6' });
     expect(repository.configEvents[0]).not.toHaveProperty('user_id');
+  });
+});
+
+// purchase-error-monitor
+describe('purchase trail errors', () => {
+  const NOW = new Date('2026-11-19T12:00:00Z');
+  const errorsApp = app;
+  const get = (server, query, user = 7) => request(server).get(`/api/v1/admin/purchase-trail/errors${query}`).set('Authorization', `Bearer ${tokenFor(user)}`);
+
+  beforeEach(() => { jest.useFakeTimers({ now: NOW, doNotFake: ['nextTick', 'setImmediate'] }); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  test('lists one market; a US failure never shows in BR; the shown step is the failed one', async () => {
+    const { app: server, repository } = errorsApp();
+    const br = await get(server, '?market=br');
+    expect(br.status).toBe(200);
+    expect(br.body.data.rows).toHaveLength(1);
+    expect(br.body.data.rows[0]).toMatchObject({ kind: 'attempt', market: 'br', attempt_status: 'paid', step: 'zipcode_lookup', error_code: 'invalid_zipcode', email: 'c@example.com' });
+    expect(repository.listFailures).toHaveBeenCalledWith(expect.objectContaining({ market: 'br', limit: 50, area: null, errorCode: null, cursor: null }));
+    const us = await get(server, '?market=us');
+    expect(us.body.data.rows[0]).toMatchObject({ kind: 'webhook', user_id: null, email: null, attempt_status: null });
+  });
+
+  test('market is required and scoped', async () => {
+    const { app: server, repository } = errorsApp();
+    const missing = await get(server, '');
+    expect(missing.status).toBe(400);
+    expect(missing.body.details.code).toBe('market_required');
+    const scoped = errorsApp({ identity: { userId: '8', roles: ['operator'], permissions: ROLE_PERMISSIONS.operator, markets: ['US'] } });
+    expect((await get(scoped.app, '?market=br', 8)).status).toBe(403);
+    expect(repository.listFailures).not.toHaveBeenCalled();
+  });
+
+  test('area, period, limit and cursor are validated', async () => {
+    const { app: server, repository } = errorsApp();
+    expect((await get(server, '?market=br&area=coupon')).body.details.code).toBe('invalid_area');
+    expect((await get(server, '?market=br&from=2026-01-01')).body.details.code).toBe('period_out_of_retention');
+    expect((await get(server, '?market=br&from=2026-11-18&to=2026-11-10')).body.details.code).toBe('invalid_period');
+    expect((await get(server, '?market=br&limit=101')).body.details.code).toBe('invalid_limit');
+    expect((await get(server, '?market=br&before=not-a-cursor')).body.details.code).toBe('invalid_cursor');
+    expect(repository.listFailures).not.toHaveBeenCalled();
+
+    expect((await get(server, '?market=br&limit=100&area=webhook&error_code=invalid_zipcode')).status).toBe(200);
+    expect(repository.listFailures).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 100, area: 'webhook', errorCode: 'invalid_zipcode' }));
+  });
+
+  test('the next page goes back with the cursor it was given, not a number', async () => {
+    const { app: server, repository } = errorsApp();
+    const first = await get(server, '?market=br&limit=1');
+    expect(first.body.data.next_before).toEqual(expect.any(String));
+    await get(server, `?market=br&limit=1&before=${first.body.data.next_before}`);
+    expect(repository.listFailures).toHaveBeenLastCalledWith(expect.objectContaining({ cursor: { t: new Date('2026-11-18T12:00:00.000Z'), k: 'attempt', id: 1 } }));
+  });
+
+  test('readonly reads, a veterinarian and a customer do not; no raw fields leave', async () => {
+    const readonly = await get(errorsApp({ roles: ['readonly'] }).app, '?market=br');
+    expect(readonly.status).toBe(200);
+    const text = JSON.stringify(readonly.body);
+    for (const field of ['body', 'headers', 'client_secret', 'payment_method', 'payload', 'cpf']) {
+      expect(text).not.toContain(`"${field}"`);
+    }
+    expect((await get(errorsApp({ roles: ['veterinarian'] }).app, '?market=br')).status).toBe(403);
+    const customer = errorsApp({ adminIdentityService: { requireOperational: jest.fn().mockRejectedValue(new HttpError(403, 'Forbidden.')) } });
+    const denied = await get(customer.app, '?market=br', 5);
+    expect(denied.status).toBe(403);
+    expect(denied.body.data).toBeUndefined();
+  });
+
+  test('config events take outcome and period; without them the call is the one of before', async () => {
+    const { app: server, repository } = errorsApp();
+    await request(server).get('/api/v1/admin/purchase-trail/config-events?market=br').set('Authorization', `Bearer ${tokenFor()}`);
+    expect(repository.listConfigEvents).toHaveBeenLastCalledWith({ market: 'br', limit: 50, before: null });
+    await request(server).get('/api/v1/admin/purchase-trail/config-events?market=br&outcome=failed&from=2026-11-12&to=2026-11-19').set('Authorization', `Bearer ${tokenFor()}`);
+    expect(repository.listConfigEvents).toHaveBeenLastCalledWith({ market: 'br', limit: 50, before: null, outcome: 'failed', from: new Date('2026-11-12T00:00:00Z'), to: new Date('2026-11-20T00:00:00Z') });
+    const bad = await request(server).get('/api/v1/admin/purchase-trail/config-events?market=br&outcome=maybe').set('Authorization', `Bearer ${tokenFor()}`);
+    expect(bad.body.details.code).toBe('invalid_outcome');
   });
 });
