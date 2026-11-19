@@ -16,10 +16,10 @@ O prefixo `wp_` em tabela MySQL é legado de schema. Não indica runtime WordPre
 
 ## Ferramentas de busca (já instaladas)
 
-`rg`, `fd`, `tree` e `ast-grep` já estão instalados no ambiente local. Os comandos já funcionam. Use-os no terminal antes de ler arquivos. Não instale, não peça instalação e não substitua por `grep`, `find` ou `ls -R`.
+`rg`, `fd`, `tree` e `ast-grep` já estão instalados no ambiente local. Os comandos já funcionam. No Debian/Ubuntu (WSL incluso) o `fd` se chama `fdfind`: use `fdfind` quando `fd` não existir. Use-os no terminal antes de ler arquivos. Não instale, não peça instalação e não substitua por `grep`, `find` ou `ls -R`.
 
 1. Conteúdo: `rg "<padrão>" src` (ou `tests`, `docs`). Exemplo: `rg "getPets|createPet|PetService" src`
-2. Arquivos: `fd "pet"` ou `fd "\.test\.js$"`
+2. Arquivos: `fd "pet"` ou `fd "\.test\.js$"` (`fdfind` no Debian/Ubuntu)
 3. Arquitetura: `tree -L 2 -I 'node_modules|dist|coverage|.git'`
 4. Estrutura de código: `ast-grep -p '<padrão>' -l js src`. Procura AST, não texto. Exemplo: `ast-grep -p 'createPet($$$)' -l js src`
 

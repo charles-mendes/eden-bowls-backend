@@ -54,13 +54,13 @@ POST /stripe/v1/webhook
 
 Nao instale o CLI como dependencia npm. O script `npm run stripe:listen` so chama o binario ja instalado no SO.
 
-## Contas de QA no localhost
+## Contas Stripe do localhost
 
-O `stripe listen` local entra nas contas de teste de QA, não numa conta só da máquina. Os secrets da API local são os secrets de teste de QA. O secret de webhook local é o valor que o CLI imprime. Não copie o signing secret do dashboard de QA nem o de produção para o `.env` local, e não use chaves live.
+O localhost tem a própria sandbox local do Brasil e a própria sandbox local dos Estados Unidos. Não usa as contas de QA. Os secrets da API local e as publishable keys da loja local são dessas duas sandboxes locais. O `stripe listen` local entra nessas sandboxes, e o secret de webhook local é o valor que o CLI imprime. Não copie o signing secret do dashboard de QA nem o de produção para o `.env` local, e chave live não entra na máquina local.
 
-O banco local copia o post meta de preço e de produto do export do operador, casando slug do produto pai, sabor e peso. Rode o script de retire. Não rode o sync de catálogo localmente: cada execução criaria produtos de novo na conta de QA compartilhada.
+Um id Stripe de outro ambiente (QA, produção ou a sandbox aposentada) não existe nas sandboxes locais. Não copie ids do QA para o banco local. Primeiro confira que as duas chaves do `.env` local (`STRIPE_US_SECRET_KEY` e `STRIPE_BR_SECRET_KEY`) são das sandboxes locais. Só então rode o script de retire com `EDEN_RUNTIME=local` e, depois dele, o sync de catálogo e o de cupons, que criam produtos, preços e promotion codes nas sandboxes locais. Com uma chave ainda de outra conta, o sync criaria esses objetos naquela conta.
 
-`EDEN_RUNTIME=local` é obrigatório, inclusive quando `NODE_ENV=production`. Um `invoice.paid` de um checkout feito no QA, encaminhado pelo CLI, não é aplicado no usuário local.
+`EDEN_RUNTIME=local` é obrigatório, inclusive quando `NODE_ENV=production`. Se o CLI estiver logado numa conta que não é local e encaminhar um `invoice.paid` de outro ambiente, ele não é aplicado no usuário local.
 
 ## Setup neste repo
 
