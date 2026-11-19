@@ -8,7 +8,12 @@ const {
 } = require('../core/shipping-fee');
 const { currentBrDeliveryDays, setBrDeliveryDays, setBrDeliveryRadiusKm, setUsMaxTransitDays } = require('../core/delivery-closed-days');
 const { loadShippingSettings } = require('../infrastructure/shipping/shipping-settings');
-const { serviceLabel } = require('../infrastructure/shipping/ups-client');
+const { serviceLabel, setSkipDryIceInTest } = require('../infrastructure/shipping/ups-client');
+
+function usStateCode(value) {
+  const code = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : '';
+}
 
 class ShippingService {
   constructor(options = {}) {
@@ -18,6 +23,7 @@ class ShippingService {
     this.osrmClient = options.osrmClient || null;
     this.upsClient = options.upsClient || null;
     this.quoteSigner = options.quoteSigner || null;
+    this.logger = options.logger || { warn() {} };
     this.production = Boolean(options.production);
     this.fixedTransitDays = Number.isFinite(Number(options.fixedTransitDays)) && Number(options.fixedTransitDays) > 0
       ? Number(options.fixedTransitDays)
@@ -35,6 +41,8 @@ class ShippingService {
     // Every Brazil delivery date (checkout, emails, queue, the customer's deliveries) counts this many business days.
     setBrDeliveryDays(value && value.br && value.br.rule ? value.br.rule.delivery_days : null);
     setUsMaxTransitDays(value && value.us ? value.us.max_transit_days : null);
+    // Every UPS request (quotes, the admin simulation, labels) reads the CIE dry ice switch from here.
+    setSkipDryIceInTest(Boolean(value && value.us && value.us.skip_dry_ice_in_test));
   }
 
   reportQuoteModeAtStartup(logger) {
@@ -133,6 +141,16 @@ class ShippingService {
     });
   }
 
+  // The fallback carries no transit days, so checkout refuses it: say why UPS was skipped.
+  logUsFallback(reason, error) {
+    this.logger.warn({
+      reason,
+      code: error?.details?.code || null,
+      status: error?.statusCode || error?.status || null,
+      message: error?.message || null
+    }, 'US shipping quote fell back to the fixed rate; checkout will refuse it as delivery_area_unverified');
+  }
+
   async calculateUs(payload = {}) {
     const us = this.settings.us;
     if (!us.enabled) {
@@ -150,6 +168,7 @@ class ShippingService {
 
     if (!this.upsClient || !this.upsClient.isConfigured()) {
       if (us.fallback_enabled) {
+        this.logUsFallback('ups_not_configured');
         return this.buildUsFallbackQuote(zipcode, 'fallback');
       }
       throw new HttpError(503, 'UPS is not configured.', { code: 'ups_not_configured' });
@@ -158,6 +177,7 @@ class ShippingService {
     const shipFrom = us.ship_from || {};
     if (!String(shipFrom.zipcode || '').replace(/\D/g, '')) {
       if (us.fallback_enabled) {
+        this.logUsFallback('ship_from_missing');
         return this.buildUsFallbackQuote(zipcode, 'fallback');
       }
       throw new HttpError(422, 'US ship-from postal code is not configured.', { code: 'ship_from_missing' });
@@ -166,16 +186,19 @@ class ShippingService {
     try {
       const rated = await this.upsClient.rate({
         shipFrom,
+        // Only what the customer gave: UPS refuses a ZIP outside the state it is sent with, and rates a bare ZIP.
         shipTo: {
           name: 'Customer',
-          street: 'Address',
-          city: 'City',
-          state: 'NY',
+          street: String(payload.street || '').trim(),
+          city: String(payload.city || '').trim(),
+          state: usStateCode(payload.state),
           zipcode,
           country: 'US'
         },
         package: us.package,
-        allowedServiceCodes: us.allowed_service_codes
+        allowedServiceCodes: us.allowed_service_codes,
+        // Checkout refuses a US quote without transit days, and only Shoptimeintransit returns them for Ground.
+        withTransit: true
       });
 
       const code = rated.serviceCode;
@@ -209,6 +232,7 @@ class ShippingService {
         || error?.details?.code === 'ups_not_configured'
       );
       if (us.fallback_enabled && (retryable || error?.details?.code === 'ups_no_rates')) {
+        this.logUsFallback('ups_rate_failed', error);
         return this.buildUsFallbackQuote(zipcode, 'fallback');
       }
       throw error;

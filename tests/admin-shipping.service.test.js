@@ -55,6 +55,17 @@ describe('AdminShippingService', () => {
     expect(repository.save).not.toHaveBeenCalled();
   });
 
+  test.each(['yes', 1, null])('skip_dry_ice_in_test %j is refused with 422 invalid_skip_dry_ice_in_test and nothing is stored', async (value) => {
+    const repository = { save: jest.fn(), get: jest.fn() };
+    const service = new AdminShippingService({ repository, shippingService: { settings: null } });
+
+    await expect(service.saveSettings({ us: { skip_dry_ice_in_test: value } })).rejects.toMatchObject({
+      statusCode: 422,
+      details: { code: 'invalid_skip_dry_ice_in_test' }
+    });
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
   test.each([-1, 4, 1.5, 'two'])('Out of range: Brazil delivery_days %j is refused with 422 and nothing is stored', async (days) => {
     const repository = { save: jest.fn(), get: jest.fn() };
     const service = new AdminShippingService({ repository, shippingService: { settings: null } });

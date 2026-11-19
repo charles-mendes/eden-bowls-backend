@@ -287,6 +287,12 @@ function buildShippingUsSettingsEntitySchema(tableName = 'shipping_us_settings')
         width: 1,
         default: 0
       },
+      skipDryIceInTest: {
+        name: 'skip_dry_ice_in_test',
+        type: 'tinyint',
+        width: 1,
+        default: 0
+      },
       createdAt: {
         name: 'created_at',
         type: 'datetime',

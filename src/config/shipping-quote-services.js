@@ -25,6 +25,7 @@ function createShippingQuoteServices({
     osrmClient,
     upsClient,
     quoteSigner: shippingQuoteSigner,
+    logger,
     production: env.EDEN_RUNTIME === 'production',
     fixedTransitDays: env.SHIPPING_US_FIXED_TRANSIT_DAYS
   });

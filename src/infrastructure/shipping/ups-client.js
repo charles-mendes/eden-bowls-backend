@@ -21,6 +21,18 @@ const UPS_BASE_URLS = Object.freeze({
   production: 'https://onlinetools.ups.com'
 });
 
+// The admin switch skip_dry_ice_in_test, loaded with the shipping settings. Only the CIE host reads it: CIE drops
+// UPS Ground for a package with dry ice, and production UPS always gets the declaration.
+let skipDryIceInTest = false;
+
+function setSkipDryIceInTest(value) {
+  skipDryIceInTest = value === true;
+}
+
+function currentSkipDryIceInTest() {
+  return skipDryIceInTest;
+}
+
 // Same credentials work on both hosts, so the client refuses a host that does not match the runtime.
 // A simulation client always uses CIE: it only quotes and validates, and cannot buy or void a label.
 function resolveUpsTarget(env, runtime, options = {}) {
@@ -252,6 +264,7 @@ class UpsClient {
 
   buildPackage(pkg = {}) {
     const dryIceKg = Number(pkg.dry_ice_kg);
+    const declareDryIce = dryIceKg > 0 && !(skipDryIceInTest && this.envName === 'cie');
     return {
       PackagingType: { Code: '02', Description: 'Customer Supplied Package' },
       Dimensions: {
@@ -266,7 +279,7 @@ class UpsClient {
       },
       // Dry ice as a refrigerant (UN1845) under the US DOT rules. Rating needs the unit Description;
       // Shipping accepts it. Not medical, so no MedicalUseIndicator (ups-dry-ice).
-      ...(dryIceKg > 0 ? {
+      ...(declareDryIce ? {
         PackageServiceOptions: {
           DryIce: {
             RegulationSet: 'CFR',
@@ -566,5 +579,7 @@ module.exports = {
   mapRatedShipments,
   pickRate,
   serviceLabel,
-  SERVICE_LABELS
+  SERVICE_LABELS,
+  setSkipDryIceInTest,
+  currentSkipDryIceInTest
 };

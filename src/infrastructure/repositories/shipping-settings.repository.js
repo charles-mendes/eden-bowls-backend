@@ -56,7 +56,8 @@ const US_COLUMNS = [
   'max_transit_days',
   'ship_from_phone',
   'package_dry_ice_kg',
-  'charge_shipping'
+  'charge_shipping',
+  'skip_dry_ice_in_test'
 ];
 
 class ShippingSettingsRepository {

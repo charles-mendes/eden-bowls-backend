@@ -1,5 +1,11 @@
 const { parseEnv } = require('../src/config/env');
-const { UpsClient, UPS_BASE_URLS, resolveUpsTarget } = require('../src/infrastructure/shipping/ups-client');
+const {
+  UpsClient,
+  UPS_BASE_URLS,
+  resolveUpsTarget,
+  setSkipDryIceInTest,
+  currentSkipDryIceInTest
+} = require('../src/infrastructure/shipping/ups-client');
 
 const CIE = 'https://wwwcie.ups.com';
 const PRODUCTION = 'https://onlinetools.ups.com';
@@ -556,5 +562,44 @@ describe('UPS dry ice declaration', () => {
 
   test('a package without dry ice sends no service options', () => {
     expect(client().buildPackage({ weight_lb: 10 })).not.toHaveProperty('PackageServiceOptions');
+  });
+
+  describe('skip_dry_ice_in_test switch', () => {
+    afterEach(() => setSkipDryIceInTest(false));
+
+    test('on: CIE quotes and labels go without the declaration, and keep the package weight', async () => {
+      setSkipDryIceInTest(true);
+      const { fetchImpl, calls } = upsWithRates();
+      const ups = clientFromEnv(envFor('local'), fetchImpl);
+      expect(ups.envName).toBe('cie');
+
+      await ups.rate({ ...parties, withTransit: true });
+      await ups.createShipment({ ...parties, serviceCode: '03' });
+
+      const rated = bodyOf(calls, '/Shoptimeintransit').RateRequest.Shipment;
+      expect(rated.Package).not.toHaveProperty('PackageServiceOptions');
+      expect(rated.Package.PackageWeight.Weight).toBe('10');
+      expect(bodyOf(calls, '/ship').ShipmentRequest.Shipment.Package).not.toHaveProperty('PackageServiceOptions');
+    });
+
+    test('on: the admin simulation client, always on CIE, skips it too', () => {
+      setSkipDryIceInTest(true);
+      const simulation = client({ simulationOnly: true });
+      expect(simulation.buildPackage(parties.package)).not.toHaveProperty('PackageServiceOptions');
+    });
+
+    test('on: production UPS still gets the declaration', () => {
+      setSkipDryIceInTest(true);
+      const production = client({ env: 'production', runtime: 'production' });
+      expect(production.envName).toBe('production');
+      expect(production.buildPackage(parties.package).PackageServiceOptions).toEqual(DRY_ICE);
+    });
+
+    test('off (deploy value): CIE gets the declaration, and only true turns it on', () => {
+      expect(currentSkipDryIceInTest()).toBe(false);
+      expect(client().buildPackage(parties.package).PackageServiceOptions).toEqual(DRY_ICE);
+      setSkipDryIceInTest('true');
+      expect(currentSkipDryIceInTest()).toBe(false);
+    });
   });
 });
