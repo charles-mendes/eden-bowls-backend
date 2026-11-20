@@ -415,6 +415,100 @@ describe('StripeCouponService', () => {
     await service.persistMapping({ 1: 'promo_br_1m' }, {}, 'br');
 
     expect(repository.getMapping).toHaveBeenCalledWith('br');
-    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_br_1m' }, {}, 'br');
+    expect(repository.saveMapping).toHaveBeenCalledWith({ 1: 'promo_br_1m' }, { 1: 'coupon_br' }, 'br');
+  });
+
+  test('saving one term keeps the stored coupon of the other terms', async () => {
+    const repository = {
+      getMapping: jest.fn().mockResolvedValue({
+        mapping: { 1: 'promo_us_1m', 3: 'promo_us_3m', 6: 'promo_us_6m_old' },
+        coupons: { 1: 'coupon_1m', 3: 'coupon_3m', 6: 'coupon_6m_old' }
+      }),
+      saveMapping: jest.fn().mockResolvedValue(undefined),
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
+    };
+    const service = new StripeCouponService(repository);
+
+    await service.persistMapping(
+      { 1: 'promo_us_1m', 3: 'promo_us_3m', 6: 'promo_us_6m_new' },
+      { 6: 'coupon_6m_new' },
+      'us'
+    );
+
+    expect(repository.saveMapping).toHaveBeenCalledWith(
+      { 1: 'promo_us_1m', 3: 'promo_us_3m', 6: 'promo_us_6m_new' },
+      { 1: 'coupon_1m', 3: 'coupon_3m', 6: 'coupon_6m_new' },
+      'us'
+    );
+  });
+});
+
+describe('StripeCouponService.checkoutReadiness', () => {
+  function setup({ mapping = { 1: 'promo_1', 3: 'promo_3', 6: 'promo_6' }, retrieve, now } = {}) {
+    const repository = {
+      getMapping: jest.fn().mockResolvedValue({ mapping, coupons: {} }),
+      saveMapping: jest.fn().mockResolvedValue(),
+      getMisconfig: jest.fn().mockResolvedValue({ count: 0, lastAt: null })
+    };
+    const promotionCodes = { retrieve: retrieve || jest.fn().mockImplementation(async (id) => ({ id, active: true })) };
+    const stripeBilling = { ensureClient: () => ({ promotionCodes }) };
+    const service = new StripeCouponService(repository, { stripeBilling, now });
+    return { service, promotionCodes };
+  }
+
+  const missing = () => Object.assign(new Error('No such promotion code'), { code: 'resource_missing' });
+
+  test('a complete mapping whose 3-month code was deleted in Stripe reports term 3', async () => {
+    const { service } = setup({
+      retrieve: jest.fn().mockImplementation(async (id) => {
+        if (id === 'promo_3') {
+          throw missing();
+        }
+        return { id, active: true };
+      })
+    });
+
+    await expect(service.checkoutReadiness('br')).resolves.toEqual({ stripe_account: 'br', missing_terms: [3], unverified: false });
+  });
+
+  test('an inactive 6-month code is reported like a missing one', async () => {
+    const { service } = setup({
+      retrieve: jest.fn().mockImplementation(async (id) => ({ id, active: id !== 'promo_6' }))
+    });
+
+    expect((await service.checkoutReadiness('us')).missing_terms).toEqual([6]);
+  });
+
+  test('a term without a stored code is missing without a Stripe call', async () => {
+    const { service, promotionCodes } = setup({ mapping: { 1: 'promo_1', 3: null, 6: null } });
+
+    expect((await service.checkoutReadiness('us')).missing_terms).toEqual([3, 6]);
+    expect(promotionCodes.retrieve).toHaveBeenCalledTimes(1);
+  });
+
+  test('a network error is unverified and not cached', async () => {
+    const { service, promotionCodes } = setup({ retrieve: jest.fn().mockRejectedValue(new Error('ECONNRESET')) });
+
+    expect(await service.checkoutReadiness('us')).toEqual({ stripe_account: 'us', missing_terms: [], unverified: true });
+    await service.checkoutReadiness('us');
+    expect(promotionCodes.retrieve).toHaveBeenCalledTimes(6);
+  });
+
+  test('the result is reused for 5 minutes and saving the mapping drops it', async () => {
+    let clock = 0;
+    const { service, promotionCodes } = setup({ now: () => clock });
+
+    await service.checkoutReadiness('us');
+    clock += 60_000;
+    await service.checkoutReadiness('us');
+    expect(promotionCodes.retrieve).toHaveBeenCalledTimes(3);
+
+    await service.persistMapping({ 1: 'promo_1', 3: 'promo_3', 6: 'promo_6' }, {}, 'us');
+    await service.checkoutReadiness('us');
+    expect(promotionCodes.retrieve).toHaveBeenCalledTimes(6);
+
+    clock += 5 * 60 * 1000;
+    await service.checkoutReadiness('us');
+    expect(promotionCodes.retrieve).toHaveBeenCalledTimes(9);
   });
 });

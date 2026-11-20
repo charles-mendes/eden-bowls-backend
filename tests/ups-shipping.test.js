@@ -25,6 +25,19 @@ describe('ups pickRate', () => {
   });
 });
 
+describe('shipping service settings and the CIE dry ice switch', () => {
+  const { currentSkipDryIceInTest, setSkipDryIceInTest } = require('../src/infrastructure/shipping/ups-client');
+  afterEach(() => setSkipDryIceInTest(false));
+
+  test('loading or saving the settings sets the switch every UPS client reads', () => {
+    const base = { br: { enabled: true, label: 'BR', center: { lat: 0, lng: 0 }, rule: {} }, us: { enabled: true } };
+    const service = new ShippingService({ settings: { ...base, us: { ...base.us, skip_dry_ice_in_test: true } } });
+    expect(currentSkipDryIceInTest()).toBe(true);
+    service.settings = base;
+    expect(currentSkipDryIceInTest()).toBe(false);
+  });
+});
+
 describe('po box guard', () => {
   test('detects common PO Box patterns', () => {
     expect(isPoBoxAddress('P.O. Box 123')).toBe(true);
@@ -103,11 +116,30 @@ describe('ShippingService US calculate', () => {
     expect(upsClient.rate).toHaveBeenCalledWith(expect.objectContaining({
       package: expect.objectContaining({ weight_lb: 10, dry_ice_kg: 0.5 })
     }));
+    // A bare ZIP reaches UPS with no made-up street, city or state, and the quote asks for transit days.
+    expect(upsClient.rate).toHaveBeenCalledWith(expect.objectContaining({
+      shipTo: expect.objectContaining({ street: '', city: '', state: '', zipcode: '94105', country: 'US' }),
+      withTransit: true
+    }));
+    expect(result.data.delivery_days).toBe(5);
+
+    upsClient.rate.mockClear();
+    await service.calculate({ country: 'US', zipCode: '33432', city: ' Boca Raton ', state: 'fl' });
+    expect(upsClient.rate).toHaveBeenCalledWith(expect.objectContaining({
+      shipTo: expect.objectContaining({ city: 'Boca Raton', state: 'FL', zipcode: '33432' })
+    }));
+
+    upsClient.rate.mockClear();
+    await service.calculate({ country: 'US', zipCode: '33432', state: 'Florida' });
+    expect(upsClient.rate).toHaveBeenCalledWith(expect.objectContaining({
+      shipTo: expect.objectContaining({ state: '' })
+    }));
   });
 
   test('falls back when UPS times out and fallback is enabled', async () => {
     const error = new HttpError(504, 'timeout', { code: 'ups_timeout' });
     error.upsTimeout = true;
+    const logger = { warn: jest.fn() };
     const upsClient = {
       isConfigured: () => true,
       rate: jest.fn().mockRejectedValue(error)
@@ -128,11 +160,17 @@ describe('ShippingService US calculate', () => {
           allowed_service_codes: ['03']
         }
       },
-      upsClient
+      upsClient,
+      logger
     });
 
     const result = await service.calculate({ country: 'US', zipCode: '94105' });
     expect(result.data.source).toBe('fallback');
     expect(result.data.shipping).toBe(14.5);
+    // The fallback has no transit days and checkout refuses it, so the UPS failure must reach the log.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'ups_rate_failed', code: 'ups_timeout', status: 504 }),
+      expect.stringContaining('fell back')
+    );
   });
 });

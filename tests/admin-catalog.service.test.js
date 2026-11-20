@@ -23,7 +23,9 @@ describe('AdminCatalogService', () => {
       currency: 'BRL',
       totalExpected: 2,
       totalMapped: 1,
-      gaps: ['22']
+      gaps: ['22'],
+      // No Stripe client in this service: the account cannot be checked.
+      stripe_account: expect.objectContaining({ status: 'unverified' })
     });
     expect(repository.listProducts).toHaveBeenCalledWith({
       market: 'BR',
@@ -47,7 +49,8 @@ describe('AdminCatalogService', () => {
       currency: 'USD',
       totalExpected: 0,
       totalMapped: 0,
-      gaps: []
+      gaps: [],
+      stripe_account: expect.objectContaining({ status: 'unverified' })
     });
   });
 
@@ -517,5 +520,155 @@ describe('AdminCatalogService', () => {
       recreateMissingProduct: true
     }));
     expect(repository.upsertPostMeta).toHaveBeenCalledWith('2001', '_stripe_product_id', 'prod_LegacyUs');
+  });
+});
+
+describe('AdminCatalogService health stripe_account', () => {
+  function usVariant(id, priceId) {
+    return { id: String(id), stripePriceId: priceId, stripePriceIdsByCurrency: priceId ? { usd: priceId } : {} };
+  }
+
+  function setup({
+    variants = [usVariant(21, 'price_a'), usVariant(22, 'price_b'), usVariant(23, 'price_c'), usVariant(24, 'price_d')],
+    planCountry = 'US',
+    accountId = jest.fn().mockResolvedValue('acct_LOCALUS'),
+    lastRun = { stripeAccountId: 'acct_LOCALUS', updatedAt: '2026-11-18T10:00:00.000Z' },
+    retrieve = jest.fn().mockImplementation(async (id) => ({ id })),
+    brEnabled = true,
+    usMissing = false,
+    now
+  } = {}) {
+    const repository = {
+      listProducts: jest.fn().mockResolvedValue({ items: [{ id: '2', planCountry, variants }] })
+    };
+    const billing = { currentAccountId: accountId, ensureClient: () => ({ prices: { retrieve } }) };
+    const stripeAccounts = {
+      getForCreation: jest.fn((account) => {
+        if (account === 'br' && !brEnabled) {
+          const error = new Error('Stripe Brazil is not enabled.');
+          error.details = { code: 'stripe_br_disabled' };
+          throw error;
+        }
+        if (account === 'us' && usMissing) {
+          const error = new Error('STRIPE_US_SECRET_KEY is not configured.');
+          error.details = { code: 'stripe_secret_missing' };
+          throw error;
+        }
+        return billing;
+      })
+    };
+    const syncRunsRepository = {
+      latestCompletedByMarket: jest.fn(async (markets) => (lastRun ? { [markets[0]]: lastRun } : {}))
+    };
+    const service = new AdminCatalogService({ repository, stripeAccounts, syncRunsRepository, now });
+    return { service, retrieve, accountId, stripeAccounts };
+  }
+
+  const read = (service, market = 'US') => service.health({ market, currency: market === 'US' ? 'USD' : 'BRL' });
+
+  test('ok when the last sync stored the current account and the sampled prices exist', async () => {
+    const { service, retrieve } = setup();
+    const health = await read(service);
+
+    expect(health).toMatchObject({ market: 'US', currency: 'USD', totalExpected: 4, totalMapped: 4, gaps: [] });
+    expect(health.stripe_account).toEqual({
+      status: 'ok',
+      current_account_id: 'acct_LOCALUS',
+      synced_account_id: 'acct_LOCALUS',
+      synced_at: '2026-11-18T10:00:00.000Z',
+      sampled_prices: 3,
+      missing_variation_ids: []
+    });
+    // The three lowest variation ids.
+    expect(retrieve.mock.calls.map(([id]) => id)).toEqual(['price_a', 'price_b', 'price_c']);
+  });
+
+  test('account_changed when the key now belongs to another account, without sampling', async () => {
+    const { service, retrieve } = setup({ accountId: jest.fn().mockResolvedValue('acct_NEW'), lastRun: { stripeAccountId: 'acct_OLD' } });
+    const { stripe_account: account } = await read(service);
+
+    expect(account).toMatchObject({ status: 'account_changed', current_account_id: 'acct_NEW', synced_account_id: 'acct_OLD' });
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+
+  test('a key rotated on the same account is not account_changed', async () => {
+    const { service } = setup({ accountId: jest.fn().mockResolvedValue('acct_LOCALUS'), lastRun: { stripeAccountId: 'acct_LOCALUS' } });
+    expect((await read(service)).stripe_account.status).toBe('ok');
+  });
+
+  test('never_synced when the market has variants and no completed run', async () => {
+    const { service } = setup({ lastRun: null });
+    expect((await read(service)).stripe_account.status).toBe('never_synced');
+  });
+
+  test('ok for a market with no variant, even without a sync', async () => {
+    const { service } = setup({ variants: [], lastRun: null });
+    expect((await read(service)).stripe_account.status).toBe('ok');
+  });
+
+  test('prices_missing lists the sampled variants Stripe does not know', async () => {
+    const retrieve = jest.fn().mockImplementation(async (id) => {
+      if (id === 'price_b') {
+        throw Object.assign(new Error('No such price'), { code: 'resource_missing' });
+      }
+      return { id };
+    });
+    const { service } = setup({ retrieve });
+
+    expect((await read(service)).stripe_account).toMatchObject({ status: 'prices_missing', missing_variation_ids: ['22'] });
+  });
+
+  test('a price_seed_ placeholder is missing without a Stripe call', async () => {
+    const { service, retrieve } = setup({ variants: [usVariant(21, 'price_seed_us_1'), usVariant(22, 'price_b')] });
+
+    expect((await read(service)).stripe_account).toMatchObject({ status: 'prices_missing', missing_variation_ids: ['21'] });
+    expect(retrieve.mock.calls.map(([id]) => id)).toEqual(['price_b']);
+  });
+
+  test('a run from before the account column is judged by the sample alone', async () => {
+    const { service } = setup({ lastRun: { stripeAccountId: null, updatedAt: '2026-11-01T00:00:00.000Z' } });
+    expect((await read(service)).stripe_account).toMatchObject({ status: 'ok', synced_account_id: null });
+  });
+
+  test('unverified when the account lookup fails, and the coverage is still returned', async () => {
+    const { service } = setup({ accountId: jest.fn().mockRejectedValue(new Error('timeout')) });
+    const health = await read(service);
+
+    expect(health.totalExpected).toBe(4);
+    expect(health.stripe_account.status).toBe('unverified');
+  });
+
+  test('unverified when a sampled price fails with another Stripe error', async () => {
+    const { service } = setup({ retrieve: jest.fn().mockRejectedValue(Object.assign(new Error('rate limit'), { code: 'rate_limit' })) });
+    expect((await read(service)).stripe_account.status).toBe('unverified');
+  });
+
+  test('unverified when the market key is empty', async () => {
+    const { service } = setup({ usMissing: true });
+    expect((await read(service)).stripe_account.status).toBe('unverified');
+  });
+
+  test('disabled for Brazil when Stripe Brazil is off, with no Stripe request', async () => {
+    const { service, accountId, retrieve } = setup({ planCountry: 'BR', brEnabled: false, variants: [{ id: '11', stripePriceIdsByCurrency: { brl: 'price_x' } }] });
+
+    expect((await read(service, 'BR')).stripe_account.status).toBe('disabled');
+    expect(accountId).not.toHaveBeenCalled();
+    expect(retrieve).not.toHaveBeenCalled();
+  });
+
+  test('three reads within a minute sample the prices once, and the cache expires after 5 minutes', async () => {
+    let clock = 1_000_000;
+    const { service, retrieve } = setup({ now: () => clock });
+
+    await read(service);
+    clock += 30_000;
+    await read(service);
+    clock += 20_000;
+    await read(service);
+    expect(retrieve).toHaveBeenCalledTimes(3);
+
+    clock += 5 * 60 * 1000;
+    await read(service);
+    expect(retrieve).toHaveBeenCalledTimes(6);
   });
 });

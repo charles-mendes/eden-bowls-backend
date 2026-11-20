@@ -141,6 +141,7 @@ const { AdminReportsService } = require('./services/admin-reports.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
+const { AdminCheckoutReadinessService } = require('./services/admin-checkout-readiness.service');
 const { RecipeContentService } = require('./services/recipe-content.service');
 const { RecipeContentRepository } = require('./infrastructure/repositories/recipe-content.repository');
 const { LifeStageService } = require('./services/life-stage.service');
@@ -166,6 +167,8 @@ const { MarketConflictsRepository } = require('./infrastructure/repositories/mar
 const { CatalogSyncRunsRepository } = require('./infrastructure/repositories/catalog-sync-runs.repository');
 const { AdminUsersService } = require('./services/admin-users.service');
 const { AdminAuditRepository } = require('./infrastructure/repositories/admin-audit.repository');
+const { CustomerPurchaseTrailRepository } = require('./infrastructure/repositories/customer-purchase-trail.repository');
+const { CustomerPurchaseTrailService } = require('./services/customer-purchase-trail.service');
 const { AdminAuditService } = require('./services/admin-audit.service');
 const { createInviteMailer } = require('./infrastructure/mailers/invite-mailer');
 const { FeedbacksRepository } = require('./infrastructure/repositories/feedbacks.repository');
@@ -329,7 +332,14 @@ async function bootstrap() {
   const firstPurchaseTermDiscountsRepository = new FirstPurchaseTermDiscountsRepository(dataSource);
   // Published nutrition parameter set, cached 60 s in each process (the API and the cron see a publication within it).
   const nutritionParameterSetsRepository = new NutritionParameterSetsRepository(dataSource);
+  // customer-purchase-trail: best-effort writes, never on the path of an answer.
+  const customerPurchaseTrailService = new CustomerPurchaseTrailService({
+    repository: new CustomerPurchaseTrailRepository(dataSource),
+    ledgerRepository: subscriptionLedgerRepository,
+    logger
+  });
   const stripeCouponService = new StripeCouponService(stripeFirstPurchasePromosRepository, {
+    purchaseTrail: customerPurchaseTrailService,
     termDiscounts: firstPurchaseTermDiscountsRepository,
     auditRepository: new AdminAuditRepository(dataSource),
     dataSource,
@@ -537,6 +547,7 @@ async function bootstrap() {
     logger
   });
   const stripeWebhookService = new StripeWebhookService({
+    purchaseTrail: customerPurchaseTrailService,
     addressIssueService,
     stripeAccounts,
     stripeBilling,
@@ -876,6 +887,15 @@ async function bootstrap() {
     recipeContentRepository,
     logger
   });
+  // Admin-only list of what would break checkout; gets whether each key is set, never the key itself.
+  const adminCheckoutReadinessService = new AdminCheckoutReadinessService({
+    adminCatalogService,
+    stripeCouponService,
+    shippingService,
+    stripeBrEnabled: env.STRIPE_BR_ENABLED,
+    stripeSecretKeyPresent: { BR: Boolean(env.STRIPE_BR_SECRET_KEY), US: Boolean(env.STRIPE_US_SECRET_KEY) },
+    logger
+  });
   const mediaLibraryService = new MediaLibraryService({
     repository: new MediaAssetRepository(dataSource),
     imageStorage: recipeImageStorage,
@@ -959,6 +979,7 @@ async function bootstrap() {
     trustProxy: env.GEO_TRUST_PROXY_HEADERS
   });
   const app = createApp({
+    customerPurchaseTrailService,
     authService,
     customerDeliveriesService,
     authCookie: {
@@ -1031,6 +1052,7 @@ async function bootstrap() {
     recipeContentService,
     mediaLibraryService,
     adminSystemHealthService,
+    adminCheckoutReadinessService,
     adminUsersService,
     stripeCouponService,
     feedbacksService,
@@ -1058,6 +1080,7 @@ async function bootstrap() {
     logger,
     onSchedule: () => startBackgroundJobs({
       dataSource,
+      customerPurchaseTrailService,
       logger,
       stripeWebhookService,
       stripeAccounts,

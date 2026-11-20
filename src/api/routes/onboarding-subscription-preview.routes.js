@@ -18,6 +18,8 @@ function registerOnboardingSubscriptionPreviewRoutes(app, dependencies = {}) {
 
       response.status(200).json(result);
     } catch (error) {
+      // customer-purchase-trail reads the code here: some answers below leave it out of the body.
+      response.locals.purchaseTrailError = error;
       if (error instanceof HttpError && error.details && error.details.code) {
         response.status(error.statusCode).json({
           success: false,

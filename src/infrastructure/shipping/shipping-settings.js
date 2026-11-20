@@ -64,7 +64,10 @@ const DEFAULT_SETTINGS = {
     // A US address whose UPS transit is longer than this is outside the delivery area.
     max_transit_days: 1,
     // Whether new US checkouts charge the shipping quote (customer-shipping-charge). Off: the company pays it.
-    charge_shipping: false
+    charge_shipping: false,
+    // UPS CIE drops Ground for a package with dry ice: on, CIE gets quotes and labels without the declaration.
+    // Production UPS always gets it (ups-client).
+    skip_dry_ice_in_test: false
   }
 };
 
@@ -241,7 +244,11 @@ function mergeSettings(base, overlay) {
         parseServiceCodes(baseUs.allowed_service_codes, ['03'])
       ),
       max_transit_days: toNumber(fileUs.max_transit_days, toNumber(baseUs.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days)),
-      charge_shipping: toBoolean(fileUs.charge_shipping, toBoolean(baseUs.charge_shipping, DEFAULT_SETTINGS.us.charge_shipping))
+      charge_shipping: toBoolean(fileUs.charge_shipping, toBoolean(baseUs.charge_shipping, DEFAULT_SETTINGS.us.charge_shipping)),
+      skip_dry_ice_in_test: toBoolean(
+        fileUs.skip_dry_ice_in_test,
+        toBoolean(baseUs.skip_dry_ice_in_test, DEFAULT_SETTINGS.us.skip_dry_ice_in_test)
+      )
     }
   };
 }
@@ -358,7 +365,8 @@ function usFromRow(row) {
     },
     allowed_service_codes: parseServiceCodes(row.allowed_service_codes, DEFAULT_SETTINGS.us.allowed_service_codes),
     max_transit_days: toNumber(row.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days),
-    charge_shipping: toBoolean(row.charge_shipping, DEFAULT_SETTINGS.us.charge_shipping)
+    charge_shipping: toBoolean(row.charge_shipping, DEFAULT_SETTINGS.us.charge_shipping),
+    skip_dry_ice_in_test: toBoolean(row.skip_dry_ice_in_test, DEFAULT_SETTINGS.us.skip_dry_ice_in_test)
   };
 }
 
@@ -420,7 +428,8 @@ function usToParams(us) {
     toNumber(us.max_transit_days, DEFAULT_SETTINGS.us.max_transit_days),
     String(us.ship_from?.phone || '').slice(0, 32),
     toNumber(us.package?.dry_ice_kg, DEFAULT_SETTINGS.us.package.dry_ice_kg),
-    toBoolean(us.charge_shipping, DEFAULT_SETTINGS.us.charge_shipping) ? 1 : 0
+    toBoolean(us.charge_shipping, DEFAULT_SETTINGS.us.charge_shipping) ? 1 : 0,
+    toBoolean(us.skip_dry_ice_in_test, DEFAULT_SETTINGS.us.skip_dry_ice_in_test) ? 1 : 0
   ];
 }
 

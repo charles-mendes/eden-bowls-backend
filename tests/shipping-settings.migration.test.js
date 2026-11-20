@@ -3,6 +3,7 @@ const { AddUsMaxTransitDays1700000000047 } = require('../src/infrastructure/migr
 const { AddUsDryIceKg1700000000069 } = require('../src/infrastructure/migrations/1700000000069-add-us-dry-ice-kg');
 const { AddBrDeliveryDays1700000000080 } = require('../src/infrastructure/migrations/1700000000080-add-br-delivery-days');
 const { AddUsShippingCharge1700000000087 } = require('../src/infrastructure/migrations/1700000000087-add-us-shipping-charge');
+const { AddUsSkipDryIceInTest1700000000088 } = require('../src/infrastructure/migrations/1700000000088-add-us-skip-dry-ice-in-test');
 
 describe('CreateShippingSettingsTables1700000000010', () => {
   test('creates BR and US shipping settings tables and seeds defaults', async () => {
@@ -149,6 +150,38 @@ describe('AddUsShippingCharge1700000000087', () => {
   test('is registered last', () => {
     const { buildDataSourceOptions } = require('../src/infrastructure/db');
     const names = buildDataSourceOptions({}).migrations.map((migration) => migration.name);
-    expect(names[names.length - 1]).toBe('AddUsShippingCharge1700000000087');
+    expect(names).toContain('AddUsShippingCharge1700000000087');
+  });
+});
+
+describe('AddUsSkipDryIceInTest1700000000088', () => {
+  function runner({ hasTable = true, hasColumn = false } = {}) {
+    return {
+      hasTable: jest.fn().mockResolvedValue(hasTable),
+      hasColumn: jest.fn().mockResolvedValue(hasColumn),
+      query: jest.fn().mockResolvedValue(undefined)
+    };
+  }
+
+  test('Value after deploy: adds skip_dry_ice_in_test off, once', async () => {
+    const first = runner({ hasColumn: false });
+    await new AddUsSkipDryIceInTest1700000000088().up(first);
+    expect(first.query).toHaveBeenCalledWith('ALTER TABLE `shipping_us_settings` ADD COLUMN `skip_dry_ice_in_test` TINYINT(1) NOT NULL DEFAULT 0');
+
+    const again = runner({ hasColumn: true });
+    await new AddUsSkipDryIceInTest1700000000088().up(again);
+    expect(again.query).not.toHaveBeenCalled();
+  });
+
+  test('down drops the column', async () => {
+    const queryRunner = runner({ hasColumn: true });
+    await new AddUsSkipDryIceInTest1700000000088().down(queryRunner);
+    expect(queryRunner.query).toHaveBeenCalledWith('ALTER TABLE `shipping_us_settings` DROP COLUMN `skip_dry_ice_in_test`');
+  });
+
+  test('is registered last', () => {
+    const { buildDataSourceOptions } = require('../src/infrastructure/db');
+    const names = buildDataSourceOptions({}).migrations.map((migration) => migration.name);
+    expect(names).toContain('AddUsSkipDryIceInTest1700000000088');
   });
 });

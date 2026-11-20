@@ -48,6 +48,8 @@ const { registerProfileRoutes } = require('./api/routes/profile.routes');
 const { registerAdminRoutes } = require('./api/routes/admin.routes');
 const { registerPrivacyRoutes } = require('./api/routes/privacy.routes');
 const { registerPublicFeedbacksRoutes } = require('./api/routes/public-feedbacks.routes');
+const { buildPurchaseTrailMiddleware, buildPurchaseTrailConfigMiddleware } = require('./api/middleware/purchase-trail.middleware');
+const { registerOnboardingCheckoutClientEventsRoutes } = require('./api/routes/onboarding-checkout-client-events.routes');
 const { HttpError } = require('./core/http-error');
 const path = require('path');
 
@@ -71,7 +73,7 @@ function corsMiddleware(config) {
       response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
       response.setHeader(
         'Access-Control-Allow-Headers',
-        'Accept,Content-Type,Authorization,Origin,X-Requested-With,X-Eden-Country,X-Eden-Domain,baggage,sentry-trace',
+        'Accept,Content-Type,Authorization,Origin,X-Requested-With,X-Eden-Country,X-Eden-Domain,X-Purchase-Correlation-Id,baggage,sentry-trace',
       );
       response.setHeader('Access-Control-Expose-Headers', 'content-type');
     }
@@ -148,6 +150,9 @@ function createApp(dependencies = {}) {
     authPath: '/api/v1/auth/token',
     jwt: dependencies.jwt || {}
   }));
+  // customer-purchase-trail: after the token, so it knows the customer; it only watches the answer.
+  app.use(buildPurchaseTrailMiddleware(dependencies));
+  app.use(buildPurchaseTrailConfigMiddleware(dependencies));
 
   app.get('/health', (request, response) => {
     response.json({ status: 'ok' });
@@ -200,6 +205,7 @@ function createApp(dependencies = {}) {
   registerOnboardingAddressAutocompleteRoutes(app, dependencies);
   registerOnboardingDiscountEligibilityRoutes(app, dependencies);
   registerOnboardingPaymentIntentAckRoutes(app, dependencies);
+  registerOnboardingCheckoutClientEventsRoutes(app, dependencies);
   registerOnboardingPaymentMethodsRoutes(app, dependencies);
   registerOnboardingPetCreateRoutes(app, dependencies);
   registerOnboardingPetUpdateRoutes(app, dependencies);
@@ -243,6 +249,8 @@ function createApp(dependencies = {}) {
   }
 
   app.use((error, request, response, next) => {
+    // customer-purchase-trail reads the code of a failed journey step from here.
+    response.locals.purchaseTrailError = error;
     if (response.headersSent) {
       next(error);
       return;

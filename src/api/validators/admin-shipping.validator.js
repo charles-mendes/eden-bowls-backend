@@ -77,7 +77,9 @@ const shippingSettingsSchema = z.object({
     allowed_service_codes: z.union([z.array(z.string()), z.string()]).optional(),
     max_transit_days: optionalNumber,
     // Checked in the service, which answers 422 invalid_charge_shipping for anything but a boolean.
-    charge_shipping: z.unknown().optional()
+    charge_shipping: z.unknown().optional(),
+    // Checked in the service, which answers 422 invalid_skip_dry_ice_in_test for anything but a boolean.
+    skip_dry_ice_in_test: z.unknown().optional()
   }).optional()
 });
 

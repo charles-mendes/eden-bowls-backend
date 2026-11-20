@@ -8,7 +8,7 @@ Webhook no localhost: [../BUG_CHECKOUT_BACK_AND_FRONT_END/STRIPE_CLI_WEBHOOK_LOC
 
 ## Contas por ambiente
 
-QA e localhost usam a QA Brazil sandbox e a conta de teste dos Estados Unidos. "Área Restrita" é o nome em português que a Stripe dá a uma sandbox. Não é uma chave restrita. Produção usa a conta live do Brasil e a conta live dos Estados Unidos. A sandbox compartilhada da Charles está aposentada.
+São seis contas, um par por ambiente. QA usa a QA Brazil sandbox e a conta de teste de QA dos Estados Unidos. O localhost usa a sandbox local do Brasil e a sandbox local dos Estados Unidos, e não usa as contas de QA. Um id Stripe de outro ambiente não existe nas sandboxes locais, e chave live não entra na máquina local. "Área Restrita" é o nome em português que a Stripe dá a uma sandbox. Não é uma chave restrita. Produção usa a conta live do Brasil e a conta live dos Estados Unidos. A sandbox compartilhada da Charles está aposentada.
 
 Cada endpoint assina os 29 eventos de `src/infrastructure/stripe/stripe-webhook-events.js` (fonte canônica; a seção 8 é o espelho para o dashboard) e usa a API version `2025-09-30.clover`.
 
@@ -25,7 +25,7 @@ A conta é escolhida pelo país do endereço, não pelo domínio. Brasil cobra e
 
 Ids ficam em post meta `_stripe_price_id`, `_stripe_price_ids_by_currency`, `_stripe_product_id` e `_stripe_product_ids_by_currency`; no ledger `stripe_customer_id`, `stripe_subscription_id`, `stripe_price_id` e `stripe_account` (`br` ou `us`); e em `coupon_id` / `promotion_code_id` de `stripe_first_purchase_promos`.
 
-Não copie ids da Charles. `prod_seed_` e `price_seed_` não são ids reais. O catálogo e os cupons são recriados uma vez no host de QA, depois do script de retire. Esse script apaga linhas de `stripe_subscriptions` por `created_at`, porque `stripe_account` só guarda `br` ou `us` e nenhum status faz `listAfterId` pular a linha. O checkout não usa `_stripe_price_id` quando a moeda não está em `_stripe_price_ids_by_currency`.
+Não copie ids da Charles. `prod_seed_` e `price_seed_` não são ids reais. O catálogo e os cupons são recriados uma vez em cada ambiente, contra as contas dele: no host de QA e em cada banco local, sempre depois do script de retire daquele ambiente. O banco local sincroniza só depois de as duas chaves do `.env` serem das sandboxes locais, e não copia ids do QA. Produção não roda o script de retire: sincroniza só com `stripe_subscriptions` e as três metas de cliente em zero. Esse script apaga linhas de `stripe_subscriptions` por `created_at`, porque `stripe_account` só guarda `br` ou `us` e nenhum status faz `listAfterId` pular a linha. O checkout não usa `_stripe_price_id` quando a moeda não está em `_stripe_price_ids_by_currency`.
 
 Rollback de QA restaura o `.env` anterior junto com o dump da task 7.2. O dump não inclui `background_job_cursors`. Para repetir o cutover, apague a linha `job_name = 'stripe_ledger_retire'` e só então rode o script de novo.
 
@@ -83,8 +83,8 @@ Usada **só na loja** (Stripe.js / Elements). Não entra no backend.
 
 ### Onde copiar
 
-1. Dashboard da conta certa (US ou BR).
-2. Toggle **Test mode** (QA/local) ou **Live mode** (produção).
+1. Dashboard da conta certa (US ou BR) do ambiente: sandbox local, QA ou live.
+2. Toggle **Test mode** (sandbox local ou QA) ou **Live mode** (produção).
 3. **Developers → API keys**.
 4. Copie **Publishable key**.
    - Test: começa com `test publishable key `.
@@ -377,7 +377,7 @@ refund.updated
 
 ## 9. Local (Stripe CLI)
 
-O Dashboard não alcança `localhost`. O CLI encaminha os eventos. Um comando sobe tudo:
+O Dashboard não alcança `localhost`. O CLI encaminha os eventos das sandboxes locais, porque as chaves do `.env` local são dessas sandboxes. Um comando sobe tudo:
 
 ```bash
 cd eden-bowls-backend

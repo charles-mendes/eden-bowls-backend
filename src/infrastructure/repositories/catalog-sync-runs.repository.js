@@ -47,7 +47,7 @@ class CatalogSyncRunsRepository {
     this.ensureDataSource();
     const market = String(run.market || '').toUpperCase();
     const result = await this.dataSource.query(
-      `INSERT INTO \`${this.tableName}\` (\`market\`, \`currency\`, \`scope\`, \`product_id\`, \`status\`, \`summary\`, \`error\`, \`started_at\`, \`finished_at\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO \`${this.tableName}\` (\`market\`, \`currency\`, \`scope\`, \`product_id\`, \`status\`, \`summary\`, \`error\`, \`stripe_account_id\`, \`started_at\`, \`finished_at\`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         market,
         run.currency ? String(run.currency).toUpperCase() : null,
@@ -56,6 +56,8 @@ class CatalogSyncRunsRepository {
         String(run.status),
         run.summary ? JSON.stringify(run.summary) : null,
         run.error ? String(run.error).slice(0, 500) : null,
+        // Only a completed run says which Stripe account the catalog now belongs to.
+        run.status !== 'failed' && run.stripeAccountId ? String(run.stripeAccountId).slice(0, 64) : null,
         new Date(run.startedAt),
         new Date(run.finishedAt)
       ]
@@ -72,6 +74,16 @@ class CatalogSyncRunsRepository {
   }
 
   async latestByMarket(markets = []) {
+    return this.newestPerMarket(markets);
+  }
+
+  // Newest run with status completed or completed_with_skips per market, market and product scope alike: the run
+  // the checkout readiness check compares the current Stripe account with. Failed runs are ignored.
+  async latestCompletedByMarket(markets = []) {
+    return this.newestPerMarket(markets, { completedOnly: true });
+  }
+
+  async newestPerMarket(markets = [], { completedOnly = false } = {}) {
     this.ensureDataSource();
     const wanted = (Array.isArray(markets) ? markets : []).map((market) => String(market).toUpperCase());
     if (wanted.length === 0) {
@@ -81,7 +93,7 @@ class CatalogSyncRunsRepository {
       const rows = await this.dataSource.query(
         [
           `SELECT r.* FROM \`${this.tableName}\` r`,
-          `INNER JOIN (SELECT \`market\`, MAX(\`id\`) AS id FROM \`${this.tableName}\` WHERE \`market\` IN (${wanted.map(() => '?').join(', ')}) GROUP BY \`market\`) latest`,
+          `INNER JOIN (SELECT \`market\`, MAX(\`id\`) AS id FROM \`${this.tableName}\` WHERE \`market\` IN (${wanted.map(() => '?').join(', ')}) ${completedOnly ? "AND `status` IN ('completed', 'completed_with_skips') " : ''}GROUP BY \`market\`) latest`,
           'ON latest.id = r.`id`'
         ].join(' '),
         wanted
@@ -116,6 +128,7 @@ class CatalogSyncRunsRepository {
       productId: row.product_id ? String(row.product_id) : undefined,
       summary: parseSummary(row.summary),
       error: row.error ? String(row.error) : null,
+      stripeAccountId: row.stripe_account_id ? String(row.stripe_account_id) : null,
       createdAt: toIso(row.started_at),
       updatedAt: finishedAt
     };

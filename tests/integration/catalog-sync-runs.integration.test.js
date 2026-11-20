@@ -1,5 +1,6 @@
 const { createScratchDatabase } = require('./helpers/scratch-database');
 const { CreateCatalogSyncRuns1700000000032 } = require('../../src/infrastructure/migrations/1700000000032-create-catalog-sync-runs');
+const { AddCatalogSyncRunStripeAccount1700000000089 } = require('../../src/infrastructure/migrations/1700000000089-add-catalog-sync-run-stripe-account');
 const { CatalogSyncRunsRepository } = require('../../src/infrastructure/repositories/catalog-sync-runs.repository');
 
 const runIntegration = process.env.RUN_DB_INTEGRATION_TESTS === 'true';
@@ -26,6 +27,7 @@ describeIntegration('catalog sync runs (MySQL)', () => {
     db = await createScratchDatabase('sync_runs', []);
     const runner = db.dataSource.createQueryRunner();
     await new CreateCatalogSyncRuns1700000000032().up(runner);
+    await new AddCatalogSyncRunStripeAccount1700000000089().up(runner);
     await runner.release();
     repository = new CatalogSyncRunsRepository(db.dataSource);
   });
@@ -85,6 +87,7 @@ describeIntegration('catalog sync runs (MySQL)', () => {
     await new CreateCatalogSyncRuns1700000000032().down(runner);
     expect(await runner.hasTable('catalog_sync_runs')).toBe(false);
     await new CreateCatalogSyncRuns1700000000032().up(runner);
+    await new AddCatalogSyncRunStripeAccount1700000000089().up(runner);
     await runner.release();
   });
 });

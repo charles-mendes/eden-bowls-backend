@@ -69,6 +69,18 @@ function assertUsChargeShipping(us) {
   }
 }
 
+// The UPS test environment dry ice switch is a boolean; anything else stores nothing.
+function assertUsSkipDryIceInTest(us) {
+  if (!us || us.skip_dry_ice_in_test === undefined) {
+    return;
+  }
+  if (typeof us.skip_dry_ice_in_test !== 'boolean') {
+    throw new HttpError(422, 'US skip_dry_ice_in_test must be true or false.', {
+      code: 'invalid_skip_dry_ice_in_test'
+    });
+  }
+}
+
 // The Brazil delivery time is a whole number of business days, 0 (same day) to 3; a refused value stores nothing.
 function assertBrDeliveryDays(br) {
   const value = br && br.rule ? br.rule.delivery_days : null;
@@ -322,6 +334,7 @@ class AdminShippingService {
     this.ensureRepository();
     assertUsMaxTransitDays(payload.us);
     assertUsChargeShipping(payload.us);
+    assertUsSkipDryIceInTest(payload.us);
     assertBrDeliveryDays(payload.br);
     await assertUsDryIce(payload.us, this.repository);
     await assertUsBoxes(payload.us, this.repository);

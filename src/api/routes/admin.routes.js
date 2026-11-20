@@ -50,6 +50,7 @@ const { registerAdminNutritionSettingsRoutes } = require('./admin-nutrition-sett
 const { registerAdminLifeStageSettingsRoutes } = require('./admin-life-stage-settings.routes');
 const { registerAdminCompanySettingsRoutes } = require('./admin-company-settings.routes');
 const { registerAdminLegalRoutes } = require('./legal.routes');
+const { registerAdminPurchaseTrailRoutes } = require('./admin-purchase-trail.routes');
 
 // The delivery range of a shipping queue (`from`, `to`); the service validates it.
 function deliveryRangeQuery(query = {}) {
@@ -954,6 +955,16 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  // Admin only (system.health.read): what would make store checkout fail in Brazil or the United States.
+  app.get('/api/v1/admin/checkout/readiness', requirePermission('system.health.read', { market: 'none' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!dependencies.adminCheckoutReadinessService) {
+        throw new HttpError(503, 'Checkout readiness service is not available.');
+      }
+      return dependencies.adminCheckoutReadinessService.read();
+    });
+  });
+
   app.get('/api/v1/admin/stripe/first-purchase-promos', requirePermission('billing.coupons.write', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.stripeCouponService) {
@@ -1205,6 +1216,7 @@ function registerAdminRoutes(app, dependencies = {}) {
   registerAdminLifeStageSettingsRoutes(app, dependencies, { requirePermission, handle });
   registerAdminCompanySettingsRoutes(app, dependencies, { requirePermission, handle });
   registerAdminLegalRoutes(app, dependencies, { requirePermission, handle });
+  registerAdminPurchaseTrailRoutes(app, dependencies, { requirePermission, handle });
 }
 
 module.exports = {

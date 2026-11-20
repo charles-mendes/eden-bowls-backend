@@ -4,15 +4,18 @@ function product(id, planCountry, variants) {
   return { id, planCountry, namePt: `Bowl ${id}`, variants };
 }
 
-function serviceWith({ products, ensureRecurringPrice, runs = [] }) {
+function serviceWith({ products, ensureRecurringPrice, runs = [], accountIds = {} }) {
   const repository = {
     listProducts: jest.fn().mockResolvedValue({ items: products }),
     fingerprint: jest.fn(() => 'fp'),
     upsertPostMeta: jest.fn().mockResolvedValue()
   };
-  const stripeBilling = {
-    ensureRecurringPrice: ensureRecurringPrice || jest.fn().mockResolvedValue({ priceId: 'price_1', productId: 'prod_1' })
-  };
+  const ensure = ensureRecurringPrice || jest.fn().mockResolvedValue({ priceId: 'price_1', productId: 'prod_1' });
+  const billingOf = (account) => ({
+    ensureRecurringPrice: ensure,
+    currentAccountId: accountIds[account] || jest.fn().mockResolvedValue(null)
+  });
+  const billings = { br: billingOf('br'), us: billingOf('us') };
   const syncRunsRepository = {
     insert: jest.fn(async (run) => {
       runs.push(run);
@@ -27,7 +30,7 @@ function serviceWith({ products, ensureRecurringPrice, runs = [] }) {
   };
   const service = new AdminCatalogService({
     repository,
-    stripeAccounts: { getForCreation: () => stripeBilling, get: () => stripeBilling },
+    stripeAccounts: { getForCreation: (account) => billings[account], get: (account) => billings[account] },
     stripeBrEnabled: true,
     syncRunsRepository
   });
@@ -106,5 +109,62 @@ describe('catalog sync runs', () => {
   test('status is empty when nothing ran', async () => {
     const { service } = serviceWith({ products: [] });
     await expect(service.status({ markets: ['BR', 'US'] })).resolves.toEqual({ status: null, byMarket: {} });
+  });
+
+  test('a completed run stores the Stripe account its market key belongs to', async () => {
+    const { service, runs } = serviceWith({
+      products: [
+        product('1', 'BR', [{ id: '11', regularPrice: 30, name: 'A' }]),
+        product('2', 'US', [{ id: '21', regularPrice: 40, name: 'C' }, { id: '22', regularPrice: 50, name: 'D' }])
+      ],
+      accountIds: {
+        br: jest.fn().mockResolvedValue('acct_LOCALBR'),
+        us: jest.fn().mockResolvedValue('acct_LOCALUS')
+      }
+    });
+
+    await service.sync({});
+
+    expect(runs).toEqual([
+      expect.objectContaining({ market: 'BR', status: 'completed', stripeAccountId: 'acct_LOCALBR' }),
+      expect.objectContaining({ market: 'US', status: 'completed', stripeAccountId: 'acct_LOCALUS' })
+    ]);
+    // One lookup per market, not one per variant.
+    expect(service.stripeAccounts.getForCreation('us').currentAccountId).toHaveBeenCalledTimes(1);
+  });
+
+  test('a failed run stores no Stripe account', async () => {
+    const { service, runs } = serviceWith({
+      products: [product('2', 'US', [{ id: '21', regularPrice: 40, name: 'C' }])],
+      ensureRecurringPrice: jest.fn().mockRejectedValue(new Error('No such product')),
+      accountIds: { us: jest.fn().mockResolvedValue('acct_LOCALUS') }
+    });
+
+    await expect(service.sync({ market: 'US' })).rejects.toThrow('No such product');
+
+    expect(runs).toEqual([expect.objectContaining({ market: 'US', status: 'failed' })]);
+    expect(runs[0].stripeAccountId).toBeUndefined();
+  });
+
+  test('an account lookup failure does not fail the sync', async () => {
+    const { service, runs } = serviceWith({
+      products: [product('2', 'US', [{ id: '21', regularPrice: 40, name: 'C' }])],
+      accountIds: { us: jest.fn().mockRejectedValue(new Error('timeout')) }
+    });
+
+    await expect(service.sync({ market: 'US' })).resolves.toMatchObject({ status: 'completed' });
+
+    expect(runs).toEqual([expect.objectContaining({ market: 'US', status: 'completed', stripeAccountId: null })]);
+  });
+
+  test('a completed sync drops the market price sample', async () => {
+    const { service } = serviceWith({ products: [product('2', 'US', [{ id: '21', regularPrice: 40, name: 'C' }])] });
+    service.priceSamples.set('US', { at: Date.now(), result: { missing: [] } });
+    service.priceSamples.set('BR', { at: Date.now(), result: { missing: [] } });
+
+    await service.sync({ market: 'US' });
+
+    expect(service.priceSamples.has('US')).toBe(false);
+    expect(service.priceSamples.has('BR')).toBe(true);
   });
 });

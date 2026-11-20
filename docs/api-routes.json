@@ -180,6 +180,10 @@
     "path": "/api/v1/admin/catalog/sync/status"
   },
   {
+    "method": "GET",
+    "path": "/api/v1/admin/checkout/readiness"
+  },
+  {
     "method": "PATCH",
     "path": "/api/v1/admin/courier-deliveries/:id"
   },
@@ -465,6 +469,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/purchase-trail/config-events"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/purchase-trail/errors"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/reports/acquisition"
   },
   {
@@ -645,6 +657,10 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/users/:userId/purchase-trail"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/users/:userId/roles"
   },
   {
@@ -738,6 +754,10 @@
   {
     "method": "POST",
     "path": "/api/v1/onboarding/address/autocomplete"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v1/onboarding/checkout/client-events"
   },
   {
     "method": "GET",

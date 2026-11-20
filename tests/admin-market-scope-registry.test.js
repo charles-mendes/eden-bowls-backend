@@ -70,9 +70,11 @@ describe('admin market scope registry', () => {
       .flatMap((route) => route.methods.map((method) => `${method} ${route.path}`))
       .sort();
 
-    // The nutrition parameter set applies to both markets (nutrition-parameters).
+    // The nutrition parameter set applies to both markets (nutrition-parameters). The checkout readiness list is admin
+    // only and always covers Brazil and the United States (admin-checkout-readiness).
     expect(nonePaths).toEqual([
       'DELETE /api/v1/admin/nutrition/parameters/draft',
+      'GET /api/v1/admin/checkout/readiness',
       'GET /api/v1/admin/me',
       'GET /api/v1/admin/nutrition/parameters',
       'POST /api/v1/admin/me/password',

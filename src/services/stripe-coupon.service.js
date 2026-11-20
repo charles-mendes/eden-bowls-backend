@@ -120,16 +120,23 @@ function isFirstPurchasePromo(promo) {
   return firstTime && duration === 'once';
 }
 
+const READINESS_TTL_MS = 5 * 60 * 1000;
+
 class StripeCouponService {
   constructor(repository, options = {}) {
     this.repository = repository;
     this.termDiscounts = options.termDiscounts || null;
     this.auditRepository = options.auditRepository || null;
+    this.purchaseTrail = options.purchaseTrail || null;
     this.dataSource = options.dataSource || null;
     this.stripeAccounts = options.stripeAccounts || null;
     this.stripeBilling = options.stripeBilling || null;
     this.secretKey = options.secretKey || '';
     this.stripeBrEnabled = options.stripeBrEnabled;
+    // Checkout readiness result per account, kept for READINESS_TTL_MS. Saving the mapping (by hand or by the sync)
+    // drops the account's entry.
+    this.readinessCache = new Map();
+    this.now = options.now || (() => Date.now());
   }
 
   accountOf(account) {
@@ -218,6 +225,49 @@ class StripeCouponService {
     };
   }
 
+  // Terms (1, 3, 6) whose first-purchase coupon would make checkout refuse on this account: no stored promotion code,
+  // a code Stripe no longer has, or an inactive one (the refusal of invalid_promotion_code_id). The stored mapping's
+  // `complete` is not enough. Any other Stripe error sets `unverified` and the result is not cached.
+  async checkoutReadiness(account) {
+    const stripeAccount = this.accountOf(account);
+    const cached = this.readinessCache.get(stripeAccount);
+    if (cached && this.now() - cached.at < READINESS_TTL_MS) {
+      return cached.result;
+    }
+
+    const mapping = await this.getMapping(stripeAccount);
+    const missingTerms = [];
+    let unverified = false;
+    let stripe = null;
+    for (const term of VALID_SUBSCRIPTION_TERMS) {
+      const promoId = mapping[term];
+      if (!promoId) {
+        missingTerms.push(term);
+        continue;
+      }
+      try {
+        stripe = stripe || this.ensureStripe(stripeAccount);
+        const promo = await stripe.promotionCodes.retrieve(promoId);
+        if (!promo || promo.active === false) {
+          missingTerms.push(term);
+        }
+      } catch (error) {
+        const code = error && (error.code || (error.raw && error.raw.code));
+        if (code === 'resource_missing') {
+          missingTerms.push(term);
+        } else {
+          unverified = true;
+        }
+      }
+    }
+
+    const result = { stripe_account: stripeAccount, missing_terms: missingTerms, unverified };
+    if (!unverified) {
+      this.readinessCache.set(stripeAccount, { at: this.now(), result });
+    }
+    return result;
+  }
+
   async incrementMisconfigMetric(account) {
     this.ensureRepository();
     return this.repository.incrementMisconfigCount(this.accountOf(account));
@@ -246,7 +296,15 @@ class StripeCouponService {
   async persistMapping(mapping = {}, coupons = {}, account) {
     this.ensureRepository();
     const sanitized = this.sanitizeMapping(mapping, coupons);
+    // The upsert overwrites coupon_id: a term saved again with the same promotion code keeps its stored coupon.
+    const stored = await this.repository.getMapping(this.accountOf(account));
+    for (const term of Object.keys(sanitized.mapping)) {
+      if (!sanitized.coupons[term] && stored.coupons[term] && stored.mapping[term] === sanitized.mapping[term]) {
+        sanitized.coupons[term] = stored.coupons[term];
+      }
+    }
     await this.repository.saveMapping(sanitized.mapping, sanitized.coupons, this.accountOf(account));
+    this.readinessCache.delete(this.accountOf(account));
     const health = await this.mappingHealth(account);
     // The three terms are saved, so the blocked checkouts counted before no longer describe the setup.
     if (health.complete && health.misconfig_count > 0 && this.repository.resetMisconfigCount) {
@@ -481,10 +539,20 @@ class StripeCouponService {
         });
       }
     };
-    if (this.dataSource && typeof this.dataSource.transaction === 'function') {
-      return this.dataSource.transaction(work);
+    const result = this.dataSource && typeof this.dataSource.transaction === 'function'
+      ? await this.dataSource.transaction(work)
+      : await work(null);
+    // customer-purchase-trail: the percent of a term is a config event of that market, after the audit committed.
+    if (this.purchaseTrail && typeof this.purchaseTrail.recordConfig === 'function') {
+      await this.purchaseTrail.recordConfig({
+        market: account,
+        actorId: actorIdOf(actor),
+        action: 'first_purchase_percent.update',
+        targetRef: `term_${termMonths}`,
+        outcome: 'ok'
+      });
     }
-    return work(null);
+    return result;
   }
 
   // A new percent needs a new coupon, since Stripe cannot change a coupon's percent: existing subscriptions keep

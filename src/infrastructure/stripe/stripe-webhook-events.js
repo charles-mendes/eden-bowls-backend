@@ -1,5 +1,5 @@
 // Canonical list of the events each Stripe webhook endpoint subscribes to (US and BR, test and live).
-// Section 8 of docs-new/FEATURE_STRIPE_SEPARAR_PAISES/COMO-CONFIGURAR-STRIPE.md mirrors this list for the
+// Section 8 of docs-new/FEATURE/FEATURE_STRIPE_SEPARAR_PAISES/COMO-CONFIGURAR-STRIPE.md mirrors this list for the
 // dashboard; tests/stripe-webhook-events.test.js fails when the two differ.
 const STRIPE_WEBHOOK_EVENTS = Object.freeze([
   'charge.dispute.closed',

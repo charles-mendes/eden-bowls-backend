@@ -102,7 +102,7 @@ class StripeWebhookEventsRepository {
     this.ensureDataSource();
     const rows = await this.dataSource.query(
       [
-        'SELECT `event_id` AS eventId, `stripe_account` AS stripeAccount, `type`, `attempts`, `created_at` AS createdAt, `next_attempt_at` AS nextAttemptAt',
+        'SELECT `event_id` AS eventId, `stripe_account` AS stripeAccount, `type`, `attempts`, `created_at` AS createdAt, `next_attempt_at` AS nextAttemptAt, `payload_summary` AS payloadSummary',
         `FROM \`${this.tableName}\``,
         'WHERE `processed_at` IS NULL AND `failed_at` IS NULL AND (`next_attempt_at` IS NULL OR `next_attempt_at` <= ?)',
         'ORDER BY `created_at` ASC',
@@ -116,7 +116,9 @@ class StripeWebhookEventsRepository {
       type: String(row.type || ''),
       attempts: Number(row.attempts || 0),
       createdAt: row.createdAt,
-      nextAttemptAt: row.nextAttemptAt
+      nextAttemptAt: row.nextAttemptAt,
+      // Ids only (customer, subscription): customer-purchase-trail resolves the customer of a terminal failure.
+      payloadSummary: row.payloadSummary
     }));
   }
 
