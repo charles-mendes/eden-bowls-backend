@@ -31,9 +31,12 @@ describe('AddCatalogSyncRunStripeAccount1700000000089', () => {
     expect(queryRunner.query).toHaveBeenCalledWith('ALTER TABLE `catalog_sync_runs` DROP COLUMN `stripe_account_id`');
   });
 
-  test('is registered last', () => {
+  test('is registered right after 088 and before the purchase trail', () => {
     const { buildDataSourceOptions } = require('../src/infrastructure/db');
     const names = buildDataSourceOptions({}).migrations.map((migration) => migration.name);
-    expect(names[names.length - 1]).toBe('AddCatalogSyncRunStripeAccount1700000000089');
+    const index = names.indexOf('AddCatalogSyncRunStripeAccount1700000000089');
+    expect(index).toBeGreaterThan(0);
+    expect(names[index - 1]).toMatch(/1700000000088$/);
+    expect(names[index + 1]).toBe('CreateCustomerPurchaseTrail1700000000090');
   });
 });
