@@ -25,5 +25,6 @@ function estimateMrr(rows = []) {
 }
 
 module.exports = {
-  estimateMrr
+  estimateMrr,
+  toMinor
 };

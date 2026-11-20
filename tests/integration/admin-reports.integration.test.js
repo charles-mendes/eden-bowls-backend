@@ -1,6 +1,8 @@
 const { DataSource } = require('typeorm');
 const { AdminReportsRepository } = require('../../src/infrastructure/repositories/admin-reports.repository');
 const { AdminReportsService } = require('../../src/services/admin-reports.service');
+const { resolveReportPeriod } = require('../../src/core/report-period');
+const { AdminReportDetailsService } = require('../../src/services/admin-report-details.service');
 
 const runIntegration = process.env.RUN_DB_INTEGRATION_TESTS === 'true';
 const describeIntegration = runIntegration ? describe : describe.skip;
@@ -35,6 +37,7 @@ describeIntegration('admin reports (MySQL)', () => {
   // 2026-10-28 15:00 in Sao Paulo; the default window is 2026-09-28..2026-10-27 local (03:00 UTC bounds).
   const now = new Date('2026-10-28T18:00:00Z');
   let service;
+  let repository;
 
   async function subscription(values) {
     const row = {
@@ -73,7 +76,7 @@ describeIntegration('admin reports (MySQL)', () => {
     await dataSource.query(`CREATE TABLE \`${tables.items}\` LIKE \`pack_stock_items\``);
     await dataSource.query(`CREATE TABLE \`${tables.movements}\` LIKE \`pack_stock_movements\``);
 
-    const repository = new AdminReportsRepository(dataSource, {
+    repository = new AdminReportsRepository(dataSource, {
       ledgerTableName: tables.ledger,
       invoicesTableName: tables.invoices,
       onboardingTableName: tables.onboarding,
@@ -198,5 +201,164 @@ describeIntegration('admin reports (MySQL)', () => {
       ['BR', 'BRL', 30000],
       ['US', 'USD', 99999]
     ]);
+  });
+
+  describe('details: the records behind each figure add up to the aggregate', () => {
+    const window = () => resolveReportPeriod({}, { market: 'BR', now });
+    const page = { limit: 50, offset: 0 };
+    const totals = (name, args, measures) => repository.detailTotals(name, args, measures);
+
+    test('invoices: paid in the market currency, grouped by billing reason, other currency apart', async () => {
+      const { range } = window();
+      const args = { account: 'br', currency: 'brl', range, variant: 'paid' };
+      const { totals: sum, groups } = await totals('invoices', args, { contribution: 'amount' });
+      expect(sum).toEqual({ count: 2, contribution: 30000 });
+      expect(groups).toEqual([
+        { key: 'subscription_create', count: 1, contribution: 15000 },
+        { key: 'subscription_cycle', count: 1, contribution: 15000 }
+      ]);
+
+      const records = await repository.detailRecords('invoices', args, { contribution: 'amount' }, page);
+      expect(records.map((row) => row.invoiceNumber)).toEqual(['EB-2026-1', 'EB-2026-2']);
+      expect(records[0]).toMatchObject({ date: '2026-10-05T15:00:00Z', groupKey: 'subscription_create' });
+      expect(Number(records[0].userId)).toBe(7);
+      expect(Number(records[0].contribution)).toBe(15000);
+
+      const second = await repository.detailRecords('invoices', args, { contribution: 'amount' }, { limit: 1, offset: 1 });
+      expect(second.map((row) => row.invoiceNumber)).toEqual(['EB-2026-2']);
+
+      const other = await totals('invoices', { ...args, variant: 'otherCurrency' }, { contribution: 'one' });
+      expect(other.totals).toEqual({ count: 1, contribution: 1 });
+      const first = await totals('invoices', { ...args, variant: 'firstPurchase' }, { contribution: 'amount' });
+      const renewal = await totals('invoices', { ...args, variant: 'renewal' }, { contribution: 'amount' });
+      expect(first.totals.contribution + renewal.totals.contribution).toBe(30000);
+    });
+
+    test('subscriptions: new, canceled and the churn base with its numerator', async () => {
+      const { range } = window();
+      const base = { account: 'br', range };
+      expect((await totals('subscriptions', { ...base, variant: 'new' }, { contribution: 'one' })).totals.contribution).toBe(2);
+      expect((await totals('subscriptions', { ...base, variant: 'canceled' }, { contribution: 'one' })).totals.contribution).toBe(2);
+      const churn = await totals('subscriptions', { ...base, variant: 'activeAtStart' }, { numerator: 'churned', denominator: 'one' });
+      expect(churn.totals).toEqual({ count: 2, numerator: 1, denominator: 2 });
+      expect((await totals('subscriptions', { account: 'br', variant: 'active' }, { contribution: 'one' })).totals.count).toBe(1);
+      expect((await totals('subscriptions', { account: 'br', variant: 'activeOrTrialing' }, { contribution: 'one' })).totals.count).toBe(2);
+    });
+
+    test('checkouts: each stage and the highest stage reached', async () => {
+      const { range } = window();
+      const base = { market: 'BR', account: 'br', range };
+      const started = await totals('checkouts', { ...base, variant: 'started' }, { numerator: 'activated', denominator: 'one' });
+      expect(started.totals).toEqual({ count: 4, numerator: 2, denominator: 4 });
+      expect(started.groups).toEqual([
+        { key: 'activated', count: 2, numerator: 2, denominator: 2 },
+        { key: 'linked', count: 1, numerator: 0, denominator: 1 },
+        { key: 'started', count: 1, numerator: 0, denominator: 1 }
+      ]);
+      expect((await totals('checkouts', { ...base, variant: 'linked' }, { contribution: 'one' })).totals.count).toBe(3);
+      expect((await totals('checkouts', { ...base, variant: 'activated' }, { contribution: 'one' })).totals.count).toBe(2);
+      expect((await totals('checkouts', { range, variant: 'unassigned' }, { contribution: 'one' })).totals.count).toBe(1);
+    });
+
+    test('mix: one record per subscription, packs of the recipe and the share of all packs', async () => {
+      const records = await repository.detailRecords('lineItems', { account: 'br', flavor: 'frango' }, { contribution: 'packs' }, page);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({ items: 'frango · 300 g × 4' });
+      const share = await totals('lineItems', { account: 'br', match: { flavor: 'frango' } }, { numerator: 'matchPacks', denominator: 'packs' });
+      expect(share.totals).toEqual({ count: 2, numerator: 4, denominator: 6 });
+    });
+
+    test('operations: cycles by status, late and awaiting payment', async () => {
+      const period = window();
+      const base = { account: 'br', from: period.from, to: period.to, today: period.today };
+      expect((await totals('cycles', { ...base, status: 'in_production' }, { contribution: 'one' })).totals.count).toBe(1);
+      const late = await repository.detailRecords('cycles', { ...base, late: true }, { contribution: 'one' }, page);
+      expect(late).toHaveLength(1);
+      expect(late[0]).toMatchObject({ groupKey: 'in_production', preparationDay: '2026-10-20', deliveryDate: '2026-10-22' });
+      expect((await totals('awaiting', { account: 'br' }, { contribution: 'one' })).totals.count).toBe(1);
+    });
+
+    test('shipments: the total leaves voided ones out and lists them apart', async () => {
+      const [us] = await dataSource.query(`SELECT id FROM \`${tables.ledger}\` WHERE stripe_subscription_id = 'sub_us'`);
+      await dataSource.query(
+        `INSERT INTO \`${tables.shipments}\` (subscription_id, stripe_invoice_id, status, tracking_number, created_at) VALUES
+          (?, 'in_a', 'delivered', '1Z1', '2026-10-05 12:00:00'), (?, 'in_b', 'voided', '1Z2', '2026-10-06 12:00:00')`,
+        [us.id, us.id]
+      );
+      const { range } = resolveReportPeriod({}, { market: 'US', now });
+      const total = await repository.detailRecords('shipments', { account: 'us', range, variant: 'total' }, { contribution: 'one' }, page);
+      expect(total.map((row) => [row.groupKey, row.trackingNumber])).toEqual([['delivered', '1Z1']]);
+      expect((await totals('shipments', { account: 'us', range, variant: 'voided' }, { contribution: 'one' })).totals.count).toBe(1);
+      expect((await totals('shipments', { account: 'us', range, variant: 'status', status: 'delivered' }, { contribution: 'one' })).totals.count).toBe(1);
+      const report = await service.report('operations', {}, { markets: ['US'] });
+      expect(report.shipments.total.value).toBe(1);
+    });
+
+    test('stock: separation nets its reversal; the balance check sums every movement', async () => {
+      const { range } = window();
+      const separated = await totals('movements', { market: 'BR', range, flavor: 'frango', grams: 300, kind: 'separated' }, { contribution: 'effect' });
+      expect(separated.totals).toEqual({ count: 2, contribution: 35 });
+      const balance = await totals('movements', { market: 'BR', flavor: 'frango', grams: 300, kind: 'balance' }, { contribution: 'effect' });
+      // 60 - 40 + 5 - 3 = 22, while the stored on_hand is 20: the details show the gap.
+      expect(balance.totals).toEqual({ count: 4, contribution: 22 });
+    });
+
+    test('customer names come in a separate query by user id', async () => {
+      const users = `it_${suffix}_rep_users`;
+      await dataSource.query(`CREATE TABLE \`${users}\` (ID bigint unsigned NOT NULL, display_name varchar(250) NOT NULL, PRIMARY KEY (ID))`);
+      try {
+        await dataSource.query(`INSERT INTO \`${users}\` (ID, display_name) VALUES (7, 'Ana'), (8, 'Bia')`);
+        repository.usersTable = users;
+        expect(await repository.customerNames([7, 7, 99])).toEqual({ 7: 'Ana' });
+      } finally {
+        await dataSource.query(`DROP TABLE IF EXISTS \`${users}\``);
+      }
+    });
+  });
+
+  describe('details of every figure on the screen', () => {
+    const NOT_A_FIGURE = new Set(['market', 'currency', 'period', 'period.previous', 'period.timezone', 'period.granularity', 'generatedAt', 'markets', 'recipes', 'packSizes', 'rows', 'shipments.byStatus']);
+    // The stored stock balance is not rebuilt from movements; a gap there is information, not a report bug.
+    const BALANCE = /(^rows\..+\.onHand$|^totals\.onHand$)/;
+    const admin = { roles: ['admin'], permissions: ['reports.read', 'reports.export', 'billing.subscribers.read'] };
+
+    test.each([
+      ['revenue', 'BR'], ['subscriptions', 'BR'], ['acquisition', 'BR'], ['mix', 'BR'], ['operations', 'BR'], ['operations', 'US'], ['stock', 'BR'], ['summary', 'BR']
+    ])('%s %s: the records of each figure add up to the card, now and in the previous period', async (report, market) => {
+      const details = new AdminReportDetailsService({ reportsService: service, repository, logger: { error: jest.fn() } });
+      const scope = { markets: [market] };
+      const { csv } = await service.exportCsv({ report, market, formato: 'csv' }, scope, admin);
+      const keys = [...new Set(csv.trim().split('\r\n').slice(1)
+        .map((line) => line.slice(line.lastIndexOf(',"') + 2, -1))
+        .filter((key) => !NOT_A_FIGURE.has(key)))];
+      expect(keys.length).toBeGreaterThan(0);
+
+      for (const key of keys) {
+        const query = { report, indicator: key, market };
+        const result = await details.details(query, scope, admin);
+        if (BALANCE.test(key)) continue;
+        expect([key, result.reconciliation.matches, result.reconciliation.recordsValue]).toEqual([key, true, result.value]);
+        if (result.hasPrevious) {
+          const previous = await details.details({ ...query, period: 'previous' }, scope, admin);
+          expect([key, 'previous', previous.reconciliation.matches]).toEqual([key, 'previous', true]);
+        }
+      }
+    });
+
+    test('a bar of the revenue series adds up to its bucket', async () => {
+      const details = new AdminReportDetailsService({ reportsService: service, repository });
+      const result = await details.details({ report: 'revenue', indicator: 'series.revenue', market: 'BR', bucket: '2026-10-05' }, { markets: ['BR'] }, admin);
+      expect(result.records.items.map((record) => record.reference)).toEqual(['EB-2026-1']);
+      expect(result.reconciliation).toEqual({ reportValue: 15000, recordsValue: 15000, matches: true });
+    });
+
+    test('the stored balance that differs from the movements is shown as a gap', async () => {
+      const logger = { error: jest.fn() };
+      const details = new AdminReportDetailsService({ reportsService: service, repository, logger });
+      const result = await details.details({ report: 'stock', indicator: 'rows.frango.300.onHand', market: 'BR' }, { markets: ['BR'] }, admin);
+      expect(result.reconciliation).toEqual({ reportValue: 20, recordsValue: 22, matches: false });
+      expect(result.records.total).toBe(4);
+      expect(logger.error).toHaveBeenCalled();
+    });
   });
 });

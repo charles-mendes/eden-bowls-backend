@@ -138,6 +138,7 @@ const { AdminShippingService } = require('./services/admin-shipping.service');
 const { ShippingHeadquartersService } = require('./services/shipping-headquarters.service');
 const { AdminTodayService } = require('./services/admin-today.service');
 const { AdminReportsService } = require('./services/admin-reports.service');
+const { AdminReportDetailsService } = require('./services/admin-report-details.service');
 const { AdminOnboardingService } = require('./services/admin-onboarding.service');
 const { AdminBillingService } = require('./services/admin-billing.service');
 const { AdminCatalogService } = require('./services/admin-catalog.service');
@@ -935,9 +936,15 @@ async function bootstrap() {
     shippingSettings: () => shippingService.settings,
     logger
   });
+  const adminReportsRepository = new AdminReportsRepository(dataSource, { usersTableName: env.WP_USERS_TABLE_NAME });
   const adminReportsService = new AdminReportsService({
-    repository: new AdminReportsRepository(dataSource),
+    repository: adminReportsRepository,
     recipeNamesRepository: adminCatalogRepository,
+    logger
+  });
+  const adminReportDetailsService = new AdminReportDetailsService({
+    reportsService: adminReportsService,
+    repository: adminReportsRepository,
     logger
   });
   const adminTodayService = new AdminTodayService({
@@ -1039,6 +1046,7 @@ async function bootstrap() {
     adminPackStockService,
     adminTodayService,
     adminReportsService,
+    adminReportDetailsService,
     adminDeliveryCalendarService,
     upsShipmentService,
     upsPickupService,

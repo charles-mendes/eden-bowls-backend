@@ -461,6 +461,14 @@
   },
   {
     "method": "GET",
+    "path": "/api/v1/admin/reports/details"
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/reports/details/export.csv"
+  },
+  {
+    "method": "GET",
     "path": "/api/v1/admin/reports/export.csv"
   },
   {

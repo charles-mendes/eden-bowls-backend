@@ -717,6 +717,32 @@ function registerAdminRoutes(app, dependencies = {}) {
     });
   });
 
+  function reportDetailsService() {
+    if (!dependencies.adminReportDetailsService) {
+      throw new HttpError(503, 'Report details are not available.');
+    }
+    return dependencies.adminReportDetailsService;
+  }
+
+  // The records behind one figure of a report, with the same criteria and a check against the figure.
+  app.get('/api/v1/admin/reports/details', requirePermission('reports.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => reportDetailsService().details(
+      request.query || {},
+      request.marketQuery,
+      request.adminIdentity,
+      parsePageQuery(request.query, { defaultPerPage: 50, maxPerPage: 200 })
+    ));
+  });
+
+  app.get('/api/v1/admin/reports/details/export.csv', requirePermission('reports.export', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!request.adminIdentity.permissions.includes('reports.read')) {
+        throw new HttpError(403, 'Forbidden.');
+      }
+      return reportDetailsService().exportCsv(request.query || {}, request.marketQuery, request.adminIdentity);
+    });
+  });
+
   app.get('/api/v1/admin/billing/subscriptions', requirePermission('billing.subscribers.read', { market: 'query' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminBillingService) {
