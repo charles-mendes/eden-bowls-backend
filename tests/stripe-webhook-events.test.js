@@ -5,7 +5,7 @@ const {
   isSubscribedStripeEvent
 } = require('../src/infrastructure/stripe/stripe-webhook-events');
 
-const DOC_PATH = path.resolve(__dirname, '../docs-new/FEATURE_STRIPE_SEPARAR_PAISES/COMO-CONFIGURAR-STRIPE.md');
+const DOC_PATH = path.resolve(__dirname, '../docs-new/FEATURE/FEATURE_STRIPE_SEPARAR_PAISES/COMO-CONFIGURAR-STRIPE.md');
 
 function readSection8() {
   const doc = fs.readFileSync(DOC_PATH, 'utf8');
