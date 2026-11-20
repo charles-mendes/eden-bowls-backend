@@ -277,6 +277,13 @@ describe('AdminProductionService', () => {
     })).toThrow(HttpError);
   });
 
+  test('accepts a one-day window for the "Hoje" period and still rejects other sizes', () => {
+    const { parseProductionQueueQuery } = require('../src/api/validators/admin-production.validator');
+    expect(parseProductionQueueQuery({ windowDays: '1' }).windowDays).toBe(1);
+    expect(parseProductionQueueQuery({}).windowDays).toBe(7);
+    expect(() => parseProductionQueueQuery({ windowDays: '2' })).toThrow(HttpError);
+  });
+
   test('returns 409 when periodEnd is stale', async () => {
     const productionRepository = {
       findBySubscriptionAndPeriodEnd: jest.fn(),

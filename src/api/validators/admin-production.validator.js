@@ -1,7 +1,7 @@
 const { z } = require('zod');
 const { HttpError } = require('../../core/http-error');
 
-const WINDOW_DAYS = [7, 14, 30];
+const WINDOW_DAYS = [1, 7, 14, 30];
 const PRODUCTION_STATUSES = ['to_prepare', 'in_production', 'ready', 'blocked'];
 const DUE_BUCKETS = ['overdue', 'today', 'tomorrow', 'upcoming'];
 
@@ -45,7 +45,7 @@ function parseProductionQueueQuery(query = {}) {
     ? 7
     : Number(parsed.data.windowDays);
   if (!WINDOW_DAYS.includes(windowDays)) {
-    throw new HttpError(400, 'windowDays must be 7, 14, or 30.', { code: 'invalid_window_days' });
+    throw new HttpError(400, 'windowDays must be 1, 7, 14, or 30.', { code: 'invalid_window_days' });
   }
 
   const productionStatus = String(parsed.data.productionStatus || '').trim();
