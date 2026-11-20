@@ -478,7 +478,7 @@ class AdminReportsRepository {
           columns: [
             'i.id AS id', 'i.invoice_number AS invoiceNumber', `${INSTANT('i.issued_at')} AS date`,
             "COALESCE(i.billing_reason, '') AS groupKey", 'i.amount_paid_minor AS amount', 'i.currency AS currency', 'i.user_id AS userId',
-            `(SELECT ls.id FROM \`${this.ledgerTable}\` ls WHERE ls.stripe_subscription_id = i.stripe_subscription_id ORDER BY ls.id LIMIT 1) AS subscriptionId`
+            `(SELECT ls.id FROM \`${this.ledgerTable}\` ls WHERE ls.stripe_subscription_id COLLATE utf8mb4_unicode_ci = i.stripe_subscription_id COLLATE utf8mb4_unicode_ci ORDER BY ls.id LIMIT 1) AS subscriptionId`
           ],
           measures: { amount: cond('i.amount_paid_minor'), one: cond('1') },
           order: 'date, id'
