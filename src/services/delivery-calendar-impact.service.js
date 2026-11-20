@@ -1,6 +1,7 @@
 const {
   brazilPrepValid,
   currentUsMaxTransitDays,
+  deliveryForPrep,
   editableUntil,
   timeZoneFor,
   usPrepValid,
@@ -45,6 +46,11 @@ function transitFor(subscription) {
 function prepValid(market, preparationDay, rows, transitDays) {
   const parts = partsOf(preparationDay);
   return market === 'BR' ? brazilPrepValid(parts, rows) : usPrepValid(parts, rows, transitDays);
+}
+
+function deliveryKey(market, preparationDay, rows, transitDays) {
+  const { year, month, day } = deliveryForPrep(market, partsOf(preparationDay), transitDays, rows);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 function pendingMoveAt(subscription) {
@@ -113,9 +119,28 @@ function assessSubscription(subscription, { rowsBefore, rowsAfter, now }) {
   const affected = [];
   for (const delivery of deliveries) {
     if (!prepValid(market, delivery.preparationDay, rowsBefore, transitDays)) continue;
-    if (prepValid(market, delivery.preparationDay, rowsAfter, transitDays)) continue;
-
     const reason = lockReason(subscription, delivery, timeZone, now);
+    if (prepValid(market, delivery.preparationDay, rowsAfter, transitDays)) {
+      // The preparation day holds, but a closed pickup or delivery day can push the package's pickup (United States).
+      // The charge does not move; only the delivery date does.
+      const after = deliveryKey(market, delivery.preparationDay, rowsAfter, transitDays);
+      if (after === deliveryKey(market, delivery.preparationDay, rowsBefore, transitDays)) continue;
+      affected.push({
+        stripeSubscriptionId: subscription.stripeSubscriptionId,
+        ledgerId: subscription.ledgerId,
+        userId: subscription.userId,
+        deliveryId: delivery.id,
+        preparationDay: delivery.preparationDay,
+        deliveryDate: delivery.deliveryDate,
+        newPreparationDay: delivery.preparationDay,
+        newDeliveryDate: after,
+        locked: Boolean(reason),
+        lockReason: reason,
+        move: MOVES.PROJECTION_ONLY
+      });
+      continue;
+    }
+
     const from = delivery.chargeAt
       ? new Date(Math.max(new Date(delivery.chargeAt).getTime(), prepMidnight(delivery.preparationDay, timeZone).getTime()))
       : prepMidnight(delivery.preparationDay, timeZone);

@@ -256,7 +256,7 @@ describe('production block trial end', () => {
     await expect(service.previewBlock({ subscription, alreadyCharged: true })).resolves.toEqual({ charged: true, chargeMovesTo: null, preparationDay: null });
   });
 
-  test('a Thursday preparation moves to the next valid weekday and does not invoice', () => {
+  test('a Thursday preparation stays on Thursday and does not invoice', () => {
     const plan = planBlockTrialEnd({
       market: 'US',
       rows,
@@ -269,9 +269,7 @@ describe('production block trial end', () => {
     expect(plan.invoice).toBe(false);
     expect(plan.refund).toBe(false);
     expect(plan.stripeUpdate.proration_behavior).toBe('none');
-    expect(plan.preparationDay).not.toBe('2026-06-04');
-    const weekday = new Date(`${plan.preparationDay}T00:00:00Z`).getUTCDay();
-    expect([1, 2, 3]).toContain(weekday);
+    expect(plan.preparationDay).toBe('2026-06-04');
   });
 
   test('a late unblock charges now without a past trial end and a paid charge is not refunded', () => {
@@ -371,7 +369,7 @@ function movingService(initial, now) {
 }
 
 describe('market delivery days', () => {
-  const { brazilPrepValid, usPrepValid } = require('../src/core/delivery-closed-days');
+  const { brazilPrepValid, usPrepValid, usPickupFor } = require('../src/core/delivery-closed-days');
 
   test('a Brazil Monday is a delivery day, a Sunday and Carnival 2026 are not', () => {
     expect(brazilPrepValid({ year: 2026, month: 1, day: 5 }, rows)).toBe(true);
@@ -380,12 +378,22 @@ describe('market delivery days', () => {
     expect(brazilPrepValid({ year: 2026, month: 2, day: 17 }, rows)).toBe(false);
   });
 
-  test('a United States preparation day needs a pickup and a delivery day', () => {
-    expect(usPrepValid({ year: 2026, month: 11, day: 20 }, rows, 1)).toBe(false);
-    expect(usPrepValid({ year: 2026, month: 12, day: 23 }, rows, 1)).toBe(false);
-    expect(usPrepValid({ year: 2026, month: 12, day: 30 }, rows, 1)).toBe(false);
-    expect(usPrepValid({ year: 2026, month: 12, day: 29 }, rows, 1)).toBe(false);
+  test('a United States preparation waits in the kitchen for the next pickup whose delivery is a weekday', () => {
+    const plan = (day) => {
+      const found = usPickupFor(day, rows, 1);
+      return found && [found.pickup, found.delivery].map((p) => `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`);
+    };
+    // Thursday: Friday pickup would deliver on Saturday, so it is held for Monday.
+    expect(plan({ year: 2026, month: 11, day: 19 })).toEqual(['2026-11-23', '2026-11-24']);
+    // Friday: no weekend pickup, held for Monday.
+    expect(plan({ year: 2026, month: 11, day: 20 })).toEqual(['2026-11-23', '2026-11-24']);
+    // Christmas Eve and Christmas close pickup.
+    expect(plan({ year: 2026, month: 12, day: 23 })).toEqual(['2026-12-28', '2026-12-29']);
+    // New Year's Eve closes delivery, so Wednesday's pickup is skipped.
+    expect(plan({ year: 2026, month: 12, day: 29 })).toEqual(['2027-01-04', '2027-01-05']);
+    expect(usPrepValid({ year: 2026, month: 11, day: 20 }, rows, 1)).toBe(true);
     expect(usPrepValid({ year: 2026, month: 12, day: 22 }, rows, 1)).toBe(true);
+    // Thanksgiving closes preparation.
     expect(usPrepValid({ year: 2026, month: 11, day: 26 }, rows, 1)).toBe(false);
   });
 });
@@ -526,13 +534,13 @@ describe('skip', () => {
     expect(after.delivery.date).toBe(before.nextDeliveryIfSkip);
   });
 
-  test('a United States skip whose preparation would be a Thursday moves to the next valid Monday', async () => {
+  test('a United States skip whose preparation is a Thursday keeps the Thursday (held for the Monday pickup)', async () => {
     const plan = saturdayPlan({ market: 'US', transitDays: 1, chargeAt: wallTimeToUtc(2026, 5, 4, 0, 0, 0, TIMEZONE_US) });
     const { service, stripe } = movingService(plan, charge(2026, 4, 30, 12, TIMEZONE_US));
     await service.skip(plan, 7, { deliveryId: 'current' });
     const sent = stripe.setTrialEnd.mock.calls[0][0];
-    expect(sent.trial_end).toBe(unix(2026, 6, 8, TIMEZONE_US));
-    expect(new Date('2026-06-08T00:00:00Z').getUTCDay()).toBe(1);
+    expect(sent.trial_end).toBe(unix(2026, 6, 4, TIMEZONE_US));
+    expect(new Date('2026-06-04T00:00:00Z').getUTCDay()).toBe(4);
     expect(sent.proration_behavior).toBe('none');
   });
 

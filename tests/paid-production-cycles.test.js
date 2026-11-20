@@ -82,9 +82,9 @@ describe('a cycle enters production when its invoice is paid (3.12)', () => {
       subscription: { current_period_start: unix(us(2026, 6, 1)) },
       invoice: { id: 'in_1', status_transitions: { paid_at: unix(us(2026, 6, 3, 21)) } }
     });
-    // Paid Wednesday 3 June at 21:00, after closing: Thursday cannot ship (delivery would be Saturday), so Monday 8 June,
-    // pickup Tuesday 9, delivery Wednesday 10.
-    expect(markPaid).toHaveBeenCalledWith(expect.objectContaining({ preparationDay: '2026-06-08', deliveryDate: '2026-06-10' }));
+    // Paid Wednesday 3 June at 21:00, after closing: prepared Thursday 4 June and held, since a Friday pickup would
+    // deliver on Saturday. Pickup Monday 8, delivery Tuesday 9.
+    expect(markPaid).toHaveBeenCalledWith(expect.objectContaining({ preparationDay: '2026-06-04', deliveryDate: '2026-06-09' }));
   });
 
   test('the webhook records the paid cycle for a counted cycle invoice only', async () => {

@@ -12,8 +12,8 @@ const unix = (date) => Math.floor(date.getTime() / 1000);
 
 // Wednesday 7 October 2026 at 15:00 in Sao Paulo, inside the hours (09:00–20:00): prepared that Wednesday.
 const BR_PURCHASE = wallTimeToUtc(2026, 10, 7, 15, 0, 0, TIMEZONE_BR);
-// Thursday 8 October 2026 at 10:00 in New York, 1 transit day: Friday cannot ship (pickup Saturday), so
-// preparation Monday 12 October (Columbus Day is a normal UPS day), pickup Tuesday 13, delivery Wednesday 14.
+// Thursday 8 October 2026 at 10:00 in New York, 1 transit day: prepared that Thursday and held, since a Friday
+// pickup would deliver on Saturday. Pickup Monday 12 October (Columbus Day is a normal UPS day), delivery Tuesday 13.
 const US_PURCHASE = wallTimeToUtc(2026, 10, 8, 10, 0, 0, TIMEZONE_US);
 
 const MARKETS = [
@@ -29,7 +29,7 @@ const MARKETS = [
     query: { country: 'US', transit_days: 1 },
     at: US_PURCHASE,
     ledger: { stripeAccount: 'us', address: { country: 'US', business_days_in_transit: 1 }, shipping: { delivery_days: 1 } },
-    expected: { preparationDay: '2026-10-12', deliveryDate: '2026-10-14' }
+    expected: { preparationDay: '2026-10-08', deliveryDate: '2026-10-13' }
   }
 ];
 
