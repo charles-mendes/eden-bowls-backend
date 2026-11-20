@@ -193,6 +193,44 @@ describe('UpsShipmentService label guards', () => {
     });
   });
 
+  describe('a UPS id already stored', () => {
+    const held = (invoiceId) => ({ id: 5, stripe_invoice_id: invoiceId, ups_shipment_id: 'ups_1', status: 'delivered' });
+
+    test('on the same invoice: the stored row is reused and the pending row goes', async () => {
+      const { service, repository } = buildService();
+      repository.findByUpsShipmentId.mockResolvedValue(held('in_1'));
+
+      const result = await create(service);
+
+      expect(repository.deletePending).toHaveBeenCalledWith(9);
+      expect(repository.markCreated).not.toHaveBeenCalled();
+      expect(result.data).toMatchObject({ reused: true, shipment: { id: 5 } });
+    });
+
+    test('on another invoice in CIE: the label is saved for this invoice with its own copy of the id', async () => {
+      const { service, repository } = buildService();
+      service.upsClient.envName = 'cie';
+      repository.findByUpsShipmentId.mockResolvedValue(held('in_other'));
+
+      const result = await create(service);
+
+      expect(repository.deletePending).not.toHaveBeenCalled();
+      expect(repository.markCreated).toHaveBeenCalledWith(9, expect.objectContaining({ upsShipmentId: 'ups_1#9' }));
+      expect(result.data).toMatchObject({ reused: false, shipment: { id: 9 } });
+    });
+
+    test('on another invoice in production: never hands over the other label, asks to check UPS', async () => {
+      const { service, repository } = buildService();
+      service.upsClient.envName = 'production';
+      repository.findByUpsShipmentId.mockResolvedValue(held('in_other'));
+
+      await expect(create(service)).rejects.toMatchObject({ statusCode: 502, details: { code: 'ups_shipment_unknown', shipment_id: 9 } });
+      expect(repository.deletePending).not.toHaveBeenCalled();
+      expect(repository.markCreated).not.toHaveBeenCalled();
+      expect(repository.markUnknown).toHaveBeenCalledWith(9);
+    });
+  });
+
   test('Two boxes: one UPS call with two packages, two package rows and one active shipment', async () => {
     const usCycle = {
       paidInvoiceId: 'in_1',
@@ -796,6 +834,14 @@ describe('UpsShipmentService.voidShipment', () => {
 
     expect(upsClient.voidShipment).toHaveBeenCalledWith('1ZX');
     expect(repository.markVoided).toHaveBeenCalledWith(4);
+  });
+
+  test('a CIE label stored with its row suffix is voided by its UPS id', async () => {
+    const { service, upsClient } = voidService({ id: 4, status: 'created', ups_shipment_id: '1ZXXXXXXXXXXXXXXXX#4' });
+
+    await service.voidShipment(4);
+
+    expect(upsClient.voidShipment).toHaveBeenCalledWith('1ZXXXXXXXXXXXXXXXX');
   });
 });
 

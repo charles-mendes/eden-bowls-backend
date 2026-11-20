@@ -81,6 +81,12 @@ const QUEUE_LIMIT = 100;
 const QUEUE_TIMEZONE = 'America/New_York';
 const UNRESOLVED_STATUSES = new Set(['pending', 'unknown']);
 
+// A CIE label stored as `<UPS id>#<row id>`: UPS only knows the part before the separator.
+const CIE_ID_SEPARATOR = '#';
+function upsIdForUps(storedId) {
+  return String(storedId || '').split(CIE_ID_SEPARATOR)[0];
+}
+
 const CUSTOMER_LABEL_CODES = new Set(['po_box_not_allowed', 'military_address_not_supported', 'address_incomplete', 'recipient_name_missing']);
 
 // The date a label queue cycle is sorted and filtered by, as the ledger query does.
@@ -464,11 +470,32 @@ class UpsShipmentService {
       });
     }
 
-    // From here UPS has bought the label, so the pending row is never deleted on failure.
+    // From here UPS has bought the label, so the pending row is never deleted on failure, except when the
+    // same invoice already holds this UPS shipment.
+    let storedUpsId = created.upsShipmentId;
     const recovered = await this.repository.findByUpsShipmentId(created.upsShipmentId);
     if (recovered && recovered.id !== pending.id) {
-      await this.repository.deletePending(pending.id);
-      return { success: true, data: { shipment: this.present(recovered), reused: true } };
+      if (recovered.stripe_invoice_id === invoice) {
+        await this.repository.deletePending(pending.id);
+        return { success: true, data: { shipment: this.present(recovered), reused: true } };
+      }
+      // CIE answers every shipment with the same placeholder id: the row keeps its own copy so the unique index
+      // holds and the label is saved for this invoice, never handed over from another order.
+      if (this.upsClient.envName === 'cie') {
+        storedUpsId = `${created.upsShipmentId}${CIE_ID_SEPARATOR}${pending.id}`;
+      } else {
+        // In production a UPS id held by another invoice is never reused: the operator checks it in UPS.
+        await this.repository.markUnknown(pending.id).catch(() => {});
+        this.logger.error({
+          shipmentId: pending.id,
+          invoiceId: invoice,
+          heldByShipmentId: recovered.id
+        }, 'UPS returned a shipment id already held by another invoice.');
+        throw new HttpError(502, 'UPS returned a shipment already held by another order. Check UPS before buying another label.', {
+          code: 'ups_shipment_unknown',
+          shipment_id: pending.id
+        });
+      }
     }
 
     const labelPath = await this.writeLabel(invoice, created.labelFormat, created.labelBase64, pending.id);
@@ -493,7 +520,7 @@ class UpsShipmentService {
     let saved;
     try {
       saved = await this.repository.markCreated(pending.id, {
-        upsShipmentId: created.upsShipmentId,
+        upsShipmentId: storedUpsId,
         trackingNumber: created.trackingNumber,
         serviceCode: created.serviceCode,
         labelFormat: created.labelFormat || 'GIF',
@@ -746,7 +773,7 @@ class UpsShipmentService {
       return { success: true, data: { shipment: this.present(closed), local_only: true } };
     }
     this.ensureUps();
-    await this.upsClient.voidShipment(shipment.ups_shipment_id);
+    await this.upsClient.voidShipment(upsIdForUps(shipment.ups_shipment_id));
     const voided = await this.repository.markVoided(shipment.id);
     await this.withPackages([voided]);
     return { success: true, data: { shipment: this.present(voided) } };
