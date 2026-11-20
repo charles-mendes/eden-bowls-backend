@@ -3,6 +3,7 @@ const path = require('path');
 const { AddRecipePresentation1700000000045 } = require('../src/infrastructure/migrations/1700000000045-add-recipe-presentation');
 const { RECIPE_TEXTS, seedRecipePresentation } = require('../src/infrastructure/migrations/helpers/seed-recipe-presentations');
 const { AddRecipePresentationTag1700000000048 } = require('../src/infrastructure/migrations/1700000000048-add-recipe-presentation-tag');
+const { FillMissingRecipePresentations1700000000092 } = require('../src/infrastructure/migrations/1700000000092-fill-missing-recipe-presentations');
 const { parseRecipePresentation } = require('../src/core/recipe-content');
 
 // Copy of the store's eden-bowls/src/content/__snapshots__/lifeStageRecipesContent.test.ts.snap (pt-BR files of
@@ -137,5 +138,35 @@ describe('AddRecipePresentationTag1700000000048', () => {
     await new AddRecipePresentationTag1700000000048().down(runner);
 
     expect(runner.query.mock.calls[0][0]).toContain("JSON_REMOVE(presentation, '$.tag')");
+  });
+});
+
+describe('FillMissingRecipePresentations1700000000092', () => {
+  test('fills the empty presentations of known recipes only', async () => {
+    const runner = queryRunner({
+      hasColumn: true,
+      rows: [
+        { id: 18, market: 'US', recipeKey: 'puppy-chicken-pork' },
+        { id: 19, market: 'us', recipeKey: 'puppy-beef-chicken' },
+        { id: 9, market: 'BR', recipeKey: 'bovino-e-frango' }
+      ]
+    });
+
+    await new FillMissingRecipePresentations1700000000092().up(runner);
+
+    expect(runner.query.mock.calls[0][0]).toContain('WHERE presentation IS NULL');
+    const updates = runner.query.mock.calls.filter(([sql]) => sql.startsWith('UPDATE'));
+    expect(updates).toHaveLength(2);
+    expect(updates[0][0]).toContain('WHERE id = ? AND presentation IS NULL');
+    expect(updates[0][1]).toEqual([JSON.stringify(seedRecipePresentation('US', 'puppy-chicken-pork')), 18]);
+    expect(updates[1][1]).toEqual([JSON.stringify(seedRecipePresentation('US', 'puppy-beef-chicken')), 19]);
+    expect(parseRecipePresentation(JSON.parse(updates[1][1][0]))).toEqual(seedRecipePresentation('US', 'puppy-beef-chicken'));
+  });
+
+  test('does nothing without the table or the column', async () => {
+    for (const runner of [queryRunner({ tables: [] }), queryRunner({ hasColumn: false })]) {
+      await new FillMissingRecipePresentations1700000000092().up(runner);
+      expect(runner.query).not.toHaveBeenCalled();
+    }
   });
 });
