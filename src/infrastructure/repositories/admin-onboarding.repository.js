@@ -1,17 +1,6 @@
 const { HttpError } = require('../../core/http-error');
 const { parseJsonColumn } = require('../../core/stripe-subscription-map');
-const { PROFILE_MARKET_META_KEY, appendInFilter } = require('../../core/admin-market-scope');
-
-function isMissingTableError(error) {
-  const message = String(error && error.message ? error.message : '');
-  return Boolean(
-    error && (
-      error.code === 'ER_NO_SUCH_TABLE' ||
-      error.errno === 1146 ||
-      /doesn't exist/i.test(message)
-    )
-  );
-}
+const { PROFILE_MARKET_META_KEY } = require('../../core/admin-market-scope');
 
 function safeJson(value) {
   if (value == null || value === '') {
@@ -45,145 +34,6 @@ class AdminOnboardingRepository {
     if (!this.dataSource || !this.dataSource.isInitialized) {
       throw new HttpError(503, 'Database connection is not initialized.');
     }
-  }
-
-  buildFilters(query = {}) {
-    const where = ['s.checkout_reference IS NOT NULL'];
-    const params = [];
-
-    if (query.email) {
-      where.push('LOWER(u.user_email) LIKE ?');
-      params.push(`%${String(query.email).trim().toLowerCase()}%`);
-    }
-
-    if (query.userId) {
-      where.push('s.user_id = ?');
-      params.push(Number(query.userId));
-    }
-
-    if (query.stripeSubscriptionId) {
-      where.push(`EXISTS (
-        SELECT 1 FROM \`${this.tableNames.subscriptions}\` sub
-        WHERE sub.user_id = s.user_id AND sub.stripe_subscription_id = ?
-      )`);
-      params.push(String(query.stripeSubscriptionId).trim());
-    }
-
-    if (query.stripeStatus) {
-      where.push(`EXISTS (
-        SELECT 1 FROM \`${this.tableNames.subscriptions}\` sub
-        WHERE sub.user_id = s.user_id AND sub.status = ?
-      )`);
-      params.push(String(query.stripeStatus).trim());
-    }
-
-    if (query.link === 'linked') {
-      where.push(`EXISTS (SELECT 1 FROM \`${this.tableNames.subscriptions}\` sub WHERE sub.user_id = s.user_id)`);
-    }
-
-    if (query.link === 'unlinked') {
-      where.push(`NOT EXISTS (SELECT 1 FROM \`${this.tableNames.subscriptions}\` sub WHERE sub.user_id = s.user_id)`);
-    }
-
-    if (query.frequency) {
-      where.push("JSON_UNQUOTE(JSON_EXTRACT(s.recurrence, '$.frequency')) = ?");
-      params.push(String(query.frequency).trim());
-    }
-
-    if (Array.isArray(query.markets) && query.markets.length) {
-      appendInFilter(where, params, 's.market', query.markets);
-    } else if (query.market) {
-      where.push('s.market = ?');
-      params.push(String(query.market).trim().toUpperCase());
-    }
-
-    if (query.from) {
-      where.push('s.updated_at >= ?');
-      params.push(query.from);
-    }
-
-    if (query.to) {
-      where.push('s.updated_at <= ?');
-      params.push(query.to);
-    }
-
-    return { where: where.join(' AND '), params };
-  }
-
-  async listCheckouts(query = {}, pagination = { offset: 0, perPage: 20 }) {
-    this.ensureDataSource();
-    const { where, params } = this.buildFilters(query);
-
-    try {
-      const countRows = await this.dataSource.query(
-        [
-          `SELECT COUNT(*) AS total`,
-          `FROM \`${this.tableNames.userState}\` s`,
-          `INNER JOIN \`${this.tableNames.users}\` u ON u.ID = s.user_id`,
-          `WHERE ${where}`
-        ].join(' '),
-        params
-      );
-      const total = Number(Array.isArray(countRows) && countRows[0] ? countRows[0].total : 0);
-      const rows = await this.dataSource.query(
-        [
-          'SELECT s.user_id AS userId, u.user_email AS email, u.display_name AS displayName,',
-          "MAX(CASE WHEN um.meta_key = 'hsr_activation_status' THEN um.meta_value END) AS activationStatus,",
-          's.updated_at AS updatedAt, s.created_at AS createdAt, s.checkout_reference AS checkoutReference,',
-          's.plan_selection AS planSelection, s.recurrence AS recurrence, s.address AS address, s.shipping AS shipping, s.market AS market,',
-          `(SELECT COUNT(*) FROM \`${this.tableNames.pets}\` p WHERE p.user_id = s.user_id AND p.deleted_at IS NULL) AS petCount,`,
-          `(SELECT COUNT(*) FROM \`${this.tableNames.subscriptions}\` sub WHERE sub.user_id = s.user_id) AS subscriptionCount,`,
-          `(SELECT sub.status FROM \`${this.tableNames.subscriptions}\` sub WHERE sub.user_id = s.user_id ORDER BY COALESCE(sub.updated_at, sub.created_at) DESC LIMIT 1) AS stripeStatus,`,
-          `(SELECT sub.stripe_subscription_id FROM \`${this.tableNames.subscriptions}\` sub WHERE sub.user_id = s.user_id ORDER BY COALESCE(sub.updated_at, sub.created_at) DESC LIMIT 1) AS stripeSubscriptionId`,
-          `FROM \`${this.tableNames.userState}\` s`,
-          `INNER JOIN \`${this.tableNames.users}\` u ON u.ID = s.user_id`,
-          `LEFT JOIN \`${this.tableNames.usermeta}\` um ON um.user_id = u.ID`,
-          `WHERE ${where}`,
-          'GROUP BY s.user_id, u.user_email, u.display_name, s.updated_at, s.created_at, s.checkout_reference, s.plan_selection, s.recurrence, s.address, s.shipping, s.market',
-          'ORDER BY s.updated_at DESC',
-          'LIMIT ? OFFSET ?'
-        ].join(' '),
-        [...params, pagination.perPage, pagination.offset]
-      );
-
-      return {
-        total,
-        items: (Array.isArray(rows) ? rows : []).map((row) => this.mapListRow(row))
-      };
-    } catch (error) {
-      if (isMissingTableError(error)) {
-        return { total: 0, items: [] };
-      }
-      throw error;
-    }
-  }
-
-  mapListRow(row) {
-    const checkout = safeJson(row.checkoutReference);
-    const planSelection = safeJson(row.planSelection);
-    const recurrence = safeJson(row.recurrence);
-    const subscriptionCount = Number(row.subscriptionCount || 0);
-
-    return {
-      userId: String(row.userId),
-      email: String(row.email || ''),
-      displayName: String(row.displayName || ''),
-      activationStatus: String(row.activationStatus || '').trim().toLowerCase() || 'active',
-      updatedAt: row.updatedAt,
-      createdAt: row.createdAt,
-      petCount: Number(row.petCount || 0),
-      subscriptionCount,
-      stripeStatus: subscriptionCount > 1 && row.stripeStatus ? 'mixed' : (row.stripeStatus || 'unlinked'),
-      stripeSubscriptionId: subscriptionCount > 1
-        ? `${subscriptionCount} vinculadas`
-        : (row.stripeSubscriptionId || 'Não vinculado'),
-      frequency: recurrence && recurrence.frequency ? recurrence.frequency : null,
-      termMonths: planSelection && planSelection.subscription_term_months
-        ? Number(planSelection.subscription_term_months)
-        : null,
-      firstInvoiceTotal: checkout && checkout.stripe_amount_paid != null ? checkout.stripe_amount_paid : null,
-      market: row.market ? String(row.market).trim().toUpperCase() : null
-    };
   }
 
   async getCheckout(userId) {
@@ -252,20 +102,6 @@ class AdminOnboardingRepository {
         petCondition: String(pet.pet_condition || ''),
         neutered: Boolean(pet.neutered)
       }))
-    };
-  }
-
-  async metrics(query = {}) {
-    const { total, items } = await this.listCheckouts(query, { offset: 0, perPage: 100000 });
-    const linked = items.filter((item) => item.subscriptionCount > 0).length;
-    const stripeActive = items.filter((item) => item.stripeStatus === 'active' || item.stripeStatus === 'trialing' || item.stripeStatus === 'mixed').length;
-
-    return {
-      totalCheckouts: total,
-      linkedToStripe: linked,
-      stripeActive,
-      withSimplified: items.filter((item) => item.petCount > 0).length,
-      generatedAt: new Date().toISOString()
     };
   }
 }

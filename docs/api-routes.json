@@ -389,27 +389,7 @@
   },
   {
     "method": "GET",
-    "path": "/api/v1/admin/onboarding/checkouts"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v1/admin/onboarding/checkouts.csv"
-  },
-  {
-    "method": "GET",
     "path": "/api/v1/admin/onboarding/checkouts/:userId"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v1/admin/onboarding/metrics"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v1/admin/onboarding/sessions"
-  },
-  {
-    "method": "GET",
-    "path": "/api/v1/admin/onboarding/sessions/:userId"
   },
   {
     "method": "GET",

@@ -65,7 +65,7 @@ function appWith(overrides = {}) {
 describe('admin market record scope', () => {
   const cases = [
     ['GET', '/api/v1/admin/users/91', 'user'],
-    ['GET', '/api/v1/admin/onboarding/sessions/91', 'onboarding session'],
+    ['GET', '/api/v1/admin/onboarding/checkouts/91', 'onboarding checkout'],
     ['GET', '/api/v1/admin/billing/subscriptions/91', 'subscription'],
     ['GET', '/api/v1/admin/billing/invoices/in_us/pdf?account=us', 'invoice PDF'],
     ['PATCH', '/api/v1/admin/production/queue/91', 'production queue patch'],

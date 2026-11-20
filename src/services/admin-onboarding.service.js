@@ -2,7 +2,6 @@ const { buildForPet } = require('../core/nutrition-recommendation');
 const { publishedParametersFor } = require('../infrastructure/repositories/onboarding-recommendation.repository');
 const { buildSimplifiedRecommendation } = require('../core/simplified-consumption');
 const { planPackagingFor } = require('../infrastructure/repositories/onboarding-recommendation.repository');
-const { paginatedEnvelope } = require('../api/validators/admin-pagination');
 const { petSubscriptions } = require('../core/subscription-pet-link');
 const {
   constrainMarketQuery,
@@ -69,146 +68,6 @@ function presentCheckoutHistory(subscriptions) {
     });
 }
 
-const STRIPE_STATUS_LABELS = {
-  mixed: 'Misto',
-  unlinked: 'Não vinculado',
-  active: 'Ativo',
-  trialing: 'Em trial',
-  past_due: 'Pagamento atrasado',
-  canceled: 'Cancelado',
-  cancelled: 'Cancelado',
-  unpaid: 'Não pago',
-  incomplete: 'Incompleto',
-  incomplete_expired: 'Expirado',
-  paused: 'Pausado'
-};
-
-const FREQUENCY_LABELS = {
-  monthly: 'Mensal',
-  month: 'Mensal',
-  every_month: 'Mensal',
-  weekly: 'Semanal',
-  week: 'Semanal',
-  every_week: 'Semanal',
-  biweekly: 'Quinzenal',
-  bi_weekly: 'Quinzenal',
-  fortnightly: 'Quinzenal',
-  every_4_weeks: 'A cada 4 semanas'
-};
-
-function resolveTimeZone(value) {
-  const timeZone = String(value || '').trim();
-  if (!timeZone) {
-    return 'UTC';
-  }
-
-  try {
-    Intl.DateTimeFormat('en-US', { timeZone }).format(new Date());
-    return timeZone;
-  } catch (_error) {
-    return 'UTC';
-  }
-}
-
-function formatCsvDate(value, timeZone) {
-  if (value == null || value === '') {
-    return '';
-  }
-
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-
-  return new Intl.DateTimeFormat('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZoneName: 'short',
-    timeZone
-  }).format(date);
-}
-
-function formatCsvStripeStatus(value) {
-  const raw = String(value || '').trim();
-  if (!raw) {
-    return '';
-  }
-
-  return STRIPE_STATUS_LABELS[raw.toLowerCase()] || raw;
-}
-
-function formatCsvFrequency(value) {
-  const raw = String(value || '').trim();
-  if (!raw) {
-    return '';
-  }
-
-  const normalized = raw.toLowerCase().replace(/[\s-]+/g, '_');
-  if (FREQUENCY_LABELS[normalized]) {
-    return FREQUENCY_LABELS[normalized];
-  }
-
-  const everyNMonths = /^(?:every_)?(\d+)_months?$/.exec(normalized);
-  if (everyNMonths) {
-    const count = everyNMonths[1];
-    return count === '1' ? 'Mensal' : `A cada ${count} meses`;
-  }
-
-  return raw;
-}
-
-function formatCsvTermLabel(value) {
-  if (value === null || value === undefined || value === '') {
-    return '';
-  }
-
-  const months = typeof value === 'string' ? Number(value) : value;
-  if (!Number.isFinite(months) || months <= 0) {
-    return '';
-  }
-
-  return months === 1 ? '1 mês' : `${months} meses`;
-}
-
-function toCsv(items, timeZone) {
-  const resolvedTimeZone = resolveTimeZone(timeZone);
-  const header = [
-    'userId',
-    'email',
-    'displayName',
-    'updatedAt',
-    'stripeStatus',
-    'stripeSubscriptionId',
-    // legado: Mensal/Quinzenal/Semanal (alias do prazo). Preferir termLabel.
-    'frequency',
-    'termMonths',
-    'firstInvoiceTotal',
-    'termLabel'
-  ];
-  const lines = [header.join(',')];
-
-  for (const item of items) {
-    const row = {
-      ...item,
-      updatedAt: formatCsvDate(item.updatedAt, resolvedTimeZone),
-      stripeStatus: formatCsvStripeStatus(item.stripeStatus),
-      frequency: formatCsvFrequency(item.frequency),
-      termLabel: formatCsvTermLabel(item.termMonths)
-    };
-
-    lines.push(header.map((key) => {
-      const value = row[key] == null ? '' : String(row[key]).replace(/"/g, '""');
-      return `"${value}"`;
-    }).join(','));
-  }
-
-  return `${lines.join('\n')}\n`;
-}
-
 class AdminOnboardingService {
   constructor(options = {}) {
     this.repository = options.repository;
@@ -234,41 +93,6 @@ class AdminOnboardingService {
       return pets.map(() => null);
     }
     return Promise.all(pets.map((_pet, index) => this.recipeEnergyService.forLifeStage(market, lifeStages[index])));
-  }
-
-  scopedQuery(query = {}, actor = {}) {
-    if (!shouldEnforceMarketScope(actor)) {
-      return query;
-    }
-
-    const scoped = constrainMarketQuery(actor, query);
-    const next = { ...query };
-    if (!(Array.isArray(actor.roles) && actor.roles.includes('admin') && !scoped.filtered)) {
-      next.markets = scoped.markets;
-    }
-    return next;
-  }
-
-  async list(query, pagination, actor = {}) {
-    const result = await this.repository.listCheckouts(this.scopedQuery(query, actor), pagination);
-    return paginatedEnvelope({
-      items: result.items,
-      total: result.total,
-      page: pagination.page,
-      perPage: pagination.perPage
-    });
-  }
-
-  async metrics(query, actor = {}) {
-    return this.repository.metrics(this.scopedQuery(query, actor));
-  }
-
-  async csv(query = {}, actor = {}) {
-    const timezone = query.timezone;
-    const filters = { ...query };
-    delete filters.timezone;
-    const result = await this.repository.listCheckouts(this.scopedQuery(filters, actor), { offset: 0, perPage: 10000 });
-    return toCsv(result.items, timezone);
   }
 
   async getByUserId(userId, actor = {}) {
@@ -359,6 +183,5 @@ class AdminOnboardingService {
 }
 
 module.exports = {
-  AdminOnboardingService,
-  formatCsvTermLabel
+  AdminOnboardingService
 };
