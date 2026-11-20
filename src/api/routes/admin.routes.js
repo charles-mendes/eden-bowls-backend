@@ -357,55 +357,7 @@ function registerAdminRoutes(app, dependencies = {}) {
     await handle(response, next, async () => courierService().cancel(parseCourierDeliveryId(request.params.id), request.adminIdentity));
   });
 
-  app.get('/api/v1/admin/onboarding/checkouts.csv', requirePermission('onboarding.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => {
-      if (!dependencies.adminOnboardingService) {
-        throw new HttpError(503, 'Onboarding service is not available.');
-      }
-      return {
-        csv: await dependencies.adminOnboardingService.csv(request.query || {}, request.adminIdentity),
-        filename: 'onboarding-checkouts.csv'
-      };
-    });
-  });
-
-  app.get('/api/v1/admin/onboarding/checkouts', requirePermission('onboarding.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => {
-      if (!dependencies.adminOnboardingService) {
-        throw new HttpError(503, 'Onboarding service is not available.');
-      }
-      return dependencies.adminOnboardingService.list(request.query || {}, parsePageQuery(request.query, { defaultPerPage: 20 }), request.adminIdentity);
-    });
-  });
-
   app.get('/api/v1/admin/onboarding/checkouts/:userId', requirePermission('onboarding.read', { market: 'record' }), async (request, response, next) => {
-    await handle(response, next, async () => {
-      if (!dependencies.adminOnboardingService) {
-        throw new HttpError(503, 'Onboarding service is not available.');
-      }
-      return dependencies.adminOnboardingService.getByUserId(request.params.userId, request.adminIdentity);
-    });
-  });
-
-  app.get('/api/v1/admin/onboarding/metrics', requirePermission('onboarding.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => {
-      if (!dependencies.adminOnboardingService) {
-        throw new HttpError(503, 'Onboarding service is not available.');
-      }
-      return dependencies.adminOnboardingService.metrics(request.query || {}, request.adminIdentity);
-    });
-  });
-
-  app.get('/api/v1/admin/onboarding/sessions', requirePermission('onboarding.read', { market: 'query' }), async (request, response, next) => {
-    await handle(response, next, async () => {
-      if (!dependencies.adminOnboardingService) {
-        throw new HttpError(503, 'Onboarding service is not available.');
-      }
-      return dependencies.adminOnboardingService.list(request.query || {}, parsePageQuery(request.query, { defaultPerPage: 20 }), request.adminIdentity);
-    });
-  });
-
-  app.get('/api/v1/admin/onboarding/sessions/:userId', requirePermission('onboarding.read', { market: 'record' }), async (request, response, next) => {
     await handle(response, next, async () => {
       if (!dependencies.adminOnboardingService) {
         throw new HttpError(503, 'Onboarding service is not available.');
@@ -762,6 +714,32 @@ function registerAdminRoutes(app, dependencies = {}) {
         throw new HttpError(403, 'Forbidden.');
       }
       return reportsService().exportCsv(request.query || {}, request.marketQuery, request.adminIdentity);
+    });
+  });
+
+  function reportDetailsService() {
+    if (!dependencies.adminReportDetailsService) {
+      throw new HttpError(503, 'Report details are not available.');
+    }
+    return dependencies.adminReportDetailsService;
+  }
+
+  // The records behind one figure of a report, with the same criteria and a check against the figure.
+  app.get('/api/v1/admin/reports/details', requirePermission('reports.read', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => reportDetailsService().details(
+      request.query || {},
+      request.marketQuery,
+      request.adminIdentity,
+      parsePageQuery(request.query, { defaultPerPage: 50, maxPerPage: 200 })
+    ));
+  });
+
+  app.get('/api/v1/admin/reports/details/export.csv', requirePermission('reports.export', { market: 'query' }), async (request, response, next) => {
+    await handle(response, next, async () => {
+      if (!request.adminIdentity.permissions.includes('reports.read')) {
+        throw new HttpError(403, 'Forbidden.');
+      }
+      return reportDetailsService().exportCsv(request.query || {}, request.marketQuery, request.adminIdentity);
     });
   });
 

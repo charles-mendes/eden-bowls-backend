@@ -53,7 +53,15 @@ describe('assessImpact', () => {
   test('the current delivery past its edit deadline is locked', () => {
     const subscription = sub({ chargeAt: new Date('2027-12-10T20:00:00Z') });
     const [item] = assessImpact({ subscriptions: [subscription], rowsBefore: [], rowsAfter: [closeDay('2027-12-13')], now: NOW });
-    expect(item).toMatchObject({ deliveryId: 'current', preparationDay: '2027-12-13', locked: true, lockReason: 'past_editable_until' });
+    // Friday the 10th prepares and waits for the Monday pickup; closing that Monday pushes only the delivery.
+    expect(item).toMatchObject({ deliveryId: 'current', preparationDay: '2027-12-10', newPreparationDay: '2027-12-10', newDeliveryDate: '2027-12-15', locked: true, lockReason: 'past_editable_until' });
+  });
+
+  test('closing only the pickup day keeps the preparation and moves the delivery', () => {
+    // Prepared Monday the 20th, pickup Tuesday the 21st. A closed pickup on the 21st holds the package until Wednesday.
+    const pickupOnly = { ...closeDay('2027-12-21'), closesPreparation: false, closesDelivery: false };
+    const [item] = assessImpact({ subscriptions: [sub()], rowsBefore: [], rowsAfter: [pickupOnly], now: NOW });
+    expect(item).toMatchObject({ preparationDay: '2027-12-20', newPreparationDay: '2027-12-20', deliveryDate: '2027-12-22', newDeliveryDate: '2027-12-23', move: MOVES.PROJECTION_ONLY });
   });
 
   test('a paid delivery on its way is locked', () => {

@@ -64,9 +64,9 @@ describe('calendar write endpoints', () => {
       .set('Authorization', `Bearer ${token()}`).send(closure('2027-12-22'));
     expect(response.status).toBe(200);
     expect(response.body.row).toMatchObject({ id: 99, type: 'adhoc', closedOn: '2027-12-22' });
-    expect(response.body.affected).toEqual([expect.objectContaining({ stripeSubscriptionId: 'sub_1', move: 'stripe_sync', newPreparationDay: '2027-12-27' })]);
+    expect(response.body.affected).toEqual([expect.objectContaining({ stripeSubscriptionId: 'sub_1', move: 'stripe_sync', newPreparationDay: '2027-12-23', newDeliveryDate: '2027-12-28' })]);
     expect(calendarRepository.insertRow).toHaveBeenCalled();
-    expect(syncsRepository.insertPending).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ targetTrialEnd: prepMidnight('2027-12-27', TZ).toISOString() }));
+    expect(syncsRepository.insertPending).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ targetTrialEnd: prepMidnight('2027-12-23', TZ).toISOString() }));
     expect(auditRepository.createIn).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: 'delivery_calendar.create', actorEmail: 'op@edenbowls.com' }));
   });
 

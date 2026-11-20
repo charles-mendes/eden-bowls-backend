@@ -1,4 +1,5 @@
 const { SeedRecipeLabels1700000000041 } = require('../src/infrastructure/migrations/1700000000041-seed-recipe-labels');
+const { FillMissingRecipeLabels1700000000091 } = require('../src/infrastructure/migrations/1700000000091-fill-missing-recipe-labels');
 const { RECIPE_LABELS, seedRecipeLabel, seedRecipeRegistrations } = require('../src/infrastructure/migrations/helpers/seed-recipe-labels');
 const { parseRecipeLabel, parseEnergyKcalPerKg, labelCompleteness } = require('../src/core/recipe-content');
 
@@ -80,6 +81,31 @@ describe('SeedRecipeLabels1700000000041', () => {
   test('does nothing without the table', async () => {
     const runner = queryRunner([], []);
     await new SeedRecipeLabels1700000000041().up(runner);
+    expect(runner.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('FillMissingRecipeLabels1700000000091', () => {
+  test('fills the empty labels of known recipes only', async () => {
+    const runner = queryRunner([
+      { id: 18, market: 'US', recipeKey: 'puppy-chicken-pork' },
+      { id: 19, market: 'us', recipeKey: 'puppy-beef-chicken' },
+      { id: 20, market: 'US', recipeKey: 'custom-recipe' }
+    ]);
+
+    await new FillMissingRecipeLabels1700000000091().up(runner);
+
+    expect(runner.query.mock.calls[0][0]).toContain('WHERE label IS NULL');
+    const updates = runner.query.mock.calls.filter(([sql]) => sql.startsWith('UPDATE'));
+    expect(updates).toHaveLength(2);
+    expect(updates[0][0]).toContain('WHERE id = ? AND label IS NULL');
+    expect(updates[0][1]).toEqual([JSON.stringify(seedRecipeLabel('US', 'puppy-chicken-pork')), 18]);
+    expect(updates[1][1]).toEqual([JSON.stringify(seedRecipeLabel('US', 'puppy-beef-chicken')), 19]);
+  });
+
+  test('does nothing without the table', async () => {
+    const runner = queryRunner([], []);
+    await new FillMissingRecipeLabels1700000000091().up(runner);
     expect(runner.query).not.toHaveBeenCalled();
   });
 });

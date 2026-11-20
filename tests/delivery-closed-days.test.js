@@ -302,10 +302,11 @@ describe('standard week and hours (delivery-calendar)', () => {
     expect(brazilPrepValid({ year: 2026, month: 11, day: 25 }, calendar)).toBe(true);
   });
 
-  test('Opening Friday and Saturday does not make UPS pick up on a weekend', () => {
+  test('Open Friday and Saturday prepare and wait for the Monday UPS pickup', () => {
     const calendar = { rows: [], week: { US: weekOf([1, 2, 3, 4, 5, 6, 7]) } };
-    expect(usPrepValid({ year: 2026, month: 11, day: 13 }, calendar, 1)).toBe(false);
-    expect(usPrepValid({ year: 2026, month: 11, day: 14 }, calendar, 1)).toBe(false);
+    expect(usPrepValid({ year: 2026, month: 11, day: 13 }, calendar, 1)).toBe(true);
+    expect(usPrepValid({ year: 2026, month: 11, day: 14 }, calendar, 1)).toBe(true);
+    expect(deliveryForPrep('US', { year: 2026, month: 11, day: 14 }, 1, calendar)).toEqual({ year: 2026, month: 11, day: 17 });
   });
 
   test('Opening Sunday in the United States prepares on Sunday, with pickup on Monday', () => {

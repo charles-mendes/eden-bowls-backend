@@ -316,21 +316,31 @@ function brazilPrepValid(parts, calendar) {
   return true;
 }
 
-// The United States also needs a weekday UPS pickup the next day and a weekday delivery, so an open Friday or
-// Saturday never prepares, and an open Sunday does (pickup on Monday).
+// The United States ships through a weekday UPS pickup after the preparation day. The package waits in the
+// kitchen until the first pickup day (not Saturday, Sunday or a day that closes pickup) whose delivery, the
+// transit days later, is a weekday that does not close delivery. So a Thursday or Friday preparation is held
+// and picked up on Monday. The hold is at most US_PICKUP_HOLD_MAX_DAYS.
+const US_PICKUP_HOLD_MAX_DAYS = 7;
+
+function usPickupFor(parts, calendar, transitDays) {
+  for (let offset = 1; offset <= US_PICKUP_HOLD_MAX_DAYS; offset += 1) {
+    const pickup = addCalendarDays(parts.year, parts.month, parts.day, offset);
+    if (isWeekend(pickup) || flagOn(calendar, 'US', dateKey(pickup.year, pickup.month, pickup.day), 'closesPickup')) {
+      continue;
+    }
+    const delivery = addCalendarDays(pickup.year, pickup.month, pickup.day, transitDays);
+    if (isWeekend(delivery) || flagOn(calendar, 'US', dateKey(delivery.year, delivery.month, delivery.day), 'closesDelivery')) {
+      continue;
+    }
+    return { pickup, delivery };
+  }
+  return null;
+}
+
 function usPrepValid(parts, calendar, transitDays) {
   if (!openWeekday(calendar, 'US', parts)) return false;
-  const key = dateKey(parts.year, parts.month, parts.day);
-  if (flagOn(calendar, 'US', key, 'closesPreparation')) return false;
-  const pickup = addCalendarDays(parts.year, parts.month, parts.day, 1);
-  if (isWeekend(pickup) || flagOn(calendar, 'US', dateKey(pickup.year, pickup.month, pickup.day), 'closesPickup')) {
-    return false;
-  }
-  const delivery = addCalendarDays(pickup.year, pickup.month, pickup.day, transitDays);
-  if (isWeekend(delivery) || flagOn(calendar, 'US', dateKey(delivery.year, delivery.month, delivery.day), 'closesDelivery')) {
-    return false;
-  }
-  return true;
+  if (flagOn(calendar, 'US', dateKey(parts.year, parts.month, parts.day), 'closesPreparation')) return false;
+  return usPickupFor(parts, calendar, transitDays) !== null;
 }
 
 // Brazil: the business days after preparation, skipping Saturday, Sunday and the days that close delivery.
@@ -350,6 +360,8 @@ function deliveryForPrep(market, parts, transitDays, rows = []) {
   if (market === 'BR') {
     return brazilDeliveryForPrep(parts, rows);
   }
+  const planned = usPickupFor(parts, rows, transitDays);
+  if (planned) return planned.delivery;
   const pickup = addCalendarDays(parts.year, parts.month, parts.day, 1);
   return addCalendarDays(pickup.year, pickup.month, pickup.day, transitDays);
 }
@@ -503,6 +515,8 @@ module.exports = {
   timeZoneFor,
   brazilPrepValid,
   usPrepValid,
+  usPickupFor,
+  US_PICKUP_HOLD_MAX_DAYS,
   deliveryForPrep,
   firstPrepDay,
   editableUntil,

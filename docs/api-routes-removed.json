@@ -58,5 +58,30 @@
     "method": "PUT",
     "path": "/api/v1/admin/stripe/first-purchase-promos",
     "reason": "first-purchase-coupons: a promotion code is no longer linked to a term by typing its ID; create the coupon with POST /api/v1/admin/stripe/first-purchase-coupons or bring existing ones with POST /api/v1/admin/stripe/first-purchase-promos/sync."
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/checkouts.csv",
+    "reason": "onboarding-360-removal: the admin Onboarding 360 list was legacy and is gone; a customer's checkout lives in the customer detail via GET /api/v1/admin/onboarding/checkouts/:userId, and the acquisition funnel lives in /api/v1/admin/reports/acquisition."
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/checkouts",
+    "reason": "onboarding-360-removal: the admin Onboarding 360 list was legacy and is gone; a customer's checkout lives in the customer detail via GET /api/v1/admin/onboarding/checkouts/:userId, and the acquisition funnel lives in /api/v1/admin/reports/acquisition."
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/metrics",
+    "reason": "onboarding-360-removal: the admin Onboarding 360 list was legacy and is gone; a customer's checkout lives in the customer detail via GET /api/v1/admin/onboarding/checkouts/:userId, and the acquisition funnel lives in /api/v1/admin/reports/acquisition."
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/sessions",
+    "reason": "onboarding-360-removal: the admin Onboarding 360 list was legacy and is gone; a customer's checkout lives in the customer detail via GET /api/v1/admin/onboarding/checkouts/:userId, and the acquisition funnel lives in /api/v1/admin/reports/acquisition."
+  },
+  {
+    "method": "GET",
+    "path": "/api/v1/admin/onboarding/sessions/:userId",
+    "reason": "onboarding-360-removal: the admin Onboarding 360 list was legacy and is gone; a customer's checkout lives in the customer detail via GET /api/v1/admin/onboarding/checkouts/:userId, and the acquisition funnel lives in /api/v1/admin/reports/acquisition."
   }
 ]

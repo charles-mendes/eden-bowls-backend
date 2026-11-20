@@ -29,18 +29,16 @@ function adminApp(overrides = {}) {
 }
 
 describe('admin onboarding billing catalog users', () => {
-  test('lists onboarding checkouts', async () => {
+  test('returns the onboarding checkout of a customer', async () => {
     const adminOnboardingService = {
-      list: jest.fn().mockResolvedValue({ total: 1, page: 1, perPage: 20, totalPages: 1, items: [{ userId: '3', email: 'a@b.com' }] }),
-      metrics: jest.fn().mockResolvedValue({ totalCheckouts: 1, linkedToStripe: 1, stripeActive: 1, withSimplified: 1 })
+      getByUserId: jest.fn().mockResolvedValue({ userId: '3', email: 'a@b.com', pets: [] })
     };
     const app = adminApp({ adminOnboardingService });
-    const list = await request(app).get('/api/v1/admin/onboarding/checkouts').set('Authorization', `Bearer ${tokenFor()}`);
-    const metrics = await request(app).get('/api/v1/admin/onboarding/metrics').set('Authorization', `Bearer ${tokenFor()}`);
+    const detail = await request(app).get('/api/v1/admin/onboarding/checkouts/3').set('Authorization', `Bearer ${tokenFor()}`);
 
-    expect(list.status).toBe(200);
-    expect(list.body.items[0].userId).toBe('3');
-    expect(metrics.body.totalCheckouts).toBe(1);
+    expect(detail.status).toBe(200);
+    expect(detail.body.userId).toBe('3');
+    expect(adminOnboardingService.getByUserId).toHaveBeenCalledWith('3', expect.anything());
   });
 
   test('lists billing subscriptions and users', async () => {

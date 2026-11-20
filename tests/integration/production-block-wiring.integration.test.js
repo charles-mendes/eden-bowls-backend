@@ -124,16 +124,16 @@ describeIntegration('production block moves trial_end, wired like index.js (MySQ
     expect(await production.findBySubscriptionAndPeriodEnd(id, new Date(restored * 1000))).toMatchObject({ status: 'to_prepare', preparationDay: null });
   });
 
-  test('United States: a block whose following preparation would be a Thursday moves to the next valid Monday', async () => {
-    // Current charge Monday 14 December 2026 at 00:00. The following charge, Thursday 14 January 2027, cannot ship
-    // with 1 transit day (Thursday delivers Saturday, Friday picks up Saturday), so Monday 18 January.
+  test('United States: a block whose following preparation is a Thursday keeps the Thursday', async () => {
+    // Current charge Monday 14 December 2026 at 00:00. The following charge, Thursday 14 January 2027, prepares that
+    // day with 1 transit day: the package waits for the next pickup whose delivery is a weekday.
     const chargeAt = wallTimeToUtc(2026, 12, 14, 0, 0, 0, TIMEZONE_US);
     const id = await subscription('sub_block_us', 'us', chargeAt, { country: 'US', business_days_in_transit: 1 });
 
     await admin.updateStatus(id, { status: 'blocked', note: 'Sem caixa', periodEnd: chargeAt.toISOString() }, { userId: 1 });
     expect(stripe.setTrialEnd).toHaveBeenLastCalledWith({
       subscriptionId: 'sub_block_us',
-      trial_end: unix(wallTimeToUtc(2027, 1, 18, 0, 0, 0, TIMEZONE_US)),
+      trial_end: unix(wallTimeToUtc(2027, 1, 14, 0, 0, 0, TIMEZONE_US)),
       proration_behavior: 'none'
     });
   });
